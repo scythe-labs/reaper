@@ -97,7 +97,7 @@ const SITES: Site[] = [
     what: "the base URL of a Sonarr, Radarr or Seerr instance as the operator typed it",
     selectors: [".instance-url"],
     classInTsx: "instance-url",
-    seenIn: ["components/Settings.tsx"],
+    seenIn: ["components/ServicesPanel.tsx"],
   },
   {
     // The grid around this is not a row of its own: `.plex-map-grid` renders no text, and floors
@@ -165,7 +165,7 @@ const SITES: Site[] = [
     what: "the About list, whose Data folder row is the server's configured path",
     selectors: [".about-kv dd"],
     classInTsx: "about-kv",
-    seenIn: ["components/Settings.tsx"],
+    seenIn: ["components/AboutPanel.tsx"],
   },
 
   // ---- #219: eleven blocks, one declaration each ------------------------------------------
@@ -289,7 +289,7 @@ const SITES: Site[] = [
       "(`sourceHint`). Shared with the Jobs tab's rows",
     selectors: [".jobrow-sched"],
     classInTsx: "jobrow-sched",
-    seenIn: ["components/ListsPanel.tsx", "components/Settings.tsx"],
+    seenIn: ["components/ListsPanel.tsx", "components/JobsPanel.tsx"],
   },
   {
     what:
@@ -297,7 +297,7 @@ const SITES: Site[] = [
       "status. On Lists it is now a plain count, so its outside text is the Jobs side",
     selectors: [".jobrow-desc"],
     classInTsx: "jobrow-desc",
-    seenIn: ["components/ListsPanel.tsx", "components/Settings.tsx"],
+    seenIn: ["components/ListsPanel.tsx", "components/JobsPanel.tsx"],
   },
   {
     what: "the list's name, which is the operator's own but may be pasted from anywhere",

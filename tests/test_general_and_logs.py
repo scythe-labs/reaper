@@ -629,7 +629,7 @@ class TestTheApiKeyLane:
         headers = {"X-Api-Key": key}
         twin = (
             "the fairness reads are open to a key again, so the hand-written refusal in "
-            "frontend/src/components/Settings.tsx ('it cannot ... see who watched what') "
+            "frontend/src/components/GeneralPanel.tsx ('it cannot ... see who watched what') "
             "and the generated one in middleware.api_key_scope_description are both false. "
             "Fix the fence or change BOTH sentences"
         )
@@ -817,7 +817,7 @@ class TestTheAuthBoxDescribesTheFence:
         """
         twin = (
             "the fence moved, so the hand-written twin in "
-            "frontend/src/components/Settings.tsx has to move with it"
+            "frontend/src/components/GeneralPanel.tsx has to move with it"
         )
         description = api_key_scope_description()
         assert (

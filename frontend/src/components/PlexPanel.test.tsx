@@ -744,7 +744,8 @@ describe("the groups below the form, through a failed refetch", () => {
     "The stale line's noun is the `what` prop of StaleReadNotice.tsx, which owns the sentence. " +
     'Sibling call sites: PlexPanel\'s own status read (the default, "these settings"), the ' +
     'library grid ("the library list"), the Leaving Soon group ("the Leaving Soon settings"); ' +
-    "AboutPanel, JobsPanel, LeavingSoonRow and NotificationsPanel in Settings.tsx.";
+    "AboutPanel.tsx, JobsPanel.tsx (the panel and LeavingSoonRow), NotificationsPanel.tsx and " +
+    "ServicesPanel.tsx.";
 
   it("keeps the library grid and its switches when the refetch fails", async () => {
     const queryClient = renderWithClient();

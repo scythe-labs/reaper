@@ -10,7 +10,7 @@ import { SIGNED_IN_USER } from "../test/apiFixtures";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { SecurityPanel } from "./Settings";
+import { SecurityPanel } from "./SecurityPanel";
 
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),

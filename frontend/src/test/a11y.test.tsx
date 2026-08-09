@@ -78,8 +78,8 @@ describe("the accessibility gate", () => {
 
   it("names a rule axe could not decide, which jsdom files apart from its failures", async () => {
     // The one that made this gate necessary AND nearly made it useless. A focusable element
-    // inside `aria-hidden` is a serious WCAG 4.1.2 failure, and `Settings.tsx` maintains that
-    // invariant by hand at every `aria-hidden` site in the app -- but under jsdom axe returns
+    // inside `aria-hidden` is a serious WCAG 4.1.2 failure, and the app maintains that
+    // invariant by hand at every `aria-hidden` site it has -- but under jsdom axe returns
     // it as `incomplete`, not `violations`. A gate reading only `violations` passes this markup
     // without a word, which is why the deferred bucket counts too.
     const { container } = render(

@@ -188,7 +188,7 @@ row moving is indistinguishable from one that never started.
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
-| 6 | Structural motion | in progress | 4 of 8 | C6 settled: five modules, `routes.py` cut at `:1853` and *Vocabulary* on its own |
+| 6 | Structural motion | in progress | 5 of 8 | C6 settled: five modules, `routes.py` cut at `:1853` and *Vocabulary* on its own |
 | 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
@@ -424,7 +424,7 @@ Eight files carry findings from four or more waves. Phase order is mostly *about
 | `services/snapshot.py` | 1.1, 3, 5, 7, 11 | Never split. Phase 5 deletes from it, phase 8 rewrites its carriers |
 | `api/settings.py` | 2, 3, 4.1, 5, 6, 9, 10 | Phase 6 takes 14 Plex routes out. See the password-gate note below |
 | `frontend/src/api.ts` | 1.1, 4.1, 4.2, 4.3, 7, 8 | Phase 7 hand-edits the type block; phase 9 deletes 1,239 lines of it |
-| `components/Settings.tsx` | 2, 3, 4.1, 10 | Phase 6 extracts 7 panels; phase 9's `FIELDS` descriptor then lands in `GeneralPanel.tsx` alone |
+| `components/Settings.tsx` | 2, 3, 4.1, 10 | Phase 6 extracted the 7 panels; phase 9's `FIELDS` descriptor now lands in `GeneralPanel.tsx` alone, which exists |
 | `services/executor.py` | 1.1, 3, 8, 9, 11 | Phase 5's deletions are trivial; phase 8's size-interlock work is the sharpest thing in that phase |
 | `main.py` | 2, 3, 4.2, 4.3, 9, 10, 11 | Spans phases 4, 8 and 9. Nothing splits it, so the risk is three phases editing one boot path |
 | `services/leaving_soon.py` | 3, 6, 8, 9, 10 | Phases 4, 7 and 8. W3's `plex.py` helper changes what this file's error handling sees |
@@ -916,7 +916,7 @@ The worst individual units, which is where waves 2 and 3 point:
 | `services/planner.py:315 build_plan` | 375 | 27 | 5 |
 | `services/snapshot.py:1447 _judge_item` | 111 | n/a | **27** |
 | `components/PolicyEditor.tsx`'s `PolicyEditor` | 1,408 | n/a | n/a |
-| `components/Settings.tsx` | 3,086 | 65 hooks, 25 `useState` | n/a |
+| `components/Settings.tsx`, pre-split | 3,086 | 65 hooks, 25 `useState` | n/a |
 
 ## Wave 1: deletions and mechanical wins
 
@@ -1255,7 +1255,7 @@ Each of these files draws its own seams already, in banner comments or in the fa
 | --- | --- | --- | --- |
 | `api/routes.py` | 2,789 | `api/review.py` (~1,315), `api/policy.py` (~480), `api/simulate.py` (~840), `api/about.py`. `routes.py` ceases to exist | Four banner comments already name the four. `main.py:47` imports only `router`, so the change is `include_router` calls |
 | `engine/policy.py` | 2,263 | `+policy_migrations.py` (~530), `+policy_warnings.py` (~1,030) | **Landed.** The file was 2,710 at this base, not 2,263; the correction's 2,709 was right at `759507b` and one line arrived after it. 1,577 lines out, 2,710 to 1,133: `policy_migrations.py` is 572 and `policy_warnings.py` 1,083, so the tree gains 78 lines, the two module headers plus the comment rewraps the longer module names forced. Measured at the tip, not at the first commit: three follow-up commits moved every one of these figures. Both halves import the model and neither is imported back, measured rather than argued: migrations reads `PolicyBody` and `SCHEMA_VERSION` alone, warnings reads six model types and `join_and`. `join_and` stays in `policy.py`, because `scan_runner` joins repair remedies with it and that is not a warning. The pinned module count goes 77 to 79; the logger count does not move, since a split inherits its parent's loggers |
-| `components/Settings.tsx` | 3,086 | 6 panels to their own files; the barrel keeps `PANELS`, the dirty record and the shell (~180) | **The tests are already split per panel** (6 files). Three sibling panels were already extracted. Only the source never followed |
+| `components/Settings.tsx` | 3,086 | 7 panels to their own files; the barrel keeps `PANELS`, the dirty record and the shell | **Landed, and it is 7 panels as the correction says, not 6.** 2,850 lines out, 3,086 to 236; the seven panels hold 2,933 between them, so the tree gains 83 — eight module headers and import blocks, less the seven banner comments they replace. Every moved line is byte-identical bar two: `JobsPanel` and `BackupPanel` take the `export` the shell now needs. The shell and `PANELS` are kept byte for byte. Both pinned per-file populations conserve exactly, 8 query-failure handles to 8 and 6 reload sentences to 6, which is what says no branch moved. `isDiscordWebhook` and `MIN_ADMIN_PASSWORD` re-export from the barrel on `PlexPanel`'s own precedent, so `DiscordModal` and `SetupPasswordStep` are untouched |
 | `api/settings.py` | 2,025 | `api/plex.py` (~630, 12 routes) | **Landed, and it is 14 routes as the correction says, not 12.** 698 lines out, settings 2,044 to 1,344. The **sorted** document is byte-identical either side, same 96 operations; the one thing that moves is `paths` insertion order, which nothing reads. Reported as plain "byte-identical" first, which is the reassuring direction rule 144 warns about. `plex.py` **imports** the request accessors from `settings.py` rather than copying them, so phase 8's `api/deps.py` still collapses five copies and not six |
 | `components/PlexPanel.tsx` | 1,244 | 3 sections out (~450) | **Dropped from phase 6, filed as #607, and read the correction below before this cell.** It claimed the file draws the seams as banner comments; the banners are inside the function body. The rule-146 dirty contract half is the part that holds |
 | `App.tsx` | 1,225 | 5 components to `components/` (~520) | **Landed.** 506 lines out, 1,225 to 719: 497 of them the five component spans, 9 more the import header that went with them. The row first said 728, which is 1,225 minus 497 and self-consistent, which is why it read as measured. Two carry the "exported for its tests" comment, as the correction says, and both were false on arrival: in `components/` every file exports its component, so the export carries no signal, and `WhyPanelFallback` is no longer "below". `NAV` moves with `SectionNav`; `ReapSheetLoader` does not move, since `Dashboard` renders it and not `ReapBar`. The query-failure map moves App 8 to 7 and gains `SectionNav` 1, total conserved |
@@ -1304,9 +1304,12 @@ reasoning.
 >
 > **`Settings.tsx` is 7 panels, not 6**, and the tests are split for **5**, not 6 — `JobsPanel` and
 > `BackupPanel` are unexported and have no per-panel test, so the seam is asserted for those two,
-> not demonstrated. The barrel must also keep `export { PlexPanel }` (`:62`), `isDiscordWebhook`
-> (`:2362`, read by `DiscordModal.tsx`) and `MIN_ADMIN_PASSWORD` (`:2607`, read by
-> `SetupPasswordStep.tsx`), and `ScheduleModal` moves with `JobsPanel` as one unit.
+> not demonstrated. The barrel must also keep `export { PlexPanel }`, `isDiscordWebhook` (read by
+> `DiscordModal.tsx`) and `MIN_ADMIN_PASSWORD` (read by `SetupPasswordStep.tsx`), and
+> `ScheduleModal` moves with `JobsPanel` as one unit. **All of this held on landing.** The two
+> panels are exported now because the shell imports them across a file boundary, which is a
+> consequence of the split and not a test; they are still driven only through the shell, so that
+> half of the correction survives the change that answered the rest of it.
 >
 > `App.tsx` carries **two** "exported for its tests" comments, not three. `api/settings.py` has
 > **14** PLEX-tagged routes, not 12, and the tag is a clean cut. `engine/policy.py`'s two split
@@ -1362,9 +1365,11 @@ here is preventing a future divergence.
   is disposable by contract, so all three want one primitive. **~90 lines**. The generalization
   must adopt `history_sync`'s rebuild lock, which is the strictest of the three, rather than the
   average.
-- `components/Settings.tsx` and siblings — the `.set-row` label/help/control triplet typed out
-  **26 times** across three files. A `<SetRow>` also makes rule 45 structural: one help slot per
-  row means one paragraph cannot cover two controls. **~100 lines**.
+- `components/GeneralPanel.tsx` and siblings — the `.set-row` label/help/control triplet typed out
+  **26 times**. A `<SetRow>` also makes rule 45 structural: one help slot per
+  row means one paragraph cannot cover two controls. **~100 lines**. The "three files" this said
+  was counted before `Settings.tsx` split into seven panels: the triplets are conserved, the
+  spread is not, so re-derive the file list before building this.
 - `api/deps.py` (new) — a request accessor copy-pasted at **7** routers under two spellings
   (`_factory`/`_settings`/`_box` in `api/{auth,backup,settings,setup}.py`, `_sessions` in
   `api/{routes,runs,whitelist}.py`), `_latest_snapshot` at **7**
@@ -1691,7 +1696,7 @@ four separate `_retire` calls (the per-family `when=` predicate is rule 115). `i
 three-state safety read in `ReapConfirm`'s announce effect.
 
 **Structures that exist because a specific thing broke.** `_JournalRow`/`_Terminal` (a rollback
-expires every ORM attribute, #327). `QuantityInput`'s `mine`/`seen` ref pair. `Settings.tsx`'s
+expires every ORM attribute, #327). `QuantityInput`'s `mine`/`seen` ref pair. `GeneralPanel.tsx`'s
 `seeded` and `ready` state (#139). `library_index`'s `degrade` rebinding (#513). `degrade()`'s
 sentence-terminating logic (#514). `restore.apply_pending_restore`'s two markers and
 `_DB_SIDECARS` (crash windows, rule 126). `PolicyEditor`'s scroll listener, where an
@@ -2164,8 +2169,8 @@ These are not simplifications. Two copies of one fact disagree today, and the re
 disagreement.
 
 1. **The Leaving Soon summary contradicts itself on one screen.** `leaving_soon.py:517` and
-   `Settings.tsx:2093` are the same three-branch ladder in two languages, each with its own
-   comment. `api/leaving_soon.py:44` injects a synthetic "no libraries are turned on" problem
+   `JobsPanel.tsx`'s `LeavingSoonRow` (`syncResult`, "A real per-library problem always wins the
+   message") are the same three-branch ladder in two languages, each with its own comment. `api/leaving_soon.py:44` injects a synthetic "no libraries are turned on" problem
    *after* `_run_pass` stored its summary, so with no libraries enabled the stored row reads
    "Preview only, nothing written" with a green tick while the button's flash says "Some shelves
    didn't update" in red. **Neither sentence is pinned by any test, on either side.** Fix: compute

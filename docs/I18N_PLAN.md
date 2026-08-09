@@ -233,7 +233,7 @@ The single highest-value file: it already centralizes every number, byte, date a
 Note an inconsistency this fixes on the way: `date()` and `time()` already pass `undefined` as
 the locale, so **a German browser gets German dates inside English sentences today**.
 
-Also here: `Settings.tsx:1918` `ordinal()` hand-builds English ordinals (`st`/`nd`/`rd`/`th`),
+Also here: `JobsPanel.tsx`'s `ordinal()` hand-builds English ordinals (`st`/`nd`/`rd`/`th`),
 which is `Intl.PluralRules` with `type: "ordinal"`. Its neighbor `describeCron()` renders a
 schedule as an English sentence and is the one surface in this stage that cannot be reduced to
 a formatter, so it becomes ICU messages per cron shape.
@@ -256,8 +256,9 @@ opens in the why-panel.
 
 ### Stage 4 — extract the UI catalog
 
-The mechanical bulk: ~800 strings across 76 files, `Settings.tsx` (142) and `WhyPanel.tsx` (70)
-heaviest. Attributes (`aria-label`, `title`, `placeholder`) and all 44 `announce()` sites
+The mechanical bulk: ~800 strings, the seven panels split out of `Settings.tsx` (142 between them)
+and `WhyPanel.tsx` (70) heaviest. The file count that used to sit here, 76, was measured before
+that split and is not recoverable by arithmetic, so it is gone rather than guessed. Attributes (`aria-label`, `title`, `placeholder`) and all 44 `announce()` sites
 included — a live region that announces in the wrong language is worse than one that says
 nothing.
 
