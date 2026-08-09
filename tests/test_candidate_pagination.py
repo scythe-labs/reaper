@@ -30,6 +30,11 @@ from ._auth import login
 SIZE = 2_000_000_000
 N_CONDEMN = 250
 N_PROTECT = 40
+#: How many of the condemned rows Reaper could not measure. Non-zero on purpose: a byte SUM
+#: skips a NULL without saying so, and a fixture where every row has a size cannot tell the
+#: unmeasured count from a hardcoded zero (rule 141). The Kept lane keeps all its sizes, so
+#: the two lanes pin the count from both directions.
+N_UNMEASURED = 3
 
 
 @pytest.fixture
@@ -55,7 +60,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                 media_key=f"radarr:1:{i}",
                 title=f"Movie {i:04d}",
                 media_type="movie",
-                size_bytes=SIZE,
+                size_bytes=None if i < N_UNMEASURED else SIZE,
                 verdict="condemn",
                 # Distinct, descending scores so paging order is total and stable.
                 score=99 - (i % 40),
@@ -93,9 +98,11 @@ class TestPagination:
     def test_the_totals_report_the_whole_filtered_set(self, client: TestClient) -> None:
         page = client.get("/api/candidates?verdict=condemn&limit=100&offset=0").json()
         assert page["total"] == N_CONDEMN
-        assert page["total_bytes"] == N_CONDEMN * SIZE
-        # Every row here has a size, so nothing is left out of the byte total.
-        assert page["unknown_size"] == 0
+        # The count is every row; the byte total is only the rows that have a size, and
+        # `unknown_size` is what it could not include. Three separate figures, so a queue
+        # header reading the sum alone cannot pass off an unmeasured library as a small one.
+        assert page["total_bytes"] == (N_CONDEMN - N_UNMEASURED) * SIZE
+        assert page["unknown_size"] == N_UNMEASURED
         # ...even though only a page is on the wire.
         assert len(page["items"]) == 100
 
@@ -127,6 +134,8 @@ class TestPagination:
         page = client.get("/api/candidates?verdict=protect&limit=100&offset=0").json()
         assert page["total"] == N_PROTECT
         assert page["total_bytes"] == N_PROTECT * SIZE
+        # Every Kept row has a size, so the condemned lane's unmeasured three do not leak in.
+        assert page["unknown_size"] == 0
 
     def test_the_page_names_the_snapshot_it_came_from(self, client: TestClient) -> None:
         # The queue compares this against the newest completed scan to tell when a fresher

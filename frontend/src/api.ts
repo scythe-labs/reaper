@@ -1707,10 +1707,13 @@ export const api = {
     params.set("offset", String(offset));
 
     const page = await request<CandidatePage>(`/api/candidates?${params.toString()}`);
-    // A 200 with no body is not an empty queue. `parseBody` reads one as `undefined` (a
-    // proxy answering for Reaper, say), the queue would index straight into it, and the
-    // page it drew would say "nothing to review" about a read that never landed. This is
-    // the one read whose consumer holds a list of pages, so it says so out loud instead.
+    // `parseBody` reads a 200 with no body as `undefined`, which is right for the calls that
+    // expect nothing back and wrong here: this is the one read whose consumer holds a LIST of
+    // pages and indexes into each, so the queue reaches `undefined.items` and dies with a
+    // TypeError no `instanceof ApiError` branch can see. Saying it plainly here puts the same
+    // failure on the queue's own error branch. The old hand-assembly defaulted the body to
+    // `[]`, which did not crash and was worse: it drew "nothing to review" over a read that
+    // never landed.
     if (!page) throw new ApiError(502, "Reaper got an unexpected reply from the server.");
     return page;
   },

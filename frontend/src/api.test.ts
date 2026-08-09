@@ -36,10 +36,10 @@ describe("a reply the client cannot parse", () => {
     await expect(api.candidates("condemn", {}, 1, 0)).rejects.toBeInstanceOf(ApiError);
   });
 
-  it("refuses an empty page rather than drawing it as an empty queue", async () => {
+  it("names an empty page as a failed read, not as a TypeError downstream", async () => {
     // 200 with no body: `parseBody` reads that as `undefined` for every call, which is right
-    // where nothing is expected back. Here the queue would go on to index into it, and the
-    // list it drew would say "nothing to review" about a read that never landed.
+    // where nothing is expected back. Here the queue indexes into each page it holds, so it
+    // would reach `undefined.items` and throw past every `instanceof ApiError` branch.
     vi.stubGlobal("fetch", reply(null));
     await expect(api.candidates("condemn", {}, 1, 0)).rejects.toBeInstanceOf(ApiError);
   });
