@@ -2046,7 +2046,7 @@ the wrong shape for this: it helps at most one site per file, the ~40 others are
 
 ## Mutation testing the two policy repair shims (2026-07-29)
 
-Sixty mutants over `policy.rebalance` and `policy.recover_rating_rules` — operator flips, ±1
+Sixty mutants over `policy_migrations.rebalance` and `policy_migrations.recover_rating_rules` — operator flips, ±1
 constants, dropped `not`s, `and`/`or` swaps, and ten single-statement deletions — run against
 `tests/test_policy.py` plus `tests/test_profiles.py`. Baseline 2.6 s, whole sweep about three
 minutes. **48 killed, 10 survived, 2 unparseable.** Scoping by *function* rather than by file

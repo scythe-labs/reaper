@@ -608,7 +608,8 @@ export interface Policy {
 
 /** One way the server had to change a stored policy body to load it.
  *
- *  Mirrors `PolicyRepair` in `src/reaper/engine/policy.py`, which is the declaration; a
+ *  Mirrors `PolicyRepair` in `src/reaper/engine/policy_migrations.py`, which is the
+ *  declaration; a
  *  member the server adds and this union has not is handled rather than assumed away
  *  (`REPAIR_NOTICES` in `PolicyEditor.tsx`, rule 66). Widened to `string` on purpose so an
  *  unknown id is a value TypeScript admits exists, not a cast. */

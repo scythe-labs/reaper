@@ -96,12 +96,12 @@ from reaper.engine.policy import (
     ConditionSpec,
     GateSetting,
     PolicyBody,
-    PolicyRepair,
     ProfileSettings,
     SignalSetting,
     combine_hashes,
-    inspect,
 )
+from reaper.engine.policy_migrations import PolicyRepair
+from reaper.engine.policy_warnings import inspect
 from reaper.engine.preview import UnprobableSignalError, probe_signal
 from reaper.engine.signals import SignalConfig
 from reaper.engine.verdict import decide_verdict
@@ -1549,7 +1549,7 @@ async def _requests_app_configured(session: AsyncSession) -> bool:
 
 
 async def _history_reach_days(request: Request) -> float | None:
-    """How far back the watch mirror goes, for ``policy.inspect``, or ``None`` if unknown.
+    """How far back the watch mirror goes, for ``policy_warnings.inspect``, or ``None`` if unknown.
 
     The second world-fact a policy cannot see about itself. It lets ``inspect`` say that a
     popularity window longer than the mirror blocks ``gates.ServerPopularityGate``
@@ -1674,7 +1674,7 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
     fixes it. Two recoveries, in order:
 
     1. **Rescale.** A body written before removal weights had to total 100 is repaired by
-       ``policy.rebalance``, which keeps the operator's tuning. The exact rescale cannot
+       ``policy_migrations.rebalance``, which keeps the operator's tuning. The exact rescale cannot
        move a score, but integer rounding can, by more than a point (see that function's
        docstring for the worked cases) -- which is precisely why it comes back as an
        *unsaved draft*: the operator's own tuning, in the new units, with nothing written
@@ -1683,7 +1683,7 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
        so nobody mistakes it for what is in force.
 
     A third recovery runs on a body that loads perfectly: a rating bar written before the
-    bar moved off the gate row is restored (``policy.recover_rating_rules``), because that
+    bar moved off the gate row is restored (``policy_migrations.recover_rating_rules``), because that
     body loads cleanly while keeping nothing. It comes back as an unsaved draft too.
     """
     async with _sessions(request)() as session:

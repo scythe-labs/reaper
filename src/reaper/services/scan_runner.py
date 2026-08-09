@@ -42,12 +42,8 @@ from reaper.engine.gates import (
     ServerPopularityGate,
     StreamingNowGate,
 )
-from reaper.engine.policy import (
-    LIST_GATES_NOW_KEEP_RULES,
-    PolicyBody,
-    PolicyRepair,
-    join_and,
-)
+from reaper.engine.policy import PolicyBody, join_and
+from reaper.engine.policy_migrations import LIST_GATES_NOW_KEEP_RULES, PolicyRepair
 from reaper.services import (
     app_settings,
     history_sync,
@@ -172,7 +168,7 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
             # The two list gates reach this by a different route and need their own sentence.
             # They are not unimplemented: they moved to Settings, Lists, and the loader leaves
             # the gate row in place exactly when it cannot find the list that gate was
-            # protecting (``policy.convert_list_protections``), so a scan stops rather than
+            # protecting (``policy_migrations.convert_list_protections``), so a scan stops rather than
             # running a protection short. Telling that operator Reaper "has no implementation"
             # for something called `whitelisted` names an id they have never seen on any
             # screen and points at nothing they can do (rules 21, 25).

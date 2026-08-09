@@ -47,7 +47,7 @@ export const GATE_META: Record<string, GateMeta> = {
   },
   // Both gates are RETIRED as switches -- every list now protects through an `on_list` keep
   // rule, and the loader converts a stored body still carrying either
-  // (`engine/policy.py convert_list_protections`). Their copy stays, because the ids did not
+  // (`engine/policy_migrations.py convert_list_protections`). Their copy stays, because the ids did not
   // stop being emitted: any upgraded install has stored explanations carrying both. Deleting
   // the entries sent those through `titleCase` and printed "Whitelisted" and "Curated List"
   // at the operator (rule 21). The backend's own `_kept_phrase` kept its two for exactly this

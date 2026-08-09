@@ -33,12 +33,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
 from reaper.db.models import ListConfig
-from reaper.engine.policy import (
-    DEFAULT_IMDB_LIST_NAME,
-    DEFAULT_IMDB_PRESET,
-    DEFAULT_KEEP_TAG,
-    DEFAULT_TAG_LIST_NAME,
-)
+from reaper.engine.policy import DEFAULT_IMDB_LIST_NAME, DEFAULT_TAG_LIST_NAME
+from reaper.engine.policy_migrations import DEFAULT_IMDB_PRESET, DEFAULT_KEEP_TAG
 from reaper.services import app_settings
 from reaper.services import lists as lists_service
 from reaper.services.lists import ListSource

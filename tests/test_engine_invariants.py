@@ -710,7 +710,7 @@ class TestRatingGate:
         """A rating gate switched on with an empty rule set still owes the operator a
         sentence.
 
-        Not a hypothetical state: it is exactly what `policy.recover_rating_rules` exists to
+        Not a hypothetical state: it is exactly what `policy_migrations.recover_rating_rules` exists to
         repair, and that function's own docstring quotes this sentence as the symptom the
         operator would have seen. Deleting the arm drops through to the miss-list return,
         which joins an empty list and renders `"."` -- a bare period in the panel whose job

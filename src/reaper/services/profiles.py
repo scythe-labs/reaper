@@ -34,14 +34,16 @@ from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
 from reaper.engine.fields import Op
 from reaper.engine.policy import (
-    BOTH_MEDIA_TYPES,
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
     ConditionSpec,
     PolicyBody,
-    PolicyRepair,
     ProfileSettings,
     combine_hashes,
+)
+from reaper.engine.policy_migrations import (
+    BOTH_MEDIA_TYPES,
+    PolicyRepair,
     conversion_list_names,
     convert_list_protections,
     has_legacy_list_protections,
@@ -216,13 +218,13 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     editor, the simulator and the scan, so a validator added after a row was written would
     otherwise take out all three at once, including the page that fixes it. That holds for
     a body that is not JSON at all and one that decodes to something other than an object:
-    the decode below is guarded, and ``policy.rebalance`` returns ``None`` rather than
+    the decode below is guarded, and ``policy_migrations.rebalance`` returns ``None`` rather than
     raising on any shape it cannot read. A body whose removal weights predate the
     100-point budget is rescaled and flagged ``repaired``; anything else unreadable falls
     back to the shipped default, also flagged.
 
     One recovery runs on a body that validates *perfectly well*: a rating bar written
-    before the bar moved off the gate row is restored by ``policy.recover_rating_rules``,
+    before the bar moved off the gate row is restored by ``policy_migrations.recover_rating_rules``,
     because that body loads cleanly while protecting nothing. It is checked first, on the
     raw dict, since validation cannot see what is missing.
     """
@@ -321,7 +323,7 @@ async def _conversion_list_names(
 ) -> tuple[str | None, str | None, tuple[str, ...], dict[str, frozenset[str]]]:
     """The registry rows ``convert_list_protections`` must point its rules at, plus the media
     scope each of the operator's own Plex lists may keep on. Selected by
-    ``policy.conversion_list_names`` and ``policy.own_list_media_scope``, which own WHICH row
+    ``policy_migrations.conversion_list_names`` and ``policy_migrations.own_list_media_scope``, which own WHICH row
     answers each half and WHICH policy a collection's rule belongs on, so the load path here and
     the upgrade migration cannot answer either differently (rule 104).
 

@@ -697,7 +697,7 @@ describe("the gate that counts recent watchers", () => {
         {
           field: "protect_conditions",
           severity: "warn",
-          // Verbatim from `policy.inspect`'s gate-off arm (rule 144): this is a payload the
+          // Verbatim from `policy_warnings.inspect`'s gate-off arm (rule 144): this is a payload the
           // anchor test hands in, so a drifted copy here reads as the shipped sentence
           // without failing anything.
           message:
@@ -936,7 +936,7 @@ describe("PolicyEditor warning anchors", () => {
     { anchor: "condemn_at", controls: { condemn_at: "Put a title on the list once it scores" } },
     {
       anchor: "gates",
-      // The four the server sends today, each named by `engine/policy.py` as
+      // The four the server sends today, each named by `engine/policy_warnings.py` as
       // `gates.<protection>.<setting>`. `PolicyEditor` binds them generically off the gate id
       // in the served body, so a fifth protection warning about one of these three settings
       // binds with no frontend change -- which is also why this list cannot prove the binding

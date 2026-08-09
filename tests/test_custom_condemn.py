@@ -22,8 +22,8 @@ from reaper.engine.policy import (
     PolicyBody,
     ProfileSettings,
     SignalSetting,
-    inspect,
 )
+from reaper.engine.policy_warnings import inspect
 from reaper.engine.signals import (
     CustomSignalConfig,
     KeepConfig,

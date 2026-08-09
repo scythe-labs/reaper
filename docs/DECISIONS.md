@@ -208,7 +208,7 @@ under that floor means the reach already spans any ≤1095-day window; it bites 
 lowered it. It masks nothing on the all-time half, where the span needed is the item's age rather
 than a window, so a long-lived title behind a shorter mirror reads "could not check" on shipped
 defaults. **A popularity window the mirror cannot cover is now named in the editor, before a scan
-runs into it (#85 closed).** `policy.inspect` takes the live reach
+runs into it (#85 closed).** `policy_warnings.inspect` takes the live reach
 (`api.routes._history_reach_days`, derived through `dormancy.history_reach_days` off
 `history_sync.horizon`, the same derivation `ScanContext` uses) and warns when the window outruns
 it. **The span it measures is `PolicyBody.popularity_window_days()`, not the enabled gate row

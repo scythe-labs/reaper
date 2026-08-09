@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from reaper.api.schemas import PolicyOut
-from reaper.engine.policy import PolicyRepair
+from reaper.engine.policy_migrations import PolicyRepair
 from reaper.services.scan_runner import _REPAIR_CHECKS, _what_to_check
 
 REPO = Path(__file__).resolve().parents[1]

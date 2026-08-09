@@ -403,7 +403,7 @@ class GateConfig:
     #: ``RatingFloorGate.evaluate`` and the ``_miss_phrase`` helper it calls. After the move no
     #: gate read ``secondary``, and ``scan_runner`` was copying a dead number into every gate it
     #: built. The policy body has since dropped it too, via migration ``e6f708192a3b`` -- see
-    #: ``policy.drop_retired_gate_keys`` for the stored bodies that still carry the key.
+    #: ``policy_migrations.drop_retired_gate_keys`` for the stored bodies that still carry the key.
 
     window_days: int = 365
     """How far back "recently" reaches, for gates that count activity.
@@ -647,7 +647,7 @@ def progress_is_establishable(*, reach_days: int, hold_days: int) -> bool:
 
     It lives here beside :func:`history_shortfall` and :func:`lifetime_shortfall` because it is
     the third member of one family -- a span the mirror is asked to cover, and what it means
-    when it cannot -- and because ``policy.inspect`` has to ask it to warn about this one
+    when it cannot -- and because ``policy_warnings.inspect`` has to ask it to warn about this one
     before a scan runs into it. An engine module may not import a service, and reimplementing
     the two-line predicate at the second caller is exactly what rule 104 forbids.
 
@@ -744,7 +744,7 @@ class ServerPopularityGate:
 # never firing they were not simply retired: every list -- tag, collection, watchlist, IMDb
 # -- now protects through the operator's own keep rules on the ``on_list`` field, evaluated
 # by ``fields.CustomProtectGate``, so each list's strength is a per-list choice on Policy.
-# ``policy.convert_list_protections`` rewrites a stored body's gate rows into the equivalent
+# ``policy_migrations.convert_list_protections`` rewrites a stored body's gate rows into the equivalent
 # rules, and their `GateId`s survive above so a stored explanation still decodes.
 
 

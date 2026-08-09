@@ -398,7 +398,7 @@ class TestARepairedPolicyCannotExecute:
         """``active_policy`` repairs rather than raising, and every caller can still tell
         that it did. A repair that looked identical to a clean load would put the scan on
         an unapproved policy silently, which is the whole risk."""
-        from reaper.engine.policy import PolicyRepair
+        from reaper.engine.policy_migrations import PolicyRepair
         from reaper.services.profiles import ActivePolicy
 
         assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine").repaired is False
@@ -412,7 +412,7 @@ class TestARepairedPolicyCannotExecute:
         reasonable and is wrong: an operator's own policy is very often *called* "default",
         so their rescaled policy was reported as unreadable and the editor stopped offering
         to save it. The name carries no such meaning; only the flags do."""
-        from reaper.engine.policy import PolicyRepair
+        from reaper.engine.policy_migrations import PolicyRepair
         from reaper.services.profiles import ActivePolicy
 
         theirs = ActivePolicy(DEFAULT_MOVIE_POLICY, "default", (PolicyRepair.RESCALED,))

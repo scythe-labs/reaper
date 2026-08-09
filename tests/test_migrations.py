@@ -49,12 +49,8 @@ from reaper.db.base import NAMING_CONVENTION
 from reaper.db.models import ListConfig
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.gates import GateId
-from reaper.engine.policy import (
-    DEFAULT_MOVIE_POLICY,
-    PolicyBody,
-    has_legacy_list_protections,
-    recover_rating_rules,
-)
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
+from reaper.engine.policy_migrations import has_legacy_list_protections, recover_rating_rules
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -1270,7 +1266,7 @@ def _only_these_lists(engine: Engine, *sources: str) -> None:
 
     Each row carries a real config, because that is what identifies it: the conversion finds
     the tag list by the tags it holds and the IMDb list by its preset, never by spelling and
-    never by age (``policy.conversion_list_names``).
+    never by age (``policy_migrations.conversion_list_names``).
     """
     rows = {
         "arr_tag": ("My tagged titles", {"tags": ["reaper-keep"], "match": "any"}),

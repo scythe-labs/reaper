@@ -505,7 +505,7 @@ def test_the_fixture_gates_and_signals_are_the_wire_shapes() -> None:
 def test_a_retired_gate_is_refused_at_the_save_boundary() -> None:
     """A draft naming ``whitelisted`` is operator input asking for a protection that no
     longer exists as a gate, so the boundary says so. A STORED body naming it converts on
-    load instead (``policy.convert_list_protections``); refusing the stored copy would take
+    load instead (``policy_migrations.convert_list_protections``); refusing the stored copy would take
     the install offline, and dropping the draft silently would hide the typo."""
     with pytest.raises(ValueError, match="whitelisted"):
         GateSettingIn.model_validate({"gate": "whitelisted"})

@@ -111,7 +111,7 @@ export const REMOVAL_POINTS = 100;
 
 /** A set of removal weights rescaled so they total exactly REMOVAL_POINTS, using the same
  *  largest-remainder arithmetic the server uses to repair a stored policy
- *  (engine/policy.rebalance). Score-preserving: the score is already
+ *  (engine/policy_migrations.rebalance). Score-preserving: the score is already
  *  100 * (pressure / total weight), so scaling every weight by one factor cannot move it,
  *  and largest-remainder keeps the rounding under a point.
  *

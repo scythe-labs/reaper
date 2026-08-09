@@ -104,7 +104,7 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
   //
   // The op is still read, because `on_list` carries TEXT_OPS and this branch used to
   // short-circuit past it: the composer only ever writes `eq`, but
-  // `policy.convert_list_protections` re-spells a legacy `on_curated_list` rule keeping
+  // `policy_migrations.convert_list_protections` re-spells a legacy `on_curated_list` rule keeping
   // whatever op it had, and an imported body can hold one. A stored `contains "Top"` then
   // rendered as an exact match on a list named "Top" -- a rule described as narrower than it
   // is, on the screen where its strength is judged.
