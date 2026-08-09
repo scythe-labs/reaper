@@ -78,7 +78,6 @@ class RestoreSummaryOut(BaseModel):
 
     app_version: str | None
     created_at: str | None
-    revision: str | None
     verdict: str
     key_in_backup: bool
     reaper_db_bytes: int
@@ -231,7 +230,6 @@ async def restore_prepare(request: Request) -> RestoreSummaryOut:
     return RestoreSummaryOut(
         app_version=summary.app_version,
         created_at=summary.created_at,
-        revision=summary.revision,
         verdict=summary.verdict,
         key_in_backup=summary.key_in_backup,
         reaper_db_bytes=summary.reaper_db_bytes,

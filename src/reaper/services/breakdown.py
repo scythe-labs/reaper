@@ -32,12 +32,10 @@ from reaper.services.condemned import effective_condemned, held_reaps
 
 @dataclass(frozen=True)
 class SignalCount:
-    """How many condemned titles one signal pushed toward removal, and their measured size."""
+    """How many condemned titles one signal pushed toward removal."""
 
     id: str
     count: int
-    bytes: int
-    unknown_size: int
 
 
 @dataclass(frozen=True)
@@ -47,7 +45,6 @@ class ReapBreakdown:
     # figures sum only what has a size, with the unmeasured carried as a separate count.
     policy_condemned: int
     policy_condemned_bytes: int
-    policy_condemned_unknown: int
     hand_spared: int
     spares_expired: int
     """The share of ``hand_spared`` a scan would hand straight back to policy -- titles kept out
@@ -68,7 +65,6 @@ class ReapBreakdown:
     is what the operator's copy says."""
     hand_reaped: int
     hand_reaped_bytes: int
-    hand_reaped_unknown: int
     hand_reaped_held: int
     """Hand reaps the engine refuses to honor yet (a fired structural gate, or a row it
     cannot identify -- NOT merely evidence it could not check, which no longer holds), so
@@ -94,12 +90,10 @@ def _empty() -> ReapBreakdown:
         has_snapshot=False,
         policy_condemned=0,
         policy_condemned_bytes=0,
-        policy_condemned_unknown=0,
         hand_spared=0,
         spares_expired=0,
         hand_reaped=0,
         hand_reaped_bytes=0,
-        hand_reaped_unknown=0,
         hand_reaped_held=0,
         will_reap=0,
         will_reap_bytes=0,
@@ -175,7 +169,6 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
 
     policy_condemned = len(condemned_rows)
     policy_bytes = sum(c.size_bytes for c in condemned_rows if c.size_bytes is not None)
-    policy_unknown = sum(1 for c in condemned_rows if c.size_bytes is None)
 
     # A hand spare removes a policy-condemned row from the reap set.
     spared_rows = [
@@ -214,42 +207,29 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
     hand_reaped_rows = [c for c in effective if c.verdict != "condemn"]
     hand_reaped = len(hand_reaped_rows)
     hand_reaped_bytes = sum(c.size_bytes for c in hand_reaped_rows if c.size_bytes is not None)
-    hand_reaped_unknown = sum(1 for c in hand_reaped_rows if c.size_bytes is None)
 
     # The operator's reap marks the engine refuses to honor yet: counted (not dropped) so the
     # ledger can say "N of your reap marks are held" rather than silently under-report (PR-2).
     hand_reaped_held = len(await held_reaps(session, latest.id, decisions))
 
-    # Participation over the frozen condemned rows: for each signal that added pressure,
-    # how many condemned titles carry it, and their measured size. Overlapping by design.
+    # Participation over the frozen condemned rows: for each signal that added pressure, how
+    # many condemned titles carry it. Overlapping by design. The per-signal byte totals this
+    # used to accumulate beside the counts went with the wire fields nothing read.
     counts: dict[str, int] = {}
-    sizes: dict[str, int] = {}
-    unknowns: dict[str, int] = {}
     for row in condemned_rows:
         for sid in _adds_signals(row.explanation_json):
             counts[sid] = counts.get(sid, 0) + 1
-            if row.size_bytes is None:
-                unknowns[sid] = unknowns.get(sid, 0) + 1
-            else:
-                sizes[sid] = sizes.get(sid, 0) + row.size_bytes
-    condemned_by = [
-        SignalCount(
-            id=sid, count=counts[sid], bytes=sizes.get(sid, 0), unknown_size=unknowns.get(sid, 0)
-        )
-        for sid in counts
-    ]
+    condemned_by = [SignalCount(id=sid, count=counts[sid]) for sid in counts]
     condemned_by.sort(key=lambda s: (-s.count, s.id))
 
     return ReapBreakdown(
         has_snapshot=True,
         policy_condemned=policy_condemned,
         policy_condemned_bytes=policy_bytes,
-        policy_condemned_unknown=policy_unknown,
         hand_spared=hand_spared,
         spares_expired=spares_expired,
         hand_reaped=hand_reaped,
         hand_reaped_bytes=hand_reaped_bytes,
-        hand_reaped_unknown=hand_reaped_unknown,
         hand_reaped_held=hand_reaped_held,
         will_reap=will_reap,
         will_reap_bytes=will_bytes,

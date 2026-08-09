@@ -53,18 +53,12 @@ const SKIPPED = { at: "2026-08-04T20:06:00+00:00", result: "Reaper couldn't reac
  *  (`LeavingSoonResult.summary`). */
 const NO_LIBRARIES = "No libraries are turned on, so no shelf was updated";
 
-/** What the route returns for that pass. Nothing was written and no library failed, so the
- *  three fields the row used to reason over say "clean preview" between them: reverting the
- *  fix flashes a green "Preview only, nothing written" against this exact payload. */
+/** What the route returns for that pass. Nothing was written and no library failed, so a row
+ *  reasoning from anything but `result` reads this as a clean preview: reverting the fix
+ *  flashes a green "Preview only, nothing written" against this exact payload. */
 const NO_LIBRARY_PASS: LeavingSoonResult = {
-  added_count: 0,
-  cleared_count: 0,
-  applied: false,
   ok: false,
   result: NO_LIBRARIES,
-  notified: false,
-  movies_on_shelves: 0,
-  seasons_on_shelves: 0,
 };
 
 function shelf(over: Partial<LeavingSoonSettings> = {}): LeavingSoonSettings {
@@ -179,8 +173,8 @@ describe("the shelf row after a scan that skipped the update", () => {
 describe("the shelf row's confirmation after Update now", () => {
   it("flashes what the pass said, and calls it a failure when the pass did", async () => {
     // The live end of #555, and the one an operator meets first. The row derived this chip
-    // itself from `problems`, `applied` and the counts, which read this payload as a clean
-    // preview and flashed a green tick over a pass that updated nothing.
+    // itself from fields describing the WRITES rather than the outcome, which read a pass like
+    // this one as a clean preview and flashed a green tick over a pass that updated nothing.
     const user = userEvent.setup();
     apiMock.leavingSoonSettings.mockResolvedValue(shelf({ last: null }));
     // Held open, then released: the chip only exists on a running -> finished transition the

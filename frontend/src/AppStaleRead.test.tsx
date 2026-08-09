@@ -51,7 +51,6 @@ const USER: AuthUser = {
   id: 1,
   username: "owner",
   provider: "local",
-  email: null,
   thumb_url: null,
   via_recovery: false,
 };

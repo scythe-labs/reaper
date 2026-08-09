@@ -199,7 +199,6 @@ class UserOut(BaseModel):
     id: int
     username: str
     provider: str
-    email: str | None = None
     thumb_url: str | None = None
     #: This session was opened with a recovery code, so Settings -> Security lets it set a
     #: new admin password without the current one. False on every ordinary sign-in, which
@@ -212,7 +211,6 @@ class UserOut(BaseModel):
             id=view.id,
             username=view.username,
             provider=view.provider,
-            email=view.email,
             thumb_url=view.thumb_url,
         )
 
@@ -300,7 +298,6 @@ async def me(request: Request) -> UserOut:
             id=user.id,
             username=user.username,
             provider=str(user.provider),
-            email=user.email,
             thumb_url=user.thumb_url,
             via_recovery=via_recovery,
         )
@@ -510,7 +507,6 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
         id=target.id,
         username=target.username,
         provider=str(target.provider),
-        email=target.email,
         thumb_url=target.thumb_url,
         via_recovery=True,
     )

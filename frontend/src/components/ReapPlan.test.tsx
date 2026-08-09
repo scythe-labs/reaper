@@ -35,15 +35,11 @@ beforeEach(() => {
 const run = {
   id: 3,
   snapshot_id: 1,
-  policy_hash: "p",
   state: "planned",
   item_count: 2,
   total_bytes: 1024 ** 3,
   held_back_unknown_size: 0,
   confirmation_phrase: "REAP 2 ITEMS 1 GB",
-  approved_manifest_hash: "m",
-  approved_by: "owner",
-  approved_at: "2026-01-01T00:00:00+00:00",
   // Two steps, because `item_count` is 2: a run carrying a count with no steps under it is a
   // plan the planner cannot build, and the page renders `steps` unconditionally, so an empty
   // one drew a `<thead>` over an empty `<tbody>` -- a headers-only data table, which axe files
@@ -106,11 +102,9 @@ describe("ReapPlan staleness", () => {
       has_snapshot: true,
       policy_condemned: 2,
       policy_condemned_bytes: 1024 ** 3,
-      policy_condemned_unknown: 0,
       hand_spared: 0,
       hand_reaped: 0,
       hand_reaped_bytes: 0,
-      hand_reaped_unknown: 0,
       will_reap: 2,
       will_reap_bytes: 1024 ** 3,
       will_reap_unknown: 0,

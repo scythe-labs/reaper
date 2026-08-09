@@ -105,7 +105,6 @@ beforeEach(() => {
   apiMock.restorePrepare.mockResolvedValue({
     app_version: null,
     created_at: null,
-    revision: null,
     verdict: "current",
     key_in_backup: true,
     reaper_db_bytes: 1024,

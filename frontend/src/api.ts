@@ -692,7 +692,6 @@ export interface ActionStep {
 export interface Run {
   id: number;
   snapshot_id: number;
-  policy_hash: string;
   state: string;
   item_count: number;
   total_bytes: number;
@@ -700,9 +699,6 @@ export interface Run {
   /** How many condemned items this plan left out because nothing would report their
    *  size. The plan is smaller than the queue implied, and this is what says so. */
   held_back_unknown_size: number;
-  approved_manifest_hash: string;
-  approved_by: string;
-  approved_at: string;
   steps: ActionStep[];
 }
 
@@ -712,12 +708,9 @@ export interface Run {
  *  list carries none of them and opening a row fetches the full `Run` (P-3). */
 export interface RunSummary {
   id: number;
-  snapshot_id: number;
   state: string;
-  approved_by: string;
   approved_at: string;
   aborted_reason: string | null;
-  held_back_unknown_size: number;
 }
 
 export interface RunCheck {
@@ -804,8 +797,6 @@ export interface SignalCount {
   /** A built-in signal id or a custom rule's name. */
   id: string;
   count: number;
-  bytes: number;
-  unknown_size: number;
 }
 
 /** What Plex would remove besides the files a reap deletes.
@@ -934,7 +925,6 @@ export interface ReapBreakdown {
   has_snapshot: boolean;
   policy_condemned: number;
   policy_condemned_bytes: number;
-  policy_condemned_unknown: number;
   hand_spared: number;
   /** The share of `hand_spared` a scan would hand back to policy: TITLES kept out of the plan
    *  by a spare whose clock has already passed. They are still being kept -- only a scan
@@ -946,7 +936,6 @@ export interface ReapBreakdown {
   spares_expired: number;
   hand_reaped: number;
   hand_reaped_bytes: number;
-  hand_reaped_unknown: number;
   /** Hand reaps the engine won't honor yet, so they are not in `will_reap`. The page shows
    *  one line when nonzero so the operator's held marks are not silently dropped. */
   hand_reaped_held: number;
@@ -965,20 +954,12 @@ export interface ReapBreakdown {
 }
 
 export interface LeavingSoonResult {
-  added_count: number;
-  cleared_count: number;
-  /** Whether the shelf writes landed everywhere. False in read-only preview, and false
-   *  when any library failed. */
-  applied: boolean;
   /** Whether the pass did what it set out to do. Preview is not a failure; no library
    *  turned on, or one that failed, is. */
   ok: boolean;
   /** The one plain sentence describing this pass, worded by the server and stored on the
    *  Jobs row in the same breath. Render it; never compose one here (#555). */
   result: string;
-  notified: boolean;
-  movies_on_shelves: number;
-  seasons_on_shelves: number;
   // `problems` was dropped with its server field: nothing here ever rendered it, and `result`
   // now names the libraries that failed. See `LeavingSoonOut` for the whole reason.
 }
@@ -1291,7 +1272,6 @@ export interface AuthUser {
   id: number;
   username: string;
   provider: string;
-  email: string | null;
   thumb_url: string | null;
   /** This session was opened with a recovery code, so Settings, Security accepts a new
    *  admin password without the current one. False on every ordinary sign-in. Read it
@@ -1514,7 +1494,6 @@ export interface RestoreSummary {
   /** When the backup was taken (ISO 8601, UTC), or null. */
   created_at: string | null;
   /** The schema revision the backup sits at. */
-  revision: string | null;
   /** "current" when it matches this server, "older" when this server will update it on
    *  restart. Both are safe to restore. */
   verdict: string;

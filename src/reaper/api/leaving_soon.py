@@ -44,13 +44,4 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
     # same derivation (``LeavingSoonResult.summary``). This route used to add the
     # no-libraries case here instead, after the row had been written, so the row and this
     # response described one pass differently (#555).
-    return LeavingSoonOut(
-        added_count=result.added,
-        cleared_count=result.removed,
-        applied=result.applied,
-        ok=result.ok,
-        result=result.summary,
-        notified=result.notified,
-        movies_on_shelves=result.movies_on_shelves,
-        seasons_on_shelves=result.seasons_on_shelves,
-    )
+    return LeavingSoonOut(ok=result.ok, result=result.summary)
