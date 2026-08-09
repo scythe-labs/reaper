@@ -11,6 +11,7 @@ import httpx
 import httpx2
 import pytest
 import respx
+from structlog.testing import capture_logs
 
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import GuardedTransport, IntegrationError, SafetyViolationError
@@ -318,3 +319,66 @@ class TestErrorClassification:
                 await client.system_status()
 
         assert exc.value.is_auth_failure is is_auth
+
+
+class TestTheArrRefusalIsOnTheRecordToo:
+    """Rule 72's half of ``TestEveryRefusalIsOnTheRecord`` in ``test_plex_guard.py``.
+
+    Both guards refuse through ``base.refuse_mutation``, and this is the one standing in
+    front of ``DELETE /api/v3/movie/{id}?deleteFiles=true``, so it is the larger blast
+    radius of the two. It shipped unpinned in the commit that added the logging: the whole
+    http half could be reverted to an inline raise and the suite stayed green, which is the
+    same hole C14 measured against the eight ``except SafetyViolationError: raise`` arms,
+    reproduced for the sibling guard in the PR that closed it.
+
+    ``reason`` is the discriminator, never the sentence (rules 92/93).
+    """
+
+    @pytest.mark.parametrize(
+        ("safety", "declared", "reason"),
+        [
+            (READ_ONLY, False, "not_armed"),
+            (ARMED, False, "not_declared"),
+        ],
+    )
+    async def test_a_blocked_arr_write_says_why(
+        self, safety: RuntimeSafety, declared: bool, reason: str
+    ) -> None:
+        transport = GuardedTransport(httpx2.AsyncHTTPTransport(), safety)
+        request = httpx2.Request("DELETE", "https://radarr.test/api/v3/movie/7")
+        if declared:
+            request.extensions["reaper_mutation_approved"] = True
+
+        with capture_logs() as logs, pytest.raises(SafetyViolationError):
+            await transport.handle_async_request(request)
+
+        blocked = [line for line in logs if line["event"] == "http.write_blocked"]
+        assert len(blocked) == 1, logs
+        assert blocked[0]["reason"] == reason
+        assert blocked[0]["method"] == "DELETE"
+        assert blocked[0]["path"] == "/api/v3/movie/7"
+
+    async def test_the_path_carries_no_api_key(self) -> None:
+        """The *arr key rides a header, but a query string reaches the log the same way a
+        Plex token would, so the split is asserted here as well (rule 13)."""
+        transport = GuardedTransport(httpx2.AsyncHTTPTransport(), READ_ONLY)
+        request = httpx2.Request("DELETE", "https://radarr.test/api/v3/movie/7?apikey=supersecret")
+
+        with capture_logs() as logs, pytest.raises(SafetyViolationError):
+            await transport.handle_async_request(request)
+
+        blocked = [line for line in logs if line["event"] == "http.write_blocked"]
+        assert len(blocked) == 1, logs
+        assert blocked[0]["path"] == "/api/v3/movie/7"
+        assert "supersecret" not in repr(blocked)
+
+    async def test_an_allowed_arr_write_says_nothing(self, httpx2_mock: respx.Router) -> None:
+        """The control. A guard that logged every mutation would bury the refusals."""
+        httpx2_mock.delete(host="radarr.test", path="/api/v3/movie/7").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            with capture_logs() as logs:
+                await client.delete_movie(7, delete_files=True, add_exclusion=False)
+
+        assert [line for line in logs if line["event"] == "http.write_blocked"] == []

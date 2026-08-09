@@ -15,14 +15,17 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 from unittest import mock
 
 import pytest
 import requests
+from structlog.testing import capture_logs
 
 from reaper.clients.base import SafetyViolationError
 from reaper.clients.plex import (
     GuardedSession,
+    PlexClient,
     benign_shelf_write,
     declared_mutation,
     normalize_label,
@@ -286,3 +289,172 @@ class TestSessionTlsChoice:
     def test_the_opt_out_reaches_requests(self) -> None:
         session = GuardedSession(RuntimeSafety(destructive_enabled=False), verify=False)
         assert session.verify is False
+
+
+class _WritesOnFirstTouch:
+    """plexapi, reduced to the one thing that matters here: it issues the write.
+
+    Every mutating ``PlexClient`` method reaches plexapi inside an ``asyncio.to_thread``
+    closure, and plexapi's writes go through the ``GuardedSession`` the client handed it.
+    Standing this up rather than a live server is what lets all eight be driven at once:
+    the first attribute the closure touches issues a real PUT through a real guard, and a
+    refusing guard raises before the request is dispatched, exactly as it would in
+    production.
+
+    The ``AssertionError`` is the control. It fires only if the guard let the write
+    through, which would make every assertion below vacuous.
+    """
+
+    def __init__(self, session: GuardedSession) -> None:
+        object.__setattr__(self, "_session", session)
+
+    def __getattr__(self, name: str) -> object:
+        session: GuardedSession = object.__getattribute__(self, "_session")
+        session.put("http://plex.test/library/sections/1/all")
+        raise AssertionError(f"the guard let a write through on .{name}")
+
+
+class TestAGuardRefusalReachesTheCallerAsARefusal:
+    """The eight mutating methods each carry ``except SafetyViolationError: raise`` ahead
+    of their catch-all, and until now nothing anywhere pinned a single one of them.
+
+    Deleting all eight was measured green: 4,161 passed, identical to baseline. That is
+    the shape this class exists for. Map ``except Exception`` uniformly and a guard
+    refusal becomes a ``PlexError``, which ``leaving_soon.sync_shelves._reconcile``
+    catches per library and continues past, turning a refusal into one line beside "Plex
+    is unreachable" (rules 92/93). The executor's ``_best_effort_refresh`` and
+    ``_finalize_plex`` swallow it more completely still, by design.
+
+    **What this pins and what it does not.** It pins that a refusal raised inside the
+    worker leaves the method as a ``SafetyViolationError`` rather than a ``PlexError``.
+    The guard's own decision -- which requests are mutations, and when arming and the
+    declaration are required -- is pinned by the classes above, and is not re-derived here
+    (rule 118).
+    """
+
+    @staticmethod
+    def _client() -> PlexClient:
+        client = PlexClient("http://plex.test", "t", safety=READ_ONLY)
+        # Injected so `_connect` returns without a socket. The guard under it is real.
+        client._server = _WritesOnFirstTouch(GuardedSession(READ_ONLY))  # type: ignore[assignment]
+        return client
+
+    @pytest.mark.parametrize(
+        ("name", "call"),
+        [
+            ("add_label", lambda c: c.add_label(1, [11], "leaving-soon")),
+            ("remove_label", lambda c: c.remove_label(1, [11], "leaving-soon")),
+            (
+                "create_collection",
+                lambda c: c.create_collection(
+                    1, kind="movie", name="Leaving Soon", rating_keys=[11]
+                ),
+            ),
+            ("add_to_collection", lambda c: c.add_to_collection(9, [11])),
+            (
+                "remove_collection_members",
+                lambda c: c.remove_collection_members(1, name="Leaving Soon", rating_keys=[11]),
+            ),
+            ("delete_collection", lambda c: c.delete_collection(9)),
+            ("refresh_path", lambda c: c.refresh_path(1, "/media/movies/x")),
+            ("empty_trash", lambda c: c.empty_trash(1)),
+        ],
+    )
+    async def test_the_refusal_is_not_relabeled_as_a_plex_error(self, name: str, call: Any) -> None:
+        """One case per mutating method, so a single arm dropped fails by name.
+
+        ``PlexError`` is asserted against explicitly rather than left to
+        ``pytest.raises(SafetyViolationError)`` alone: the two are unrelated classes, so
+        the raises clause already discriminates, and naming the wrong answer is what makes
+        the failure message say which relabeling happened.
+        """
+        client = self._client()
+        with pytest.raises(SafetyViolationError, match="turned off"):
+            await call(client)
+
+    async def test_the_stand_in_reaches_a_real_guard(self) -> None:
+        """The control for the control. If ``_WritesOnFirstTouch`` stopped issuing a
+        request, every case above would pass on an ``AttributeError`` that never touched
+        the guard, and the class would read as a proof of nothing."""
+        session = GuardedSession(ARMED)
+        with (
+            declared_mutation(),
+            _transport() as send,
+            pytest.raises(AssertionError, match="let a write through"),
+        ):
+            _WritesOnFirstTouch(session).library  # noqa: B018
+        assert _sent(send) == ("PUT", "http://plex.test/library/sections/1/all")
+
+
+class TestEveryRefusalIsOnTheRecord:
+    """A refusal was the loudest thing the guard did and the quietest thing in the log.
+
+    Nothing was written at the point of refusal, so the only trace was whatever the caller
+    made of the exception. The executor's ``_best_effort_refresh`` and ``_finalize_plex``
+    catch ``Exception`` deliberately, because a reap must not fail on a follow-up, and each
+    logs the refusal's own sentence under an event naming the wrong cause -- so what was
+    missing is a discriminator, not the words. ``sync_shelves._reconcile`` catches
+    ``PlexError`` alone, so a shelf refusal escapes it untouched today; the arms pinned by
+    the class above are what keep it that way, and C14 weighs collapsing them.
+
+    ``reason`` is the discriminator, not the sentence (rules 92/93): the message is
+    operator copy and will be reworded, so anything reading these lines matches on the
+    reason.
+    """
+
+    @pytest.mark.parametrize(
+        ("safety", "declared", "reason"),
+        [
+            (READ_ONLY, False, "not_armed"),
+            (ARMED, False, "not_declared"),
+        ],
+    )
+    def test_a_blocked_plex_write_says_why(
+        self, safety: RuntimeSafety, declared: bool, reason: str
+    ) -> None:
+        session = GuardedSession(safety)
+        with capture_logs() as logs, pytest.raises(SafetyViolationError):
+            if declared:
+                with declared_mutation():
+                    session.put("http://plex.test/library/sections/1/all")
+            else:
+                session.put("http://plex.test/library/sections/1/all")
+
+        blocked = [line for line in logs if line["event"] == "plex.write_blocked"]
+        assert len(blocked) == 1, logs
+        assert blocked[0]["reason"] == reason
+        assert blocked[0]["method"] == "PUT"
+        assert blocked[0]["path"] == "/library/sections/1/all"
+
+    def test_the_shelf_refusal_says_why_too(self) -> None:
+        """The third arm, which the other two cannot reach: a benign shelf shape while
+        read-only and without the operator's opt-in."""
+        session = GuardedSession(READ_ONLY)
+        with (
+            capture_logs() as logs,
+            benign_shelf_write(),
+            pytest.raises(SafetyViolationError),
+        ):
+            session.put("http://plex.test/library/sections/1/all")
+
+        blocked = [line for line in logs if line["event"] == "plex.write_blocked"]
+        assert [line["reason"] for line in blocked] == ["shelf_not_allowed"]
+
+    def test_the_path_carries_no_token(self) -> None:
+        """plexapi puts X-Plex-Token in the query string (rule 13). The guard splits it off
+        before deciding, and the logged path is that split value, never the URL."""
+        session = GuardedSession(READ_ONLY)
+        with capture_logs() as logs, pytest.raises(SafetyViolationError):
+            session.put("http://plex.test/library/sections/1/all?X-Plex-Token=supersecret")
+
+        blocked = [line for line in logs if line["event"] == "plex.write_blocked"]
+        assert blocked[0]["path"] == "/library/sections/1/all"
+        assert "supersecret" not in repr(blocked)
+
+    def test_an_allowed_write_says_nothing(self) -> None:
+        """The control. A guard that logged every mutation would bury the refusals."""
+        session = GuardedSession(ARMED)
+        with capture_logs() as logs, declared_mutation(), _transport():
+            session.put("http://plex.test/library/sections/1/all")
+
+        assert [line for line in logs if line["event"] == "plex.write_blocked"] == []
