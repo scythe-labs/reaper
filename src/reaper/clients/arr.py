@@ -40,8 +40,11 @@ class ArrClient(BaseClient):
     service: ClassVar[str] = "arr"
     default_prefix: ClassVar[str] = "/api/v3"
 
-    # Declared, never assigned: only the subclasses carry a value, so a call site cannot
-    # reach ``exclusions`` on the base class and send the wrong *arr's spelling.
+    # Declared, never assigned. The annotation gives ``exclusions`` below a type without
+    # giving the base class a value, so no call can send the wrong *arr's spelling: the
+    # subclass answers with its own, and a bare ``ArrClient`` raises ``AttributeError``
+    # rather than picking one. Reaching the method on the base class is possible and is
+    # not what this prevents.
     exclusion_param: ClassVar[str]
     exclusion_path: ClassVar[str]
 
