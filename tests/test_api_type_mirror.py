@@ -76,9 +76,6 @@ ALIAS = {
 #: Browser types with no server declaration to mirror, classified rather than silenced
 #: (rule 103). If one of these gains a server counterpart it must move out of this list.
 CLIENT_ONLY = {
-    # Assembled in the browser from the response body plus the X-Total-Count and
-    # X-Total-Bytes headers, so no single model describes it.
-    "CandidatePage",
     # The query the browser sends as URL parameters, not a body any model validates.
     "CandidateQuery",
     # A UI-side subset of ScanStatus (phase/done/total/detail) that several components take
@@ -111,8 +108,12 @@ CLIENT_ONLY = {
 # Both +1 again for W8-2's steps window: `RunSteps` pairs with `RunStepsOut` on the suffix
 # rule. It is its own route rather than query parameters on the run detail, so it is its own
 # type rather than a widened `Run`.
+# PAIRS alone +1 for W8-1's candidates envelope: `CandidatePage` was the browser's own
+# assembly of a bare list plus four response headers and sat in CLIENT_ONLY above. It is a
+# served model now, `CandidatePageOut`, pairing on the suffix rule, so it left that set
+# without being a new interface.
 EXPECTED_INTERFACES = 93
-EXPECTED_PAIRS = 90
+EXPECTED_PAIRS = 91
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

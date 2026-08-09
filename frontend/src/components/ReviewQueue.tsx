@@ -1535,8 +1535,8 @@ export function ReviewQueue({
   // Named apart from the `totalBytes` formatter, which this used to shadow -- which is
   // how the header kept rendering a bare sum while every other total had learned to say
   // what it could not include.
-  const totalSize = pages?.pages[0]?.totalBytes ?? 0;
-  const totalUnknownSize = pages?.pages[0]?.unknownSize ?? 0;
+  const totalSize = pages?.pages[0]?.total_bytes ?? 0;
+  const totalUnknownSize = pages?.pages[0]?.unknown_size ?? 0;
 
   // Reveal another render-page as the sentinel scrolls into view.
   useEffect(() => {
@@ -1732,7 +1732,7 @@ export function ReviewQueue({
     return () => window.clearTimeout(id);
   }, [toastTick]);
   const freshness = useReviewFreshness({
-    viewSnapshotId: pages?.pages[0]?.snapshotId ?? null,
+    viewSnapshotId: pages?.pages[0]?.snapshot_id ?? null,
     latestSnapshotId: latestScanSnapshotId,
     isBusy,
     // A silent refresh whose refetch settles without catching up surfaces the nudge instead of a

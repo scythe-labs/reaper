@@ -123,10 +123,10 @@ function renderQueue(
   apiMock.candidates.mockResolvedValue({
     items,
     total: items.length,
-    totalBytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
-    unknownSize: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
+    total_bytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
+    unknown_size: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
     offset: 0,
-    snapshotId: 1,
+    snapshot_id: 1,
   });
   const queryClient = seedSettings(testQueryClient());
   return renderWithProviders(

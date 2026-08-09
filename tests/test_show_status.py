@@ -164,7 +164,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def _by_key(client: TestClient) -> dict[str, dict[str, object]]:
-    rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()
+    rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()["items"]
     return {str(r["media_key"]): r for r in rows}
 
 

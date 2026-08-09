@@ -737,10 +737,12 @@ class TestOverrideRoutesAndTheGraceClock:
         # A hand reap the engine honors moves the item onto the Condemned lane; one it will not
         # honor yet (a held reap) stays on the Kept lane, its stored verdict pure policy beneath.
         condemned = {
-            r["media_key"]: r for r in client.get("/api/candidates?verdict=condemn&limit=50").json()
+            r["media_key"]: r
+            for r in client.get("/api/candidates?verdict=condemn&limit=50").json()["items"]
         }
         kept = {
-            r["media_key"]: r for r in client.get("/api/candidates?verdict=protect&limit=50").json()
+            r["media_key"]: r
+            for r in client.get("/api/candidates?verdict=protect&limit=50").json()["items"]
         }
 
         assert condemned["radarr:1:22"]["override_effective"] is True
@@ -834,7 +836,7 @@ class TestOverrideViewsInResponses:
 
     def test_a_movie_owns_its_effective_decision(self, client: TestClient) -> None:
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
-        rows = client.get("/api/candidates?verdict=protect&limit=50").json()
+        rows = client.get("/api/candidates?verdict=protect&limit=50").json()["items"]
         movie = {r["media_key"]: r for r in rows}["radarr:1:22"]
         assert movie["override"] == "spare"
         assert movie["override_own"] == "spare"  # no show to inherit from

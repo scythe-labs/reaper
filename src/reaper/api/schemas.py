@@ -322,6 +322,32 @@ class CandidateDetail(CandidateOut):
     genres: list[str] = Field(default_factory=list)
 
 
+class CandidatePageOut(BaseModel):
+    """One page of the review queue, plus the size of the whole filtered set.
+
+    The totals are measured over every row the filters keep, *before* the page window, so
+    the queue can head the list with a count and a byte total it has not loaded. They rode
+    in four custom response headers until this model existed, which meant the one thing a
+    reader of the published document could not see was the shape of the answer.
+    """
+
+    items: list[CandidateOut]
+    total: int
+    """How many rows the filters keep, across every page."""
+    total_bytes: int
+    """Summed over the rows that have a size. ``unknown_size`` counts the rest."""
+    unknown_size: int
+    """How many of those rows have no size at all. A SUM skips them without saying so, so
+    the count is taken in the same query and reported beside the total -- otherwise an
+    unmeasured library is indistinguishable from an empty one."""
+    offset: int
+    """Where this page starts. The queue asks for ``offset + len(items)`` next."""
+    snapshot_id: int | None = None
+    """Which snapshot the page was drawn from, or None before any scan has run. The queue
+    compares it against the newest completed scan to notice when a fresher snapshot has
+    landed under an open review."""
+
+
 class GroupOut(BaseModel):
     """One show, whole: the show-level header the info panel draws, plus every season
     row in the latest snapshot regardless of verdict. Read-only display; the seasons

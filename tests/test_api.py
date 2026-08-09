@@ -1013,7 +1013,7 @@ class TestTheWhyPanel:
     ) -> None:
         """The block no competitor shows. Every protection evaluated, with the ACTUAL
         NUMBERS -- not just which rules matched."""
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
         detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
 
         checked = detail["explanation"]["protections_checked"]
@@ -1025,7 +1025,7 @@ class TestTheWhyPanel:
 
         The protected fixture scores 90 -- it would be deleted on score alone -- and
         the panel must say both: why it scored that, and why it is kept anyway."""
-        protected = client.get("/api/candidates?verdict=protect").json()
+        protected = client.get("/api/candidates?verdict=protect").json()["items"]
         detail = client.get(f"/api/candidates/{protected[0]['id']}").json()
 
         assert detail["verdict"] == "protect"
@@ -1035,7 +1035,7 @@ class TestTheWhyPanel:
         assert "well rated: 8.0 on IMDb from 250,000 votes" in fired[0]["detail"]
 
     def test_the_grace_clock_is_exposed(self, client: TestClient) -> None:
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
 
         assert candidates[0]["first_flagged_at"]
 
@@ -1044,7 +1044,7 @@ class TestTheWhyPanel:
         the wire schema did not declare them, so pydantic silently DROPPED both -- and the
         panel's "kept to be safe" notice could never render. Every key the UI reads must
         be named in the schema."""
-        abstained = client.get("/api/candidates?verdict=abstain").json()
+        abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
         detail = client.get(f"/api/candidates/{abstained[0]['id']}").json()
 
         assert detail["explanation"]["match"]["status"] == "unmatched"
@@ -1056,7 +1056,7 @@ class TestTheWhyPanel:
         """The card's one-liner. Three gates each report "could not check X: Plex has not
         matched this item"; the owner should read the shared cause once, in plain words,
         not the first gate's engineer-speak."""
-        abstained = client.get("/api/candidates?verdict=abstain").json()
+        abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
 
         assert abstained[0]["reason"] == "Kept to be safe: it couldn't be found in Plex."
 
@@ -1072,7 +1072,7 @@ class TestPanelHeadFields:
     """
 
     def test_the_card_carries_the_badge_and_the_dormancy_pill(self, client: TestClient) -> None:
-        row = client.get("/api/candidates?verdict=condemn").json()[0]
+        row = client.get("/api/candidates?verdict=condemn").json()["items"][0]
 
         assert row["video_resolution"] == "1080"
         assert row["dormant_for"] == "5 years, 7 months"
@@ -1080,7 +1080,7 @@ class TestPanelHeadFields:
     def test_a_row_without_the_metadata_hides_both(self, client: TestClient) -> None:
         """The abstained fixture predates the capture (no columns, and its dormancy came
         from an unmatched item) -- both fields must be null, not an error."""
-        row = client.get("/api/candidates?verdict=abstain").json()[0]
+        row = client.get("/api/candidates?verdict=abstain").json()["items"][0]
 
         assert row["video_resolution"] is None
         # Its explanation says "not watched in ..." but with evaluated=True from the
@@ -1089,7 +1089,7 @@ class TestPanelHeadFields:
         assert row["dormant_for"] == "5 years, 7 months"
 
     def test_the_detail_carries_links_ratings_and_the_meta_line(self, client: TestClient) -> None:
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
         detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
 
         assert detail["links"] == {
@@ -1142,7 +1142,7 @@ class TestPanelHeadFields:
             == 200
         )
 
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
         links = client.get(f"/api/candidates/{candidates[0]['id']}").json()["links"]
 
         # The link opens at the external address (trailing slash stripped), not base_url.
@@ -1158,7 +1158,7 @@ class TestPanelHeadFields:
     ) -> None:
         """No rating key -> no Plex/Tautulli link; no tmdb id -> no Radarr link. The
         panel hides them all rather than rendering a broken jump."""
-        abstained = client.get("/api/candidates?verdict=abstain").json()
+        abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
         detail = client.get(f"/api/candidates/{abstained[0]['id']}").json()
 
         assert detail["links"] == {
@@ -1191,7 +1191,7 @@ class TestPlexWebUrlSetting:
         assert saved.status_code == 200
         assert saved.json()["web_url"] == "https://plex.example"
 
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
         detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
         # A self-hosted address serves the web client under /web, not /desktop (which 403s).
         assert detail["links"]["plex"].startswith("https://plex.example/web#!/server/")
@@ -1418,7 +1418,7 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
 
     def test_the_premise(self, client: TestClient) -> None:
         """No row here froze its Facts, so the replay tier is unreachable by construction."""
-        rows = client.get("/api/candidates?verdict=condemn").json()
+        rows = client.get("/api/candidates?verdict=condemn").json()["items"]
         assert rows, "the fixture seeded no candidates, so nothing below is exercised"
         # A threshold-only edit still answers: it never needed the frozen evidence, which is
         # what makes the refusals below about the evidence rather than about the route.

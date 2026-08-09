@@ -31,8 +31,16 @@ describe("a reply the client cannot parse", () => {
     await expect(api.safety()).resolves.toBeUndefined();
   });
 
-  it("covers the queue, which reads its totals off the headers and parses by hand", async () => {
+  it("covers the queue, whose consumer indexes into the page it is handed", async () => {
     vi.stubGlobal("fetch", reply("not json"));
+    await expect(api.candidates("condemn", {}, 1, 0)).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("names an empty page as a failed read, not as a TypeError downstream", async () => {
+    // 200 with no body: `parseBody` reads that as `undefined` for every call, which is right
+    // where nothing is expected back. Here the queue indexes into each page it holds, so it
+    // would reach `undefined.items` and throw past every `instanceof ApiError` branch.
+    vi.stubGlobal("fetch", reply(null));
     await expect(api.candidates("condemn", {}, 1, 0)).rejects.toBeInstanceOf(ApiError);
   });
 });

@@ -13,7 +13,13 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
-import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
+import {
+  api,
+  type Candidate,
+  type CandidatePage,
+  type GroupSeasonMark,
+  type Verdict,
+} from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -93,15 +99,19 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
 }
 
 /** One page of candidates, with `total` deciding whether another page is claimed to exist and
- *  `snapshotId` naming which scan the page came from (so a refetch can land a newer one). */
-function page(items: Candidate[], total = items.length, offset = 0, snapshotId = 1) {
+ *  `snapshotId` naming which scan the page came from (so a refetch can land a newer one).
+ *
+ *  Annotated, so a field added to or renamed on the envelope fails the build here rather than
+ *  reaching 57 call sites as `undefined`: `apiMock.candidates` is a bare `vi.fn()`, which
+ *  checks nothing about what it is handed. */
+function page(items: Candidate[], total = items.length, offset = 0, snapshotId = 1): CandidatePage {
   return {
     items,
     total,
-    totalBytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
-    unknownSize: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
+    total_bytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
+    unknown_size: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
     offset,
-    snapshotId,
+    snapshot_id: snapshotId,
   };
 }
 
