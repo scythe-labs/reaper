@@ -53,5 +53,4 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
         notified=result.notified,
         movies_on_shelves=result.movies_on_shelves,
         seasons_on_shelves=result.seasons_on_shelves,
-        problems=result.problems,
     )

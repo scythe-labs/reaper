@@ -1268,4 +1268,37 @@ describe("the shelf status line", () => {
     // is never migrated, so a tester's row can thaw as `result: ""`.
     expect(await statusLine({ last: { ...PASS, result: "" } })).toMatch(LINE(""));
   });
+
+  it("groups every number on the line the one way, whatever the browser's locale", async () => {
+    // The lead sentence is the service's, comma-grouped by Python's `:,`, and the server
+    // cannot know the browser's locale. `count` follows that locale, so the two together read
+    // "1,234 added, 5,678 cleared. Last updated …, 1.234 movies" in a de-DE browser -- two
+    // thousands separators in one sentence, neither wrong alone.
+    //
+    // Driving the locale is what makes this fail on reverting to `count` (rule 118): under
+    // en-US both formatters agree and the assertion cannot discriminate. The default locale
+    // is stubbed at `Number.prototype.toLocaleString`, which is the call both formatters
+    // actually make -- spying on `Intl.NumberFormat` does NOT reach it, and a version of this
+    // test that did read green against the very revert it was written to catch.
+    const original = Number.prototype.toLocaleString;
+    vi.spyOn(Number.prototype, "toLocaleString").mockImplementation(function (
+      this: number,
+      locales?: Intl.LocalesArgument,
+      options?: Intl.NumberFormatOptions,
+    ) {
+      return original.call(this, locales ?? "de-DE", options);
+    });
+    try {
+      const line = await statusLine({
+        last: { ...PASS, movies: 1234, seasons: 5678, result: "1,234 added, 5,678 cleared" },
+      });
+
+      expect(line).toContain("1,234 added, 5,678 cleared");
+      expect(line).toContain("1,234 movies and 5,678 seasons");
+      expect(line).not.toContain("1.234");
+      expect(line).not.toContain("5.678");
+    } finally {
+      vi.mocked(Number.prototype.toLocaleString).mockRestore();
+    }
+  });
 });

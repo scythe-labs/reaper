@@ -981,8 +981,8 @@ export interface LeavingSoonResult {
   notified: boolean;
   movies_on_shelves: number;
   seasons_on_shelves: number;
-  /** Per-library failures, in plain words. `result` is the one-line summary over them. */
-  problems: string[];
+  // `problems` was dropped with its server field: nothing here ever rendered it, and `result`
+  // now names the libraries that failed. See `LeavingSoonOut` for the whole reason.
 }
 
 export interface WatchEvidence {

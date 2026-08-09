@@ -140,10 +140,11 @@ def _outcome(
     removed: int = 0,
     applied: bool = True,
     error: str | None = None,
+    title: str = "Movies",
 ) -> ShelfOutcome:
     return ShelfOutcome(
         section_key=2,
-        section_title="Movies",
+        section_title=title,
         kind="movie",
         added=added,
         removed=removed,
@@ -182,8 +183,34 @@ class TestTheSummary:
 
     def test_a_library_that_failed_beats_the_preview_caveat(self) -> None:
         result = _pass(_outcome(applied=False, error="connection refused"))
-        assert result.summary == "Some shelves didn't update"
+        assert result.summary == "These shelves didn't update: Movies"
         assert result.ok is False
+
+    def test_the_failing_library_is_named_and_the_working_one_is_not(self) -> None:
+        """The sentence used to be "Some shelves didn't update", so one unreachable library
+        out of several read exactly like all of them failing, and no surface carried the
+        detail: the per-library list was on the wire but nothing rendered it. Naming them is
+        the whole answer the operator gets, so it has to name the right ones."""
+        result = _pass(
+            _outcome(added=4),
+            _outcome(applied=False, error="connection refused", title="Kids TV"),
+        )
+        assert result.summary == "These shelves didn't update: Kids TV"
+        assert result.ok is False
+
+    def test_every_failing_library_is_named(self) -> None:
+        result = _pass(
+            _outcome(applied=False, error="connection refused", title="Kids TV"),
+            _outcome(applied=False, error="timed out"),
+        )
+        assert result.summary == "These shelves didn't update: Kids TV, Movies"
+
+    def test_the_raw_cause_stays_out_of_the_sentence(self) -> None:
+        """``str(exc)`` is stack-shaped and rule 21 keeps it off the screen. It survives in
+        the ``leaving_soon.problems`` log event, which is where a raw cause belongs."""
+        result = _pass(_outcome(applied=False, error="HTTPStatusError: 502 Bad Gateway"))
+        assert "502" not in result.summary
+        assert "HTTPStatusError" not in result.summary
 
     def test_a_preview_is_not_a_failure(self) -> None:
         # Read-only with no opt-in: computed, announced, and deliberately not written. The
