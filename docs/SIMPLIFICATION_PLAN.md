@@ -188,7 +188,7 @@ row moving is indistinguishable from one that never started.
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
-| 6 | Structural motion | in progress | 6 of 8 | Every row landed or dropped. Open: the exit task, which blocks phase 7 |
+| 6 | Structural motion | **done** | 6 of 8, 2 dropped | The by-design ceiling. Exit task finished: every `path:NNN` in this document resolves against the tree |
 | 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
@@ -252,7 +252,7 @@ here first and never reconstructed later.
 | #595 | 4 | W10-6 | `_strut_comment`, `_bolding_and_strutted` | no | Comment-only in the CSS, as the correction says: the two rules are byte-identical and the enumeration omitted `.view-tab`. Six controls bold when chosen, five carry the strut, `.filter-mi` is exempt in writing. The gate reads the claim *sentence*, not the block, because the block's own narrative mention of `.view-tab` made the first version green on the very drift it was written for |
 | #596 | 4 | W10-7 | `plexServerQueries.invalidateAllPlex` | no | Decided to fix here rather than move to #550, on the finding body: the fix adds keys, so it is rule 79's class and not a comment correction. Five server-changing paths across two components, one declaration. No symptom confirmed by reading `App.tsx`'s gate, not assumed |
 | #597 | 5 | W1.1 a-h, i's `_SeriesWork.plan`, j, k, m, o; W7-3/4; W7-5's `detail` | `evaluate_rules`, `GateConfig.gate`, `_verdict(override=)`, `HealthOut` | no | 13 findings landed, W1.1-l killed. Two deletions were bigger than their rows: `_verdict`'s override took `blocked_holds_reap` and `safety_protected` with it (rule 64) and moved 14 reap assertions onto `reap_override_verdict_decoded`, the only caller production has; `is_available` took `MediaRequest.status` and the `MediaStatus` enum. `Condemn logic` daggered, `DECISION_SECTIONS` 17 to 18 |
-| #599 | 5 | W1.2 | `engine/backtest.py`, `engine/calibration.py` | no | 1,974 lines of engine and test, plus ~30 prose sites nothing would have failed on. `FALLBACK_REWATCH_PRIOR` is NOT rehomed: its only reader was `rewatch_prior`, whose only caller was `backtest.run`, so the correction is right that moving the pair moves dead code. The curve survives in `SIGNALS.md` and a new hygiene test holds the two source docstrings to it by name (rule 144), which is what the deleted `TestTheRewatchPrior` used to do. **The review found one real coverage loss and it is repaired here**: the suite's only non-default `window_days` sweep lived on the replay lane, so `TestTheWindowScoredAgainstIsThePolicysOwn` now pins both readers of the span on the live scan, driven red against each. M3c/M3g dropped, M3f done, open item 2 gone. S7: 78→76 modules, 49→47 loggers, 43→39 reasons |
+| #599 | 5 | W1.2 | `engine/backtest.py`, `engine/calibration.py` | no | 1,974 lines of engine and test, plus ~30 prose sites nothing would have failed on. `FALLBACK_REWATCH_PRIOR` is NOT rehomed: its only reader was `rewatch_prior`, whose only caller was `BacktestResult._expected_rates` (this row first said `backtest.run`; same file, so the argument held, but the symbol was wrong), so the correction is right that moving the pair moves dead code. The curve survives in `SIGNALS.md` and a new hygiene test holds the two source docstrings to it by name (rule 144), which is what the deleted `TestTheRewatchPrior` used to do. **The review found one real coverage loss and it is repaired here**: the suite's only non-default `window_days` sweep lived on the replay lane, so `TestTheWindowScoredAgainstIsThePolicysOwn` now pins both readers of the span on the live scan, driven red against each. M3c/M3g dropped, M3f done, open item 2 gone. S7: 78→76 modules, 49→47 loggers, 43→39 reasons |
 
 | #600 | 5 | W1.1-i's poster chain, rule 148 release M | `e6f7a8b9c0d1`, six write-only ORM attributes | no | **Row written after the fact, from the PR body**, which is why it is here and not in the landing commit; see #604. Rule 148 release M for six columns `src/`, `tests/` and `frontend/src/` only ever write. The attributes leave, nothing is dropped. Five are `NOT NULL` with no server default, so deleting the attribute alone breaks a fresh install's first write; the revision lands the shape ahead of them, per column: `sa.false()` where the retiring value is still a real answer (`profile.enabled`, `list_config.built_in`), nullable where there is no honest default (`pending_plex_login.pin_code`, `plex_server.owner_plex_account_id`, `profile.active_policy_id`). **Three traps, each found by driving rather than reading**: a `NOT NULL` FOREIGN KEY cannot take a `server_default` at all under `PRAGMA foreign_keys`; the `list_config` batch rebuild silently dropped `COLLATE NOCASE`, since reflection does not report collations, and two lists differing only in case then answered one keep rule; and `include_name` had to grow a `foreign_key_constraint` arm, because hiding a column from autogenerate does not hide its FK. Counter-proof at the previous head: the first settings save dies with `IntegrityError` on `profile.enabled` |
 | #601 | 5 | W1.1-n | `SpareIn`, `whitelist.spare`, `whitelist.list_spared`, three `/api/whitelist` routes | no | **Row written after the fact, from the PR body**; see #604. One way to write a keep-list row, not three. **Nine test files changed and that is not the usual warning sign**: five assert the deleted routes exist, which is what the PR removes, and two were parametrized over the byte-identical pair precisely because only one was driven (rule 72). **The plan's file count was wrong and the correction is the general lesson**: it said six, counting the production sweep; four more test files call `spare()` as setup 32 times, so a count taken off `src/` understates the work whenever the deleted thing was also a test convenience. The 32 rewrites were AST-compared at base and HEAD, 41 calls per side, zero mismatches. Review: 19 candidates, 7 survived, all tier 4. The one worth carrying forward is **one count in five ungenerated prose copies**, two in `main.py` and three in `test_general_and_logs.py`, all saying 87 operations and 42 fenced against a measured 96 and 48, stale before the PR and moved further by it |
@@ -788,6 +788,28 @@ the two `range(0, len(keys), _KEY_CHUNK)` loops in `_group_rollups`, `api/review
 under-scopes W6-2's sweep. Phases 7 and 8 read those bodies, and a session that reads a stale line
 number edits the wrong code with green tests behind it.
 
+> **Done, and phase 7 is unblocked.** Every `path:NNN` in this document resolves against the tree.
+> Rows 1 to 6 re-anchored their own shifts as they landed, so the exit sweep was the **18** that
+> were already stale when phase 6 opened, each re-anchored to a symbol plus a quoted fragment and
+> each validated against the tree before it was written — row 4's review caught three re-anchors
+> naming a symbol that did not resolve, so the validation is the step, not the lookup.
+>
+> **Six of the eighteen point at code that no longer exists**, so they are past tense rather than
+> re-pointed: `session_scope`, `FALLBACK_REWATCH_PRIOR`, `rewatch_prior`, `BacktestResult` and
+> `engine/backtest.py` have zero occurrences left outside this document's own history.
+>
+> **The checker under-reports, which is the finding worth carrying into phase 7.** It walks
+> `path:NNN`, so it is blind to a bare `:NNN` continuation: one `main.py` citation carried a second
+> line as a bare `:NNN`, and that half was stale and unflagged while its neighbor was caught. and to a citation whose line is still in range but now points
+> at something unrelated. Both classes were found by reading rather than by the walk: the
+> `services/lists.py` weight-column citation had drifted by one *and* named one of two write
+> sites, the `services/leaving_soon.py` summary-ladder one landed on a comment rather than the
+> ladder under it, a `test_settings_api.py` line was stale beside a flagged sibling, and a
+> `db/models.py` one was nine lines off. **Two entries were wrong rather than merely misplaced**
+> and are corrected in place: the `AutonomyGrant` item cites three evidence sites and has had two
+> since #599, and #599's own `Landed` row named `backtest.run` where the caller was
+> `BacktestResult._expected_rates`.
+
 ### Phase 7 — wire contract
 
 W8, W4.3, W7-2's `spared`, and **W7-5's `SignalProbeIn.window_days`**, which arrives here from
@@ -945,7 +967,7 @@ below. Read the *Landed* row before acting on a line number in this table.
 | `services/snapshot.py:202` | `RawItem.has_file`: constructed as literal `True`, read nowhere | 5 | `none` |
 | `services/whitelist.py:242,337` | `is_spared`, `unspare`: superseded by `override_for` and `remove_override` | 12 | `none` |
 | `services/season_scan.py:254,196` | `_SeriesWork.plan` (assigned, never read; the plan is recomputed) and `SeasonJudgment.poster_url` (never set) | 10 | `none` |
-| `db/session.py:83` | `session_scope`: zero references anywhere; all 30 call sites open the factory by hand | 5 | `none` |
+| `db/session.py` | `session_scope`: zero references anywhere; all 30 call sites open the factory by hand | 5 | `none` |
 | `services/history_sync.py:542,550` | `state` (a bare forwarder to `_state`) and `latest` (test-only, superseded by `last_synced_at`) | 20 | `none` |
 | `clients/tautulli.py:270` | `metadata`, plus the `get_metadata` entry in `READ_COMMANDS` that exists only for it | 12 | `none` |
 | `clients/seerr.py:74,121` | `Requester.is_mappable` (#550) and `MediaRequest.is_available` | 15 | `none` |
@@ -1018,7 +1040,7 @@ baseline, so removing the attribute leaves `alembic check`, a CI gate, reporting
 never-written members are also *not* dead: the executor's growth interlock allow-lists them
 exhaustively and fails closed, so deleting one narrows a fail-closed set (rule 143).
 
-> **Corrected: the trap is deeper than autogenerate, and `include_name` is at `:55`, not `:45`.**
+> **Corrected: the trap is deeper than autogenerate, and `include_name` is in `alembic/env.py`, not `:45`.**
 > Excluding the column silences `alembic check` and does nothing about the `INSERT`. `enabled`
 > works today only because the model carries a Python-side `default=False`, which is lost with the
 > attribute; the column is then absent from the emitted `INSERT` and SQLite rejects it. The same
@@ -1061,7 +1083,7 @@ Two successors are filed as feature requests and are deliberately *not* attempts
 code: **#553** (weigh a previously reaped title down, because its return is an observed regret)
 and **#554** (probability of a future rewatch, over a long enough window to mean something).
 
-**Before deleting, rehome one constant.** `FALLBACK_REWATCH_PRIOR` lives in `backtest.py:109` and
+**Before deleting, rehome one constant.** `FALLBACK_REWATCH_PRIOR` lived in `engine/backtest.py` and
 is cited from `engine/gates.py:764` and `engine/policy.py`'s `DEFAULT_MOVIE_POLICY` ("the numbers come from
 the measured rewatch curve"), plus `docs/SIGNALS.md:155`,
 `docs/LEARNINGS.md:121` and `docs/README.md:64`. `engine/dormancy.py` is its natural home. Rule 64:
@@ -1079,7 +1101,7 @@ the doc citations move in the same change.
 > this is an excision, not a file rewrite.
 >
 > The constant's only reader is `rewatch_prior()`, in the file being deleted, and its only caller
-> is `backtest.py:237`, also in that file. Rehoming both to `dormancy.py` moves dead code together.
+> is `BacktestResult._expected_rates`, also in that file. Rehoming both to `dormancy.py` moves dead code together.
 > The two comments citing it
 > need the number's provenance, and `docs/SIGNALS.md` already tabulates the curve, so **delete
 > both and repoint the two comments at `SIGNALS.md`.** `LEARNINGS.md`'s citation is at `:122`, and
@@ -1093,7 +1115,7 @@ the doc citations move in the same change.
 > `docs/DECISIONS.md` needs no edit. The dagger test walks only rows under `## Decisions locked`,
 > and M3c/M3f/M3g are milestones.
 >
-> **This collides with *Owner decisions* item 1**, which cites `engine/backtest.py:260` as one of
+> **This collides with *Owner decisions* item 1**, which cites `BacktestResult.lift`'s docstring as one of
 > three reasons to keep `AutonomyGrant`. That citation dies here, and the surviving
 > `backtest_passed` column plus its CHECK constraint then name a feature with no code and no
 > successor issue (rule 25).
@@ -1383,7 +1405,7 @@ here is preventing a future divergence.
   three documented opt-outs that must stay bespoke. **~100 lines**, risk `safety-path`, 32 pinning
   assertions.
 - `services/scheduler.py` — **7 copies** of "run the job, record the outcome, swallow the failure",
-  plus an eighth inner half in `leaving_soon.py:641`. One decorator. `refresh_curated_lists`'s
+  plus an eighth inner half in `services/leaving_soon.py`'s `_record_skip`. One decorator. `refresh_curated_lists`'s
   docstring currently has to *state in prose* that every exit records a run, which is a guarantee
   a decorator holds structurally. **~55 lines**.
 - `services/lists.py:777`, `history_sync.py:238`, `imdb_dataset.py:213` — three hand-rolled
@@ -1452,7 +1474,8 @@ nothing structurally preventing the movie loop being handed `tv_keeps`.
 > methods each carry `except SafetyViolationError: raise` *ahead* of the catch-all (`:1223, 1267,
 > 1317, 1348, 1414, 1439, 1470, 1498`) — a second wrapper shape the "three opt-outs" does not
 > name. Map `except Exception` uniformly and a guard refusal becomes a `PlexError`, which
-> `leaving_soon.py:338-350` catches per library and *continues*, turning a loud stop into a string
+> `services/leaving_soon.py`'s `sync_shelves._reconcile` catches per library (`except PlexError`)
+> and *continues*, turning a loud stop into a string
 > beside "Plex is unreachable" (rules 92/93, and a rule 21 regression). **That arm is entirely
 > unpinned**: every `SafetyViolationError` test drives `GuardedSession` directly, and
 > `test_plex_labels.py` / `test_plex_sweep.py` never construct a refusing safety state. Dropping it
@@ -1477,7 +1500,7 @@ nothing structurally preventing the movie loop being handed `tv_keeps`.
 > of its catch-all whose
 > comment says the record exists so `ScanRow` prefers it over a stale snapshot — recording a
 > "scan already running" skip would hide the last scan behind "Scan failed". Signatures also
-> diverge. `leaving_soon.py:641` is `_record_skip`, the writer, not the wrapper half.
+> diverge. `services/leaving_soon.py`'s `_record_skip` is the writer, not the wrapper half; the wrapper is `after_scan`, which calls it at three sites.
 >
 > **The admin-password gate is four sites, and the
 > 503 clause is already structural.** `PasswordVerificationBusyError` raises out of
@@ -1622,7 +1645,7 @@ Two items turned on a roadmap call rather than on the code. Both are now settled
 recommendation; each reverses what this audit's first pass concluded. A third, the two unreachable
 engines, was settled the other way and has moved to wave 1.2 as a deletion.
 
-**1. `db/models.py:314` `AutonomyGrant`: a table, two CHECK constraints and an index for a feature
+**1. `db/models.py`'s `AutonomyGrant` `AutonomyGrant`: a table, two CHECK constraints and an index for a feature
 with no code. The recommendation here is to KEEP it and correct one sentence.** The audit's first
 pass said delete, on the strength of "zero references in `src/`, `tests/` or `frontend/src/`. That
 claim is true of *code* and false of *prose*, and the difference decides the question:
@@ -1631,7 +1654,9 @@ claim is true of *code* and false of *prose*, and the difference decides the que
   concern gated behind an earned autonomy grant". `tests/test_scheduler.py:168` and `:199` pin it.
 - `engine/policy.py`'s `PolicyBody._pin_to_the_running_scorer` — a policy edit "voids pending approvals and any autonomy grant keyed to
   it".
-- `engine/backtest.py:260` — the number the earned-autonomy flow is designed to consume.
+- `engine/backtest.py`'s `BacktestResult.lift` docstring — the number the earned-autonomy flow
+  was designed to consume. **Deleted with the module in #599**, so this is two live sites, not
+  three; the keep recommendation is unaffected and the correction below already says why.
 
 So the concept is load-bearing in the reasoning even though the table is inert, and the docstring
 is the only full record of the design: the grant keys on `policy_hash`, so any policy edit mints a
@@ -1652,15 +1677,17 @@ If M3b leaves the roadmap, revisit. The mechanics then need **no migration**: `a
 already has an `include_name` filter for cache tables, so a `RETIRED_TABLES` arm plus deleting the
 model class leaves existing databases with an inert empty table and keeps `alembic check` green.
 
-> **Corrected: one of the three evidence sites dies in wave 1.2.** `engine/backtest.py:260` is
+> **Corrected: one of the three evidence sites died in wave 1.2.** `engine/backtest.py`'s
+> `BacktestResult.lift` docstring was
 > deleted there, and the sentence at the top of this item about no row existing "until the backtest
 > ships" stops parsing with it. The recommendation survives on the two remaining citations
 > (`scheduler.py:22`, `policy.py`'s `PolicyBody._pin_to_the_running_scorer`) and on M3b's place at the top of the roadmap. But the
 > surviving `backtest_passed` column and its CHECK constraint then name a feature with no code, no
 > plan and no successor issue, so the docstring rewrite this item already schedules must stop
-> promising the backtest (rule 25). `include_name` is at `:55`. No `RETIRED_TABLES` registry exists
-> yet. `docs/DECISIONS.md` needs no edit either way: the dagger test walks only rows under
-> `## Decisions locked`.
+> promising the backtest (rule 25). `include_name` is in `alembic/env.py`. No `RETIRED_TABLES`
+> registry exists yet, though `RETIRED_COLUMNS` now does, which is the same mechanism one level
+> down and the thing a `RETIRED_TABLES` arm would sit beside. `docs/DECISIONS.md` needs no edit
+> either way: the dagger test walks only rows under `## Decisions locked`.
 
 > **Decided 2026-08-07 (C1): keep the column, correct the docstring, and the successors already
 > exist.** The rule 25 concern is narrower than the correction reads: #553 and #554 are open, so
@@ -1895,7 +1922,7 @@ gate instead."
 | --- | --- | --- | --- |
 | Rule 40's one control standard | `00-tokens.css:212`, in prose | 10 rule blocks re-declare the same 6 fields; 8 more re-declare the identical focus ring | One grouped base rule, ~70 lines, risk `visual` (source order) |
 | Rule 94's 500-key `IN` bound | prose only | `_KEY_CHUNK`, `_WATCH_KEY_CHUNK`, three bare `500` literals, one `_CHUNK = 200` whose comment already enumerates the others | One constant + a hygiene grep, ~10 lines |
-| Rule 56's paging contract | cited by all four loops | `plex.py:427` hardened, `history_sync.py:380` with a backstop, `library_index.py:245` with **no backstop**, `seerr.py:345` and `:370` | One `paged()` iterator, ~60 lines, risk `safety-path` |
+| Rule 56's paging contract | cited by all four loops | `clients/plex.py`'s `_iter_pages` hardened, `history_sync.py:380` with a backstop, `library_index.py:245` with **no backstop**, `seerr.py:345` and `:370` | One `paged()` iterator, ~60 lines, risk `safety-path` |
 | Rule 88's case-fold | 3 docstrings cross-referencing each other | `normalize_label`, `_tag_key`, `_name_key` are all `x.strip().casefold()`, plus ~28 inline copies across 10 modules | One `fold()`, so the rule is greppable by symbol, ~16 lines |
 | The layering in *Architecture* | CLAUDE.md prose | Holds today, measured: 0 top-level SCCs, no `engine/ → services`, no upward `api/` import | A ~30-line AST test lands **green** and pins it |
 | "The only path list in the repository" | `ci.yml:55` **and** `CLAUDE.md:280` | `codeql.yml` restates it twice, `docs-deploy.yml` once | Correct the two sentences, 2 lines (rule 7/24) |
@@ -1929,7 +1956,7 @@ enforced by nothing but the next author's memory.
 > **The sweep is nine `IN` sites, not five.** The row inherits the plan's "three bare `500`
 > literals" and that is short by four: `_KEY_CHUNK` (`api/review.py`), `_WATCH_KEY_CHUNK`
 > (`snapshot.py:1319`), and bare literals at both `_group_rollups` chunk loops (`api/review.py`), `snapshot.py:1844`,
-> `imdb_dataset.py:341`, `fairness.py:888`, `:916` and `season_scan.py:873`. Under-scoping a sweep
+> `imdb_dataset.py:341`, `services/fairness.py`'s `_evidence_index` and `_distinct_episodes` and `season_scan.py:873`. Under-scoping a sweep
 > is rule 72's own failure mode, so count before extracting.
 >
 > **W6-8's guard finds nothing at the obvious hook point.** The 15-second test never reaches
@@ -1975,10 +2002,11 @@ enforced by nothing but the next author's memory.
 Wave 1.1 found dead *symbols*. These are dead *concepts* that still cost branches, columns, wire
 fields and a fail-open guard.
 
-- **`ListMode` (`lists.py:95`) is a second discriminator for a split `ListKind` already carries,
+- **`ListMode` (`services/lists.py`) is a second discriminator for a split `ListKind` already carries,
   and it never varies.** Every writer passes `HARD`; `SOFT` appears only in its own declaration
   and two comments. It drags along the `mode` column, the `weight` column (written at
-  `lists.py:838`, **read by nothing**), `Membership.mode`, `ConfiguredList.mode`, and **two guard
+  `services/lists.py`'s `_record_sync_error` AND its `sync` upsert, two sites not one, **read by
+  nothing**), `Membership.mode`, `ConfiguredList.mode`, and **two guard
   branches that can never fire** (`snapshot.py:2669`, `:2776`), both of which skip a degradation
   check. Those two point fail-*open*, which is the direction that matters here. `protection_list`
   lives in `cache.db`, which is disposable by contract, so there is no migration. ~35 lines.
@@ -2051,7 +2079,9 @@ fields and a fail-open guard.
 > both columns are raw DDL on `cache.db` **with** server defaults, and the two guard branches
 > suppress a degradation, so deleting them is strictly more fail-closed. All six `CACHE_TABLES`
 > are raw DDL and none is on `Base.metadata`. `HealthOut`'s deletion is already fenced by
-> `tests/test_app.py:54` and `test_settings_api.py:771`, which is worth citing as the proof.
+> `tests/test_app.py`'s `test_destructive_actions_are_off_by_default` and `test_settings_api.py`'s
+> `TestSafety.test_turning_deletion_on_requires_the_admin_password`, which is worth citing as the
+> proof. `HealthOut` itself is gone (#597); the two tests still fence the behavior.
 > `DiscordNotifier`'s docstring claim is false as described.
 
 ## Wave 8: payload weight
@@ -2122,8 +2152,9 @@ An axis no pass has measured. Two of these are the largest single wins in either
 > the substance holds, since `usePlexTrash.ts:44` is the surface that would use it. The three
 > `RunOut` hash and approver fields are safe to drop from the *response*: every interlock reads the
 > DB row (`executor.py:975`, `:995`), never the wire model. Ten routes return `dict[str, bool]`,
-> not eleven, and **`backup.py:293` returns two keys** (`ok` and `cleared`, the second read at
-> `api.ts`'s `restoreCancel`), so it needs its own model rather than a shared `OkOut`. `backup.py:326` is a
+> not eleven, and **`api/backup.py`'s `restore_cancel` returns two keys** (`ok` and `cleared`, the second read at
+> `api.ts`'s `restoreCancel`), so it needs its own model rather than a shared `OkOut`. `api/backup.py`'s `restore_restart`
+> (`-> JSONResponse`, no response model) is a
 > fifth anonymous-payload route the sweep misses (rule 72). W8-4 needs no lockstep; W8-3 and W8-5
 > do.
 >
@@ -2195,7 +2226,7 @@ the question is which breaks earn their keep, and most do not.
 These are not simplifications. Two copies of one fact disagree today, and the reader sees the
 disagreement.
 
-1. **The Leaving Soon summary contradicts itself on one screen.** `leaving_soon.py:517` and
+1. **The Leaving Soon summary contradicts itself on one screen.** `services/leaving_soon.py`'s `_run_pass` summary ladder (`if result.problems:`) and
    `JobsPanel.tsx`'s `LeavingSoonRow` (`syncResult`, "A real per-library problem always wins the
    message") are the same three-branch ladder in two languages, each with its own comment. `api/leaving_soon.py:44` injects a synthetic "no libraries are turned on" problem
    *after* `_run_pass` stored its summary, so with no libraries enabled the stored row reads
@@ -2290,7 +2321,7 @@ milliseconds computed 11 times, 7 of them inside `run_scan` (~15). `_maintenance
 from six threaded dependencies at four call sites, once per job per reschedule (~40). Two
 `Retry-After` parsers that differ on a negative header (~10; the two *caps* are deliberate and
 stay). The cooperative-yield stride spelled two ways at four sites. Concurrency bounds written per
-caller, with `fairness.py:803` fanning out up to 80 live Seerr calls unbounded while
+caller, with `services/fairness.py`'s `_enrich_titles` fanning out up to 80 live Seerr calls unbounded while
 `auth/ratelimit.py:200` ships an unused `ConcurrencyGate` (~20, `behavior`: adding the bound is a
 fix, so ship it separately).
 
