@@ -59,7 +59,6 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     library: null,
     dormant_for: null,
     reason: null,
-    spared: false,
     override: null,
     override_own: null,
     show_override: null,
@@ -1209,7 +1208,7 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
 describe("a per-row control on the lane it does not match", () => {
   it("keeps Reap on a spared condemned movie, so the decision can be reversed", async () => {
     apiMock.candidates.mockResolvedValue(
-      page([movie(1, { override: "spare", override_own: "spare", spared: true })]),
+      page([movie(1, { override: "spare", override_own: "spare" })]),
     );
     renderQueue("condemn");
     // `reapIsNoop` is false here (a spare is not already-condemned), so Reap stays. The tab

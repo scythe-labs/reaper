@@ -246,9 +246,6 @@ class CandidateOut(BaseModel):
     """The one-line "why", drawn from the explanation: the protection that keeps a spared
     item, or the top reason a reaped one scored. It is what the card shows in place of a plot
     synopsis -- on the review queue you want to know why Reaper judged it, not what it is."""
-    spared: bool = False
-    """True if the owner has hand-spared this media_key (or its show). Lets the queue strike it
-    through before the next scan moves it to the Spared list for real."""
     override: str | None = None
     """The owner's manual decision *in effect* on this item -- ``"spare"``, ``"reap"``, or
     ``None``. Set the moment they click, so the card can show the pending intent before the

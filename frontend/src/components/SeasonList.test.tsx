@@ -62,7 +62,6 @@ function season(
     library: null,
     dormant_for: null,
     reason: null,
-    spared: false,
     override: null,
     override_own: null,
     show_override: null,
