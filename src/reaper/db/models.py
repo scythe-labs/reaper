@@ -65,7 +65,7 @@ class Instance(Base):
     # never sent a request, so it does not need TLS verification or a key. Nullable and NULL by
     # default: the additive migration only ADDs a nullable column, and NULL means "no external
     # address", so links fall back to base_url and nothing changes for an operator who leaves it
-    # blank (services.deep_links via api.routes._deep_links). Plex has its own web_url and is
+    # blank (services.deep_links via api.review._deep_links). Plex has its own web_url and is
     # not an Instance, so it is untouched here.
     external_url: Mapped[str | None] = mapped_column(String(500), default=None)
 

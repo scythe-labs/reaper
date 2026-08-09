@@ -2,7 +2,7 @@
 """The registry fingerprint a fixture's snapshot has to carry, read from production.
 
 A snapshot records which protection lists its scan gathered membership under
-(``Snapshot.list_config_hash``), and ``api.routes.simulate`` refuses when that no longer
+(``Snapshot.list_config_hash``), and ``api.simulate.simulate`` refuses when that no longer
 matches the registry -- a list retagged or renamed after the scan changes what every
 ``on_list`` rule protects, and no policy hash can see it (#512).
 

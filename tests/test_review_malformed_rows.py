@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import (
+from reaper.api.review import (
     _chip,
     _decode_explanation,
     _dormant_for,

@@ -187,7 +187,7 @@ recommendation this converges on is the one Reaper's own rule 92 already states.
 
 `GateResult.detail` and `SignalResult.detail` become a typed reason id plus typed params, and the
 frontend composes the sentence from the catalog. `defers_to_owner` on `GateResult` is the in-repo
-precedent: a wording test replaced by a typed flag, shipped, and read by `api.routes._chip`.
+precedent: a wording test replaced by a typed flag, shipped, and read by `api.review._chip`.
 
 `HTTPException.detail` stays **English**, per the table above, and the frontend maps a stable
 error code to translated copy — the same split Stripe ships.

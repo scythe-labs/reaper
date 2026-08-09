@@ -45,7 +45,7 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import _policy_out, _to_body
+from reaper.api.policy import _policy_out, _to_body
 from reaper.api.schemas import PolicyIn
 from reaper.clock import utcnow
 from reaper.config import Settings

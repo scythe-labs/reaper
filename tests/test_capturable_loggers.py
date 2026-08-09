@@ -82,13 +82,16 @@ class TestALoggerFrozenByAnEarlierTestIsStillCapturable:
 
 class TestTheGuardReachesEveryLoggerInTheTree:
     """A guard that SCANS is proven against the population it claims to cover, not against
-    one member of it (rule 145). The count is reconciled by hand: 48 files under
+    one member of it (rule 145). The count is reconciled by hand: 50 files under
     ``src/reaper`` declare a module-level logger, and ``grep -rl`` over the tree agrees.
 
     It was 47 before ``services/list_config.py`` (the operator's own protection lists) landed
     with a logger and this number did not move with it, which is what the guard is for, then 49
     with ``services/list_rules.py`` (the keep rules a list acts through), 47 again once the two
-    retired lab engines left and took theirs, and 48 with ``api/plex.py``."""
+    retired lab engines left and took theirs, and 48 with ``api/plex.py``. Then 50, when
+    ``api/routes.py`` became five modules: three of the five log, so one logger left and three
+    arrived. ``api/vocabulary.py`` and ``api/about.py`` declare none, because neither logs --
+    a split inherits its parent's logger only where it inherited something to say."""
 
     @staticmethod
     def _modules_declaring_a_logger() -> set[str]:
@@ -105,8 +108,8 @@ class TestTheGuardReachesEveryLoggerInTheTree:
 
     def test_the_count_is_the_one_reconciled_by_hand(self) -> None:
         declared = self._modules_declaring_a_logger()
-        assert len(declared) == 48, (
-            f"expected 48 modules declaring a logger, found {len(declared)}. Bump the number "
+        assert len(declared) == 50, (
+            f"expected 50 modules declaring a logger, found {len(declared)}. Bump the number "
             "here AND in this class's docstring above, which states it again and which nothing "
             "asserts (rule 144). Leave the *Landed* rows in docs/SIMPLIFICATION_PLAN.md alone: "
             "their figures are historical deltas, so editing one makes a correct record false."

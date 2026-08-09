@@ -40,14 +40,10 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import (
-    _contribution,
-    _fired_gates,
-    _has_blocked_protections,
-    _policy_out,
-    _to_body,
-)
+from reaper.api.policy import _policy_out, _to_body
+from reaper.api.review import _contribution
 from reaper.api.schemas import ConditionIn, GateSettingIn, PolicyIn, SignalSettingIn
+from reaper.api.simulate import _fired_gates, _has_blocked_protections
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base

@@ -114,7 +114,7 @@ BLOCKED = stored_explanation(
 # so the scan abstains and asks for a look), and `defers_to_owner` marks it as a decision
 # for the owner rather than a source Reaper could not read. A hand reap IS that decision,
 # so it condemns. The flag no longer decides that -- no block holds a hand reap -- but it
-# still picks the operator's chip (`api.routes._chip`), so the shapes below keep varying it.
+# still picks the operator's chip (`api.review._chip`), so the shapes below keep varying it.
 KEEP_RULE_CONFLICT = stored_explanation(
     protections_unknown=[
         {

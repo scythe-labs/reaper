@@ -1322,7 +1322,7 @@ _NO_DISPLAY = Display()
 #: What a hand spare reads as in the why-panel's "Protections that fired" list. A lowercase
 #: fragment with no trailing period, matching every gate protection ("someone is watching it
 #: right now", "on your keep list, never reaped"). A hand spare wears the whitelist gate id,
-#: so the review chip (``api.routes._kept_phrase``) tells it apart from a real keep-list
+#: so the review chip (``api.review._kept_phrase``) tells it apart from a real keep-list
 #: entry by this exact string. Every producer and that one reader import this constant;
 #: never re-type the literal.
 HAND_SPARE_DETAIL = "you spared this by hand"
@@ -1722,7 +1722,7 @@ def _explain(
             ],
             # ``defers_to_owner`` is written on every entry, never omitted when False, so
             # a row frozen by THIS version is distinguishable from one frozen before the
-            # flag existed (rule 104's explicit thaw). The card's chip (``api.routes._chip``)
+            # flag existed (rule 104's explicit thaw). The card's chip (``api.review._chip``)
             # and the why panel's verdict note both read that difference, the panel through
             # ``api.schemas.GateOutcomeOut``: present-and-True names the comparison Reaper
             # made, present-and-False says it could not make one, and absent names neither,

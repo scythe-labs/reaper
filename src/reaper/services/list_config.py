@@ -189,7 +189,7 @@ async def current_fingerprint(session: AsyncSession) -> str | None:
     to compare**, and a caller must not: a snapshot that degraded for the same unreadable
     registry recorded ``None`` too, so ``stored != current`` reads two unknowns as agreement
     and passes. Every caller tests each side for ``None`` first and refuses on either
-    (``api.routes.simulate``, ``services.executor``).
+    (``api.simulate.simulate``, ``services.executor``).
     """
     try:
         return fingerprint(await definitions(session, strict=True))

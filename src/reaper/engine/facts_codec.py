@@ -130,7 +130,7 @@ def _result_from_dict(d: dict[str, Any]) -> GateResult:
         # The thaw, stated rather than left to a ``KeyError`` (rule 104): a row frozen before
         # the flag existed carries nothing that distinguishes a comparison that was made from
         # one that was refused, so it reads as "Reaper did not establish this" -- the claim
-        # that asserts less. That answer reaches the operator's chip (``api.routes._chip``),
+        # that asserts less. That answer reaches the operator's chip (``api.review._chip``),
         # not any reap decision: no blocked gate holds a hand reap (``engine.verdict``).
         #
         # Through the shared reader, which is where that rule is now written down, even though
@@ -160,7 +160,7 @@ def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -
     So the hash no longer stands behind this value. The nine season fields are in
     ``policy.PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``, which means a season edit does not move
     ``evidence_hash`` and does not force a fresh scan. What refuses instead is
-    ``api.routes._season_guard_replay``, asked of the stored evidence rather than of the
+    ``api.simulate._season_guard_replay``, asked of the stored evidence rather than of the
     policy -- a hash cannot say whether a show's bundle is present and readable.
     """
     return {

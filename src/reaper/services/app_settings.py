@@ -56,7 +56,7 @@ JOB_LAST_RUN_PREFIX = "job_last_run:"
 DISCORD_WEBHOOK_KEY = "discord_webhook_enc"
 #: The set of rating keys already announced as "leaving soon". Persisted so the heads-up is
 #: idempotent across repeated syncs even when the Plex label write never lands (preview /
-#: unarmed) -- see :func:`reaper.services.leaving_soon.sync`.
+#: unarmed) -- see :func:`reaper.services.leaving_soon.announce_new`.
 LEAVING_SOON_ANNOUNCED_KEY = "leaving_soon_announced"
 #: Whether the "Leaving Soon" shelf in Plex is on at all. Off (the default) means Reaper
 #: never touches the shelf and never runs the reconcile on its own.

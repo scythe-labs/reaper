@@ -2511,6 +2511,88 @@ def test_docs_referenced_from_code_exist() -> None:
     assert not dangling, "these doc paths do not exist:\n" + "\n".join(dangling)
 
 
+#: A dotted citation of one of this repository's own symbols, as prose writes it:
+#: ``api.review._chip``, ``services.snapshot.build_facts``, ``engine.gates.PROTECT``. Anchored on
+#: the four layered packages plus ``db`` and ``auth``, because those are the names that appear
+#: bare in a comment; a fully-qualified ``reaper.api.review._chip`` matches too, since the
+#: pattern is not anchored at a word start on the left.
+#: A leading ``/`` is what tells a citation from a URL or a file path, and nothing else does:
+#: ``https://api.github.com``, ``https://api.radarr.video/v1/…`` and ``frontend/src/api.test.ts``
+#: are all shaped exactly like ``api.review._chip``, and two of the three sit in the same double
+#: backticks this repository cites code with. So the pattern refuses a match preceded by a slash.
+_DOTTED_SYMBOL = re.compile(
+    r"(?<![/\w.])(api|services|clients|engine|db|auth)((?:\.[a-z_][\w]*)+)\.([A-Za-z_]\w{1,})\b"
+)
+
+
+def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
+    """A comment naming ``package.module.symbol`` names one that exists.
+
+    Rule 64's supply chain, for the citation form no other guard covers.
+    ``test_docs_referenced_from_code_exist`` above does this for a ``docs/`` path; nothing did it
+    for a symbol, so splitting a module left every comment pointing at its old address, and the
+    only thing that found them was `docs/SIMPLIFICATION_PLAN.md` happening to warn that they
+    existed. Splitting ``api/routes.py`` into five moved **43** of these across 27 files, and the
+    plan's own estimate of that population was "roughly ten".
+
+    Both halves are checked: the module has to import, and the symbol has to be in it. A module
+    that no longer exists is the split case; a symbol that moved between modules is the rename
+    case, and it is the one a passing import would otherwise hide.
+
+    Deliberately not a count (rule 145). The population is every comment in the tree and it moves
+    with ordinary writing, so a number here would be bumped without being read. What cannot drift
+    is whether each one resolves.
+    """
+    import importlib
+    import inspect
+
+    #: A dotted name ending in one of these is a filename, not a symbol: `api.types.gen.ts`.
+    suffixes = (".ts", ".tsx", ".py", ".md", ".mdx", ".json", ".css", ".html", ".yml", ".yaml")
+    #: `docs/SIMPLIFICATION_PLAN.md` is exempt, and it is the one document that has to be. Its
+    #: finding bodies quote the tree as it stood *before* each change, with `> Corrected:` and
+    #: `Landed` blocks layered on top rather than edited in — so a citation that no longer
+    #: resolves is often the record working, not rot. Re-pathing them against today's tree would
+    #: destroy the history the plan exists to keep (its own preamble says so of `refuted.md`).
+    exempt = {REPO / "docs" / "SIMPLIFICATION_PLAN.md"}
+
+    dangling: list[str] = []
+    for path in [p for p in (*_code_files(), *_live_docs()) if p not in exempt]:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for match in _DOTTED_SYMBOL.finditer(line):
+                if match.group(0).endswith(suffixes):
+                    continue
+                package, middle, symbol = match.groups()
+                module = f"reaper.{package}{middle}"
+                try:
+                    mod = importlib.import_module(module)
+                except ImportError:
+                    dangling.append(
+                        f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)} "
+                        f"(no module {module})"
+                    )
+                    continue
+                # A method is cited as ``services.executor.execute``, without its class, because
+                # the module has one obvious owner and the prose reads better for it. Accept the
+                # symbol anywhere in the module's own classes.
+                on_class = any(
+                    inspect.isclass(member)
+                    and member.__module__ == module
+                    and hasattr(member, symbol)
+                    for member in vars(mod).values()
+                )
+                if not hasattr(mod, symbol) and not on_class:
+                    dangling.append(
+                        f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)} "
+                        f"({symbol} is not in {module})"
+                    )
+    assert not dangling, (
+        "these dotted citations do not resolve. A comment naming a symbol is part of that\n"
+        "symbol's supply chain (rule 64): when it moves, the citation moves with it in the same\n"
+        "change. Re-path each, or delete the citation if the thing it named is gone:\n  "
+        + "\n  ".join(dangling)
+    )
+
+
 def test_live_docs_do_not_restate_the_numbered_rules() -> None:
     """The numbered rules have exactly one home: ``CLAUDE.md`` and ``.claude/rules/``.
 
@@ -3905,7 +3987,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 79
+_EXPECTED_LAYERED_MODULES = 83
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -3928,7 +4010,7 @@ _EXPECTED_LAYER_EDGES = frozenset(
 #: by hand, never a number bumped to make a red test go green.
 _DEFERRED_CROSS_PACKAGE_IMPORTS = frozenset(
     {
-        ("reaper/api/routes.py", "reaper.services.scan_runner", "function-local"),
+        ("reaper/api/simulate.py", "reaper.services.scan_runner", "function-local"),
         ("reaper/services/executor.py", "reaper.clients.plex", "TYPE_CHECKING"),
         ("reaper/services/scan_runner.py", "reaper.engine.fields", "function-local"),
     }

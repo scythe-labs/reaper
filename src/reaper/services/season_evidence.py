@@ -281,7 +281,7 @@ def guard_result(
     **That distinction no longer decides a hand reap, and the flag is no longer an
     interlock.** A blocked gate does not hold a reap at all now -- see ``engine.verdict``
     -- so all three shapes are overrulable by hand, and the flag survives to pick what the
-    operator is TOLD: the card's chip (``api.routes._chip``) and, across the wire through
+    operator is TOLD: the card's chip (``api.review._chip``) and, across the wire through
     ``api.schemas.GateOutcomeOut``, the why panel's verdict note. Keeping the last two
     un-overrulable is exactly what made a short watch mirror refuse every TV reap on the
     server, which is the opposite of what "evidence too thin" should cost someone who can
@@ -530,7 +530,7 @@ def from_dict(d: Mapping[str, Any]) -> SeasonPruneInput:
     Raises on anything it cannot read, rather than defaulting a member. There is no safe
     default here: every one of these is evidence, and a missing key means the scan did not
     record it, which is a refusal (rule 93). The caller catches and refuses to preview -- see
-    ``api.routes._SeasonReplay``, which catches ``OSError`` and ``OverflowError`` alongside
+    ``api.simulate._SeasonReplay``, which catches ``OSError`` and ``OverflowError`` alongside
     the obvious three, because ``from_epoch`` ends in ``datetime.fromtimestamp`` and that
     raises ``OSError`` for an out-of-range epoch. Do not narrow this to a list: the contract
     is that a payload this cannot read never becomes a plan, not that it fails in three

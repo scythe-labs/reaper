@@ -113,7 +113,7 @@ open. `Resolution.candidate_rating_keys` carries the rows it was choosing betwee
 `LinksOut.match_candidates`, and the notice offers a Plex and a Tautulli pill per row.
 `GateResult.defers_to_owner` survives the change but no longer decides anything about a reap: it
 tells the operator whether Reaper actually made the comparison, and **both surfaces that speak for
-a conflict now read it** — the card's chip (`api.routes._chip`) and the why panel's verdict note,
+a conflict now read it** — the card's chip (`api.review._chip`) and the why panel's verdict note,
 which reaches it through `api.schemas.GateOutcomeOut` → `api.ts` (**#86 closed**). The panel had
 been running the retired wording test, which passes for all three conflict shapes, so it opened
 "This was watched more than a season your keep rule protects" about a comparison nobody made,
@@ -209,7 +209,7 @@ lowered it. It masks nothing on the all-time half, where the span needed is the 
 than a window, so a long-lived title behind a shorter mirror reads "could not check" on shipped
 defaults. **A popularity window the mirror cannot cover is now named in the editor, before a scan
 runs into it (#85 closed).** `policy_warnings.inspect` takes the live reach
-(`api.routes._history_reach_days`, derived through `dormancy.history_reach_days` off
+(`api.policy._history_reach_days`, derived through `dormancy.history_reach_days` off
 `history_sync.horizon`, the same derivation `ScanContext` uses) and warns when the window outruns
 it. **The span it measures is `PolicyBody.popularity_window_days()`, not the enabled gate row
 (#133 closed).** That call falls back to 365 with the gate off or absent and `build_gates` hands

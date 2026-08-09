@@ -750,7 +750,7 @@ class PolicyBody(Frozen):
         (tier 2, still exact and still zero API calls) or whether the edit changed what
         a scan would gather at all, in which case it **refuses to report numbers**
         rather than reporting confident, stale ones (tier 3). The three tiers are
-        enumerated in ``api.routes.simulate``.
+        enumerated in ``api.simulate.simulate``.
 
         ``scorer_version`` is deliberately still in here: if the scorer itself changed, the
         stored scores are not comparable and this hash must say so, which is what routes a
@@ -790,7 +790,7 @@ class PolicyBody(Frozen):
     #: bundle, or for turning the mid-binge hold on over a scan that never read Sonarr's
     #: episode lists. Neither is a hash question -- a hash cannot say WHY it mismatched
     #: (``docs/LEARNINGS.md`` §13) -- so both are asked of the stored evidence itself in
-    #: ``api.routes._season_guard_replay``, which is what lets the panel name the one control at
+    #: ``api.simulate._season_guard_replay``, which is what lets the panel name the one control at
     #: fault instead of blanking nine.
     _EVIDENCE_REPLAYABLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
@@ -864,7 +864,7 @@ class PolicyBody(Frozen):
         guard rather than reading a stale one. What a matching hash therefore promises about
         a TV row is narrower than it looks -- it says the FACTS replay, not that the show's
         bundle is present, readable, and describes that season.
-        ``api.routes._season_guard_replay`` asks the evidence that second question, because a
+        ``api.simulate._season_guard_replay`` asks the evidence that second question, because a
         hash cannot answer it: two policies that gather identically can still disagree about
         stored evidence, which is a fact about the snapshot and not about the policy.
 

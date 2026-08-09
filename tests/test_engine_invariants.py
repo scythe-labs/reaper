@@ -362,7 +362,7 @@ class TestEveryFailClosedGuardKeepsTheFile:
     def test_an_unreadable_fact_blocks_the_gate(self, gate: Gate, field: str) -> None:
         """An Unknown input abstains *and* raises the blocked flag, naming its own cause.
 
-        The "could not check" prefix is load-bearing beyond this assertion: `api.routes._chip`
+        The "could not check" prefix is load-bearing beyond this assertion: `api.review._chip`
         routes a detail starting with it to "Some checks couldn't run" rather than "left for
         you to decide", and `WhyPanel` splits it into check and cause.
         """

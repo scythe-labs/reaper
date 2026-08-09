@@ -115,7 +115,7 @@ class GateOutcomeOut(BaseModel):
     carries the flag. Read this field off ``protections_unknown``, which is where the guard
     that sets it puts its blocked result.
 
-    Declared here because a wire schema must name every key the UI reads: ``api.routes._chip``
+    Declared here because a wire schema must name every key the UI reads: ``api.review._chip``
     already reads it off the stored row, and until this field existed the panel that opens
     beside that chip could not, so it went on running the retired wording test and asserted a
     comparison its own reason block denied (#86)."""
@@ -319,7 +319,7 @@ def read_explanation(decoded: object) -> Explanation | None:
     """One stored explanation as the panel renders it, or ``None`` where it cannot be read.
 
     **The single definition of "unreadable" for this document (rule 104).** Both readers that
-    must agree call it: ``api.routes._explanation_out``, which degrades the panel to an empty
+    must agree call it: ``api.review._explanation_out``, which degrades the panel to an empty
     body, and ``services.condemned.reap_override_verdict_decoded``, which holds the hand reap.
     Deriving it twice is what let them disagree, and the permissive copy was the one on the
     destructive path (#142).

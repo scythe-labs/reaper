@@ -1405,7 +1405,7 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
     the product, because the number would look exactly as authoritative as the true one.
 
     **This fixture's snapshot froze no Facts**, which is what every case below is really
-    driven by: ``api.routes.simulate``'s replay tier needs every governed row to carry a
+    driven by: ``api.simulate.simulate``'s replay tier needs every governed row to carry a
     ``facts_json``, so a pre-facts-freeze snapshot falls to the refusal whatever the edit
     was. That is a real state -- every snapshot taken before the freeze shipped is in it,
     and it is exactly the state the refusal must survive -- but it is not the same claim as

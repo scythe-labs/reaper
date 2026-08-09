@@ -70,7 +70,7 @@ def _hand_reap(evaluation: Evaluation, score: int, policy: PolicyBody) -> str:
 
 
 def _simulator_verdict(score: int, coverage_bp: int, condemn_at: int, floor_bp: int) -> str:
-    """The simulator's re-decision for a clean stored row, as ``api.routes.simulate``
+    """The simulator's re-decision for a clean stored row, as ``api.simulate.simulate``
     actually makes it: the REAL shared function, with the stored integers.
 
     Not a transcription. The route imports ``decide_verdict`` and calls it exactly like
@@ -439,7 +439,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         is that it decides nothing.
 
         ``defers_to_owner`` is still set and still varied here, because it still picks the
-        operator's chip (``api.routes._chip``, pinned in ``test_review_chips.py``). It must
+        operator's chip (``api.review._chip``, pinned in ``test_review_chips.py``). It must
         not pick the verdict. Each shape also abstains with no override -- the item still
         goes to a human first."""
         details = {

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import __version__, logbuffer
 from reaper.api import tags as api_tags
+from reaper.api.about import router as about_router
 from reaper.api.auth import router as auth_router
 from reaper.api.backup import router as backup_router
 from reaper.api.breakdown import router as breakdown_router
@@ -42,14 +43,17 @@ from reaper.api.middleware import (
 )
 from reaper.api.plex import router as plex_router
 from reaper.api.plex_trash import router as plex_trash_router
+from reaper.api.policy import router as policy_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
-from reaper.api.routes import router
+from reaper.api.review import router as review_router
 from reaper.api.runs import profile_router, reap_in_flight
 from reaper.api.runs import router as runs_router
 from reaper.api.scan import router as scan_router
 from reaper.api.settings import router as settings_router
 from reaper.api.setup import router as setup_router
+from reaper.api.simulate import router as simulate_router
+from reaper.api.vocabulary import router as vocabulary_router
 from reaper.api.whitelist import router as whitelist_router
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
@@ -732,7 +736,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # nothing reads it.
     app.include_router(plex_router)
     app.include_router(backup_router)
-    app.include_router(router)
+    # The five that used to be `routes.py`, in the order its four banners drew them, so the
+    # served `paths` order moves as little as one file becoming five allows. Nothing reads
+    # that order (`test_openapi_tags.py` keys on method and path), and four `include_router`
+    # calls cannot reproduce it exactly whatever the order here.
+    app.include_router(review_router)
+    app.include_router(policy_router)
+    app.include_router(simulate_router)
+    app.include_router(vocabulary_router)
+    app.include_router(about_router)
     app.include_router(scan_router)
     app.include_router(poster_router)
     app.include_router(runs_router)

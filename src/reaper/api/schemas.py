@@ -802,7 +802,7 @@ class SimStale(enum.StrEnum):
 
     Reached only *after* a scan that wrote the table: a snapshot older than it cannot match
     the re-scoped ``evidence_hash`` either, so it refuses one tier earlier as
-    :attr:`GATHERS_DIFFERENTLY` (``api.routes.simulate`` states the same thing at length).
+    :attr:`GATHERS_DIFFERENTLY` (``api.simulate.simulate`` states the same thing at length).
     Like every refusal it zeroes the whole lane rather than the season card alone --
     ``routes._SeasonEvidenceMissingError`` says why holding the rest at their scan-time
     verdicts would be worse."""

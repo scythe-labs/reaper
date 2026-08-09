@@ -25,7 +25,7 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
-from reaper.api import routes
+from reaper.api import simulate as routes
 from reaper.api.schemas import SimStale, SimulationOut
 from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
@@ -3033,7 +3033,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 class TestTheScanRecordsTheListsItGatheredUnder:
     """The write side of ``Snapshot.list_config_hash`` (#512).
 
-    ``api.routes.simulate`` refuses whenever the recorded value does not match the registry,
+    ``api.simulate.simulate`` refuses whenever the recorded value does not match the registry,
     so a scan that stopped recording it would not fail loudly: it would leave the panel
     permanently refusing, which reads as "run a scan" forever. The read side is pinned in
     ``test_simulate_hardening``; this is the half that fills it in.
