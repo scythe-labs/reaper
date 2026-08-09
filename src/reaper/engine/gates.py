@@ -163,7 +163,7 @@ class GateResult:
     actually make: a readable ``kept_watchers`` AND a ``shortfall`` of ``None``. The
     second is not implied by the first -- a count read off a mirror that does not reach
     back to when the season arrived is a number all the same, and settles nothing (#94).
-    ``api.routes._chip`` reads it to choose between "this was watched more than a season
+    ``api.review._chip`` reads it to choose between "this was watched more than a season
     your rule keeps" and "couldn't check who watched these seasons", which are genuinely
     different things to tell someone deciding what to delete.
 
@@ -210,7 +210,7 @@ class GateResult:
 def thaw_defers_to_owner(value: object) -> bool | None:
     """``defers_to_owner`` as it comes off a stored explanation: three states, no coercion.
 
-    The one derivation, because it had two and they disagreed (rule 104). ``api.routes._chip``
+    The one derivation, because it had two and they disagreed (rule 104). ``api.review._chip``
     read the raw dict with ``is True`` / ``is False``, so anything else fell to its
     vague-but-true chip; ``explanation.GateOutcomeOut`` read the same byte through Pydantic's
     lax bool coercion, which takes ``1`` and ``"true"`` as True, ``0`` as False, and REFUSES
@@ -716,7 +716,7 @@ class ServerPopularityGate:
                 # reaps library-wide. It still forces ABSTAIN, which is its real job.
                 #
                 # The "could not check ..." prefix IS still load-bearing, for the two
-                # surfaces that read it: ``api.routes._chip`` sends a detail starting
+                # surfaces that read it: ``api.review._chip`` sends a detail starting
                 # with it to "Some checks couldn't run" instead of "left for you to
                 # decide", and ``WhyPanel`` splits it into check and cause. Reword it and a
                 # plumbing failure starts reading to the operator as their own decision.
@@ -879,7 +879,7 @@ class DataHorizonGate:
 # path that can find media NO *arr manages -- reading Plex directly rather than the *arrs --
 # so that the fact can be something other than True. Gate, builders and tests return together.
 # ``GateId.UNMANAGED`` survives so a stored explanation still decodes. Four surfaces read one
-# back, and all four stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.routes`' chip
+# back, and all four stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.review`' chip
 # phrasing, `WhyPanel.tsx`'s held-reap line, and `WhyPanel.tsx`'s ``CHECK_COPY`` entry for
 # "which *arr owns this", which was this gate's blocked branch and whose only producer was the
 # code deleted here.

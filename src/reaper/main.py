@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import __version__, logbuffer
 from reaper.api import tags as api_tags
+from reaper.api.about import router as about_router
 from reaper.api.auth import router as auth_router
 from reaper.api.backup import router as backup_router
 from reaper.api.breakdown import router as breakdown_router
@@ -42,14 +43,17 @@ from reaper.api.middleware import (
 )
 from reaper.api.plex import router as plex_router
 from reaper.api.plex_trash import router as plex_trash_router
+from reaper.api.policy import router as policy_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
-from reaper.api.routes import router
+from reaper.api.review import router as review_router
 from reaper.api.runs import profile_router, reap_in_flight
 from reaper.api.runs import router as runs_router
 from reaper.api.scan import router as scan_router
 from reaper.api.settings import router as settings_router
 from reaper.api.setup import router as setup_router
+from reaper.api.simulate import router as simulate_router
+from reaper.api.vocabulary import router as vocabulary_router
 from reaper.api.whitelist import router as whitelist_router
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
@@ -521,7 +525,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         The SPA renders ``detail[].msg`` verbatim (``api.ts``'s ``reason``), so a domain
         refusal raised in a schema validator reached the operator as "Value error, There is
         no ... protection to switch on" -- internal vocabulary in front of a plain sentence,
-        which rule 21 does not allow. ``routes._to_body`` already strips exactly this for
+        which rule 21 does not allow. ``policy._to_body`` already strips exactly this for
         refusals raised inside a route; this is the same removal for the ones FastAPI
         handles before the route body ever runs, so both paths read alike.
 
@@ -732,7 +736,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # nothing reads it.
     app.include_router(plex_router)
     app.include_router(backup_router)
-    app.include_router(router)
+    # The five that used to be one API routes module, in the order its four banners drew them. The
+    # sections were contiguous there, so including them in that order reproduces the served
+    # route table **exactly** -- 79 paths and 96 operations, position for position, measured
+    # against the pre-split document rather than assumed. Keep them in this order: FastAPI
+    # matches first-registered-wins, and while no parameterized path in this app currently
+    # shadows a literal sibling, that is a property of today's paths and not of the framework.
+    app.include_router(review_router)
+    app.include_router(policy_router)
+    app.include_router(simulate_router)
+    app.include_router(vocabulary_router)
+    app.include_router(about_router)
     app.include_router(scan_router)
     app.include_router(poster_router)
     app.include_router(runs_router)

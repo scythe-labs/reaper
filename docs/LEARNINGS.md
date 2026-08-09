@@ -140,7 +140,7 @@ snapshot records it, and while it matches, re-comparing stored scores is exact.
 stale number was the danger, not re-scoring itself: once a scan froze each item's
 evidence (`Candidate.facts_json`), a weight edit could be answered *exactly* by replaying
 the real `score` / `evaluate_all` / `decide_verdict` over that frozen evidence, still with
-zero API calls. So `simulate` is now three tiers (`api.routes.simulate`): stored-score
+zero API calls. So `simulate` is now three tiers (`api.simulate.simulate`): stored-score
 re-compare while `scoring_hash` matches; **replay** while `evidence_hash` matches, which
 covers weights, rating bars, custom condemn rules, graded keeps and protect conditions —
 `PolicyBody._EVIDENCE_REPLAYABLE_FIELDS` is the authority, not this sentence; and only then
@@ -328,7 +328,7 @@ doc change.**
 
 Found on a live install, not in a test (measured 2026-07-26). Every policy edit showed
 "Needs a fresh scan", and **scanning did not clear it**. Both fast tiers of
-`api.routes.simulate` were unreachable, so the panel an operator tunes a deletion threshold
+`api.simulate.simulate` were unreachable, so the panel an operator tunes a deletion threshold
 with had been dead since the last `SCHEMA_VERSION` bump.
 
 `schema_version` is the *storage shape* of a policy body, and the wire schema does not carry
@@ -1336,7 +1336,8 @@ unnamed constraint; Alembic rebuilds the table but can only drop a constraint it
 
 ### Alembic will silently produce a migration that creates nothing
 
-Autogenerate rendered a custom type as `reaper.db.types.TZDateTime()` **without emitting
+Autogenerate rendered a custom type as `reaper.db.types.EpochDateTime()`, named `TZDateTime`
+at the time, **without emitting
 the import**. `alembic upgrade head` reported success and created **zero tables**. Use a
 `render_item` hook to emit a stdlib type.
 

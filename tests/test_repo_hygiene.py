@@ -2511,6 +2511,158 @@ def test_docs_referenced_from_code_exist() -> None:
     assert not dangling, "these doc paths do not exist:\n" + "\n".join(dangling)
 
 
+#: A dotted citation of one of this repository's own symbols, as prose writes it:
+#: ``api.review._chip``, ``services.snapshot.build_facts``, ``engine.gates.PROTECT``. Anchored on
+#: the four layered packages plus ``db`` and ``auth``, because those are the names that appear
+#: bare in a comment; a fully-qualified ``reaper.api.review._chip`` matches too, since the
+#: pattern is not anchored at a word start on the left.
+#: A leading ``/`` is what tells a citation from a URL or a file path, and nothing else does:
+#: ``https://api.github.com``, ``https://api.radarr.video/v1/…`` and ``frontend/src/api.test.ts``
+#: are all shaped exactly like ``api.review._chip``, and two of the three sit in the same double
+#: backticks this repository cites code with. So the pattern refuses a match preceded by a slash.
+#: The lookbehind refuses `/` and a word character but NOT a dot, so a fully-qualified
+#: `reaper.api.review._chip` matches on its `api.` segment. Adding `.` to that class reads as
+#: tighter and silently drops every `:func:`reaper.…`` cross-reference in the tree, which is the
+#: spelling both pre-existing stale citations this guard first caught were written in.
+_DOTTED_SYMBOL = re.compile(
+    r"(?<![/\w])(api|services|clients|engine|db|auth)((?:\.[a-z_][\w]*)+)\.([A-Za-z_]\w{1,})\b"
+)
+
+
+def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
+    """A comment naming ``package.module.symbol`` names one that exists.
+
+    Rule 64's supply chain, for the citation form no other guard covers.
+    ``test_docs_referenced_from_code_exist`` above does this for a ``docs/`` path; nothing did it
+    for a symbol, so splitting a module left every comment pointing at its old address, and the
+    only thing that found them was `docs/SIMPLIFICATION_PLAN.md` happening to warn that they
+    existed. Splitting the API routes module into five moved **39** of these across 26 files, and
+    the plan's own first estimate of that population was "roughly ten".
+
+    **What it catches, stated as a bound rather than a boast.** A retired module named any of the
+    three ways prose names one (a path, a bare module name, a dotted package path), and a
+    symbol that is not reachable from the module cited. **What it does not catch: a symbol that
+    moved to a sibling while the old module still imports it.** ``api.simulate._replayed_evidence``
+    resolves green here, because `simulate` imports that name from `review` for its own use, and
+    the guard cannot tell an import kept for use from one kept by accident. A stricter
+    "defined here" test was written and withdrawn: it flags every monkeypatch target in the suite
+    (`services.snapshot.utcnow` is imported into `snapshot`, which is exactly why patching it
+    works), so it trades this hole for a much larger false-positive class.
+
+    Deliberately not a count (rule 145). The population is every comment in the tree and it moves
+    with ordinary writing, so a number here would be bumped without being read. What cannot drift
+    is whether each one resolves.
+    """
+    import importlib
+    import inspect
+
+    #: A dotted name ending in one of these is a filename, not a symbol: `api.types.gen.ts`.
+    suffixes = (".ts", ".tsx", ".py", ".md", ".mdx", ".json", ".css", ".html", ".yml", ".yaml")
+    #: `docs/SIMPLIFICATION_PLAN.md` is exempt, and it is the one document that has to be. Its
+    #: finding bodies quote the tree as it stood *before* each change, with `> Corrected:` and
+    #: `Landed` blocks layered on top rather than edited in — so a citation that no longer
+    #: resolves is often the record working, not rot. Re-pathing them against today's tree would
+    #: destroy the history the plan exists to keep (its own preamble says so of `refuted.md`).
+    exempt = {REPO / "docs" / "SIMPLIFICATION_PLAN.md"}
+    #: This file names the retired module to DECLARE it, in `retired_modules` and in the prose
+    #: explaining why the tombstone exists, so the tombstone check skips its own declaration.
+    #: Scoped to that check alone -- the dotted check below still reads this file.
+    declares_the_tombstone = REPO / "tests" / "test_repo_hygiene.py"
+
+    #: Every module under `src/reaper/`, to check the OTHER two spellings prose uses for one.
+    #: `api/routes.py` (a path) and `routes._chip` (a bare module name) are cited as often as the
+    #: dotted form, and both survived the sweep this test was written for: 25 citations across
+    #: `src/`, `tests/`, `frontend/src/`, a rules file and `CLAUDE.md`, found by a reviewer rather
+    #: than by the guard, because the pattern above requires a package prefix and refuses a
+    #: leading slash. A guard covering one spelling of three is rule 145's failure wearing the
+    #: shape of the thing it checks.
+    modules = {
+        str(q.relative_to(REPO / "src" / "reaper")) for q in (REPO / "src" / "reaper").rglob("*.py")
+    }
+    #: The retired module's OTHER two spellings, tombstoned rather than derived. A "does this
+    #: path exist" check cannot be general here: prose legitimately names files the tree does not
+    #: have -- `api/deps.py` is phase 8's planned module, `engine/requester.py` and
+    #: `engine/custom_gate.py` are proposals -- so a derived check flags the plan for planning.
+    #: What is NOT legitimate is naming a module that used to exist and does not, which is
+    #: exactly what a split leaves behind, and that is a list of one line per retirement.
+    #: The bare form is undecidable in prose on its own -- `routes._chip` and a local
+    #: `result._asdict` are the same shape, and one of the twelve real sites
+    #: (`engine/explanation.py`) was not even in backticks -- so this is keyed on the retired
+    #: name rather than derived. One entry per retirement: package, then module.
+    retired_modules = {"routes": "api"}
+    names = "|".join(retired_modules)
+    packages = "|".join(dict.fromkeys(retired_modules.values()))
+    cites = re.compile(rf"(?<![\w/.])(?:(?:{packages})/)?({names})\.(py\b|_?[A-Za-z]\w*)")
+    assert modules, "the module walk found nothing, so every check below passes vacuously"
+
+    dangling: list[str] = []
+    for path in [p for p in (*_code_files(), *_live_docs()) if p not in exempt]:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if path != declares_the_tombstone:
+                for m in cites.finditer(line):
+                    dangling.append(
+                        f"{path.relative_to(REPO)}:{lineno} -> {m.group(0)} "
+                        f"({m.group(1)}.py was retired; it is now several modules)"
+                    )
+            for match in _DOTTED_SYMBOL.finditer(line):
+                if match.group(0).endswith(suffixes):
+                    continue
+                package, middle, symbol = match.groups()
+                # Resolve by importing the longest prefix that IS a module, then walking what is
+                # left with getattr. A citation is not always module-then-symbol: `httpx2` in
+                # `clients.base.httpx2.AsyncHTTPTransport` is an alias bound inside a module, and
+                # a monkeypatch target reads the same way. Splitting on the last dot instead
+                # would flag every one of those as a missing module.
+                parts = f"reaper.{package}{middle}.{symbol}".split(".")
+                mod, depth = None, 0
+                for i in range(len(parts), 1, -1):
+                    try:
+                        mod = importlib.import_module(".".join(parts[:i]))
+                        depth = i
+                        break
+                    except ImportError:
+                        continue
+                if mod is None:
+                    dangling.append(
+                        f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)} "
+                        f"(no module under reaper.{package})"
+                    )
+                    continue
+                rest = parts[depth:]
+                if rest:
+                    target: object | None = mod
+                    for attr in rest:
+                        target = getattr(target, attr, None)
+                        if target is None:
+                            break
+                    if target is not None:
+                        continue
+                    symbol = rest[-1]
+                    module = ".".join(parts[:depth])
+                else:
+                    continue
+                # A method is cited as ``services.executor.execute``, without its class, because
+                # the module has one obvious owner and the prose reads better for it. Accept the
+                # symbol anywhere in the module's own classes.
+                on_class = any(
+                    inspect.isclass(member)
+                    and member.__module__ == module
+                    and hasattr(member, symbol)
+                    for member in vars(mod).values()
+                )
+                if not on_class:
+                    dangling.append(
+                        f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)} "
+                        f"({symbol} is not in {module})"
+                    )
+    assert not dangling, (
+        "these dotted citations do not resolve. A comment naming a symbol is part of that\n"
+        "symbol's supply chain (rule 64): when it moves, the citation moves with it in the same\n"
+        "change. Re-path each, or delete the citation if the thing it named is gone:\n  "
+        + "\n  ".join(dangling)
+    )
+
+
 def test_live_docs_do_not_restate_the_numbered_rules() -> None:
     """The numbered rules have exactly one home: ``CLAUDE.md`` and ``.claude/rules/``.
 
@@ -3905,7 +4057,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 79
+_EXPECTED_LAYERED_MODULES = 83
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -3928,7 +4080,7 @@ _EXPECTED_LAYER_EDGES = frozenset(
 #: by hand, never a number bumped to make a red test go green.
 _DEFERRED_CROSS_PACKAGE_IMPORTS = frozenset(
     {
-        ("reaper/api/routes.py", "reaper.services.scan_runner", "function-local"),
+        ("reaper/api/simulate.py", "reaper.services.scan_runner", "function-local"),
         ("reaper/services/executor.py", "reaper.clients.plex", "TYPE_CHECKING"),
         ("reaper/services/scan_runner.py", "reaper.engine.fields", "function-local"),
     }

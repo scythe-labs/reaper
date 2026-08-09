@@ -9,7 +9,7 @@ hash, and nothing replaced it: an operator could retag, repoint, rename or switc
 and the panel went on reporting the membership the last scan froze, labelled exact (#512).
 
 This column is the missing half. The scan records what its lists looked like
-(``services.list_config.fingerprint``) and ``api.routes.simulate`` compares it against the
+(``services.list_config.fingerprint``) and ``api.simulate.simulate`` compares it against the
 registry as it stands, above the tier split -- both tiers read evidence derived from that
 membership, the replay through the frozen fact and the threshold path through the stored
 verdict the fact produced.

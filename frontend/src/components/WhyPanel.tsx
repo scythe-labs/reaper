@@ -409,7 +409,7 @@ export function MatchCandidates({ links }: { links: Links }) {
  *  **Read the gate, never the sentence (rule 142).** This was a wording test until #86:
  *  `!detail.startsWith("could not check")`, which passed for all three conflict shapes and so
  *  told the caller nothing about which one it had. The producer has recorded the answer as a
- *  typed flag since `defers_to_owner` shipped, and `api.routes._chip` has read it since; the
+ *  typed flag since `defers_to_owner` shipped, and `api.review._chip` has read it since; the
  *  panel could not, because `GateOutcomeOut` did not serve it. Now it does, and the flag rides
  *  on the outcome for `verdictLook` to branch on.
  *
@@ -478,7 +478,7 @@ function conflictNote(defersToOwner: boolean | null | undefined): string {
  *  It used to come first and was wrong every time it fired: an unmatched item has no rating
  *  key, so every Plex-dependent gate blocks, and the branch shadowed the real cause, sending
  *  the operator after watch-history depth when they needed a re-match. The card chip beside
- *  it tests the match first (`api.routes._chip`). These branches are mutually reachable and
+ *  it tests the match first (`api.review._chip`). These branches are mutually reachable and
  *  the first true one wins, so the order is load-bearing. */
 /** The FIRED protection a hand reap cannot overrule, if one fired: `verdict.STRUCTURAL_GATES`,
  *  which is something playing right now and the retired `unmanaged`. Neither is a judgment about
@@ -498,7 +498,7 @@ function structuralStop(item: CandidateDetail): "streaming_now" | "unmanaged" | 
   // Reads a STORED explanation, so it outlives the gate that wrote it. That gate is retired
   // (`engine/gates.py`) and no new scan can produce this, but a snapshot on disk is read back
   // by whatever version is running, and a wrong-but-specific sentence is worse than a right
-  // one. Kept for the same reason `api/routes.py` keeps its phrase for `others_watching`.
+  // one. Kept for the same reason `api/review.py` keeps its phrase for `others_watching`.
   if (fired.has("unmanaged")) return "unmanaged";
   return undefined;
 }

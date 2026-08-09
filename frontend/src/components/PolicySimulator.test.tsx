@@ -111,7 +111,7 @@ describe("what the panel says when it will not answer", () => {
   });
 
   it("renders the server's sentence rather than a copy of its own", () => {
-    // The reason lives in api/routes.py alone. It used to live in both, and the copy the
+    // The reason lives in api/simulate.py alone. It used to live in both, and the copy the
     // operator actually read was the one in this file -- so the sentence that was reviewed
     // and the sentence that shipped were different strings (rule 144).
     renderNotice({

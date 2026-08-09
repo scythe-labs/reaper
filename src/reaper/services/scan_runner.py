@@ -724,7 +724,7 @@ async def _run_scan_locked(
         # "TV", not the raw `tv` media-type id: this lands verbatim in the incomplete-scan
         # notice on three screens, and the app spells it TV everywhere else, so lower case
         # read as a typo in the middle of a sentence telling the operator to go and fix
-        # something. `api/routes.py`'s simulator sentence already maps its own lane this way
+        # something. `api/simulate.py`'s simulator sentence already maps its own lane this way
         # (rules 21, 144).
         for label, active in (("movie", active_movie), ("TV", active_tv)):
             if active.repairs:

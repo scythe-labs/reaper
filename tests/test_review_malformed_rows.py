@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import (
+from reaper.api.review import (
     _chip,
     _decode_explanation,
     _dormant_for,
@@ -287,7 +287,7 @@ class TestThePanelAndTheReapAgreeOnUnreadable:
         condemned_but_blank = sorted(k for k in degraded if reaps[k] == "condemn")
         assert not condemned_but_blank, (
             "these rows render an empty why panel and a hand Reap on them still condemns, so "
-            "the operator consents to reasons nobody showed them (#142). api.routes."
+            "the operator consents to reasons nobody showed them (#142). api.review."
             "_explanation_out and services.condemned.reap_override_verdict_decoded must both "
             f"read engine.explanation.read_explanation: {condemned_but_blank}"
         )

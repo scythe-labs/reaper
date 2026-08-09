@@ -188,7 +188,7 @@ row moving is indistinguishable from one that never started.
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
-| 6 | Structural motion | in progress | 5 of 8 | C6 settled: five modules, `routes.py` cut at `:1853` and *Vocabulary* on its own |
+| 6 | Structural motion | in progress | 6 of 8 | Every row landed or dropped. Open: the exit task, which blocks phase 7 |
 | 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
@@ -213,7 +213,8 @@ forever while being genuinely complete. Phase 6 tops out at 6 of 8 by design: it
 | C2 | **settled** | Owner, 2026-08-08. The cheap KDF stays: a test that needs an encryption key to exist should not pay 124ms to prove nothing. Both proofs accepted, the collapse demonstration being the load-bearing one. **The standing cost is recorded rather than fixed**: no test now exercises the real 64 MiB derivation, so its own correctness rests on `crypto.py` being unchanged, not on being run |
 | C3 | **counts settled by audit, owner read outstanding** | Three independent auditors re-derived every count without being shown it first, and **every one held exactly** — including the socket guard's 7 violations, re-measured in a detached worktree. **What did not hold is the matcher beside each count**, which is the half rule 145 says a count cannot cover: the layering walk could not see `from reaper import services` (#588), the path-filter gate pinned a number where the prose names files (#591), and the network guard hooked 3 of 10 exits (#592). All three fixed and driven. The lesson for later phases: re-deriving a count is cheap and confirmed it; what the count could not answer is whether the *walk* sees the tree, and that needed a second party. Below is what each gate now covers. **W6-5**: 78 modules under the four packages *as audited*, 6 directed pairs, 3 deferred imports (the module figure is 79 now: #599 deleted two and phase 6 added `api/plex.py`, `engine/policy_migrations.py` and `engine/policy_warnings.py`); the reconciliation is that all 14 `engine/` modules and 8 of 9 `clients/` produce no cross-package edge at all. **W6-8**: 2,023 socketpairs across 1,674 tests allowed, 9 `getaddrinfo` calls seen, 7 of them real violations; the allowlist is 7 hosts and every one is driven. **W6-6**: 3 path filters across 9 workflows, counted twice by two different matchers. W1.5-c landed no gate, so nothing there to check |
 | C12 | **settled** | Owner, 2026-08-08: **the boot log keeps the added lines.** The one cost put to them was ~2 lines per restart saying a job runs on its built-in default, and they took it — a boot that states every job's schedule out loud is worth more than a quiet one, which is the same argument `main.py`'s per-job "next firing" table already rests on. Nothing to change; #594 ships as merged. The evidence behind the read follows. Two questions, both measured rather than argued. **What startup now applies: the same job table, byte for byte.** The same stored config booted on the phase-3 tip and on the phase-4 tip gives six jobs with identical ids and triggers; the boot log differs by exactly three lines, and the `scheduler.*` event diff is the whole behavioral surface of #594 — an orphaned stored row's warning renamed from `bad_maintenance_cron` to `unknown_maintenance_job` and moved earlier, plus one `maintenance_scheduled` line each for the two jobs still on their built-in defaults, which the replay now re-applies from the same constant `build_scheduler` used. The interval sweeps are outside `MAINTENANCE_JOB_IDS`, so `sweep_old_snapshots` keeps its start delay and jitter. **The deliberate re-freeze is a no-op, and that is the finding.** Tier A: 114 replay tests pass and `tests/_policy_lab.py` is untouched. Tier B: re-captured against snapshot 86 and **byte-for-byte identical** to the committed file — 5,965 items, protect 4,261 / condemn 543 / abstain 1,161, same plan and manifest hash. The phase text expected corrected behavior to move the baseline; the corrections are why it did not, since all four items proved latent or off the decision surface entirely |
-| C6 | **settled** | Owner, 2026-08-08: **five modules, and *Vocabulary* gets its own.** `api/review.py` (1,315, the *Snapshots and candidates* banner), `api/policy.py` (~485), `api/simulate.py` (~841), `api/vocabulary.py` (85), `api/about.py` (47), off a ~150-line shared preamble. So the *Policy* banner is cut at `:1853` (`_SIM_YIELD_EVERY`), a seam the file does not draw, and the 85-line *Vocabulary* banner stands alone rather than riding under the POLICY tag it shares with the editor. **Two cross-module edges are created and were measured before the read, not after**: `_to_body` is called by both the policy routes and `simulate`, so `simulate.py` imports `policy.py`; and `_replayed_evidence` is defined inside the simulate block yet called at `routes.py:1286` from `_deep_links`, which is *review*, so `review.py` imports `simulate.py`. Neither is a design problem at two import lines, but the wave's "pure motion" framing does not predict them, and phase 8 plans against this graph. One route is filed under a banner its tag disagrees with: `season_shape` (`:208`) is POLICY-tagged and sits in *Snapshots and candidates*. It moves by banner, to `review.py`, because `test_openapi_tags.py` keys on method and path and the served tag is unchanged either way |
+| C6 | **settled** | Owner, 2026-08-08: **five modules, and *Vocabulary* gets its own.** `api/review.py` (1,315, the *Snapshots and candidates* banner), `api/policy.py` (~485), `api/simulate.py` (~841), `api/vocabulary.py` (85), `api/about.py` (47), off a ~150-line shared preamble. So the *Policy* banner is cut at `:1853` (`_SIM_YIELD_EVERY`), a seam the file does not draw, and the 85-line *Vocabulary* banner stands alone rather than riding under the POLICY tag it shares with the editor. **Two cross-module edges are created and were measured before the read, not after**: `_to_body` is called by both the policy routes and `simulate`, so `simulate.py` imports `policy.py`; and `_replayed_evidence` is defined inside the simulate block yet called from `_deep_links` (`api/review.py`, "the replay can never disagree"), which is *review*, so `review.py` imports `simulate.py`. Neither is a design problem at two import lines, but the wave's "pure motion" framing does not predict them, and phase 8 plans against this graph. One route is filed under a banner its tag disagrees with: `season_shape` (`:208`) is POLICY-tagged and sits in *Snapshots and candidates*. It moves by banner, to `review.py`, because `test_openapi_tags.py` keys on method and path and the served tag is unchanged either way |
+| C6, corrected on landing | **the edge count was low, and the two it found were a cycle** | Owner, 2026-08-09. C6 measured two cross-module edges and got the direction of both right; there are **four**, and the two it missed are what make its own pair a loop. `simulate` reads `_decode_explanation` and `_entries` from *review*, while review reads `_replayed_evidence` from *simulate* — `from x import y` both ways does not load, so the five-module cut as settled would not have booted. Settled by moving `_replayed_evidence` into `review.py`, which inverts the one edge C6 reasoned about explicitly. It is not only a cycle break: all three are readers of a stored explanation or its evidence, its two siblings were already in review, and the panel is their first reader. The graph is now `simulate → review`, `simulate → policy`, `policy → review`, `vocabulary → review`, and acyclic. **The lesson is C3's again at a different target**: re-deriving the count was not what a second party added — measuring *two* of something is no evidence about how many there are, and a partial edge measurement cannot see a cycle by construction, because a cycle is a property of the set |
 | C4, C5, C7 to C11, C14 | not started | — |
 
 Replace this row with one row per checkpoint as it is reached. A mandatory checkpoint (C4, C5,
@@ -259,6 +260,7 @@ here first and never reconstructed later.
 | #605 | 6 | W2, `api/settings.py` row | `api/plex.py`, 14 PLEX routes, 16 schemas | no | **Row written after the fact, from the PR body.** 698 lines out, `settings.py` 2,044 to 1,344; 700 consecutive lines of schema and route body match in exact order, by sequence matcher against the base. The **sorted** served document is byte-identical, 96 operations; `paths` insertion order moves and nothing reads it. `plex.py` imports the request accessors rather than copying them, so phase 8's `api/deps.py` still collapses five copies. Twelve findings, all fixed there. The one with teeth: `.claude/rules/auth.md` scoped rules 11/98/125/126 to `api/settings.py` and the watch-evidence gate moved out from under it, which nothing failed on because the hygiene test parses rule numbers and never the globs. `api/backup.py` held a fourth uncovered gate site; both added, in `auth.md` and in `CLAUDE.md`'s table row. Rule 144 three times, including a failure message that told the next author to edit a `Landed` row whose figures are a historical delta. Closed #604 by writing the #600 and #601 rows above |
 | #608 | 6 | W2, `App.tsx` row | `SectionNav`, `ReapBar`, `ScanFreshness`, `UserMenu`, `WhyPanelFallback` | no | **Row written after the fact, from the PR body.** 506 lines out, `App.tsx` 1,225 to 719. Every moved span identical apart from comment corrections, checked by reconstructing the base and diffing each cut; deleting the two ranges leaves the import block as the only other difference. `ReapSheetLoader` stays, since `Dashboard` renders it. Rule 146 holds both ways. The query-failure map is conserved, App 8 to 7 plus `SectionNav` 1. Four findings, all fixed there: rule 72 swept in one direction only, so `App.tsx` still named a `signOut` that had left it at three sites and six comments cited moved components at their old address; a plan row whose 728 was arithmetic rather than measurement; two `refuted.md` fingerprints re-pathed. Rows 7 and 8 dropped and filed as #606 and #607 |
 | #609 | 6 | W2, `engine/policy.py` row | `policy_migrations.py`, `policy_warnings.py` | no | 1,577 lines out, `policy.py` 2,710 to 1,133; every top-level symbol moved byte for byte, 44 before and 44 after. Same 96 operations and the same `paths` order, and the sorted document is NOT byte-identical: three description lines carry the renamed module, which FastAPI serves. `_EXPECTED_LAYERED_MODULES` 77 to 79; the logger counter does not move, since a split inherits its parent's loggers. Three lanes, nine findings, all fixed there. `ruff check` was red while `ruff format` was green, because the rename adds 11 characters to prose and format does not reflow it (rule 134). The new module's header claimed nothing in it is on the live path while `LIST_GATES_NOW_KEEP_RULES` is read by `scan_runner.build_gates` on every scan. Rule 144 for the fifth PR running, this time on the Landed cell's own figures, stale at its own tip. Eleven `refuted.md` rows re-pathed |
+| #612 | 6 | W2, `api/routes.py` row; C6 | `api/review.py`, `api/policy.py`, `api/simulate.py`, `api/vocabulary.py`, `api/about.py` | no | 2,827 out, `routes.py` gone: review 1,469, simulate 854, policy 443, vocabulary 114, about 72, so the tree gains 125. **The invariant is exact** — 96 operations over 79 paths, every `(method, path, operationId, tags)` tuple identical, both documents built in-process and diffed. **C6's edge count was low and its two were a cycle**: `simulate` reads `_decode_explanation` and `_entries` from review while review reads `_replayed_evidence` from simulate, so the settled cut would not have booted. `_replayed_evidence` moved to `review.py` beside its two siblings, inverting the one edge C6 named; graph acyclic. The rule 64 sweep was **39 dotted citations across 26 files** and six test files, which is the correction's own figure exactly; the row's "roughly ten" was the low one. A first draft of this cell said 43 across 27 and called the correction an undercount, using the base population (which includes four citations the plan keeps as history) to overrule a figure that was right. **The guard the row called "worth considering" is written** and every spelling driven red, but only after review found it covered one of three: `api/routes.py` and bare `routes._chip` were 25 more citations it could not see, and a `.` in its lookbehind dropped the `:func:`reaper.…`` form its own docstring claimed to match. It found two citations already stale at this base (`services.leaving_soon.sync`, `db.types.TZDateTime`). Loggers 48 to **50**, not 52: two of the five log nothing and their generated loggers were deleted rather than counted. `_EXPECTED_LAYERED_MODULES` 79 to 83 |
 | #611 | 6 | W2, `components/Settings.tsx` row | `GeneralPanel.tsx`, `JobsPanel.tsx`, `SecurityPanel.tsx`, `NotificationsPanel.tsx`, `ServicesPanel.tsx`, `AboutPanel.tsx`, `BackupPanel.tsx` | no | 2,847 lines out, `Settings.tsx` 3,086 to 239; the seven hold 2,934, so the tree gains 87, the eight headers and import blocks less the seven banners they replace. 2,797 moved lines reconstructed from the base and diffed: 2,790 byte-identical and **seven** changed, becoming eight because one comment gained a line. The two are the `export` `JobsPanel` and `BackupPanel` need across a file boundary; the other five are the three comments rule 72 re-pointed. The first draft of this cell said "two", which was the count of `export`s read off the fix list rather than off the diff, and the review caught it — 2,797 is the number of lines *compared*, not the number that matched. `PANELS` is byte for byte and the shell is bar three, all one class the review surfaced: the dirty record's comment said "the other four" and "the nine in `PANELS`" against ten sections and five silent ones, and the rail's said "nine labels". Wrong on `dev` since the tenth section arrived, and left wrong by a split that kept the block byte-identical — which is how a count survives a move that re-reads everything around it. **Every figure in this cell was re-measured at the tip after the review fixes landed, and four of them had moved** — the review's own edits changed two file sizes, which is #609's lesson arriving on schedule. **Two pinned per-file populations are the proof no branch changed shape**, and both conserve exactly: 8 query-failure handles to 8 across seven files, 6 reload sentences to 6 across five. The barrel re-exports `isDiscordWebhook` and `MIN_ADMIN_PASSWORD`, so `DiscordModal` and `SetupPasswordStep` are untouched; the `PlexPanel` re-export those were first modeled on had **zero** callers and is deleted, which both review lanes found independently. `JobsPanel` and `BackupPanel` are exported now only because the shell imports them; neither gained a test, so that half of the correction stands. Rule 72 both ways: three moved comments pointed outside their new file, and `index-outside-text.test.ts` asserts a class renders in the file it names, which would have gone red. Seven `refuted.md` rows re-pathed, three of them carrying line numbers already stale at this base. `I18N_PLAN.md`'s "76 files" is **not restated**, because adding seven to someone else's measurement is the arithmetic-for-measurement swap #608 shipped; the same review pass caught the first draft re-attributing that file's whole 142-string count to the panels, when the shell keeps the `PANELS` labels and the switch-confirm templates |
 
 ### Killed while executing
@@ -782,7 +784,7 @@ carries eight phase-7/8/9 citations that all shift when phase 5 deletes at `:202
 carries five, `main.py` four. Re-anchor to the **symbol plus a quoted fragment**: eight of these sit
 hundreds of lines inside `scan`, `simulate`, `list_candidates` or `ReviewQueue`, where the symbol
 alone locates nothing, and two pairs share a symbol (`season_scan.py:1099`/`:1147` in `gather`,
-`routes.py:566`/`:609` in `_group_rollups`), so a bare symbol silently merges two sites into one and
+the two `range(0, len(keys), _KEY_CHUNK)` loops in `_group_rollups`, `api/review.py`), so a bare symbol silently merges two sites into one and
 under-scopes W6-2's sweep. Phases 7 and 8 read those bodies, and a session that reads a stale line
 number edits the wrong code with green tests behind it.
 
@@ -969,7 +971,7 @@ below. Read the *Landed* row before acting on a line number in this table.
 > **Corrected: W1.1-i's `poster_url` has a reader.** `snapshot.py:1162` passes
 > `judgment.poster_url` into `Display`, which reaches `Candidate.poster_url`. It is a three-hop
 > chain, not a field drop. `RawItem.poster_url` is never assigned either, so the stored column is
-> always `NULL` and `api/routes.py:1196` recomputes the poster and ignores it. Delete the whole
+> always `NULL` and `api/review.py`'s `_candidate_out` (`poster_url=(`) recomputes the poster and ignores it. Delete the whole
 > chain or none of it. `_SeriesWork.plan` is confirmed dead and unaffected.
 
 > **Corrected: W1.1-n is an external contract change, and two of its claims are wrong.** Only one
@@ -1254,9 +1256,9 @@ Each of these files draws its own seams already, in banner comments or in the fa
 
 | File | Now | Split | Evidence the seam is real |
 | --- | --- | --- | --- |
-| `api/routes.py` | 2,789 | `api/review.py` (~1,315), `api/policy.py` (~480), `api/simulate.py` (~840), `api/about.py`. `routes.py` ceases to exist | Four banner comments already name the four. `main.py:47` imports only `router`, so the change is `include_router` calls |
+| `api/routes.py` | 2,789 | `api/review.py`, `api/policy.py`, `api/simulate.py`, `api/vocabulary.py`, `api/about.py`. `routes.py` ceases to exist | **Landed, on C6's five modules and its `:1853` cut.** The file was 2,827 at this base, not 2,789. Out: review 1,469, simulate 854, policy 443, vocabulary 114, about 72 — 2,952, so the tree gains 125 across five headers and five import blocks. **The invariant holds exactly**: 96 operations over 79 paths, and every `(method, path, operationId, tags)` tuple identical to the base, compared by building both documents in-process. `main.py` grew four `include_router` calls. `_EXPECTED_LAYERED_MODULES` 79 to 83; the logger count 48 to 50, not 52, because `vocabulary.py` and `about.py` log nothing and a split inherits its parent's logger only where it inherited something to say |
 | `engine/policy.py` | 2,263 | `+policy_migrations.py` (~530), `+policy_warnings.py` (~1,030) | **Landed.** The file was 2,710 at this base, not 2,263; the correction's 2,709 was right at `759507b` and one line arrived after it. 1,577 lines out, 2,710 to 1,133: `policy_migrations.py` is 572 and `policy_warnings.py` 1,083, so the tree gains 78 lines, the two module headers plus the comment rewraps the longer module names forced. Measured at the tip, not at the first commit: three follow-up commits moved every one of these figures. Both halves import the model and neither is imported back, measured rather than argued: migrations reads `PolicyBody` and `SCHEMA_VERSION` alone, warnings reads six model types and `join_and`. `join_and` stays in `policy.py`, because `scan_runner` joins repair remedies with it and that is not a warning. The pinned module count goes 77 to 79; the logger count does not move, since a split inherits its parent's loggers |
-| `components/Settings.tsx` | 3,086 | 7 panels to their own files; the barrel keeps `PANELS`, the dirty record and the shell | **Landed, and it is 7 panels as the correction says, not 6.** 2,847 lines out, 3,086 to 239; the seven panels hold 2,934 between them, so the tree gains 87 — eight module headers and import blocks, less the seven banner comments they replace. 2,790 of the 2,797 moved lines are byte-identical; seven changed, becoming eight. Two are the `export` `JobsPanel` and `BackupPanel` take for the shell, and five are comments rule 72 re-pointed at `ServicesPanel.tsx:47`, `:59` and `JobsPanel.tsx:162`, each of which named a neighbor that had stopped being one. `PANELS` is kept byte for byte; the shell is bar three stale counts the review found in it, wrong on `dev` since the tenth section arrived. Both pinned per-file populations conserve exactly, 8 query-failure handles to 8 and 6 reload sentences to 6, which is what says no branch moved. `isDiscordWebhook` and `MIN_ADMIN_PASSWORD` re-export from the barrel on `PlexPanel`'s own precedent, so `DiscordModal` and `SetupPasswordStep` are untouched |
+| `components/Settings.tsx` | 3,086 | 7 panels to their own files; the barrel keeps `PANELS`, the dirty record and the shell | **Landed, and it is 7 panels as the correction says, not 6.** 2,847 lines out, 3,086 to 239; the seven panels hold 2,934 between them, so the tree gains 87 — eight module headers and import blocks, less the seven banner comments they replace. 2,790 of the 2,797 moved lines are byte-identical; seven changed, becoming eight. Two are the `export` `JobsPanel` and `BackupPanel` take for the shell, and five are comments rule 72 re-pointed: `ServicesPanel`'s remove toggle ("mirroring the arm confirm in `DeletionToggle.tsx`") and its announce ("the webhook's in `NotificationsPanel`"), and `JobsPanel`'s `scanScheduleText` ("the same split `JobsPanel`'s own `StaleReadSlot` takes"), each of which named a neighbor that had stopped being one. `PANELS` is kept byte for byte; the shell is bar three stale counts the review found in it, wrong on `dev` since the tenth section arrived. Both pinned per-file populations conserve exactly, 8 query-failure handles to 8 and 6 reload sentences to 6, which is what says no branch moved. `isDiscordWebhook` and `MIN_ADMIN_PASSWORD` re-export from the barrel on `PlexPanel`'s own precedent, so `DiscordModal` and `SetupPasswordStep` are untouched |
 | `api/settings.py` | 2,025 | `api/plex.py` (~630, 12 routes) | **Landed, and it is 14 routes as the correction says, not 12.** 698 lines out, settings 2,044 to 1,344. The **sorted** document is byte-identical either side, same 96 operations; the one thing that moves is `paths` insertion order, which nothing reads. Reported as plain "byte-identical" first, which is the reassuring direction rule 144 warns about. `plex.py` **imports** the request accessors from `settings.py` rather than copying them, so phase 8's `api/deps.py` still collapses five copies and not six |
 | `components/PlexPanel.tsx` | 1,244 | 3 sections out (~450) | **Dropped from phase 6, filed as #607, and read the correction below before this cell.** It claimed the file draws the seams as banner comments; the banners are inside the function body. The rule-146 dirty contract half is the part that holds |
 | `App.tsx` | 1,225 | 5 components to `components/` (~520) | **Landed.** 506 lines out, 1,225 to 719: 497 of them the five component spans, 9 more the import header that went with them. The row first said 728, which is 1,225 minus 497 and self-consistent, which is why it read as measured. Two carry the "exported for its tests" comment, as the correction says, and both were false on arrival: in `components/` every file exports its component, so the export carries no signal, and `WhyPanelFallback` is no longer "below". `NAV` moves with `SectionNav`; `ReapSheetLoader` does not move, since `Dashboard` renders it and not `ReapBar`. The query-failure map moves App 8 to 7 and gains `SectionNav` 1, total conserved |
@@ -1269,6 +1271,25 @@ Each of these files draws its own seams already, in banner comments or in the fa
 test guards a dotted symbol citation the way `test_docs_referenced_from_code_exist` guards a doc
 path. Fixing the comments is part of the change (rule 64); adding that guard is worth considering
 in the same commit.
+
+> **Landed. The row's "roughly ten" is low; the correction's 39 was exactly right.** 43 dotted
+> citations existed, 4 of them in this very paragraph as history, so **39 across 26 files** were
+> re-pathed — the correction's figure, over its 9 symbols, with `_chip` at 16. Six test files
+> import internals, not five.
+>
+> **This block first said 43 across 27 and called the correction an undercount that "counted
+> `src/` while a third live in `tests/` and `docs/`".** Both halves were wrong: 43 is the base
+> population including the four sentences below, and the 39 already spanned src 22, tests 10,
+> docs 5, frontend 2. A verified measurement was used to overrule a correct one, which is rule
+> 144 running backwards — the reassuring direction here was believing the sweep had been bigger
+> than the correction predicted. Caught in review, and the reconciliation is the useful record:
+> the two numbers count different populations and both are right.
+>
+> All 39 re-pathed mechanically off the new modules' own symbol tables, so the mapping is the
+> tree's rather than a reading of it. **The guard this paragraph says is "worth considering" was
+> written**, and reviewing it found it covered one of the three spellings prose uses: `api/routes.py`
+> and bare `routes._chip` account for 25 more citations it could not see, and a `.` in its
+> lookbehind silently dropped every `:func:`reaper.…`` form. All four spellings are now driven red.
 
 **Not recommended:** splitting `db/models.py` (1,066 lines, roughly two thirds per-column prose
 explaining what a NULL means) or `engine/identity.py` (47% prose, and rule 3 is better served by
@@ -1574,7 +1595,8 @@ look like.
 > exceptions.
 >
 > **4.2's mechanism is wrong.** `/api/openapi.json` sits inside `/api` behind the `AuthGuard`
-> (`main.py:502-505`, `:688`), which a session cookie or an API key satisfies, so an HTTP-fetching
+> (`main.py`'s `docs_url=None`/`openapi_url=None` block and the `@app.get("/api/openapi.json")`
+> route under it), which a session cookie or an API key satisfies, so an HTTP-fetching
 > generator needs a booted server and a credential. Build the document **in process** with
 > `create_app(settings).openapi()` instead. No precedent exists for that in the tree:
 > `tests/test_openapi_tags.py`'s fixture deliberately reads it over HTTP, signed in, and its header
@@ -1823,9 +1845,9 @@ added to the first.
 | `snapshot.py:1286` `Display` | The 15-field carrier exists; `RawItem` and `SeasonJudgment` both re-declare its fields flat, then `:1057` and `:1157` re-pack them field for field, then `_judge_item` unpacks it again | ~60 | `none` |
 | `season_scan.py:1099` `gather` | Nine loose policy fields taken one frame above the `SeasonPolicy` that groups them, re-packed at `:1147`. This is the sole reason the second road exists: `SeasonPolicy.from_body` is the same nine assignments written again, and `season_evidence.py:140` already names it "rule 144's shape" | ~40 | `behavior` |
 | `api/breakdown.py:22` + 6 siblings | 18 identically named fields copied by hand from the service dataclass to the wire model, plus a nested list re-packed 4 for 4. Same shape at `api/backup.py:224`, `api/fairness.py:159`, `api/settings.py:562` **and** `:641`, both `SeerrServiceOut(` (written twice; the second
-citation read `:831` from the start, which was a banner comment even then), `api/runs.py:776`, `api/routes.py:1289` | ~180 | `none` |
+citation read `:831` from the start, which was a banner comment even then), `api/runs.py:776`, `api/review.py`'s `_deep_links` (`return LinksOut(`) | ~180 | `none` |
 | `api/runs.py:741`/`:775` `ProfileSettingsIO` | A 7-field record declared twice, **including re-typed `ge`/`le` bounds**, with a hand-written converter in each direction. Rule 131 wants a consumer's bound derived from the producer's; here it is transcribed | ~16 | `none` |
-| `routes.py:1967`, `:2298`, `:2610` | `SimulationOut`'s 14-field constructor assembled verbatim at three sites. `no_longer_condemned` already went wrong exactly this way once, recorded in `schemas.py`'s `SimulationOut` ("owner actually needs before saving") | ~25 | `none` |
+| `api/simulate.py`'s `_refused`, `_replay_simulation` and `simulate`, one `return SimulationOut(` each | `SimulationOut`'s 14-field constructor assembled verbatim at three sites. `no_longer_condemned` already went wrong exactly this way once, recorded in `schemas.py`'s `SimulationOut` ("owner actually needs before saving") | ~25 | `none` |
 | `auth.py:220` vs `api/plex.py:118` | `PlexServerChoiceOut` **declared twice under the same class name in two modules**. Pydantic collapses them in `components.schemas` today; the moment either gains a field both operations get module-qualified component names and any generated client breaks silently | 8 | `none` |
 
 **One caveat, and it is the reason this wave is not risk-free.** Building the explanation from the
@@ -1858,7 +1880,7 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 > W5-5's site in the reverse direction, and its real population is ~13 sites, not 7. W5-5 is not
 > `none`: these are the deletion caps, and collapsing the models changes the 422 the operator sees,
 > because FastAPI's own validation fires before `update_profile`'s hand-formatting. W5-6 has two
-> verbatim copies, not three — `routes.py:1967` is the refusal shape. W5-7's line numbers are both
+> verbatim copies, not three — `_refused` (`api/simulate.py`) is the refusal shape. W5-7's line numbers are both
 > wrong (`auth.py:232`, `api/plex.py:118`), and the duplicate **masks the mirror test**:
 > `_server_models` buckets on `__name__`, so the two classes collide into one key and a future
 > divergence is checked against only the survivor.
@@ -1905,8 +1927,8 @@ enforced by nothing but the next author's memory.
 > name or it flags two correct values.
 >
 > **The sweep is nine `IN` sites, not five.** The row inherits the plan's "three bare `500`
-> literals" and that is short by four: `_KEY_CHUNK` (`routes.py:634`), `_WATCH_KEY_CHUNK`
-> (`snapshot.py:1319`), and bare literals at `routes.py:566`, `:609`, `snapshot.py:1844`,
+> literals" and that is short by four: `_KEY_CHUNK` (`api/review.py`), `_WATCH_KEY_CHUNK`
+> (`snapshot.py:1319`), and bare literals at both `_group_rollups` chunk loops (`api/review.py`), `snapshot.py:1844`,
 > `imdb_dataset.py:341`, `fairness.py:888`, `:916` and `season_scan.py:873`. Under-scoping a sweep
 > is rule 72's own failure mode, so count before extracting.
 >
@@ -1961,7 +1983,7 @@ fields and a fail-open guard.
   check. Those two point fail-*open*, which is the direction that matters here. `protection_list`
   lives in `cache.db`, which is disposable by contract, so there is no migration. ~35 lines.
 - **`CandidateOut.spared`** is a dead second name for `override == "spare"`, set literally that
-  way at `routes.py:1211`. No production frontend code reads it; every render site asks `override`
+  way at `api/review.py`'s `_candidate_out` (`spared=override == "spare"`). No production frontend code reads it; every render site asks `override`
   directly. It is the one of the item's spare-shaped fields that rules 120 to 122 do not justify.
   ~12 lines.
 - **`HealthOut`** was an orphan model describing a response the route stopped giving, still
@@ -1991,7 +2013,7 @@ fields and a fail-open guard.
 
 > **Corrected: W7-5's `window_days` is read, W7-7 has an invoker, and W7-8 needs a migration.**
 >
-> **`SignalProbeIn.window_days` reaches the engine.** `routes.py:1806` passes it into
+> **`SignalProbeIn.window_days` reaches the engine.** `api/policy.py`'s `probe_policy` (`window_days=payload.window_days`) passes it into
 > `probe_signal` → `evaluate_signal`, where it reaches `signals.py:399` (the detail wording) and
 > `:403` (`reach_shortfall`). The frontend omits it so the default always stands, which is why it
 > looks inert. Removing `PolicyProbeOut.detail` first makes it genuinely dead; removing it alone
@@ -2036,7 +2058,7 @@ fields and a fail-open guard.
 
 An axis no pass has measured. Two of these are the largest single wins in either document.
 
-- **`/api/candidates` repeats every show-level field once per season row.** `routes.py:497` stamps
+- **`/api/candidates` repeats every show-level field once per season row.** `api/review.py`'s `_candidate_out` stamps
   `group_seasons`, `group_condemned_count`, `group_condemned_bytes`, `group_unknown_size`,
   `group_title` and `show_status` onto every member, and `ReviewQueue.tsx` reads all six off
   `group.items[0]`. Measured: **157 KiB per 100-row page against 15.7 KiB**. An envelope (`{items,
@@ -2046,13 +2068,13 @@ An axis no pass has measured. Two of these are the largest single wins in either
 
 > **Corrected: only four of the six fields can move, and the rollup is not `items[0]`.**
 > `group_title` and `show_status` are read off a **flat** `CandidateDetail` at `WhyPanel.tsx:1312`
-> and `:1365`, and `routes.py:1461` derives `GroupOut.show_status` by iterating the nested season
+> and `:1365`, and `api/review.py`'s `group_detail` derives `GroupOut.show_status` by iterating the nested season
 > list, so both must stay on `CandidateOut`. `show_status` is deliberately
 > `items.find(s => s.show_status)` at `ReviewQueue.tsx:1132`, not `[0]`, because a snapshot
 > predating the field carries `null` on some rows; an envelope reproduces that rollup or blanks
 > the chip. `ReviewQueue.tsx:2007` is a second `group_condemned_count` read feeding the bulk bar's
 > count beside a destructive action. Six backend tests assert the four headers, and
-> `routes.py:328` has an early-return branch setting only two of them. The ~15-line estimate does
+> `api/review.py`'s `list_candidates` (`response.headers["X-Total-Count"] = "0"`) has an early-return branch setting only two of them. The ~15-line estimate does
 > not survive any of this.
 - **`GET /api/runs/{id}` ships the whole journal to render 50 rows**, including each step's `body`
   dict, the literal request payload. `ReapPlan.tsx:50`'s own comment says a 500-item plan is 1,500
@@ -2127,7 +2149,7 @@ the question is which breaks earn their keep, and most do not.
 - **Three cycle-breaking workarounds in `scan_runner.py` break no cycle** (a `TYPE_CHECKING`
   import, the same symbol imported again inside a function, and a third function-local import),
   verified empirically. `executor.py:135` `TYPE_CHECKING`-imports a module already imported at
-  `:117`. `routes.py:2171`'s function-local import breaks nothing and carries no comment, unlike
+  `:117`. `api/simulate.py`'s `_replay_simulation` function-local `build_gates` import breaks nothing and carries no comment, unlike
   `launcher.py:551` and `:569`, which name their reasons and stay.
 - **Both frontend cycles are one borrowed symbol each.** `PolicyEditor ↔ PolicyRuleEditors` exists
   because the deliberate split left three lookup tables behind, and the same file re-exports
@@ -2186,7 +2208,7 @@ disagreement.
    declare the intended status per subclass, and `RestoreError` already demonstrates the fix by
    carrying `.status`.
 3. **The startup scheduler replay and `reschedule_timezone` are the same ladder**, found
-   independently by two lanes. `main.py:372` re-implements `scheduler.py:847` guard for guard and
+   independently by two lanes. `main.py`'s scheduler block ("one scheduled job that produces new review candidates") re-implements `scheduler.py:847` guard for guard and
    log event for log event, and the function's own docstring says it uses "the same `ValueError`
    guard startup uses (rule 87)." Only the shared function is tested; the startup copy is not.
 4. **Four keys in `.env.example` do nothing in a `.env.local`.** `REAPER_UPDATE_CHECK`,
@@ -2208,7 +2230,7 @@ disagreement.
 > `maintenance_schedules.items()` (stored values only) while `scheduler.py` iterates
 > `MAINTENANCE_JOB_IDS` through `effective_maintenance_cron`, so a naive dedup changes what startup
 > applies. The guards and log events do match, and only the shared copy is tested. The cite is
-> `main.py:375`, not `:371`. **Item 2 is latent, not shipping**: every 404 arm is correct against
+> `main.py`'s scheduler block ("ladders written out again here"), not `:371`. **Item 2 is latent, not shipping**: every 404 arm is correct against
 > today's callees, and the base `InstanceError` declares no status, which is the actual gap.
 > **Item 6 is exact copies**, and the drift is `04-buttons.css:105`'s "every control that bolds
 > when active" enumeration omitting `.view-tab`. **Item 7's three missing keys are confirmed and
@@ -2317,7 +2339,7 @@ existing `UtcTimestamp` idiom renders byte-identical DDL for 13 models.
 jobs across three workflows, the store-credential probe byte-identical in two workflows plus a
 third shape, provenance baked twice in one workflow, and the macOS boot probe written twice inside
 one step (~85 lines total, all `ci`). "Install root, else repo root" spelled three times, with
-`main.py:761` re-inlining `launcher.py`'s three-parent walk from a different module that happens
+`main.py`'s SPA mount ("leave a stale second copy of the UI") re-inlining `launcher.py`'s three-parent walk from a different module that happens
 to sit at the same depth, so moving either file breaks one of them silently. `preflight → migrate
 → serve` written three times where only `serve` is genuinely per-environment (~23, `behavior`, and
 it is a deletion tool's boot path, so rank it last).
@@ -2438,7 +2460,7 @@ The register above holds. This pass adds:
 
 Three items are stated as questions, with no `Reviewed/` claim behind them:
 
-1. **`_kept_season_phrase` (`routes.py:883`) recovers a discriminant by prefix-matching the
+1. **`_kept_season_phrase` (`api/review.py`) recovers a discriminant by prefix-matching the
    producer's own sentence.** Rule 92/142's shape, and its docstring records that a reword already
    stranded three of these on older snapshots. Could the frozen explanation carry a reason id,
    leaving the prefix tests as the legacy-row fallback? The stored-schema cost was not measured.

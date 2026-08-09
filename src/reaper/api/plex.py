@@ -17,7 +17,7 @@ sibling routers.
 The request accessors come from ``api.settings`` rather than being copied. Seven modules
 already declare their own under two spellings -- ``_factory``/``_settings``/``_box`` in
 ``api/auth.py``, ``api/backup.py``, ``api/settings.py`` and ``api/setup.py``, and ``_sessions``
-in ``api/routes.py``, ``api/runs.py`` and ``api/whitelist.py`` -- and phase 8's ``api/deps.py``
+in ``api/review.py``, ``api/runs.py`` and ``api/whitelist.py`` -- and phase 8's ``api/deps.py``
 collapses them at once
 (``docs/SIMPLIFICATION_PLAN.md``, wave 3). Named rather than counted, because a count in prose
 is a number nothing asserts. A copy here would grow exactly what that change exists to shrink.

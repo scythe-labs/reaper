@@ -1018,7 +1018,7 @@ class Executor:
         # nobody can name is exactly what must not execute.
         #
         # Checked in the dry run too, so the simulation proves the same refusal.
-        # `api.routes.simulate` makes the same three-way test for the preview panel.
+        # `api.simulate.simulate` makes the same three-way test for the preview panel.
         snapshot = await self._session.get(Snapshot, run.snapshot_id)
         live_lists = await list_config.current_fingerprint(self._session)
         stored_lists = snapshot.list_config_hash if snapshot is not None else None

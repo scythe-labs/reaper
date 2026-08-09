@@ -2,7 +2,7 @@
 """The one condemn/abstain/protect decision.
 
 Every surface that answers "what happens to this item?" -- the scan
-(``services.snapshot``), the threshold simulator (``api.routes.simulate``) and the
+(``services.snapshot``), the threshold simulator (``api.simulate.simulate``) and the
 stored-row reap re-decision (``services.condemned``) -- imports THIS function. The rule
 exists because the decision once lived in three transcriptions, and a ``>`` for a ``>=`` at
 the exact threshold in one of them is the kind of drift no reviewer catches: the review queue and

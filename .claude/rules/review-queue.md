@@ -61,7 +61,7 @@ add the surface to `handFate`, and its class after the scan-verdict classes so i
 **50. An override control reflects and acts on its OWN level; the effective (inherited) decision
 colors the row but never lights a control.** The whitelist keeps a decision at two levels — a
 whole show (its show key) or a single season (its own key), the season's winning — so three views
-ride on every candidate, built once in `_candidate_out` / `GroupOut` (`api/routes.py`) from the
+ride on every candidate, built once in `_candidate_out` / `GroupOut` (`api/review.py`) from the
 one `whitelist.effective_override` + `show_key`, never recomputed as a client-side aggregate:
 - `override` — the decision *in effect* (own or inherited); colors the chip, score, and strip.
 - `override_own` — the item's own decision, and the ONLY value a Spare/Reap control passes to

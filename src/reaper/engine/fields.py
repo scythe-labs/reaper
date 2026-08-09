@@ -801,7 +801,7 @@ def evaluate(
     # above are true of any deeper mirror, and blocking them would withhold a protection
     # the operator's own rule did fire (and, on the condemn lane, drop pressure that was
     # honestly measured). The other two are reported as unchecked, in the same amber
-    # "could not check" shape as an Unknown input, prefix included -- ``api.routes._chip``
+    # "could not check" shape as an Unknown input, prefix included -- ``api.review._chip``
     # and ``WhyPanel`` both read it.
     if not _survives_more_history(condition.op, matched=matched) and (
         (short := reach_shortfall(spec, facts, window_days=window_days)) is not None

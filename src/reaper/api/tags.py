@@ -6,9 +6,13 @@ scan, nothing to collapse, and no way to find the four routes that do the thing 
 came for. OpenAPI's answer is a tag per operation, so this module holds the tag names.
 
 **A router declares the tag, or its routes do -- never both.** Most routers here carry
-``tags=`` on the ``APIRouter`` itself, which files every route in the file. The two
-serving more than one section (``api/routes.py``, ``api/settings.py``) leave the router
-bare and tag each route. Mixing them does not override: FastAPI *concatenates* a
+``tags=`` on the ``APIRouter`` itself, which files every route in the file. Seven leave it
+bare and tag each route instead: ``review`` and ``settings`` because they genuinely serve
+more than one section, ``plex`` because it splits a prefix with ``settings``, and
+``policy``, ``simulate``, ``vocabulary`` and ``about`` because they were cut out of one
+router that had to be bare and kept the shape. Those four could take a router-level tag;
+doing so means deleting their route-level ones in the same edit, because mixing the two
+does not override. FastAPI *concatenates* a
 route-level tag with its router's, so the operation lands in two sidebar sections at
 once, which ``tests/test_openapi_tags.py`` refuses. A router whose routes split across
 sections needs a second router, as ``api/runs.py`` does for the pace settings.

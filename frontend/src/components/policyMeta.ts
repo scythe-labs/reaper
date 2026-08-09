@@ -68,7 +68,7 @@ export const GATE_META: Record<string, GateMeta> = {
     help: "Kept because it is on a ready-made list Reaper syncs, like the IMDb Top 250.",
     retired: true,
   },
-  // Not a gate: `api/routes.py` gives a hand spare its own id when it tallies what spared a
+  // Not a gate: `api/simulate.py` gives a hand spare its own id when it tallies what spared a
   // title, so the simulator names it as the hand spare it is. It rode in on `whitelisted`
   // once, which on a fresh install -- where no gate emits that id at all -- made "Why titles
   // were spared" report every hand spare as list membership, and an operator reading that

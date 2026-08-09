@@ -362,7 +362,7 @@ class TestEveryFailClosedGuardKeepsTheFile:
     def test_an_unreadable_fact_blocks_the_gate(self, gate: Gate, field: str) -> None:
         """An Unknown input abstains *and* raises the blocked flag, naming its own cause.
 
-        The "could not check" prefix is load-bearing beyond this assertion: `api.routes._chip`
+        The "could not check" prefix is load-bearing beyond this assertion: `api.review._chip`
         routes a detail starting with it to "Some checks couldn't run" rather than "left for
         you to decide", and `WhyPanel` splits it into check and cause.
         """
@@ -1010,7 +1010,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
     def test_enough_watchers_still_protect_on_a_short_history(self) -> None:
         """The lower bound only ever *understates*. Three people seen inside the covered
         part did watch it within the window, so the protection is earned and fires -- and
-        keeps its own wording, which the review chip parses (``routes._kept_phrase``)."""
+        keeps its own wording, which the review chip parses (``review._kept_phrase``)."""
         result = self.gate.evaluate(_popularity_facts(3, Known(value=90.0, source="t")))
 
         assert result.outcome == PROTECT

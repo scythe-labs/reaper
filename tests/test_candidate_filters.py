@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import _split_search_year
+from reaper.api.review import _split_search_year
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base

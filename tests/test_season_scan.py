@@ -378,7 +378,7 @@ class TestGuardResult:
         is the decision it asked for.
 
         The flag no longer decides the reap -- no block does -- but it still picks the chip
-        the operator reads (``api.routes._chip``), which is why it is still produced and
+        the operator reads (``api.review._chip``), which is why it is still produced and
         still asserted here. It is the one shape whose chip names the comparison."""
         plan = plan_series_prune(
             series_title="S",

@@ -609,7 +609,7 @@ def _definition(**overrides: object) -> list_config.ListDefinition:
 class TestTheRegistryFingerprint:
     """What a scan records so the simulator can tell its evidence went stale (#512).
 
-    ``Snapshot.list_config_hash`` is this value, and ``api.routes.simulate`` refuses when it
+    ``Snapshot.list_config_hash`` is this value, and ``api.simulate.simulate`` refuses when it
     no longer matches. Every assertion below is about which edits an operator can make that
     change what a scan would GATHER, so the cases are chosen from that question rather than
     from the fields the function happens to read.
@@ -668,7 +668,7 @@ class TestTheRegistryFingerprint:
         no lists, and preview against membership nobody could confirm. ``None`` is not that,
         and it is also not a value to COMPARE: a snapshot that degraded for the same
         unreadable registry recorded ``None`` too, so each caller tests either side for it
-        and refuses (``api.routes.simulate``, ``services.executor``), rather than resting on
+        and refuses (``api.simulate.simulate``, ``services.executor``), rather than resting on
         an inequality that reads two unknowns as agreement.
 
         The same row is read twice, readable then not, so the ``None`` is pinned to the

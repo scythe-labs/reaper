@@ -65,7 +65,7 @@ class Instance(Base):
     # never sent a request, so it does not need TLS verification or a key. Nullable and NULL by
     # default: the additive migration only ADDs a nullable column, and NULL means "no external
     # address", so links fall back to base_url and nothing changes for an operator who leaves it
-    # blank (services.deep_links via api.routes._deep_links). Plex has its own web_url and is
+    # blank (services.deep_links via api.review._deep_links). Plex has its own web_url and is
     # not an Instance, so it is untouched here.
     external_url: Mapped[str | None] = mapped_column(String(500), default=None)
 
@@ -666,7 +666,7 @@ class SeasonPruneEvidence(Base):
     """The show key, shared by every season of the show and equal to ``Candidate.group_key``
     for those rows.
 
-    Carries no index of its own: the only read is ``routes._season_payloads``' ``WHERE
+    Carries no index of its own: the only read is ``simulate._season_payloads``' ``WHERE
     snapshot_id = ?``, which the unique constraint above already covers on its leading column,
     and nothing filters a show key across snapshots. A second B-tree here would be written
     once per show per scan to serve nobody, in the table whose per-row cost the paragraph
