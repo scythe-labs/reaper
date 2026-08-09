@@ -189,7 +189,7 @@ row moving is indistinguishable from one that never started.
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
 | 6 | Structural motion | **done** | 6 of 8, 2 dropped | The by-design ceiling. Exit task finished: every `path:NNN` in this document resolves against the tree |
-| 7 | Wire contract | in progress | 8 of 8, W8-1 outstanding | C7 settled, C11 outstanding. Eight items, not ~5: W8-3 measures 20 unread fields and W8-4's anonymous payloads are 11 routes over 4 shapes |
+| 7 | Wire contract | in progress | 7 of 8 | C7 settled, C11 outstanding. Eight items, not ~5: W8-3 measures 20 unread fields and W8-4's anonymous payloads are 11 routes over 4 shapes |
 | 8 | Dedup and carriers | not started | 0 of ~25 | W6-2 landed early as #618: #556 made rule 94's bound a live defect, not a tidiness item |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
 
