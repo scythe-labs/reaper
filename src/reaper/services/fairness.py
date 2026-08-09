@@ -49,6 +49,7 @@ from reaper.aio import gather_reaped
 from reaper.clients.base import IntegrationError
 from reaper.clients.seerr import MediaRequest, QuotaStatus, SeerrClient, UserQuota
 from reaper.clock import utcnow
+from reaper.db import KEY_CHUNK
 from reaper.db.models import Candidate, Snapshot
 from reaper.services import condemned, history_sync, whitelist
 from reaper.services.planner import MediaRef, PlanError
@@ -885,7 +886,7 @@ async def _evidence_index(
     async with cache_engine.connect() as conn:
         # Chunked so a very large candidate set cannot exceed SQLite's bound-variable limit;
         # chunks are disjoint keys, so plain merging is exact.
-        for chunk in batched(sorted(rating_keys), 500, strict=False):
+        for chunk in batched(sorted(rating_keys), KEY_CHUNK, strict=False):
             for key, user_id, plays in (await conn.execute(stmt, {"keys": list(chunk)})).all():
                 result.setdefault(str(key), {})[int(user_id)] = int(plays)
 
@@ -913,7 +914,7 @@ async def _distinct_episodes(
 
     out: dict[int, int] = {}
     async with cache_engine.connect() as conn:
-        for chunk in batched(sorted(season_keys), 500, strict=False):
+        for chunk in batched(sorted(season_keys), KEY_CHUNK, strict=False):
             rows = (await conn.execute(stmt, {"pid": plex_id, "keys": list(chunk)})).all()
             for k, eps in rows:
                 out[int(k)] = int(eps)

@@ -45,6 +45,7 @@ from reaper.api.schemas import (
     SnapshotOut,
     thaw_threshold,
 )
+from reaper.db import KEY_CHUNK
 from reaper.db.models import (
     Candidate,
     FirstFlagged,
@@ -558,7 +559,7 @@ async def _group_rollups(
     Without it the square could only draw the solid "you chose this" green, which is the
     one thing an expired spare is not.
 
-    ``IN`` chunked at 500 per the bound-variable limit.
+    ``IN`` chunked at ``KEY_CHUNK`` per the bound-variable limit.
     """
     if not group_keys:
         return {}, {}
@@ -569,8 +570,8 @@ async def _group_rollups(
     # every member's JSON through the rollup query. media_key -> (mark, group, bytes).
     pending: dict[str, tuple[GroupSeasonMarkOut, str, int | None]] = {}
     keys = sorted(group_keys)
-    for start in range(0, len(keys), 500):
-        chunk = keys[start : start + 500]
+    for start in range(0, len(keys), KEY_CHUNK):
+        chunk = keys[start : start + KEY_CHUNK]
         members = (
             await session.execute(
                 select(
@@ -612,8 +613,8 @@ async def _group_rollups(
                 totals[group_key] = _add_member(totals[group_key], size_bytes)
 
     pending_keys = sorted(pending)
-    for start in range(0, len(pending_keys), 500):
-        chunk = pending_keys[start : start + 500]
+    for start in range(0, len(pending_keys), KEY_CHUNK):
+        chunk = pending_keys[start : start + KEY_CHUNK]
         rows = (
             await session.execute(
                 select(Candidate.media_key, Candidate.score, Candidate.explanation_json).where(
@@ -635,11 +636,6 @@ async def _group_rollups(
     return totals, marks
 
 
-#: How many keys ride in one ``IN`` expansion. SQLite caps bound variables per statement,
-#: so every list-shaped filter here is fed in chunks, the way ``_group_rollups`` does.
-_KEY_CHUNK = 500
-
-
 async def _decided_keys(
     session: AsyncSession,
     conditions: list[ColumnElement[bool]],
@@ -658,8 +654,8 @@ async def _decided_keys(
         return []
     keys = sorted(decisions)
     found: list[str] = []
-    for start in range(0, len(keys), _KEY_CHUNK):
-        chunk = keys[start : start + _KEY_CHUNK]
+    for start in range(0, len(keys), KEY_CHUNK):
+        chunk = keys[start : start + KEY_CHUNK]
         rows = (
             await session.execute(
                 select(Candidate.media_key).where(

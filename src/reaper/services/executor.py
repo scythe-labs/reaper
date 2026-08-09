@@ -106,6 +106,7 @@ import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from itertools import batched
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
@@ -117,6 +118,7 @@ from reaper.clients.base import IntegrationError, SafetyViolationError
 from reaper.clients.plex import declared_mutation
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
+from reaper.db import KEY_CHUNK
 from reaper.db.models import (
     ActionStep,
     Candidate,
@@ -1040,13 +1042,17 @@ class Executor:
         candidates_by_key = dict(condemned)
         planned_keys = {s.media_key for s in steps}
         missing = sorted(planned_keys - set(candidates_by_key))
-        if missing:
+        # Chunked (rule 94). Usually a handful -- the items spared since the plan was built --
+        # but with the caps off a plan is library-sized, and a plan whose snapshot has since
+        # aged out of retention leaves every one of its keys missing, so the whole plan can
+        # land here. Merged into a map keyed by media_key, so the chunks cannot reorder it.
+        for chunk in batched(missing, KEY_CHUNK, strict=False):
             extra = (
                 (
                     await self._session.execute(
                         select(Candidate).where(
                             Candidate.snapshot_id == run.snapshot_id,
-                            Candidate.media_key.in_(missing),
+                            Candidate.media_key.in_(chunk),
                         )
                     )
                 )

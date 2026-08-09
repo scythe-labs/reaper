@@ -76,6 +76,7 @@ from reaper.clients.plex import PlexClient, PlexError, PlexSeasonRow
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
+from reaper.db import KEY_CHUNK
 from reaper.db.models import SizeSource
 from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
@@ -869,7 +870,7 @@ async def season_watch_stats(
         # Chunked like imdb_dataset.lookup: the ``expanding`` bindparam turns every key
         # into one bound variable, and a very large library can exceed SQLite's limit.
         # Chunks are disjoint keys, so accumulating across them is exact.
-        for chunk in batched(keys, 500, strict=False):
+        for chunk in batched(keys, KEY_CHUNK, strict=False):
             key_chunk = list(chunk)
             rows = (await conn.execute(aggregate, {"keys": key_chunk, "since": since})).all()
             for row in rows:

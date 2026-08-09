@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS history_sync_state (
 #: creates it in place, leaving the mirrored rows alone.
 #:
 #: Every column a fairness query filters on wants one here: the board and the person drawer
-#: run ``WHERE ... IN (:keys)`` per 500-key chunk, and an unindexed column turns each chunk
+#: run ``WHERE ... IN (:keys)`` per ``db.KEY_CHUNK``, and an unindexed column turns each chunk
 #: into a full scan of a table that holds every play the server has ever recorded (P-4).
 INDEXES = {
     "ix_watch_event_rating_key": (
