@@ -246,6 +246,7 @@ class TestARecoverySessionCanSetANewPassword:
 
         saved = client.post("/api/settings/admin-password", json={"password": NEW_PASSWORD})
         assert saved.status_code == 200, saved.text
+        assert saved.json() == {"ok": True}
 
         # It really is the password now: it arms deletion, and the old one does not.
         assert (

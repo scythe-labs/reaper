@@ -592,6 +592,7 @@ class TestApi:
             json={"password": TEST_PASSWORD, "token": token},
         )
         assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json() == {"ok": True}
         assert client.get("/api/settings/backup").json()["restore_armed"] is True
 
     def test_confirm_refuses_a_token_from_a_replaced_upload(

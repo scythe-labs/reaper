@@ -107,7 +107,9 @@ class TestLocalLoginFlow:
         )
         assert client.get("/api/auth/me").status_code == 200
 
-        assert client.post("/api/auth/logout", headers=CSRF).status_code == 200
+        signed_out = client.post("/api/auth/logout", headers=CSRF)
+        assert signed_out.status_code == 200
+        assert signed_out.json() == {"ok": True}
         assert client.get("/api/auth/me").status_code == 401
 
 

@@ -46,7 +46,7 @@ from reaper.api.auth import (
     _verify_admin_password,
     record_password_failure,
 )
-from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
+from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn, RemovedOut
 
 # Private on purpose, and imported rather than copied: see the module docstring.
 from reaper.api.settings import _box, _factory, _require_web_url, _required_web_url, _settings
@@ -347,18 +347,18 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
 
 
 @router.delete("/plex", tags=[api_tags.PLEX])
-async def plex_unlink(request: Request) -> dict[str, bool]:
+async def plex_unlink(request: Request) -> RemovedOut:
     """Forget the linked Plex server. Deletes nothing in Plex -- it just drops the stored
     connection and token, so Leaving Soon and the collection whitelist go quiet until a
     server is linked again."""
     async with _factory(request)() as session:
         server = (await session.execute(select(PlexServer))).scalars().first()
         if server is None:
-            return {"removed": False}
+            return RemovedOut(removed=False)
         await session.delete(server)
         await session.commit()
     log.info("plex.unlinked")
-    return {"removed": True}
+    return RemovedOut(removed=True)
 
 
 async def _linked_server(session: AsyncSession) -> PlexServer:
@@ -720,7 +720,7 @@ async def reset_watch_evidence(
 
 
 @router.delete("/watch-evidence/{media_key}", tags=[api_tags.PLEX])
-async def forget_watch_evidence_for(request: Request, media_key: str) -> dict[str, bool]:
+async def forget_watch_evidence_for(request: Request, media_key: str) -> RemovedOut:
     """Accept what Reaper can see now for ONE title, and judge it on that from the next scan.
 
     The narrow twin of the reset above. Reaper holds a title back when the plays it recorded
@@ -740,7 +740,7 @@ async def forget_watch_evidence_for(request: Request, media_key: str) -> dict[st
     async with _factory(request)() as session:
         removed = await watch_evidence.forget_one(session, media_key)
         await session.commit()
-    return {"removed": removed}
+    return RemovedOut(removed=removed)
 
 
 @router.put("/plex/libraries", tags=[api_tags.PLEX])
