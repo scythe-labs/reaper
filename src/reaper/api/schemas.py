@@ -463,6 +463,12 @@ class RunOut(BaseModel):
     size. Zero for a healthy library, and every surface hides it at zero, so an operator
     whose sources all answer never sees a new number anywhere."""
 
+    step_count: int = 0
+    """How many journal rows this run holds in total. ``steps`` below carries a window of them,
+    so this is what a surface counting them must read: ``len(steps)`` is the size of the page,
+    never the size of the plan. It is NOT ``item_count`` either, which counts deduplicated
+    candidates: a season is three steps sharing one key, so the two differ by 3x on a show."""
+
     # The approval audit -- ``policy_hash``, ``approved_manifest_hash``, ``approved_by`` and
     # ``approved_at`` -- is deliberately NOT on this response. Every interlock reads the stored
     # row rather than the wire model, so nothing enforcing an approval loses anything: the
@@ -470,6 +476,26 @@ class RunOut(BaseModel):
     # ``approved_at`` reaches ``_watched_since_approval`` the same way. ``approved_by`` was the
     # constant string "api" on every response an operator could obtain.
     steps: list[ActionStepOut]
+    """The first :data:`api.runs.STEP_PAGE` rows of the journal, not all of them. A plan of 500
+    seasons is 1,500 rows carrying a path and a request body each, and the table draws 50.
+    ``GET /api/runs/{id}/steps`` serves any window, and ``step_count`` above says how many there
+    are, so a surface can say how many it is not showing."""
+
+
+class RunStepsOut(BaseModel):
+    """One window of a run's journal.
+
+    Its own route rather than query parameters on the run detail, for two reasons. Building a
+    ``RunOut`` re-reads the whole effective condemned set and re-derives the confirmation
+    phrase, so paging through it would pay that per page. And the browser holds the run detail
+    under one cache key with an infinite stale time, which is what lets the confirmation sheet
+    keep the exact plan it opened with; an offset in that key would move the object under it.
+    """
+
+    steps: list[ActionStepOut]
+    step_count: int
+    """The whole journal's size, so a caller can page without a second request."""
+    offset: int
 
 
 class RunSummaryOut(BaseModel):

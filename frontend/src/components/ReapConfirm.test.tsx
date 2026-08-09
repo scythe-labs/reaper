@@ -35,6 +35,7 @@ const run = {
   total_bytes: 1024 ** 3,
   held_back_unknown_size: 0,
   confirmation_phrase: "REAP 1 SOUL 1 GB",
+  step_count: 0,
   steps: [],
 } as Run;
 

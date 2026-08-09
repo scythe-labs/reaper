@@ -113,6 +113,7 @@ export function makeApiMock(): ApiMock {
     scanStatus: vi.fn(),
     runs: vi.fn(),
     run: vi.fn(),
+    runSteps: vi.fn(),
     createRun: vi.fn(),
     dryRun: vi.fn(),
     executeRun: vi.fn(),

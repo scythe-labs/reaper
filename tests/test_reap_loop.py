@@ -30,7 +30,7 @@ from sqlalchemy.exc import IntegrityError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
-from reaper.api.runs import _planned_candidates, _run_out
+from reaper.api.runs import STEP_PAGE, _planned_candidates, _run_out
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import ActiveStream, PlexError, PlexSectionPaths
 from reaper.clock import utcnow
@@ -1063,6 +1063,37 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         run = await _plan(session, snapshot_id)
 
         assert confirmation_phrase(await _planned_candidates(session, run)) == "REAP 1 SOUL 1 GB"
+
+    async def test_the_phrase_names_the_whole_plan_when_the_response_shows_a_window(
+        self, session: AsyncSession
+    ) -> None:
+        """C7's test, and the reason the cap sits where it does.
+
+        ``_run_out`` serializes a WINDOW of the journal. The number the owner types must still
+        describe the whole plan, so the window is applied to the serialization and nowhere near
+        ``_run_steps`` or ``_planned_candidates`` -- both of which feed the phrase, on this
+        route and again inside ``execute_run``. A ``LIMIT`` in either shrinks what is shown and
+        what the server expects by the same amount, so the typed phrase still matches while
+        ``services.executor`` loads its own steps and deletes every one.
+
+        Driven at a size no other test in this suite reaches: the largest plan anywhere else is
+        five items, and a cap of fifty is invisible below that.
+        """
+        keys = [(f"radarr:1:{n}", GB) for n in range(1, 61)]
+        snapshot_id = await _snapshot_with(session, keys)
+        run = await _plan(session, snapshot_id)
+
+        out = await _run_out(session, run)
+
+        assert len(out.steps) == STEP_PAGE
+        assert out.step_count == 60
+        assert out.item_count == 60
+        assert out.confirmation_phrase == "REAP 60 SOULS 60 GB"
+        # What the dangerous implementation would have produced. Asserted rather than implied,
+        # because the two phrases differ only in a number and the wrong one is the plausible one.
+        planned = await _planned_candidates(session, run)
+        assert confirmation_phrase(planned[:STEP_PAGE]) == "REAP 50 SOULS 50 GB"
+        assert out.confirmation_phrase != "REAP 50 SOULS 50 GB"
 
     def test_an_unmeasured_item_reaching_the_byte_sum_aborts_the_run(self) -> None:
         """The tripwire under every byte cap, tested directly because nothing can reach it.
