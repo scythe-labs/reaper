@@ -39,6 +39,7 @@ from reaper.api.schemas import (
     ChipOut,
     Explanation,
     GroupOut,
+    GroupRollupOut,
     GroupSeasonMarkOut,
     LinksOut,
     RatingsOut,
@@ -333,7 +334,13 @@ async def list_candidates(
         snapshot = await _latest_snapshot(session)
         if snapshot is None:
             return CandidatePageOut(
-                items=[], total=0, total_bytes=0, unknown_size=0, offset=offset, snapshot_id=None
+                items=[],
+                groups=[],
+                total=0,
+                total_bytes=0,
+                unknown_size=0,
+                offset=offset,
+                snapshot_id=None,
             )
 
         # The filters, built once and applied to BOTH the count and the page, so the envelope's
@@ -491,21 +498,27 @@ async def list_candidates(
             .all()
         }
         expiries = await whitelist.spare_expiries(session)
+        group_keys = {r.group_key for r in rows if r.group_key}
         group_totals, group_marks = await _group_rollups(
-            session, snapshot.id, {r.group_key for r in rows if r.group_key}, decisions, expiries
+            session, snapshot.id, group_keys, decisions, expiries
         )
 
         return CandidatePageOut(
             items=[
-                _candidate_out(
-                    r,
-                    flagged.get(r.media_key),
-                    decisions,
-                    group_condemned=group_totals.get(r.group_key) if r.group_key else None,
-                    group_seasons=group_marks.get(r.group_key) if r.group_key else None,
-                    expiries=expiries,
-                )
+                _candidate_out(r, flagged.get(r.media_key), decisions, expiries=expiries)
                 for r in rows
+            ],
+            # One entry per show on the page, in place of the same four values stamped onto
+            # each of its season rows. Sorted so a page's shape does not depend on set order.
+            groups=[
+                GroupRollupOut(
+                    group_key=key,
+                    condemned_count=group_totals[key][0],
+                    condemned_bytes=group_totals[key][1],
+                    unknown_size=group_totals[key][2],
+                    seasons=group_marks[key],
+                )
+                for key in sorted(group_keys)
             ],
             total=int(totals[0]),
             total_bytes=int(totals[1]),
@@ -1156,8 +1169,6 @@ def _candidate_out(
     flagged_at: datetime | None = None,
     decisions: dict[str, str] | None = None,
     *,
-    group_condemned: tuple[int, int, int] | None = None,
-    group_seasons: list[GroupSeasonMarkOut] | None = None,
     expiries: dict[str, datetime | None] | None = None,
 ) -> CandidateOut:
     # Three views of the one whitelist: the decision in EFFECT (own, or inherited from the
@@ -1206,9 +1217,6 @@ def _candidate_out(
         requested_by=r.requested_by,
         group_key=r.group_key,
         group_title=r.group_title,
-        group_condemned_count=group_condemned[0] if group_condemned is not None else None,
-        group_condemned_bytes=group_condemned[1] if group_condemned is not None else None,
-        group_unknown_size=group_condemned[2] if group_condemned is not None else None,
         video_resolution=r.video_resolution,
         library=r.library_title,
         dormant_for=_dormant_for(explanation),
@@ -1228,7 +1236,6 @@ def _candidate_out(
         show_spare_expires_at=show_spare_exp.isoformat() if show_spare_exp is not None else None,
         chip=_chip(explanation, r.verdict, r.score, r.media_type),
         season_number=_season_number(r.media_key),
-        group_seasons=group_seasons,
         show_status=r.show_status,
     )
 

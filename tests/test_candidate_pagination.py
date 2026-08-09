@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -174,6 +175,7 @@ def test_before_the_first_scan_the_page_is_whole(unscanned_client: TestClient) -
     page = unscanned_client.get("/api/candidates?verdict=condemn&offset=40").json()
     assert page == {
         "items": [],
+        "groups": [],
         "total": 0,
         "total_bytes": 0,
         "unknown_size": 0,
@@ -251,28 +253,42 @@ def tv_client(tmp_path: Path) -> Iterator[TestClient]:
         yield c
 
 
+def _rollup(page: dict[str, Any], group_key: str) -> dict[str, Any]:
+    """The one rollup for a show, and proof there is exactly one.
+
+    Sent once per show now, not stamped on each season row, so a duplicate would be the
+    regression this shape was made to remove.
+    """
+    entries = [g for g in page["groups"] if g["group_key"] == group_key]
+    assert len(entries) == 1, f"expected one rollup for {group_key}, got {len(entries)}"
+    return cast("dict[str, Any]", entries[0])
+
+
 class TestGroupCondemnedTotals:
     def test_a_page_holding_part_of_a_show_still_reports_the_whole_plan(
         self, tv_client: TestClient
     ) -> None:
         """The failure this guards: a small first page holds two of six seasons, and the
-        card built from it used to say "2 seasons" while Reap now planned all six. Every
-        season row now carries the whole-snapshot totals."""
-        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()["items"]
-        seasons = [r for r in page if r["group_key"] == "sonarr:1:42"]
+        card built from it used to say "2 seasons" while Reap now planned all six. The
+        show's rollup describes the whole snapshot however little of it the page holds."""
+        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()
+        seasons = [r for r in page["items"] if r["group_key"] == "sonarr:1:42"]
         assert seasons, "the page should hold at least one of the show's seasons"
         assert len(seasons) < N_SEASONS, "the show must straddle the page for this test"
-        for row in seasons:
-            assert row["group_condemned_count"] == N_SEASONS
-            assert row["group_condemned_bytes"] == N_SEASONS * SEASON_SIZE
 
-    def test_movies_carry_no_group_totals(self, tv_client: TestClient) -> None:
-        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()["items"]
-        movies = [r for r in page if r["media_type"] == "movie"]
+        rollup = _rollup(page, "sonarr:1:42")
+        assert rollup["condemned_count"] == N_SEASONS
+        assert rollup["condemned_bytes"] == N_SEASONS * SEASON_SIZE
+        # Every season of the show, not the ones this page happened to fetch: the strip and a
+        # whole-show Reap are both judged over it.
+        assert len(rollup["seasons"]) == N_SEASONS
+
+    def test_movies_bring_no_rollup(self, tv_client: TestClient) -> None:
+        """A movie is its own card and has no show to roll up, so it contributes no entry."""
+        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()
+        movies = [r for r in page["items"] if r["media_type"] == "movie"]
         assert movies
-        for row in movies:
-            assert row["group_condemned_count"] is None
-            assert row["group_condemned_bytes"] is None
+        assert {g["group_key"] for g in page["groups"]} == {"sonarr:1:42"}
 
     def test_a_hand_spared_season_leaves_the_plan_totals(self, tv_client: TestClient) -> None:
         """The totals must match the planner exactly, and the planner drops hand-spares:
@@ -283,12 +299,13 @@ class TestGroupCondemnedTotals:
         )
         assert spare.status_code == 200, spare.text
 
-        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()["items"]
-        seasons = [r for r in page if r["group_key"] == "sonarr:1:42"]
-        assert seasons
-        for row in seasons:
-            assert row["group_condemned_count"] == N_SEASONS - 1
-            assert row["group_condemned_bytes"] == (N_SEASONS - 1) * SEASON_SIZE
+        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()
+        rollup = _rollup(page, "sonarr:1:42")
+        assert rollup["condemned_count"] == N_SEASONS - 1
+        assert rollup["condemned_bytes"] == (N_SEASONS - 1) * SEASON_SIZE
+        # The spared season leaves the plan and stays on the strip, which is what draws it
+        # as kept rather than dropping it out of the show.
+        assert len(rollup["seasons"]) == N_SEASONS
 
     def test_sparing_the_whole_show_zeroes_the_plan(self, tv_client: TestClient) -> None:
         spare = tv_client.post(
@@ -298,9 +315,29 @@ class TestGroupCondemnedTotals:
 
         # A whole-show spare moves its seasons onto the Kept lane (their stored verdict stays pure
         # policy); the plan they would have fed is now empty.
-        page = tv_client.get("/api/candidates?verdict=protect&limit=10&offset=0").json()["items"]
-        seasons = [r for r in page if r["group_key"] == "sonarr:1:42"]
-        assert seasons  # the rows still list, now on the Kept lane; the plan is empty
-        for row in seasons:
-            assert row["group_condemned_count"] == 0
-            assert row["group_condemned_bytes"] == 0
+        page = tv_client.get("/api/candidates?verdict=protect&limit=10&offset=0").json()
+        assert [r for r in page["items"] if r["group_key"] == "sonarr:1:42"]
+        rollup = _rollup(page, "sonarr:1:42")
+        assert rollup["condemned_count"] == 0
+        assert rollup["condemned_bytes"] == 0
+
+    def test_a_show_split_across_pages_carries_its_rollup_on_both(
+        self, tv_client: TestClient
+    ) -> None:
+        """The queue merges rollups by key across every page it has fetched, so a show first
+        seen on a later page must bring its own. Reading only the first page would leave that
+        show's card with no count at all, beside its Reap button (rule 30)."""
+        pages = [
+            tv_client.get(f"/api/candidates?verdict=condemn&limit=10&offset={offset}").json()
+            for offset in (0, 10, 20)
+        ]
+        carrying = [p for p in pages if any(g["group_key"] == "sonarr:1:42" for g in p["groups"])]
+        assert len(carrying) > 1, "the fixture must split the show across pages"
+        # Same whole-snapshot figures on every page that carries it, so which copy a merge
+        # keeps cannot change the number.
+        assert {
+            (g["condemned_count"], g["condemned_bytes"], len(g["seasons"]))
+            for p in carrying
+            for g in p["groups"]
+            if g["group_key"] == "sonarr:1:42"
+        } == {(N_SEASONS, N_SEASONS * SEASON_SIZE, N_SEASONS)}

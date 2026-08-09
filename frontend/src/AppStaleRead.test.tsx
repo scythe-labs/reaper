@@ -77,6 +77,7 @@ const COMPLETE_SETUP: SetupStatus = {
 
 const EMPTY_PAGE: CandidatePage = {
   items: [],
+  groups: [],
   total: 0,
   total_bytes: 0,
   unknown_size: 0,

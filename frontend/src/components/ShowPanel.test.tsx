@@ -50,9 +50,6 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     requested_by: null,
     group_key: "sonarr:show:1",
     group_title: "Example Show",
-    group_condemned_count: null,
-    group_condemned_bytes: null,
-    group_unknown_size: null,
     video_resolution: null,
     library: null,
     dormant_for: null,
@@ -67,7 +64,6 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     chip: null,
     show_status: null,
     season_number: n,
-    group_seasons: null,
     ...extra,
   };
   if (extra.override_own === undefined) c.override_own = c.override;

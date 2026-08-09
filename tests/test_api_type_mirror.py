@@ -112,8 +112,10 @@ CLIENT_ONLY = {
 # assembly of a bare list plus four response headers and sat in CLIENT_ONLY above. It is a
 # served model now, `CandidatePageOut`, pairing on the suffix rule, so it left that set
 # without being a new interface.
-EXPECTED_INTERFACES = 93
-EXPECTED_PAIRS = 91
+# Both +1 again for the second half of W8-1: `GroupRollup` pairs with `GroupRollupOut` on the
+# suffix rule. It is the show-level rollup that used to be four fields on every season row.
+EXPECTED_INTERFACES = 94
+EXPECTED_PAIRS = 92
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

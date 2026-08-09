@@ -543,6 +543,7 @@ describe("the authenticated app's heading outline", () => {
     apiMock.fairness.mockResolvedValue({ generated_at: null, horizon_at: null, requesters: [] });
     apiMock.candidates.mockResolvedValue({
       items: [],
+      groups: [],
       total: 0,
       total_bytes: 0,
       unknown_size: 0,

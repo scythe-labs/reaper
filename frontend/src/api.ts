@@ -92,14 +92,6 @@ export interface Candidate {
   requested_by: string | null;
   group_key: string | null;
   group_title: string | null;
-  /** How many seasons "Reap now" on this show would plan: its condemned, not-spared
-   *  seasons across the whole snapshot, not just the fetched pages. Null for movies. */
-  group_condemned_count: number | null;
-  /** The byte total over that same set: the number the planner will act on. */
-  group_condemned_bytes: number | null;
-  /** How many of the show's actable seasons have no size. They are left out of both
-   *  numbers above, because the planner will not plan them. Null for movies. */
-  group_unknown_size: number | null;
   /** Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality badge.
    *  Null hides the badge (TV seasons, unmatched items, rows from older scans). */
   video_resolution: string | null;
@@ -151,9 +143,6 @@ export interface Candidate {
   chip: Chip | null;
   /** Which season this row is, for season rows. Null for movies and unparseable keys. */
   season_number: number | null;
-  /** The whole show's per-season verdict marks, for the card's season strip. Null for
-   *  movies. */
-  group_seasons: GroupSeasonMark[] | null;
   /** Whether the show has finished. Null for a movie, where the question doesn't apply,
    *  and on a row stored before this field existed -- both render nothing at all. */
   show_status: ShowStatus | null;
@@ -200,10 +189,33 @@ export interface Group {
   seasons: Candidate[];
 }
 
+/** What one show on the page looks like across the whole snapshot, sent once per show
+ *  rather than stamped onto each of its season rows.
+ *
+ *  Every figure spans the whole snapshot, never the fetched page: a page can hold some of a
+ *  show's seasons and not the rest, and these numbers sit beside "Reap now". */
+export interface GroupRollup {
+  group_key: string;
+  /** How many seasons "Reap now" on this show would plan: its condemned, not-spared
+   *  seasons, plus the hand reaps the engine honors. */
+  condemned_count: number;
+  /** The byte total over that same set: the number the planner will act on. */
+  condemned_bytes: number;
+  /** How many of those seasons have no size. They are left out of both numbers above,
+   *  because the planner will not plan them. */
+  unknown_size: number;
+  /** Every season of the show, all lanes, for the card's season strip. */
+  seasons: GroupSeasonMark[];
+}
+
 /** One page of candidates, plus the full-set totals the server measured before the page
  *  window -- what the queue header counts and sizes. */
 export interface CandidatePage {
   items: Candidate[];
+  /** One entry per show with a row on this page. A show straddling two pages appears in
+   *  both with the same figures, so merging pages by `group_key` cannot leave a partial
+   *  rollup behind. */
+  groups: GroupRollup[];
   total: number;
   total_bytes: number;
   /** How many across the whole filtered set have no size. `total_bytes` is the sum of

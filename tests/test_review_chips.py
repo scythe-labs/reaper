@@ -1389,7 +1389,8 @@ class TestCandidatesCarryTheGroupShape:
         """A row in one lane still describes the WHOLE show's shape: its strip marks
         every season across every lane, so the card can show kept and condemned
         side by side."""
-        rows = client.get("/api/candidates", params={"verdict": "abstain"}).json()["items"]
+        page = client.get("/api/candidates", params={"verdict": "abstain"}).json()
+        rows = page["items"]
         assert len(rows) == 1
         row = rows[0]
         assert row["season_number"] == 3
@@ -1400,7 +1401,10 @@ class TestCandidatesCarryTheGroupShape:
             # without the frontend parsing the text back apart (H-1).
             "why": "watched more than a season your rule keeps",
         }
-        marks = row["group_seasons"]
+        # The strip rides the show's own rollup, sent once beside the rows rather than
+        # copied onto each of them.
+        rollup = next(g for g in page["groups"] if g["group_key"] == row["group_key"])
+        marks = rollup["seasons"]
         assert [(m["season"], m["verdict"]) for m in marks] == [
             (1, "protect"),
             (2, "condemn"),
@@ -1412,12 +1416,14 @@ class TestCandidatesCarryTheGroupShape:
         assert all(isinstance(m["id"], int) for m in marks)
         assert next(m["id"] for m in marks if m["season"] == 3) == row["id"]
 
-    def test_movie_rows_carry_no_strip(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()["items"]
-        movie = next(r for r in rows if r["media_type"] == "movie")
-        assert movie["group_seasons"] is None
+    def test_movie_rows_bring_no_rollup(self, client: TestClient) -> None:
+        page = client.get("/api/candidates", params={"verdict": "condemn"}).json()
+        movie = next(r for r in page["items"] if r["media_type"] == "movie")
+        assert movie["group_key"] is None
         assert movie["season_number"] is None
         assert movie["chip"] is None  # condemned cards keep the amber pill instead
+        # No show, so nothing to roll up: a movie contributes no entry of its own.
+        assert all(g["group_key"] is not None for g in page["groups"])
 
 
 class TestGroupDetail:

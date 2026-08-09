@@ -6,7 +6,7 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Candidate, Chip, Group, ShowStatus, Verdict } from "../api";
+import type { Candidate, Chip, Group, GroupSeasonMark, ShowStatus, Verdict } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
@@ -55,9 +55,6 @@ function season(
     requested_by: null,
     group_key: "sonarr:5:42",
     group_title: "Example Show",
-    group_condemned_count: null,
-    group_condemned_bytes: null,
-    group_unknown_size: null,
     video_resolution: null,
     library: null,
     dormant_for: null,
@@ -72,40 +69,41 @@ function season(
     chip,
     show_status: showStatus,
     season_number: n,
-    group_seasons: [
-      {
-        id: 1,
-        season: 1,
-        verdict: "protect",
-        override: null,
-        override_effective: null,
-        size_bytes: 1024 ** 3,
-        spare_expires_at: null,
-        spare_covers_until: null,
-      },
-      {
-        id: 2,
-        season: 2,
-        verdict: "condemn",
-        override: null,
-        override_effective: null,
-        size_bytes: 1024 ** 3,
-        spare_expires_at: null,
-        spare_covers_until: null,
-      },
-      {
-        id: 3,
-        season: 3,
-        verdict: "abstain",
-        override: null,
-        override_effective: null,
-        size_bytes: 1024 ** 3,
-        spare_expires_at: null,
-        spare_covers_until: null,
-      },
-    ],
   };
 }
+
+const SHOW_SEASONS: GroupSeasonMark[] = [
+  {
+    id: 1,
+    season: 1,
+    verdict: "protect",
+    override: null,
+    override_effective: null,
+    size_bytes: 1024 ** 3,
+    spare_expires_at: null,
+    spare_covers_until: null,
+  },
+  {
+    id: 2,
+    season: 2,
+    verdict: "condemn",
+    override: null,
+    override_effective: null,
+    size_bytes: 1024 ** 3,
+    spare_expires_at: null,
+    spare_covers_until: null,
+  },
+  {
+    id: 3,
+    season: 3,
+    verdict: "abstain",
+    override: null,
+    override_effective: null,
+    size_bytes: 1024 ** 3,
+    spare_expires_at: null,
+    spare_covers_until: null,
+  },
+];
 
 const limboSeason = season(3, 3, "abstain", 82, {
   tone: "look",
@@ -122,6 +120,16 @@ function renderQueue(
   const items = overrides.items ?? [limboSeason];
   apiMock.candidates.mockResolvedValue({
     items,
+    // One rollup per show on the page, carrying the seasons the strip draws. Every row here
+    // belongs to the same show unless a test gives it its own key, and a show with no rollup
+    // simply draws no strip.
+    groups: [...new Set(items.map((i) => i.group_key).filter((k) => k !== null))].map((key) => ({
+      group_key: key,
+      condemned_count: 0,
+      condemned_bytes: 0,
+      unknown_size: 0,
+      seasons: SHOW_SEASONS,
+    })),
     total: items.length,
     total_bytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
     unknown_size: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
