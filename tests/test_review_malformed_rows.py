@@ -180,11 +180,11 @@ class TestTheQueueSurvivesABrokenRow:
         for verdict in ("condemn", "protect", "abstain"):
             response = client.get("/api/candidates", params={"verdict": verdict})
             assert response.status_code == 200
-            seen.update(str(row["media_key"]) for row in response.json())
+            seen.update(str(row["media_key"]) for row in response.json()["items"])
         assert seen == set(MALFORMED) | {"radarr:1:7"}
 
     def test_a_broken_row_shows_no_reason_rather_than_a_wrong_one(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates", params={"verdict": "protect"}).json()
+        rows = client.get("/api/candidates", params={"verdict": "protect"}).json()["items"]
         by_key = {str(r["media_key"]): r for r in rows}
         # Nothing readable to lead with, so the card leads with nothing.
         assert by_key["radarr:1:2"]["reason"] is None
@@ -200,7 +200,7 @@ class TestTheQueueSurvivesABrokenRow:
         The row is stored ``abstain`` but rides the KEPT lane, because a reap the engine
         will not honor keeps the file.
         """
-        rows = client.get("/api/candidates", params={"verdict": "protect"}).json()
+        rows = client.get("/api/candidates", params={"verdict": "protect"}).json()["items"]
         row = next(r for r in rows if r["media_key"] == "radarr:1:6")
         assert row["override"] == "reap"
         assert row["override_effective"] is False
@@ -208,7 +208,7 @@ class TestTheQueueSurvivesABrokenRow:
 
 class TestTheWhyPanelSurvivesABrokenRow:
     def test_it_degrades_and_says_so(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()
+        rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()["items"]
         detail = client.get(f"/api/candidates/{rows[0]['id']}")
         assert detail.status_code == 200
         body = detail.json()
@@ -225,7 +225,7 @@ class TestTheWhyPanelSurvivesABrokenRow:
         Without this the degradation would be untestable -- a panel that always claimed
         the reasons were missing would pass every assertion above it.
         """
-        rows = client.get("/api/candidates", params={"verdict": "protect"}).json()
+        rows = client.get("/api/candidates", params={"verdict": "protect"}).json()["items"]
         row = next(r for r in rows if r["media_key"] == "radarr:1:7")
         body = client.get(f"/api/candidates/{row['id']}").json()
         assert body["explanation_unreadable"] is False

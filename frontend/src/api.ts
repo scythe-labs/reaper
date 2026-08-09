@@ -205,14 +205,15 @@ export interface Group {
 export interface CandidatePage {
   items: Candidate[];
   total: number;
-  totalBytes: number;
-  /** How many across the whole filtered set have no size. `totalBytes` is the sum of
+  total_bytes: number;
+  /** How many across the whole filtered set have no size. `total_bytes` is the sum of
    *  what is known; this is what it could not include. */
-  unknownSize: number;
+  unknown_size: number;
+  /** Where this page starts. The queue asks for `offset + items.length` next. */
   offset: number;
   /** The snapshot this page was drawn from, or null before any scan. The queue compares it
    *  against the newest completed scan to notice when a fresher snapshot has landed under it. */
-  snapshotId: number | null;
+  snapshot_id: number | null;
 }
 
 export type RequestedFilter = "any" | "yes" | "no";
@@ -1616,8 +1617,8 @@ async function throwIfFailed(response: Response, path: string): Promise<void> {
 
 /** EVERY request the app makes goes through here: the CSRF header, the session hook, and the
  *  error mapping, in one place, returning the raw Response for the few callers that need more
- *  than a parsed body (the paged queue reads its totals off the headers; the two downloads
- *  want a blob).
+ *  than a parsed body: the two downloads want a blob, and the restore upload sends a file
+ *  rather than the JSON body `request` names.
  *
  *  Four call sites used to hand-roll this `fetch` -- so the wrapper only looked like a choke
  *  point, and a cross-cutting change landed on three quarters of the surface. They had already
@@ -1684,9 +1685,9 @@ const plexForward = () => ({ forward_origin: window.location.origin });
 export const api = {
   latestSnapshot: () => request<Snapshot>("/api/snapshots/latest"),
   /** One page of the review queue. The full filtered totals (count + bytes, before the page
-   *  window) ride along in response headers, so the queue can show the whole set's count and
-   *  byte total without loading them all. Paged because a library runs to thousands of
-   *  protected titles. */
+   *  window) ride in the envelope beside the rows, so the queue can show the whole set's
+   *  count and byte total without loading them all. Paged because a library runs to
+   *  thousands of protected titles. */
   candidates: async (
     verdict: Verdict,
     q: CandidateQuery = {},
@@ -1705,19 +1706,13 @@ export const api = {
     params.set("limit", String(limit));
     params.set("offset", String(offset));
 
-    const response = await fetchApi(`/api/candidates?${params.toString()}`, {
-      headers: { "Content-Type": "application/json" },
-    });
-    const items = (await parseBody<Candidate[]>(response)) ?? [];
-    const snapshotHeader = response.headers.get("X-Snapshot-Id");
-    return {
-      items,
-      total: Number(response.headers.get("X-Total-Count") ?? items.length),
-      totalBytes: Number(response.headers.get("X-Total-Bytes") ?? 0),
-      unknownSize: Number(response.headers.get("X-Unknown-Size-Count") ?? 0),
-      offset,
-      snapshotId: snapshotHeader ? Number(snapshotHeader) : null,
-    };
+    const page = await request<CandidatePage>(`/api/candidates?${params.toString()}`);
+    // A 200 with no body is not an empty queue. `parseBody` reads one as `undefined` (a
+    // proxy answering for Reaper, say), the queue would index straight into it, and the
+    // page it drew would say "nothing to review" about a read that never landed. This is
+    // the one read whose consumer holds a list of pages, so it says so out loud instead.
+    if (!page) throw new ApiError(502, "Reaper got an unexpected reply from the server.");
+    return page;
   },
   candidate: (id: number) => request<CandidateDetail>(`/api/candidates/${id}`),
   /** One show, whole: every season in the latest snapshot, across all lanes. */

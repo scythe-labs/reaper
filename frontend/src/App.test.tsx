@@ -544,10 +544,10 @@ describe("the authenticated app's heading outline", () => {
     apiMock.candidates.mockResolvedValue({
       items: [],
       total: 0,
-      totalBytes: 0,
-      unknownSize: 0,
+      total_bytes: 0,
+      unknown_size: 0,
       offset: 0,
-      snapshotId: 1,
+      snapshot_id: 1,
     });
     apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
     apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);

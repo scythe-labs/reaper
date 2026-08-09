@@ -78,10 +78,10 @@ const COMPLETE_SETUP: SetupStatus = {
 const EMPTY_PAGE: CandidatePage = {
   items: [],
   total: 0,
-  totalBytes: 0,
-  unknownSize: 0,
+  total_bytes: 0,
+  unknown_size: 0,
   offset: 0,
-  snapshotId: 1,
+  snapshot_id: 1,
 };
 
 // The Dashboard's own marker, rendered above the lazy section boundary, so it is on screen

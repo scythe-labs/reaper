@@ -1389,7 +1389,7 @@ class TestCandidatesCarryTheGroupShape:
         """A row in one lane still describes the WHOLE show's shape: its strip marks
         every season across every lane, so the card can show kept and condemned
         side by side."""
-        rows = client.get("/api/candidates", params={"verdict": "abstain"}).json()
+        rows = client.get("/api/candidates", params={"verdict": "abstain"}).json()["items"]
         assert len(rows) == 1
         row = rows[0]
         assert row["season_number"] == 3
@@ -1413,7 +1413,7 @@ class TestCandidatesCarryTheGroupShape:
         assert next(m["id"] for m in marks if m["season"] == 3) == row["id"]
 
     def test_movie_rows_carry_no_strip(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()
+        rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()["items"]
         movie = next(r for r in rows if r["media_type"] == "movie")
         assert movie["group_seasons"] is None
         assert movie["season_number"] is None

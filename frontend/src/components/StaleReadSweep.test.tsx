@@ -527,10 +527,10 @@ function renderQueue(firstRead: "ok" | Error = "ok"): QueryClient {
     apiMock.candidates.mockResolvedValue({
       items,
       total: items.length,
-      totalBytes: 1024 ** 3,
-      unknownSize: 0,
+      total_bytes: 1024 ** 3,
+      unknown_size: 0,
       offset: 0,
-      snapshotId: 1,
+      snapshot_id: 1,
     });
   return renderWithClient(
     <ReviewQueue

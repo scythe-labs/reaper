@@ -5,8 +5,8 @@ A real library runs to thousands of protected titles; returning them in one payl
 capping the list and hiding the tail (the bug: "thousands scanned, fewer than a thousand
 shown"). The endpoint now returns a page of ``limit`` rows at ``offset`` and reports the
 full filtered set -- a count and a byte total measured *before* the page window -- in the
-``X-Total-Count`` and ``X-Total-Bytes`` headers, so the header can read the whole set's count
-while only a page is on the wire.
+envelope's ``total`` and ``total_bytes``, so the header can read the whole set's count while
+only a page is on the wire.
 """
 
 from __future__ import annotations
@@ -90,34 +90,43 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 class TestPagination:
-    def test_the_headers_report_the_whole_filtered_set(self, client: TestClient) -> None:
-        r = client.get("/api/candidates?verdict=condemn&limit=100&offset=0")
-        assert r.headers["X-Total-Count"] == str(N_CONDEMN)
-        assert r.headers["X-Total-Bytes"] == str(N_CONDEMN * SIZE)
+    def test_the_totals_report_the_whole_filtered_set(self, client: TestClient) -> None:
+        page = client.get("/api/candidates?verdict=condemn&limit=100&offset=0").json()
+        assert page["total"] == N_CONDEMN
+        assert page["total_bytes"] == N_CONDEMN * SIZE
+        # Every row here has a size, so nothing is left out of the byte total.
+        assert page["unknown_size"] == 0
         # ...even though only a page is on the wire.
-        assert len(r.json()) == 100
+        assert len(page["items"]) == 100
 
     def test_a_page_is_capped_even_when_more_exist(self, client: TestClient) -> None:
         # The default page (no limit) no longer returns the whole set.
-        assert len(client.get("/api/candidates?verdict=condemn").json()) == 100
+        assert len(client.get("/api/candidates?verdict=condemn").json()["items"]) == 100
 
     def test_offset_walks_the_whole_set_without_gaps_or_overlap(self, client: TestClient) -> None:
         seen: list[str] = []
         for offset in range(0, N_CONDEMN, 100):
             page = client.get(f"/api/candidates?verdict=condemn&limit=100&offset={offset}").json()
-            seen.extend(str(row["media_key"]) for row in page)
+            # The envelope says where it starts, which is what the queue asks the next page from.
+            assert page["offset"] == offset
+            seen.extend(str(row["media_key"]) for row in page["items"])
         assert len(seen) == N_CONDEMN
         assert len(set(seen)) == N_CONDEMN  # every key exactly once
 
     def test_the_last_page_is_short_and_then_empty(self, client: TestClient) -> None:
-        assert len(client.get("/api/candidates?verdict=condemn&limit=100&offset=200").json()) == 50
-        assert len(client.get("/api/candidates?verdict=condemn&limit=100&offset=250").json()) == 0
+        short = client.get("/api/candidates?verdict=condemn&limit=100&offset=200").json()
+        past_the_end = client.get("/api/candidates?verdict=condemn&limit=100&offset=250").json()
+        assert len(short["items"]) == 50
+        assert len(past_the_end["items"]) == 0
+        # A page past the end still reports the whole set, so the queue's header does not
+        # blank out when the operator scrolls to the bottom.
+        assert past_the_end["total"] == N_CONDEMN
 
     def test_totals_track_the_filter_not_the_snapshot(self, client: TestClient) -> None:
         # A different verdict is a different filtered set, so its totals differ.
-        r = client.get("/api/candidates?verdict=protect&limit=100&offset=0")
-        assert r.headers["X-Total-Count"] == str(N_PROTECT)
-        assert r.headers["X-Total-Bytes"] == str(N_PROTECT * SIZE)
+        page = client.get("/api/candidates?verdict=protect&limit=100&offset=0").json()
+        assert page["total"] == N_PROTECT
+        assert page["total_bytes"] == N_PROTECT * SIZE
 
     def test_the_page_names_the_snapshot_it_came_from(self, client: TestClient) -> None:
         # The queue compares this against the newest completed scan to tell when a fresher
@@ -128,7 +137,40 @@ class TestPagination:
             "/api/candidates?verdict=condemn&limit=100&offset=0",
             "/api/candidates?verdict=protect&limit=100&offset=0",
         ):
-            assert client.get(path).headers["X-Snapshot-Id"] == str(latest_id)
+            assert client.get(path).json()["snapshot_id"] == latest_id
+
+
+@pytest.fixture
+def unscanned_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A database with the tables and no snapshot: what an operator sees before the first
+    scan finishes."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+def test_before_the_first_scan_the_page_is_whole(unscanned_client: TestClient) -> None:
+    """Every field, not the two the headers used to carry.
+
+    The header form set ``X-Total-Count`` and ``X-Total-Bytes`` on this branch and neither
+    of the other two, so the browser read a missing ``X-Unknown-Size-Count`` as zero and a
+    missing ``X-Snapshot-Id`` as null by two different defaults it wrote itself. One model
+    answers the whole shape or it does not answer at all.
+    """
+    page = unscanned_client.get("/api/candidates?verdict=condemn&offset=40").json()
+    assert page == {
+        "items": [],
+        "total": 0,
+        "total_bytes": 0,
+        "unknown_size": 0,
+        "offset": 40,
+        "snapshot_id": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +249,7 @@ class TestGroupCondemnedTotals:
         """The failure this guards: a small first page holds two of six seasons, and the
         card built from it used to say "2 seasons" while Reap now planned all six. Every
         season row now carries the whole-snapshot totals."""
-        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()
+        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()["items"]
         seasons = [r for r in page if r["group_key"] == "sonarr:1:42"]
         assert seasons, "the page should hold at least one of the show's seasons"
         assert len(seasons) < N_SEASONS, "the show must straddle the page for this test"
@@ -216,7 +258,7 @@ class TestGroupCondemnedTotals:
             assert row["group_condemned_bytes"] == N_SEASONS * SEASON_SIZE
 
     def test_movies_carry_no_group_totals(self, tv_client: TestClient) -> None:
-        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()
+        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()["items"]
         movies = [r for r in page if r["media_type"] == "movie"]
         assert movies
         for row in movies:
@@ -232,7 +274,7 @@ class TestGroupCondemnedTotals:
         )
         assert spare.status_code == 200, spare.text
 
-        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()
+        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()["items"]
         seasons = [r for r in page if r["group_key"] == "sonarr:1:42"]
         assert seasons
         for row in seasons:
@@ -247,7 +289,7 @@ class TestGroupCondemnedTotals:
 
         # A whole-show spare moves its seasons onto the Kept lane (their stored verdict stays pure
         # policy); the plan they would have fed is now empty.
-        page = tv_client.get("/api/candidates?verdict=protect&limit=10&offset=0").json()
+        page = tv_client.get("/api/candidates?verdict=protect&limit=10&offset=0").json()["items"]
         seasons = [r for r in page if r["group_key"] == "sonarr:1:42"]
         assert seasons  # the rows still list, now on the Kept lane; the plan is empty
         for row in seasons:

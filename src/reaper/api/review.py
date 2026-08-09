@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import and_, asc, desc, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -35,6 +35,7 @@ from reaper.api.schemas import (
     CandidateDetail,
     CandidateLinkOut,
     CandidateOut,
+    CandidatePageOut,
     ChipOut,
     Explanation,
     GroupOut,
@@ -288,7 +289,6 @@ def _like_literal(text_: str) -> str:
 @router.get("/candidates", tags=[api_tags.REVIEW])
 async def list_candidates(
     request: Request,
-    response: Response,
     verdict: str = "condemn",
     search: str | None = None,
     media_type: str | None = None,
@@ -300,15 +300,15 @@ async def list_candidates(
     order: str = "desc",
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-) -> list[CandidateOut]:
+) -> CandidatePageOut:
     """One page of the review queue.
 
     The list is **paged** -- a library runs to thousands of protected titles, and returning
     them in one payload was hiding the tail: the client fetches ``limit`` rows at ``offset``
-    and asks for the next page as it scrolls. The full size of the filtered set (a count and a
-    byte total, both *before* the page window) is returned in the ``X-Total-Count`` and
-    ``X-Total-Bytes`` response headers, so the queue can show the whole set's count and byte
-    total without having loaded them all.
+    and asks for the next page as it scrolls. The full size of the filtered set (a count, a
+    byte total and how many rows have no size, all *before* the page window) rides in the
+    envelope beside the rows, so the queue can show the whole set's count and byte total
+    without having loaded them all.
 
     Default order is by score, then by size -- so the biggest wins among the safest
     deletions come first. Size ranks the candidates the score has already chosen; it never
@@ -332,11 +332,11 @@ async def list_candidates(
     async with _sessions(request)() as session:
         snapshot = await _latest_snapshot(session)
         if snapshot is None:
-            response.headers["X-Total-Count"] = "0"
-            response.headers["X-Total-Bytes"] = "0"
-            return []
+            return CandidatePageOut(
+                items=[], total=0, total_bytes=0, unknown_size=0, offset=offset, snapshot_id=None
+            )
 
-        # The filters, built once and applied to BOTH the count and the page, so the header
+        # The filters, built once and applied to BOTH the count and the page, so the envelope's
         # totals describe exactly the set the rows are drawn from.
         decisions = await whitelist.overrides(session)
         conditions = [Candidate.snapshot_id == snapshot.id]
@@ -438,7 +438,7 @@ async def list_candidates(
 
         # The byte total is a SUM, which skips NULL rows without saying so, and COALESCE
         # cannot tell that from a real zero. So the unmeasured count is taken in the same
-        # query under the same conditions, and the header carries it beside the total.
+        # query under the same conditions, and the envelope carries it beside the total.
         totals = (
             await session.execute(
                 select(
@@ -448,13 +448,6 @@ async def list_candidates(
                 ).where(*conditions)
             )
         ).one()
-        response.headers["X-Total-Count"] = str(int(totals[0]))
-        response.headers["X-Total-Bytes"] = str(int(totals[1]))
-        response.headers["X-Unknown-Size-Count"] = str(int(totals[2]))
-        # Which snapshot this page was drawn from. The queue compares it against the newest
-        # completed scan (from the polled status) to notice when a scan has landed a fresher
-        # snapshot underneath an open review, without re-deciding anything here.
-        response.headers["X-Snapshot-Id"] = str(snapshot.id)
 
         direction = asc if order == "asc" else desc
         sort_columns = {
@@ -502,17 +495,27 @@ async def list_candidates(
             session, snapshot.id, {r.group_key for r in rows if r.group_key}, decisions, expiries
         )
 
-        return [
-            _candidate_out(
-                r,
-                flagged.get(r.media_key),
-                decisions,
-                group_condemned=group_totals.get(r.group_key) if r.group_key else None,
-                group_seasons=group_marks.get(r.group_key) if r.group_key else None,
-                expiries=expiries,
-            )
-            for r in rows
-        ]
+        return CandidatePageOut(
+            items=[
+                _candidate_out(
+                    r,
+                    flagged.get(r.media_key),
+                    decisions,
+                    group_condemned=group_totals.get(r.group_key) if r.group_key else None,
+                    group_seasons=group_marks.get(r.group_key) if r.group_key else None,
+                    expiries=expiries,
+                )
+                for r in rows
+            ],
+            total=int(totals[0]),
+            total_bytes=int(totals[1]),
+            unknown_size=int(totals[2]),
+            offset=offset,
+            # Which snapshot this page was drawn from. The queue compares it against the newest
+            # completed scan (from the polled status) to notice when a scan has landed a fresher
+            # snapshot underneath an open review, without re-deciding anything here.
+            snapshot_id=snapshot.id,
+        )
 
 
 def _add_member(total: tuple[int, int, int], size_bytes: int | None) -> tuple[int, int, int]:
