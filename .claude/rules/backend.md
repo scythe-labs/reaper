@@ -322,9 +322,13 @@ carries the heal migration's reflection guard, so in-window databases upgrade in
 boot-looping. Never edit the baseline; when the rule is broken anyway, the follow-up is guarded,
 not plain.
 
-**94. Every `WHERE col IN :keys` over a scan-sized set is chunked at 500 or fewer.** An unchunked
-expanding bindparam overflows SQLite's variable ceiling and aborts the scan; chunk it, or express
-the filter as an anti-join. A new `parent_rating_key`-style filter also needs its covering index.
+**94. Every `WHERE col IN :keys` over a scan-sized set is chunked on `db.KEY_CHUNK` (500).** An
+unchunked expanding bindparam overflows SQLite's variable ceiling and aborts the scan; chunk it,
+or express the filter as an anti-join. **The bound is one declaration and the sweep is a gate**:
+this rule spelled the number in prose and nowhere in code, five sites spelled it five ways, and
+the grace report shipped reading the whole condemned set in one statement, so
+`test_repo_hygiene.py` collects every membership filter in `src/` and fails on one carrying no
+written classification. A new `parent_rating_key`-style filter also needs its covering index.
 Reconcile a `cache.db` index by name and create the missing one in place; never bump the
 column-shape tuple to force it, which drops the whole mirror.
 
