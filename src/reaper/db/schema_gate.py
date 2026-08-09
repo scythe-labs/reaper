@@ -64,7 +64,7 @@ DATABASE_IS_NEWER = (
 #: The fail-closed answer when the migrations that ship beside the code cannot be read at
 #: all. Without them there is no set to compare against, so the question is unanswerable
 #: rather than answered "fine". ``launcher.main`` refuses the same broken install earlier
-#: and in the same words, for installs that reach it (a bare ``pip install``).
+#: where it reaches it (a bare ``pip install``), in its own words but the same noun.
 MIGRATIONS_UNREADABLE = (
     "Reaper stopped. It can't find the database migrations that ship with it, so it "
     "can't tell whether this database is one it can read. Install Reaper again."

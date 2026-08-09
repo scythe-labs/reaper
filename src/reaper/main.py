@@ -19,8 +19,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import __version__, logbuffer
@@ -116,22 +116,6 @@ def _report_background_failure(task: asyncio.Task[Any]) -> None:
         log.warning("startup.background_task_failed", task=task.get_name(), error=str(exc))
 
 
-async def _schema_revision(session: AsyncSession) -> str | None:
-    """The Alembic revision this database sits at: the boot log's, and the gate's.
-
-    "Which schema is this install on, and did the upgrade run" otherwise has no answer in
-    the log the operator downloads -- migrations are applied by a different process (the
-    container entrypoint, or `launcher._migrate`) whose output never reaches it. ``None``
-    is a database built straight from the models, which is what a test carries.
-    """
-    try:
-        result = await session.execute(text("SELECT version_num FROM alembic_version"))
-    except OperationalError:
-        return None
-    row = result.first()
-    return str(row[0]) if row and row[0] else None
-
-
 def _refuse_unservable_schema(revision: str | None) -> None:
     """Stop the boot rather than serve a schema this build does not know (#565).
 
@@ -188,11 +172,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     factory = create_session_factory(engine)
     app.state.session_factory = factory
 
-    # First, in its own session, before the block below seeds instances and writes
-    # settings: a database at a revision this build never shipped is refused here rather
-    # than discovered later as SQL naming a column that is not there.
-    async with factory() as session:
-        revision = await _schema_revision(session)
+    # First, before the block below seeds instances and writes settings: a database at a
+    # revision this build never shipped is refused here rather than discovered later as SQL
+    # naming a column that is not there.
+    #
+    # Read through the gate's own reader rather than a second query beside it. There was one
+    # here -- an async `SELECT version_num` catching `OperationalError` alone -- and it fed
+    # this gate, so "no alembic_version table" and "could not read the database" arrived as
+    # the same `None`, which `refusal` unconditionally allows. That is rule 93's conflation
+    # sitting on the gate's input, and one reader with one error policy is the fix (rule 104).
+    # It also serves `db.ready` below, which is where the revision was first wanted.
+    revision = schema_gate.stored_revision(settings.database_path)
     _refuse_unservable_schema(revision)
 
     # The caches live in their own file. See Settings.cache_database_url.

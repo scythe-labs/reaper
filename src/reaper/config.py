@@ -57,6 +57,14 @@ class InstanceSeed(BaseModel):
         return v.strip().rstrip("/")
 
 
+#: The precious, migrated database, named once (rule 104). Both driver URLs and
+#: :attr:`Settings.database_path` read it, and so does every caller that holds a bare
+#: ``data_dir`` rather than a ``Settings``. It was spelled out at five sites before the boot
+#: schema gate wanted a sixth, which is when four of them disagreeing became a real risk
+#: rather than a tidiness argument.
+DATABASE_FILENAME = "reaper.db"
+
+
 class DataDirError(RuntimeError):
     """The data directory is missing or not writable, so Reaper cannot start.
 
@@ -214,13 +222,15 @@ class Settings(BaseSettings):
 
     @property
     def database_path(self) -> Path:
-        """Where the precious database lives, spelled once (rule 104).
+        """Where the precious database lives.
 
         The two URLs below are two drivers reading this one file, and the boot schema gate
         (``reaper.db.schema_gate``) opens it directly with ``sqlite3`` before either engine
-        exists. Three spellings of one filename is three places for it to drift.
+        exists. All three read :data:`DATABASE_FILENAME`, which is the one declaration of
+        the name (rule 104), so does every caller holding only a bare ``data_dir`` and no
+        ``Settings`` -- ``services/retention.py``'s compaction is the one of those.
         """
-        return self.data_dir / "reaper.db"
+        return self.data_dir / DATABASE_FILENAME
 
     @property
     def database_url(self) -> str:
