@@ -40,6 +40,7 @@ const run = {
   total_bytes: 1024 ** 3,
   held_back_unknown_size: 0,
   confirmation_phrase: "REAP 2 ITEMS 1 GB",
+  step_count: 2,
   // Two steps, because `item_count` is 2: a run carrying a count with no steps under it is a
   // plan the planner cannot build, and the page renders `steps` unconditionally, so an empty
   // one drew a `<thead>` over an empty `<tbody>` -- a headers-only data table, which axe files
@@ -127,6 +128,27 @@ describe("ReapPlan staleness", () => {
   it("has no accessibility violations", async () => {
     const { container } = await buildPlan();
     await expectNoA11yViolations(container);
+  });
+
+  it("counts the rows it is not showing off step_count, never off the page it was sent", async () => {
+    // The response carries a WINDOW of the journal, so the rows this line is counting are not
+    // in it. Subtracting the page from itself reads zero, the line disappears, and the operator
+    // sees 50 rows with nothing saying the plan is 500 -- the copy failing in the reassuring
+    // direction, beside a destructive action (rule 62). Driven: `steps.length` here renders
+    // "NaN more steps" against this fixture, since a windowed response is exactly the case
+    // where the two numbers differ.
+    apiMock.createRun.mockResolvedValue({ ...run, step_count: 500 });
+    apiMock.run.mockResolvedValue({ ...run, step_count: 500 });
+    await buildPlan();
+
+    expect(await screen.findByText(/498 more steps, not shown/i)).toBeInTheDocument();
+    expect(screen.getByText(/The run still covers every one of them/i)).toBeInTheDocument();
+  });
+
+  it("says nothing about hidden rows when the window holds the whole plan", async () => {
+    await buildPlan();
+
+    expect(screen.queryByText(/not shown/i)).not.toBeInTheDocument();
   });
 
   it("says nothing when the plan came from the newest scan", async () => {

@@ -699,7 +699,23 @@ export interface Run {
   /** How many condemned items this plan left out because nothing would report their
    *  size. The plan is smaller than the queue implied, and this is what says so. */
   held_back_unknown_size: number;
+  /** How many journal rows this run holds in total. `steps` below is a window, so anything
+   *  counting rows reads THIS: `steps.length` is the size of the page, never the size of the
+   *  plan. Not `item_count` either, which counts deduplicated candidates, and a season is
+   *  three steps sharing one key. */
+  step_count: number;
+  /** The first page of the journal, not all of it. `api.runSteps` serves any window. */
   steps: ActionStep[];
+}
+
+/** One window of a run's journal, from `GET /api/runs/{id}/steps`. Its own route rather than
+ *  query parameters on the run detail: building that response re-derives the confirmation
+ *  phrase, and the sheet holds the detail under one cache key with an infinite stale time so
+ *  it keeps the exact plan it opened with. */
+export interface RunSteps {
+  steps: ActionStep[];
+  step_count: number;
+  offset: number;
 }
 
 /** One line of the run history: the stored row, and nothing derived. A past plan's counts,
@@ -1938,6 +1954,12 @@ export const api = {
 
   runs: () => request<RunSummary[]>("/api/runs"),
   run: (id: number) => request<Run>(`/api/runs/${id}`),
+  /** A window of one run's journal, past the page the detail route carries. No component
+   *  reads this yet: the step table still draws the first page and says how many it is not
+   *  showing. It ships with the route so the whole plan stays reachable, which is what the
+   *  table's own paging will read when it is built. */
+  runSteps: (id: number, offset = 0, limit = 50) =>
+    request<RunSteps>(`/api/runs/${id}/steps?offset=${offset}&limit=${limit}`),
   /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned set; an
    *  array reaps just those items -- the safe path for a first, hand-picked deletion.
    *

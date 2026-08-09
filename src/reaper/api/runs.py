@@ -38,6 +38,7 @@ from reaper.api.schemas import (
     RunOut,
     RunOutcomeOut,
     RunReportOut,
+    RunStepsOut,
     RunSummaryOut,
 )
 from reaper.config import Settings
@@ -83,6 +84,12 @@ async def _latest_snapshot(session: AsyncSession) -> Snapshot | None:
     return (
         await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
     ).scalar_one_or_none()
+
+
+#: How many journal rows a run's detail response carries, and the default page of the steps
+#: route. A plan of 500 seasons is 1,500 rows, each with a path and a stringified request body,
+#: and the table draws 50 of them. The rest are a route away rather than in every response.
+STEP_PAGE = 50
 
 
 async def _run_steps(session: AsyncSession, run: ReapRun) -> list[ActionStep]:
@@ -235,6 +242,21 @@ async def _run_out(
         total_bytes=plan_bytes(planned)[0],
         confirmation_phrase=confirmation_phrase(planned) if planned else "REAP 0 SOULS 0 GB",
         held_back_unknown_size=run.held_back_unknown_size,
+        step_count=len(steps),
+        # The window, and it is applied HERE rather than in `_run_steps` or
+        # `_planned_candidates`. Both of those feed the confirmation phrase: `planned` above
+        # comes off the full list, and `execute_run` re-derives the same phrase through
+        # `_planned_candidates` at send time. A LIMIT in either would shrink the phrase and the
+        # server's expectation together, so the comparison would still pass -- while
+        # `services.executor` loads its own steps and deletes every one. The operator would type
+        # REAP 50 SOULS and 500 would go.
+        #
+        # So slice the ITERABLE below, and never rebind `steps`. Two later uses of that name
+        # read the full list and a rebinding breaks whichever it sits above: the
+        # `_planned_candidates` call, which is the failure this comment is about, and
+        # `step_count` just above, which would report the window as the plan and silently empty
+        # the "N more steps" line the operator reads instead of the rows.
+        # `GET /api/runs/{id}/steps` serves anything past the window.
         steps=[
             ActionStepOut(
                 media_key=s.media_key,
@@ -247,7 +269,7 @@ async def _run_out(
                 is_canary=s.ordinal == 0,
                 error=s.error,
             )
-            for s in steps
+            for s in steps[:STEP_PAGE]
         ],
     )
 
@@ -331,11 +353,55 @@ async def list_runs(
 
 @router.get("/runs/{run_id}")
 async def get_run(request: Request, run_id: int) -> RunOut:
+    """One run, with the first page of its journal.
+
+    ``steps`` is a window, not the whole plan. ``step_count`` says how many rows there are and
+    ``GET /api/runs/{run_id}/steps`` serves the rest.
+    """
     async with _sessions(request)() as session:
         run = await session.get(ReapRun, run_id)
         if run is None:
             raise HTTPException(404, "No such run.")
         return await _run_out(session, run)
+
+
+@router.get("/runs/{run_id}/steps")
+async def get_run_steps(
+    request: Request,
+    run_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(STEP_PAGE, ge=1, le=500),
+) -> RunStepsOut:
+    """A window of one run's journal, for reading past what the run detail carries.
+
+    Reads only. Nothing here feeds the confirmation phrase or any count the operator acts on:
+    that is `_planned_candidates`, which the detail route and the execute route both derive
+    from the WHOLE step list. A cap belongs here and in `_run_out`'s serialization, never in
+    the shared helper underneath them.
+    """
+    async with _sessions(request)() as session:
+        run = await session.get(ReapRun, run_id)
+        if run is None:
+            raise HTTPException(404, "No such run.")
+        steps = await _run_steps(session, run)
+        return RunStepsOut(
+            steps=[
+                ActionStepOut(
+                    media_key=s.media_key,
+                    ordinal=s.ordinal,
+                    kind=s.kind,
+                    method=s.method,
+                    path=s.path,
+                    body=json.loads(s.body_json) if s.body_json else None,
+                    state=s.state.value,
+                    is_canary=s.ordinal == 0,
+                    error=s.error,
+                )
+                for s in steps[offset : offset + limit]
+            ],
+            step_count=len(steps),
+            offset=offset,
+        )
 
 
 @router.post("/runs/{run_id}/dry-run")

@@ -108,8 +108,11 @@ CLIENT_ONLY = {
 # `InstanceProbeOut` on the suffix rule, and needs no ALIAS entry. `InstanceTest` keeps its
 # own ALIAS to `TestOut`, and both sides narrow to the same three fields. The `TestVerdict`
 # alias it replaced was an `export type` and was counted by neither walk.
-EXPECTED_INTERFACES = 92
-EXPECTED_PAIRS = 89
+# Both +1 again for W8-2's steps window: `RunSteps` pairs with `RunStepsOut` on the suffix
+# rule. It is its own route rather than query parameters on the run detail, so it is its own
+# type rather than a widened `Run`.
+EXPECTED_INTERFACES = 93
+EXPECTED_PAIRS = 90
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
