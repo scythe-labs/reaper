@@ -587,9 +587,18 @@ class GateSettingIn(GateSettingOut):
         page (#627). The refusal itself is unchanged: nothing may WRITE one of these ids.
         """
         if v not in POLICY_AUTHORABLE_GATES:
+            # No gate id in the sentence. An operator reads this as "Can't save this: ..." on
+            # the policy page, where the row it is about is labeled in their own words ("On a
+            # list you curate yourself"), so the slug names nothing on screen (rule 21).
+            # ``scan_runner.build_gates`` already refuses to print the same id for the same
+            # state and says why; this is that decision applied to its sibling (rule 144).
+            # It went from unreachable to routine when the response stopped being validated
+            # through here: the editor re-validates the loaded draft on mount, so an upgraded
+            # install meets this before touching anything. The 422's ``loc`` still carries
+            # ``body.gates.<i>.gate``, so an API caller can still tell which row.
             raise ValueError(
-                f'There is no "{v.value}" protection to switch on. '
-                "Remove it from the policy and save again."
+                "That protection is left over from an older version and can't be saved. "
+                "Turn it off, then save."
             )
         return v
 

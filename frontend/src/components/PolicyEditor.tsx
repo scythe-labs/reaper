@@ -218,6 +218,12 @@ function GateRow({
       <label className="toggle rule-toggle">
         <Switch
           checked={gate.enabled}
+          // The only switch in the product that removes its own row, so it is the only one
+          // that has to say where focus goes afterwards. Sibling of `RatingFloorRow`'s bar
+          // removal 280 lines below, which wears the same marker for the same reason
+          // (rule 72): activating a control that unmounts itself drops focus to `<body>` and
+          // the next Tab restarts at the top of a form this long (#173).
+          removesRow={meta.retired}
           // Turning a RETIRED row off takes it out of the body rather than storing it off,
           // because there is nothing to store: the save boundary refuses the id in either
           // position, so `{...gate, enabled: false}` left the page unsavable and the notice
@@ -1273,6 +1279,17 @@ export function PolicyEditor({
   // above the `if (!draft)` return further down, because a hook below an early return is a
   // different hook order on the renders that take it (rule 146).
   const bar = useSavebarFocus();
+  // Where focus lands when a leftover protection's switch removes its own row. Declared with
+  // the other focus hooks for rule 146's reason, and the fallback is Save because it is the
+  // only place it CAN be: `useRemovalFocus` looks for the marked control that took the removed
+  // one's index, and only a retired row wears the marker, so the marked set is always empty
+  // afterwards and the fallback is the whole answer here rather than an edge case. Save is the
+  // right target anyway -- the removal is a draft edit and pressing it is what makes the edit
+  // real, which is the same "stable neighbour and the only thing left to do" the hook's own
+  // add-a-row fallbacks are. It is mounted whenever this can fire: the body that carries a
+  // leftover always arrives with a repair, and `dirty` counts repairs.
+  const saveRef = useRef<HTMLButtonElement>(null);
+  const protections = useRemovalFocus(saveRef);
   // Movies and TV are tuned separately -- keep-last-N seasons and season rank only make
   // sense for TV -- so this toggle picks which policy you are editing.
   const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
@@ -2074,7 +2091,7 @@ export function PolicyEditor({
           only ever <em>keep</em> a file, never mark one for removal.
         </p>
 
-        <ul className="rule-list">
+        <ul className="rule-list" ref={protections.ref as RefObject<HTMLUListElement>}>
           {draft.gates.map((gate, i) => {
             const setGate = (g: GateSetting) => {
               const gates = [...draft.gates];
@@ -2084,7 +2101,15 @@ export function PolicyEditor({
             // Only a retired row reaches this, and it is the one edit that is a REMOVAL: the
             // id cannot be saved in either switch position, so taking it off means taking it
             // out. By index rather than by id, like `setGate` above.
-            const dropGate = () => update({ gates: draft.gates.filter((_, j) => j !== i) });
+            //
+            // `removing(0)`, never `removing(i)`: the index is into the MARKED controls, and
+            // only a retired row wears the marker, so its position among all the protections
+            // is not its position among the removable ones. That mismatch is the hazard
+            // `useRemovalFocus`'s other call sites avoid by marking every row.
+            const dropGate = () => {
+              protections.removing(0);
+              update({ gates: draft.gates.filter((_, j) => j !== i) });
+            };
             // A protection that carries its own settings renders as a card below the plain
             // rows (the rating card), so the visual weight says which protections have more
             // to configure. It is skipped here.
@@ -2608,6 +2633,7 @@ export function PolicyEditor({
             </button>
             <button
               className="primary"
+              ref={saveRef}
               // Enabled when EITHER half can be written. A blocked policy no longer holds
               // pace and limits hostage (PR-7); the line above says which half is waiting.
               disabled={(!willSavePolicy && !willSavePace) || saving}

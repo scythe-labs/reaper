@@ -1384,6 +1384,12 @@ describe("the controls a screen reader has to tell apart", () => {
     expect(
       screen.queryByRole("switch", { name: "On a list you curate yourself" }),
     ).not.toBeInTheDocument();
+    // The control that was pressed went with the row, so focus has to be put somewhere or it
+    // falls to `<body>` and the next Tab restarts at the top of a ~1,900-line form (#173).
+    // Save, because the removal is a draft edit and pressing it is what makes it real.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Save changes" }));
+    });
     // ...and the draft the page is now working against is one the server accepts. Read off
     // the validate call because that is the same body the Save button posts.
     await waitFor(() => {

@@ -1679,6 +1679,62 @@ class TestPolicyPersistence:
         exists to repair. Nothing here relaxes that boundary: the save below is still refused,
         and the row leaves only when the operator takes it off.
         """
+        self._seed_upgraded_install(settings, gate=gate, keep_tags=keep_tags, lists=lists)
+
+        with TestClient(create_app(settings)) as client:
+            login(client, settings)
+            loaded = client.get("/api/policy")
+
+            assert loaded.status_code == 200, loaded.text
+            out = loaded.json()
+            # Served as it is stored, still on: the editor's leftover-row notice renders off
+            # this row, and it is the switch beside it that the operator turns off.
+            row = next(g for g in out["body"]["gates"] if g["gate"] == gate)
+            assert row["enabled"] is True
+            # The savebar is up either way, so there is a Save to press once they have.
+            assert out["repairs"] == ["lists_migrated"]
+
+            # Serving it did NOT make it savable. Handing the body straight back is refused,
+            # in the plain sentence the SPA renders verbatim (rule 21).
+            refused = client.post("/api/policy", json=out["body"])
+
+            assert refused.status_code == 422
+            message = " ".join(d["msg"] for d in refused.json()["detail"])
+            assert "left over from an older version" in message
+            # Not the gate id: this is the editor's "Can't save this" banner on arrival, and
+            # the row it names is labeled in the operator's words on the same screen (rule 21).
+            assert gate not in message
+            assert "Value error" not in message
+
+            # The exit the row's notice names: take it off, save, and the install scans again.
+            cleared = dict(out["body"])
+            cleared["gates"] = [g for g in cleared["gates"] if g["gate"] != gate]
+            saved = client.post("/api/policy", json=cleared)
+
+            assert saved.status_code == 200, saved.text
+            reloaded = client.get("/api/policy").json()
+            assert gate not in {g["gate"] for g in reloaded["body"]["gates"]}
+            assert reloaded["repairs"] == []
+            # And it really is gone: no keep rule took its place, which is the cost the row's
+            # notice and the scan's sentence both have to state rather than imply.
+            assert not [
+                c for c in reloaded["body"]["protect_conditions"] if c["field"] == "on_list"
+            ]
+
+    @staticmethod
+    def _seed_upgraded_install(
+        settings: Settings,
+        *,
+        gate: str,
+        keep_tags: list[str],
+        lists: list[tuple[str, str, dict[str, Any]]],
+    ) -> None:
+        """A database an upgrade left carrying a leftover list protection.
+
+        Rows and the ``lists_seeded`` flag go in BEFORE the app boots, because that is the
+        state the migration leaves: the seed is guarded by the flag rather than by the rows,
+        so an install that has been through it never gains a second shipped copy.
+        """
         stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         stored["protect_conditions"] = []
         stored["keep_tags"] = keep_tags
@@ -1710,37 +1766,67 @@ class TestPolicyPersistence:
             session.commit()
         engine.dispose()
 
+    def test_adding_the_list_back_first_is_what_keeps_the_protection(
+        self, settings: Settings
+    ) -> None:
+        """The order ``build_gates`` tells the operator to work in, driven.
+
+        That sentence used to say to open Policy and save first, then add the list. Following
+        it loses the protection outright and the test above is the proof: the only way to
+        reach a save is to take the row off, and the saved body then carries neither the gate
+        nor ``keep_tags``, so the conversion can never fire again and a list added afterwards
+        attaches no rule of its own (``api/lists.py``'s ``add_list``).
+
+        In the order the sentence names now, the same install keeps its cover: the registry
+        row resolves ``tag_list_name``, so the next load converts the gate into an outright
+        ``on_list`` keep rule naming that list, and the save that follows writes it (rules 25,
+        144 -- the copy and this are one fact).
+        """
+        self._seed_upgraded_install(
+            settings,
+            gate="whitelisted",
+            keep_tags=["reaper-keep"],
+            lists=[("Saturday movie night", "arr_tag", {"tags": ["movie-night"]})],
+        )
+
         with TestClient(create_app(settings)) as client:
             login(client, settings)
-            loaded = client.get("/api/policy")
+            blocked = client.get("/api/policy").json()
+            assert "whitelisted" in {g["gate"] for g in blocked["body"]["gates"]}
 
-            assert loaded.status_code == 200, loaded.text
-            out = loaded.json()
-            # Served as it is stored, still on: the editor's leftover-row notice renders off
-            # this row, and it is the switch beside it that the operator turns off.
-            row = next(g for g in out["body"]["gates"] if g["gate"] == gate)
-            assert row["enabled"] is True
-            # The savebar is up either way, so there is a Save to press once they have.
+            # Step one of the sentence: the list goes back on Settings, Lists. Resolved by the
+            # TAGS it holds, never by its name or its age, so the operator may call it anything.
+            added = client.post(
+                "/api/lists/configured",
+                json={
+                    "name": "Titles I tagged",
+                    "source": "arr_tag",
+                    "config": {"tags": ["reaper-keep"], "match": "any"},
+                },
+            )
+            assert added.status_code == 201, added.text
+
+            # Step two: open Policy. The conversion now has a list to name, so the gate leaves
+            # as a keep rule instead of leaving as nothing.
+            out = client.get("/api/policy").json()
+
+            assert "whitelisted" not in {g["gate"] for g in out["body"]["gates"]}
             assert out["repairs"] == ["lists_migrated"]
+            assert [
+                c["value"] for c in out["body"]["protect_conditions"] if c["field"] == "on_list"
+            ] == ["Titles I tagged"]
 
-            # Serving it did NOT make it savable. Handing the body straight back is refused,
-            # in the plain sentence the SPA renders verbatim (rule 21).
-            refused = client.post("/api/policy", json=out["body"])
-
-            assert refused.status_code == 422
-            message = " ".join(d["msg"] for d in refused.json()["detail"])
-            assert gate in message
-            assert "Value error" not in message
-
-            # The exit the row's notice names: take it off, save, and the install scans again.
-            cleared = dict(out["body"])
-            cleared["gates"] = [g for g in cleared["gates"] if g["gate"] != gate]
-            saved = client.post("/api/policy", json=cleared)
+            # Step three: save. The body is savable now, and the protection is what was saved.
+            saved = client.post("/api/policy", json=out["body"])
 
             assert saved.status_code == 200, saved.text
             reloaded = client.get("/api/policy").json()
-            assert gate not in {g["gate"] for g in reloaded["body"]["gates"]}
             assert reloaded["repairs"] == []
+            assert "Titles I tagged" in [
+                c["value"]
+                for c in reloaded["body"]["protect_conditions"]
+                if c["field"] == "on_list"
+            ]
 
     def test_a_saved_policy_is_what_loads_next(self, client: TestClient) -> None:
         client.post("/api/policy", json=_policy(condemn_at=55, name="mine"))
@@ -1759,15 +1845,24 @@ class TestPolicyPersistence:
         did it. It is refused at the boundary now, and the refusal has to be readable: the SPA
         renders ``detail[].msg`` verbatim, so pydantic's "Value error," prefix would land in
         front of the sentence (rule 21).
+
+        **The gate id is the part that must NOT be in it.** The editor renders this message as
+        its "Can't save this" banner, and once the response stopped being validated through
+        this same model (#627) an upgraded install meets the banner on arrival, beside a row
+        labeled in the operator's own words. Which row it is still comes back in ``loc``,
+        asserted below, so nothing an API caller needs was traded for the plain sentence.
         """
         bad = [*DEFAULT_GATES, {"gate": "season_progression", "enabled": True}]
 
         response = client.post("/api/policy", json=_policy(gates=bad))
 
         assert response.status_code == 422
-        message = " ".join(d["msg"] for d in response.json()["detail"])
-        assert "season_progression" in message
+        detail = response.json()["detail"]
+        message = " ".join(d["msg"] for d in detail)
+        assert "season_progression" not in message
         assert "Value error" not in message
+        assert "Turn it off, then save." in message
+        assert ["body", "gates", "3", "gate"] in [d["loc"] for d in detail]
 
         # And the stored policy is untouched, so the install still scans.
         assert client.get("/api/policy").status_code == 200
