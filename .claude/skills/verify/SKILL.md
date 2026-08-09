@@ -98,7 +98,17 @@ the app:
   capture is worthless for the one thing it is for. `fonts-liberation` plus
   `fonts-noto-color-emoji` covers the UI.
 
-No display server is needed either way: Playwright's headless mode does not use one, so Xvfb is
+**WebKit is a lane, not an extra.** Chromium answers "does it work"; it cannot answer "does it
+work on the operator's phone", and this UI has already shipped a defect no Chromium run could
+see — rule 46's shrinking button left a red ghost in the region it vacated, in Safari alone.
+WebKit is the only engine outside a Mac that renders what an iPhone or a Safari desktop will, so
+a change to the queue's action grammar, an anchored popover (rule 138), or anything laid out with
+`dvh` gets driven there too: `npx playwright install webkit`, `install-deps webkit`, then
+`webkit.launch({ headless: true })` and the same script. Reach for
+`devices["iPhone 15"]` as the context when the change is about a phone, since viewport and touch
+are half of what those rules are about.
+
+No display server is needed for any of them: Playwright's headless mode does not use one, so Xvfb is
 not part of this.
 
 Login = click `.auth-alt`, fill
