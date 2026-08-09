@@ -415,7 +415,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         # operator's names for every list holding the item, so a rule here is how ANY list
         # -- tag, collection, watchlist, IMDb -- comes to keep or lean. The stored rules
         # that used to spell this ``on_curated_list`` are re-spelled by
-        # ``policy.convert_list_protections``.
+        # ``policy_migrations.convert_list_protections``.
         label="On one of your lists",
         help_text="Matches a list by the name it has on Settings → Lists.",
         type=FieldType.TEXT,
@@ -733,7 +733,7 @@ def can_add_pressure_under_a_shortfall(op: Op) -> bool:
     stands -- blocked where it matched, and honestly zero where it did not.
 
     That is what makes the weight part of the score CEILING rather than a per-item
-    discount, and it is exactly the discrimination ``policy.inspect``'s condemn lane needs:
+    discount, and it is exactly the discrimination ``policy_warnings.inspect``'s condemn lane needs:
     under ``gte`` a matched item still earns the weight, so the list is not empty, while
     under ``lte`` no item can earn it at all. Asked here rather than restated at the caller,
     so there is one derivation of what a short mirror does to an outcome (rule 104).

@@ -26,12 +26,8 @@ from reaper.db.models import AppSetting, Profile
 from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.session import create_engine, create_session_factory
-from reaper.engine.policy import (
-    DEFAULT_MOVIE_POLICY,
-    DEFAULT_TV_POLICY,
-    PolicyRepair,
-    ProfileSettings,
-)
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, ProfileSettings
+from reaper.engine.policy_migrations import PolicyRepair
 from reaper.ratings import RatingSource
 from reaper.services import app_settings, list_config, list_rules, profiles
 from reaper.services.profiles import (

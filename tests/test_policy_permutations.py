@@ -44,8 +44,8 @@ from reaper.engine.policy import (
     SCORER_VERSION,
     PolicyBody,
     ProfileSettings,
-    inspect,
 )
+from reaper.engine.policy_warnings import inspect
 from reaper.engine.signals import SignalId
 from reaper.engine.verdict import decide_verdict
 from reaper.services.scan_runner import build_gates

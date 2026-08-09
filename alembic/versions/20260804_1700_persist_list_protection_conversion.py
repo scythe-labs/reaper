@@ -2,7 +2,7 @@
 """persist the list-protection conversion, so the upgrade needs no visit to the policy page
 
 ``c3d4e5f6a7b8`` moved the keep tags into the list registry and left the policy-body half to
-``engine.policy.convert_list_protections``, which runs **on load** and is never written back.
+``engine.policy_migrations.convert_list_protections``, which runs **on load** and is never written back.
 That is the shape the shim was designed for -- a protection moving between surfaces is a
 policy edit nobody has saved, so the editor opens on it as a draft and the scan degrades
 until it is saved (rule 65). What it misses is that the load shim can never *finish*: the
@@ -37,7 +37,7 @@ that never passed through this revision.
 to the schema.** It resolved the tag and IMDb lists by age, and age is the operator's to change:
 delete the tag list this converts and the *arr-tag list they added for something else becomes
 the oldest of its source, so this wrote that list's name into their policy permanently. It now
-asks ``policy.conversion_list_names``, which identifies each row by what it holds. A database
+asks ``policy_migrations.conversion_list_names``, which identifies each row by what it holds. A database
 that has already run this revision does not run it again, so an install that upgraded into the
 window keeps the wrong rule -- visible on Policy as an ordinary keep rule and removable there,
 which is why it is left alone rather than healed by a later revision that would have to guess
@@ -69,7 +69,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def _list_rows(conn: sa.Connection) -> list[tuple[str, str, str | None]]:
-    """Every registry row as ``policy.conversion_list_names`` takes them, oldest first. That
+    """Every registry row as ``policy_migrations.conversion_list_names`` takes them, oldest first. That
     function decides WHICH row answers each half of the conversion, here and on the load path
     alike (rule 104)."""
     rows = conn.execute(
@@ -83,7 +83,7 @@ def _library_media_types(conn: sa.Connection) -> dict[str, frozenset[str]]:
     ``plex_libraries`` setting. Read best-effort: it only ever narrows a collection's rule to
     one policy, so an absent, unparseable, or unreadable setting leaves every collection on both
     -- the wider protection, and the same fail-open the load path takes (rule 104, #545)."""
-    from reaper.engine.policy import library_media_types
+    from reaper.engine.policy_migrations import library_media_types
 
     try:
         row = conn.execute(
@@ -105,8 +105,8 @@ def _library_media_types(conn: sa.Connection) -> dict[str, frozenset[str]]:
 def upgrade() -> None:
     # Imported inside the function, so a module that moves or fails to import cannot stop an
     # upgrade whose other revisions are unrelated to policy bodies.
-    from reaper.engine.policy import (
-        PolicyBody,
+    from reaper.engine.policy import PolicyBody
+    from reaper.engine.policy_migrations import (
         conversion_list_names,
         convert_list_protections,
         has_legacy_list_protections,

@@ -48,18 +48,19 @@ from reaper.engine.policy import (
     GradedCondemnSpec,
     GradedKeepSpec,
     PolicyBody,
-    PolicyWarning,
     ProfileSettings,
     RatingRuleSpec,
     SignalSetting,
+)
+from reaper.engine.policy_migrations import (
     convert_list_protections,
     has_legacy_list_protections,
-    inspect,
     library_media_types,
     own_list_media_scope,
     rebalance,
     recover_rating_rules,
 )
+from reaper.engine.policy_warnings import PolicyWarning, inspect
 from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
@@ -1641,7 +1642,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         the editor and the why panel describe one mirror two ways.
 
         If this fails, the two copies have drifted: fix them together, in
-        ``engine/policy.py:inspect`` and ``engine/gates.py:ServerPopularityGate.evaluate``.
+        ``engine/policy_warnings.py inspect`` and ``engine/gates.py:ServerPopularityGate.evaluate``.
 
         **What it pins, stated exactly, because it was read as more than it is** (#243
         asked whether this is a tautological oracle, since it computes its expectation by
@@ -2199,7 +2200,7 @@ class TestEveryReachSpanIsRoutedByName:
         assert set(ReachSpan) == {ReachSpan.POPULARITY_WINDOW, ReachSpan.ITEM_LIFETIME}, (
             "A ReachSpan member was added or removed. Five sites decide what a span means "
             "and none of them can infer it: fields.reach_shortfall (which bound the mirror "
-            "is measured against), policy.inspect's lean loop (which span a graded keep's "
+            "is measured against), policy_warnings.inspect's lean loop (which span a graded keep's "
             "discount is charged to), inspect's two protect membership tests "
             "(owner_protect_on_window, and the ITEM_LIFETIME branch under it), each of "
             "which needs operator copy written for that span, and inspect's condemn-lane "

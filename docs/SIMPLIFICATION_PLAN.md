@@ -188,7 +188,7 @@ row moving is indistinguishable from one that never started.
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
-| 6 | Structural motion | in progress | 3 of 8 | C6 settled: five modules, `routes.py` cut at `:1853` and *Vocabulary* on its own |
+| 6 | Structural motion | in progress | 4 of 8 | C6 settled: five modules, `routes.py` cut at `:1853` and *Vocabulary* on its own |
 | 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
@@ -211,7 +211,7 @@ forever while being genuinely complete. Phase 6 tops out at 6 of 8 by design: it
 | C1 | **settled** | Owner, 2026-08-07. Six decisions, each recorded on the finding it governs: delete the whitelist routes (not shipped, so S4 has no reader to protect yet); delete the poster chain whole; move the flat-AND reasoning to `DECISIONS.md`; delete `run_migrations_offline`; keep `backtest_passed` and correct its docstring; and schema now leaves under rule 148 rather than accumulating |
 | C13 | **part settled** | Owner, 2026-08-07, on redaction: the capture ships as cut. The coverage half stands open — both tiers hold `Facts` fixed, so a carrier that widens what is prunable on a real library moves nothing in either. S3's driven pass is the only thing that reaches it |
 | C2 | **settled** | Owner, 2026-08-08. The cheap KDF stays: a test that needs an encryption key to exist should not pay 124ms to prove nothing. Both proofs accepted, the collapse demonstration being the load-bearing one. **The standing cost is recorded rather than fixed**: no test now exercises the real 64 MiB derivation, so its own correctness rests on `crypto.py` being unchanged, not on being run |
-| C3 | **counts settled by audit, owner read outstanding** | Three independent auditors re-derived every count without being shown it first, and **every one held exactly** — including the socket guard's 7 violations, re-measured in a detached worktree. **What did not hold is the matcher beside each count**, which is the half rule 145 says a count cannot cover: the layering walk could not see `from reaper import services` (#588), the path-filter gate pinned a number where the prose names files (#591), and the network guard hooked 3 of 10 exits (#592). All three fixed and driven. The lesson for later phases: re-deriving a count is cheap and confirmed it; what the count could not answer is whether the *walk* sees the tree, and that needed a second party. Below is what each gate now covers. **W6-5**: 78 modules under the four packages *as audited*, 6 directed pairs, 3 deferred imports (the module figure is 77 now: #599 deleted two and phase 6 added `api/plex.py`); the reconciliation is that all 14 `engine/` modules and 8 of 9 `clients/` produce no cross-package edge at all. **W6-8**: 2,023 socketpairs across 1,674 tests allowed, 9 `getaddrinfo` calls seen, 7 of them real violations; the allowlist is 7 hosts and every one is driven. **W6-6**: 3 path filters across 9 workflows, counted twice by two different matchers. W1.5-c landed no gate, so nothing there to check |
+| C3 | **counts settled by audit, owner read outstanding** | Three independent auditors re-derived every count without being shown it first, and **every one held exactly** — including the socket guard's 7 violations, re-measured in a detached worktree. **What did not hold is the matcher beside each count**, which is the half rule 145 says a count cannot cover: the layering walk could not see `from reaper import services` (#588), the path-filter gate pinned a number where the prose names files (#591), and the network guard hooked 3 of 10 exits (#592). All three fixed and driven. The lesson for later phases: re-deriving a count is cheap and confirmed it; what the count could not answer is whether the *walk* sees the tree, and that needed a second party. Below is what each gate now covers. **W6-5**: 78 modules under the four packages *as audited*, 6 directed pairs, 3 deferred imports (the module figure is 79 now: #599 deleted two and phase 6 added `api/plex.py`, `engine/policy_migrations.py` and `engine/policy_warnings.py`); the reconciliation is that all 14 `engine/` modules and 8 of 9 `clients/` produce no cross-package edge at all. **W6-8**: 2,023 socketpairs across 1,674 tests allowed, 9 `getaddrinfo` calls seen, 7 of them real violations; the allowlist is 7 hosts and every one is driven. **W6-6**: 3 path filters across 9 workflows, counted twice by two different matchers. W1.5-c landed no gate, so nothing there to check |
 | C12 | **settled** | Owner, 2026-08-08: **the boot log keeps the added lines.** The one cost put to them was ~2 lines per restart saying a job runs on its built-in default, and they took it — a boot that states every job's schedule out loud is worth more than a quiet one, which is the same argument `main.py`'s per-job "next firing" table already rests on. Nothing to change; #594 ships as merged. The evidence behind the read follows. Two questions, both measured rather than argued. **What startup now applies: the same job table, byte for byte.** The same stored config booted on the phase-3 tip and on the phase-4 tip gives six jobs with identical ids and triggers; the boot log differs by exactly three lines, and the `scheduler.*` event diff is the whole behavioral surface of #594 — an orphaned stored row's warning renamed from `bad_maintenance_cron` to `unknown_maintenance_job` and moved earlier, plus one `maintenance_scheduled` line each for the two jobs still on their built-in defaults, which the replay now re-applies from the same constant `build_scheduler` used. The interval sweeps are outside `MAINTENANCE_JOB_IDS`, so `sweep_old_snapshots` keeps its start delay and jitter. **The deliberate re-freeze is a no-op, and that is the finding.** Tier A: 114 replay tests pass and `tests/_policy_lab.py` is untouched. Tier B: re-captured against snapshot 86 and **byte-for-byte identical** to the committed file — 5,965 items, protect 4,261 / condemn 543 / abstain 1,161, same plan and manifest hash. The phase text expected corrected behavior to move the baseline; the corrections are why it did not, since all four items proved latent or off the decision surface entirely |
 | C6 | **settled** | Owner, 2026-08-08: **five modules, and *Vocabulary* gets its own.** `api/review.py` (1,315, the *Snapshots and candidates* banner), `api/policy.py` (~485), `api/simulate.py` (~841), `api/vocabulary.py` (85), `api/about.py` (47), off a ~150-line shared preamble. So the *Policy* banner is cut at `:1853` (`_SIM_YIELD_EVERY`), a seam the file does not draw, and the 85-line *Vocabulary* banner stands alone rather than riding under the POLICY tag it shares with the editor. **Two cross-module edges are created and were measured before the read, not after**: `_to_body` is called by both the policy routes and `simulate`, so `simulate.py` imports `policy.py`; and `_replayed_evidence` is defined inside the simulate block yet called at `routes.py:1286` from `_deep_links`, which is *review*, so `review.py` imports `simulate.py`. Neither is a design problem at two import lines, but the wave's "pure motion" framing does not predict them, and phase 8 plans against this graph. One route is filed under a banner its tag disagrees with: `season_shape` (`:208`) is POLICY-tagged and sits in *Snapshots and candidates*. It moves by banner, to `review.py`, because `test_openapi_tags.py` keys on method and path and the served tag is unchanged either way |
 | C4, C5, C7 to C11, C14 | not started | — |
@@ -337,13 +337,14 @@ the case that will hit this first.
 lands under rule 145 adds another. Phase 6 splits two routers and phase 8 creates `api/deps.py` and
 moves `LAUNCHER_CONF_NAME` — both move populations that phase 3's gates count. Grep for the counter
 before closing a PR that adds or removes a member. **The phase-3 counters, by name:**
-`_EXPECTED_LAYERED_MODULES` (**77** modules under the four packages), the logger counter in
+`_EXPECTED_LAYERED_MODULES` (**79** modules under the four packages), the logger counter in
 `tests/test_capturable_loggers.py` (**48**, and it is the one phase 6 had to bump that this list
 did not name), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (the three sites W9 deletes). The module
-figure has moved twice already: #599's deletion took it to 76 without this paragraph noticing,
-and phase 6's
-`api/plex.py` took it to 77. Each gate's failure message now names its prose siblings, since
-nothing asserts them.
+figure has moved three times already: #599's deletion took it to 76 without this paragraph
+noticing, phase 6's `api/plex.py` took it to 77, and its `policy_migrations` / `policy_warnings`
+pair took it to 79. Each gate's failure message now names its prose siblings, since
+nothing asserts them. The logger counter has not moved with any of them: a split inherits its
+parent's loggers rather than declaring new ones, so W2 motion moves one counter and not both.
 
 **S8. Every PR diffs the behavioral baseline, and an unexplained line is a regression.** Phase 1
 freezes what the app currently *decides* about a real library. The test suite does not cover
@@ -486,7 +487,7 @@ script reading `data/reaper.db` read-only exactly as the extractor does, emittin
 
 3. **A hash of `Candidate.facts_json`**, the per-item frozen evidence. `Snapshot.evidence_hash` is
    **not** this and belongs nowhere in the baseline: it hashes the *policy fields* that decide what
-   gathering asks for (`engine/policy.py:850`), there is one per snapshot, and it is constant while
+   gathering asks for (`engine/policy.py`'s `PolicyBody.evidence_hash`), there is one per snapshot, and it is constant while
    the policy is. A refactor that changed what gathering produced would not move it at all. This
    item previously claimed that hash was "already computed and the cheapest single check that
    gathering did not move," and it would have failed green.
@@ -660,7 +661,7 @@ Four PRs, in order:
 2. **The two engines** (W1.2). Five test files, not two. Its prose sweep is 24 comment sites, two
    `SIGNALS.md` sections, two rule bodies and the STATUS roadmap, and none of that fails a test.
 3. **The alembic hook** — `Profile.enabled`, `PendingPlexLogin.pin_code`, `CACHE_TABLES` (W7-6),
-   `run_migrations_offline` (W7-7, which fails `test_migrations.py:163` deliberately), W7-8's three
+   `run_migrations_offline` (W7-7, which fails `test_migrations.py`'s `test_env_py_configures_batch_mode` deliberately), W7-8's three
    columns, and **W1.1-i's poster chain**, which terminates at the `Candidate.poster_url` column
    and so belongs here rather than in PR 1. One PR because they are one `include_name` and one
    `server_default` revision. S2 governs it.
@@ -906,12 +907,12 @@ The worst individual units, which is where waves 2 and 3 point:
 
 | Unit | Lines | Complexity | Parameters |
 | --- | --- | --- | --- |
-| `engine/policy.py:1600 inspect` | 988 | 52 | 4 |
+| `engine/policy_warnings.py` `inspect` | 988 | 52 | 4 |
 | `services/snapshot.py:570 scan` | 714 | 43 | 17 |
 | `services/season_scan.py:1088 gather` | 478 | 34 | 25 |
 | `services/planner.py:315 build_plan` | 375 | 27 | 5 |
 | `services/snapshot.py:1447 _judge_item` | 111 | n/a | **27** |
-| `components/PolicyEditor.tsx:1238` | 1,408 | n/a | n/a |
+| `components/PolicyEditor.tsx`'s `PolicyEditor` | 1,408 | n/a | n/a |
 | `components/Settings.tsx` | 3,086 | 65 hooks, 25 `useState` | n/a |
 
 ## Wave 1: deletions and mechanical wins
@@ -942,12 +943,12 @@ below. Read the *Landed* row before acting on a line number in this table.
 | `services/history_sync.py:542,550` | `state` (a bare forwarder to `_state`) and `latest` (test-only, superseded by `last_synced_at`) | 20 | `none` |
 | `clients/tautulli.py:270` | `metadata`, plus the `get_metadata` entry in `READ_COMMANDS` that exists only for it | 12 | `none` |
 | `clients/seerr.py:74,121` | `Requester.is_mappable` (#550) and `MediaRequest.is_available` | 15 | `none` |
-| `api/whitelist.py:181,212,259` | Three routes with no frontend caller, two byte-identical to their `/api/override` siblings, plus `SpareIn`. `api.ts:2019` already records deleting the client methods for this reason | 70 | `behavior` |
+| `api/whitelist.py:181,212,259` | Three routes with no frontend caller, two byte-identical to their `/api/override` siblings, plus `SpareIn`. `api.ts`'s keep-list comment ("three more ways to write the same safety-adjacent row") already records deleting the client methods for this reason | 70 | `behavior` |
 | `styles/00-tokens.css:167`, `21-queue-cards.css:337`, `23-queue-chips.css:34` | `--radius-xs`, `.row-actions`, `.chip-reap`: no user in any construction path | 20 | `none` |
 
 > **Corrected: W1.1-a's line range is wrong and holds live code.** `CustomProtectGate` sits at
 > `fields.py:1016-1042`, inside the cited span, and is the whole user-authored-protection path
-> (`services/scan_runner.py:205,213`). `evaluate_rules` ends at `:1104`. Delete the four named
+> (`services/scan_runner.py`'s `build_gates`, its one `gates.extend` and two `gates.append`). `evaluate_rules` ends at `:1104`. Delete the four named
 > symbols, not the range. `tests/test_fields.py`'s dead blocks are `:127-217` and `:274-287`, with
 > a live `TestCustomProtectGate` at `:239` between them. `docs/STATUS.md:69`'s "Flat AND of typed
 > conditions" loses its only code expression and carries no dagger, so the reasoning survives
@@ -970,7 +971,8 @@ below. Read the *Landed* row before acting on a line number in this table.
 > **Corrected: W1.1-n is an external contract change, and two of its claims are wrong.** Only one
 > of the three route pairs is byte-identical (`unspare_item` vs `clear_override`); `spare_item`
 > takes a different schema and calls `whitelist.spare`; `GET /whitelist` has no `/override`
-> sibling at all. `api.ts:2019` records deleting the *client methods* and explicitly keeping the
+> sibling at all. `api.ts`'s keep-list comment ("three more ways to write the same
+> safety-adjacent row") records deleting the *client methods* and explicitly keeping the
 > routes, so citing it as precedent inverts it. `api/middleware.py:134-152` default-allows reads,
 > so an API key reaches `GET /api/whitelist` today. Five test files depend on these routes
 > (`test_general_and_logs.py:699,869,1050`, `test_override_truth.py:897,925`,
@@ -1054,7 +1056,8 @@ code: **#553** (weigh a previously reaped title down, because its return is an o
 and **#554** (probability of a future rewatch, over a long enough window to mean something).
 
 **Before deleting, rehome one constant.** `FALLBACK_REWATCH_PRIOR` lives in `backtest.py:109` and
-is cited from `engine/gates.py:764` and `engine/policy.py:2644`, plus `docs/SIGNALS.md:155`,
+is cited from `engine/gates.py:764` and `engine/policy.py`'s `DEFAULT_MOVIE_POLICY` ("the numbers come from
+the measured rewatch curve"), plus `docs/SIGNALS.md:155`,
 `docs/LEARNINGS.md:121` and `docs/README.md:64`. `engine/dormancy.py` is its natural home. Rule 64:
 the doc citations move in the same change.
 
@@ -1066,7 +1069,7 @@ the doc citations move in the same change.
 > whole classes), and `tests/test_signal_quality.py:19` (about a third of the file). In
 > `test_engine_derivations.py` only two of the eight tests in `TestDormancyIsDerivedOnce` touch
 > backtest (`:183` and `:209`, the second self-described as a guard rather than a proof), and
-> `test_fact_layer_states.py:163-172` and `test_policy.py:1301-1314` pin the derivation too, so
+> `test_fact_layer_states.py:163-172` and `test_policy.py`'s `test_the_clamp_that_makes_the_claim_true` pin the derivation too, so
 > this is an excision, not a file rewrite.
 >
 > The constant's only reader is `rewatch_prior()`, in the file being deleted, and its only caller
@@ -1248,7 +1251,7 @@ Each of these files draws its own seams already, in banner comments or in the fa
 | File | Now | Split | Evidence the seam is real |
 | --- | --- | --- | --- |
 | `api/routes.py` | 2,789 | `api/review.py` (~1,315), `api/policy.py` (~480), `api/simulate.py` (~840), `api/about.py`. `routes.py` ceases to exist | Four banner comments already name the four. `main.py:47` imports only `router`, so the change is `include_router` calls |
-| `engine/policy.py` | 2,263 | `+policy_migrations.py` (~530), `+policy_warnings.py` (~1,030) | The two halves import the model and nothing imports them back. No cycle exists |
+| `engine/policy.py` | 2,263 | `+policy_migrations.py` (~530), `+policy_warnings.py` (~1,030) | **Landed.** The file was 2,710 at this base, not 2,263; the correction's 2,709 was right at `759507b` and one line arrived after it. 1,577 lines out, 2,710 to 1,133: `policy_migrations.py` is 572 and `policy_warnings.py` 1,083, so the tree gains 78 lines, the two module headers plus the comment rewraps the longer module names forced. Measured at the tip, not at the first commit: three follow-up commits moved every one of these figures. Both halves import the model and neither is imported back, measured rather than argued: migrations reads `PolicyBody` and `SCHEMA_VERSION` alone, warnings reads six model types and `join_and`. `join_and` stays in `policy.py`, because `scan_runner` joins repair remedies with it and that is not a warning. The pinned module count goes 77 to 79; the logger count does not move, since a split inherits its parent's loggers |
 | `components/Settings.tsx` | 3,086 | 6 panels to their own files; the barrel keeps `PANELS`, the dirty record and the shell (~180) | **The tests are already split per panel** (6 files). Three sibling panels were already extracted. Only the source never followed |
 | `api/settings.py` | 2,025 | `api/plex.py` (~630, 12 routes) | **Landed, and it is 14 routes as the correction says, not 12.** 698 lines out, settings 2,044 to 1,344. The **sorted** document is byte-identical either side, same 96 operations; the one thing that moves is `paths` insertion order, which nothing reads. Reported as plain "byte-identical" first, which is the reassuring direction rule 144 warns about. `plex.py` **imports** the request accessors from `settings.py` rather than copying them, so phase 8's `api/deps.py` still collapses five copies and not six |
 | `components/PlexPanel.tsx` | 1,244 | 3 sections out (~450) | **Dropped from phase 6, filed as #607, and read the correction below before this cell.** It claimed the file draws the seams as banner comments; the banners are inside the function body. The rule-146 dirty contract half is the part that holds |
@@ -1335,7 +1338,9 @@ here is preventing a future divergence.
 - `clients/seerr.py:299-393` — the paging contract written three times; its own test is titled
   "Rule 72: the same loop, twenty lines down". `plex.py`'s `_iter_pages` is the complete-or-raise
   helper rule 56/89 names; Seerr never got one.
-- `services/scan_runner.py:323,441` + `services/instances.py:582` — per-kind client construction
+- `services/scan_runner.py`'s `build_sources` (three `verify=r.verify_tls` arms) and
+  `build_reap_gateway` (three `verify=row.verify_tls`, which is why grepping the scan spelling
+  misses it) + `services/instances.py:582` — per-kind client construction
   in three places, and `instances.py:597` already records the drift incident (`api_path_prefix`
   reached the scan but not Test Connection).
 
@@ -1516,7 +1521,7 @@ direction of the mirror.
 | Signal ids | `engine/signals.py:66` (5) | `SIGNAL_META`, `RAMPS`, `BUILTIN_SIGNAL_IDS`, 4 more | Partial: 3 TS maps unguarded |
 | Verdict | **none: bare `str`** | `api.ts:17` closed union, `reviewFate.ts` | Impossible, no declaration to compare |
 | Override | one model only | `api.ts:168`, `reviewFate.ts`, `StatusChip.tsx` | None |
-| Chip tone | `schemas.py:113` | `api.ts:40`, **CSS classes** via interpolation | None |
+| Chip tone | `schemas.py`'s `ChipOut.tone` | `api.ts:40`, **CSS classes** via interpolation | None |
 | `InstanceKind`, `SignalState`, `MatchStatus`, `ListSource`, `ListHealth`, `ShowStatus`, `Channel` | various | `api.ts`, labels, `.env.example`, the Unraid template | None |
 
 Two fixes, both small:
@@ -1589,7 +1594,7 @@ claim is true of *code* and false of *prose*, and the difference decides the que
 
 - `services/scheduler.py:22` — "This scheduler never deletes media ... automated deletion is an M8
   concern gated behind an earned autonomy grant". `tests/test_scheduler.py:168` and `:199` pin it.
-- `engine/policy.py:386` — a policy edit "voids pending approvals and any autonomy grant keyed to
+- `engine/policy.py`'s `PolicyBody._pin_to_the_running_scorer` — a policy edit "voids pending approvals and any autonomy grant keyed to
   it".
 - `engine/backtest.py:260` — the number the earned-autonomy flow is designed to consume.
 
@@ -1615,7 +1620,7 @@ model class leaves existing databases with an inert empty table and keeps `alemb
 > **Corrected: one of the three evidence sites dies in wave 1.2.** `engine/backtest.py:260` is
 > deleted there, and the sentence at the top of this item about no row existing "until the backtest
 > ships" stops parsing with it. The recommendation survives on the two remaining citations
-> (`scheduler.py:22`, `policy.py:386`) and on M3b's place at the top of the roadmap. But the
+> (`scheduler.py:22`, `policy.py`'s `PolicyBody._pin_to_the_running_scorer`) and on M3b's place at the top of the roadmap. But the
 > surviving `backtest_passed` column and its CHECK constraint then name a feature with no code, no
 > plan and no successor issue, so the docstring rewrite this item already schedules must stop
 > promising the backtest (rule 25). `include_name` is at `:55`. No `RETIRED_TABLES` registry exists
@@ -1807,7 +1812,7 @@ added to the first.
 | `api/breakdown.py:22` + 6 siblings | 18 identically named fields copied by hand from the service dataclass to the wire model, plus a nested list re-packed 4 for 4. Same shape at `api/backup.py:224`, `api/fairness.py:159`, `api/settings.py:562` **and** `:641`, both `SeerrServiceOut(` (written twice; the second
 citation read `:831` from the start, which was a banner comment even then), `api/runs.py:776`, `api/routes.py:1289` | ~180 | `none` |
 | `api/runs.py:741`/`:775` `ProfileSettingsIO` | A 7-field record declared twice, **including re-typed `ge`/`le` bounds**, with a hand-written converter in each direction. Rule 131 wants a consumer's bound derived from the producer's; here it is transcribed | ~16 | `none` |
-| `routes.py:1967`, `:2298`, `:2610` | `SimulationOut`'s 14-field constructor assembled verbatim at three sites. `no_longer_condemned` already went wrong exactly this way once, recorded at `schemas.py:860` | ~25 | `none` |
+| `routes.py:1967`, `:2298`, `:2610` | `SimulationOut`'s 14-field constructor assembled verbatim at three sites. `no_longer_condemned` already went wrong exactly this way once, recorded in `schemas.py`'s `SimulationOut` ("owner actually needs before saving") | ~25 | `none` |
 | `auth.py:220` vs `api/plex.py:118` | `PlexServerChoiceOut` **declared twice under the same class name in two modules**. Pydantic collapses them in `components.schemas` today; the moment either gains a field both operations get module-qualified component names and any generated client breaks silently | 8 | `none` |
 
 **One caveat, and it is the reason this wave is not risk-free.** Building the explanation from the
@@ -1823,7 +1828,7 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 > decides whether a hand reap condemns.
 >
 > Three more things the caveat misses. `Explanation` is already the *wire* model
-> (`schemas.py:280`), so making it the writer welds the on-disk format to the API: a later
+> (`schemas.py`'s `CandidateDetail`), so making it the writer welds the on-disk format to the API: a later
 > `exclude_none` or alias change made for the wire silently changes what is written to disk. And as
 > declared it would **drop** an unhandled write-side key rather than raise, because Pydantic
 > defaults to `extra="ignore"` — the cited precedent raises at `facts_codec.py:75`, so the rebuild
@@ -1834,7 +1839,7 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 >
 > Smaller corrections: `Display` is 16 fields, not 15, repacked at `:1057` and `:1160`; `RawItem`
 > re-declares 10 of them, not all 16. `Explanation` is declared at `engine/explanation.py:213` and
-> reaches the wire through `schemas.py:281`. `season_evidence.py`'s "rule 144's shape" comment is
+> reaches the wire through `schemas.py`'s `CandidateDetail.explanation`. `season_evidence.py`'s "rule 144's shape" comment is
 > at `:121` —
 > the plan says `:121` in one place and `:130` in another. W5-4 names `runs.py:776`, which is
 > W5-5's site in the reverse direction, and its real population is ~13 sites, not 7. W5-5 is not
@@ -1916,8 +1921,8 @@ enforced by nothing but the next author's memory.
 > `frozen`, so a source run on macOS tells the operator the tray is on and never starts one.
 >
 > **W6-4's `fold()` must skip three sites** that omit `strip()` on purpose (`engine/fields.py:821`,
-> `:1000`, `services/list_config.py:316`). The count is 30 inline copies across 11 modules. And
-> `list_config.py:281` compares SQL `func.lower()` against Python `casefold()` — ASCII-only against
+> `:1000`, `services/list_config.py`'s `_clean_config`). The count is 30 inline copies across 11 modules. And
+> `list_config.py`'s `_refuse_name_twice` compares SQL `func.lower()` against Python `casefold()` — ASCII-only against
 > full Unicode — which a shared `fold()` makes greppable and leaves wrong.
 >
 > **W6-6 is three workflows with path lists, not four copies of one.** codeql restates the same
@@ -1946,9 +1951,10 @@ fields and a fail-open guard.
   way at `routes.py:1211`. No production frontend code reads it; every render site asks `override`
   directly. It is the one of the item's spare-shaped fields that rules 120 to 122 do not justify.
   ~12 lines.
-- **`HealthOut` (`schemas.py:1260`)** is an orphan model describing a response the route stopped
-  giving, and it still declares `destructive_actions_enabled` and `safety_note`: a wire model
-  asserting armed state on an unauthenticated probe. 6 lines.
+- **`HealthOut`** was an orphan model describing a response the route stopped giving, still
+  declaring `destructive_actions_enabled` and `safety_note`: a wire model asserting armed state
+  on an unauthenticated probe. **Deleted in #597**, which the Landed row above records; kept
+  here because the reasoning is what W7-3 was.
 - **`DiscordNotifier(client=…)`** is an injection seam wired zero times, and `build_notifier`'s
   docstring claims it exists "so tests can drive it" while all four test sites construct the
   notifier bare. 8 lines, plus a false sentence. The lane also reported a leaked client here; that
@@ -1989,7 +1995,8 @@ fields and a fail-open guard.
 > under S1 and an external contract change under S4**, which is the same reason W1.1-n is its own
 > PR. Phase 5 PR 1 removed a response field and left the request alone deliberately.
 >
-> **`run_migrations_offline` has a test invoker.** `tests/test_migrations.py:163-175` is
+> **`run_migrations_offline` has a test invoker.** `tests/test_migrations.py`'s
+> `test_env_py_configures_batch_mode` is
 > parametrized `["offline", "online"]` and drives `as_sql=True` specifically to assert what the
 > offline branch configures. Deleting the function fails it — a pin to remove deliberately, not to
 > discover in CI. No `--sql` exists anywhere, so the row's premise holds.
@@ -1997,7 +2004,7 @@ fields and a fail-open guard.
 > **W7-8's three columns are `NOT NULL` with no server default**, so deleting the attributes breaks
 > the `INSERT` on a fresh install: `plex_server` kills Plex linking, `profile` kills the first
 > settings save. Constraint S2 governs. `ListConfig.built_in`'s contradiction is bigger than the
-> row says — `services/list_config.py:402` states outright that every list is removable, and
+> row says — `services/list_config.py`'s `delete` states outright that every list is removable, and
 > `20260804_1200_lists_arr_style.py:108` has already zeroed every row. `20260803_1900:17` names an
 > `ensure_built_ins` that does not exist (rule 7/24).
 >
@@ -2020,7 +2027,7 @@ An axis no pass has measured. Two of these are the largest single wins in either
   `group_seasons`, `group_condemned_count`, `group_condemned_bytes`, `group_unknown_size`,
   `group_title` and `show_status` onto every member, and `ReviewQueue.tsx` reads all six off
   `group.items[0]`. Measured: **157 KiB per 100-row page against 15.7 KiB**. An envelope (`{items,
-  groups, total, …}`) also retires the four custom response headers that `api.ts:1713` hand-parses
+  groups, total, …}`) also retires the four custom response headers that `api.ts`'s `candidates` hand-parses
   back into the object it already builds. ~15 net lines, ~90% of the show-level payload, risk
   `behavior` because the client lands in lockstep.
 
@@ -2081,7 +2088,7 @@ An axis no pass has measured. Two of these are the largest single wins in either
 > `RunOut` hash and approver fields are safe to drop from the *response*: every interlock reads the
 > DB row (`executor.py:975`, `:995`), never the wire model. Ten routes return `dict[str, bool]`,
 > not eleven, and **`backup.py:293` returns two keys** (`ok` and `cleared`, the second read at
-> `api.ts:1893`), so it needs its own model rather than a shared `OkOut`. `backup.py:326` is a
+> `api.ts`'s `restoreCancel`), so it needs its own model rather than a shared `OkOut`. `backup.py:326` is a
 > fifth anonymous-payload route the sweep misses (rule 72). W8-4 needs no lockstep; W8-3 and W8-5
 > do.
 >
@@ -2385,7 +2392,7 @@ The register above holds. This pass adds:
   each have one implementation and are **not** a testing seam: they narrow what a delete can reach
   to a written-down surface. Same for `armed_recheck`/`stop_recheck`, injected once, reason
   recorded.
-- **`policy.py:660`'s identity repacks** (`GradedKeepSpec` → `KeepConfig`) look like wave 5's
+- **`policy.py`'s `PolicyBody.keep_configs` identity repacks** (`GradedKeepSpec` → `KeepConfig`) look like wave 5's
   shape and are the opposite: the layer boundary is the point, because `score()` must not import
   the policy layer.
 - **The raw-dict explanation readers beside the typed `read_explanation`.** A deliberate split,

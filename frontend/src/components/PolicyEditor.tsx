@@ -162,7 +162,8 @@ function WarnBlock({
 }
 
 /** The field name the server gives a warning about ONE setting of ONE protection.
- *  `engine/policy.py` builds every member of this family as `f"gates.{gate}.{setting}"`, where
+ *  `engine/policy_warnings.py` builds every member of this family as
+ *  `f"gates.{gate}.{setting}"`, where
  *  the setting is a field of the gate row itself -- which is why the suffix is typed off
  *  `GateSetting` rather than spelled out here: the shape both ends already share is the
  *  declaration, so a suffix the server cannot send does not compile (rule 144).
@@ -323,7 +324,7 @@ function describeBar(rule: RatingRule): string {
 }
 
 /** The field name the server gives a warning about ONE setting of ONE rating bar.
- *  `engine/policy.py` builds every member of this family as
+ *  `engine/policy_warnings.py` builds every member of this family as
  *  `f"keep_rating_rules.{source}.{setting}"`, the same shape as the `gates.` family above and
  *  for the same reason: the source keys the row uniquely, because `PolicyBody` refuses two
  *  rules on one source. The suffix is typed off `RatingRule` so a setting the server cannot
@@ -2296,7 +2297,7 @@ export function PolicyEditor({
         />
         {/* Both lanes of this card, because both can be warned about and the card is the
             one surface either can be fixed from. `protect_conditions` carries the
-            gate-off popularity window (`engine/policy.py:inspect`), which has nowhere
+            gate-off popularity window (`engine/policy_warnings.py inspect`), which has nowhere
             else to go: with that protection off its window control is not rendered. */}
         <WarnBlock anchor="keep_rules" warnings={warningsAt("keep_rules")} />
 

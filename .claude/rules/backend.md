@@ -26,9 +26,9 @@ Past that bound, or with no record of a successful sync, degrade.
 
 **3 / 22. One decision function.** Condemn/abstain/protect lives only in
 `engine/verdict.decide_verdict`, and four callers import it: `snapshot`, `simulate`,
-`condemned`, and `policy.inspect` — which is the one every list of them has forgotten, and whose
-"nothing will be flagged for removal" warning rests on the decision being monotone in score and
-coverage. Never
+`condemned`, and `policy_warnings.inspect` — which is the one every list of them has forgotten,
+and whose "nothing will be flagged for removal" warning rests on the decision being monotone in
+score and coverage. Never
 write `score >= threshold` or `coverage_bp >= floor` inline outside it, and never reimplement
 scoring, coverage, rounding, or floors anywhere they can drift.
 

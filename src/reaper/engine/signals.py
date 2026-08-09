@@ -69,7 +69,7 @@ class SignalId(enum.StrEnum):
     Note what is **not** here: size.
 
     ``SIZE`` remains available for owners who insist, but it is off by default and
-    enabling it raises a ``danger`` warning on the policy page (``policy.inspect``, the
+    enabling it raises a ``danger`` warning on the policy page (``policy_warnings.inspect``, the
     same one a hand-written size rule raises). Backtested against real watch history, a
     scorer that weighted
     size produced a condemned set with *worse* regret than picking at random among

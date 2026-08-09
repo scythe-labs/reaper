@@ -15,13 +15,8 @@ import pytest
 
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine.gates import GateId, progress_is_establishable
-from reaper.engine.policy import (
-    GateSetting,
-    PolicyBody,
-    ProfileSettings,
-    SignalSetting,
-    inspect,
-)
+from reaper.engine.policy import GateSetting, PolicyBody, ProfileSettings, SignalSetting
+from reaper.engine.policy_warnings import inspect
 from reaper.engine.signals import SignalId
 from reaper.services.season_pruning import (
     UNANSWERABLE_REASONS,
@@ -701,7 +696,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
         of #224: an operator saw an empty automatic lane, no warning, and no way to learn their
         watch history was the cause.
 
-        ``policy.inspect``'s warning asserts a behavior of THIS module, across a module
+        ``policy_warnings.inspect``'s warning asserts a behavior of THIS module, across a module
         boundary, so it is the shape rule 144 warns about: a sentence that reads as
         demonstrably correct while vouching for a consistency nothing checks. If
         ``_detect_conflicts`` ever stops degenerating this way, the sibling above goes red and

@@ -27,12 +27,8 @@ from reaper.engine.explanation import (
 )
 from reaper.engine.fields import FieldType, Lane, Op
 from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
-from reaper.engine.policy import (
-    CustomCondemnSpec,
-    GradedKeepSpec,
-    PolicyRepair,
-    RatingRuleSpec,
-)
+from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
+from reaper.engine.policy_migrations import PolicyRepair
 from reaper.engine.preview import MAX_PROBE_WINDOW_DAYS
 from reaper.engine.signals import SignalId
 

@@ -46,7 +46,8 @@ from reaper.db.session import create_cache_engine, create_engine, create_session
 from reaper.engine.dormancy import history_reach_days
 from reaper.engine.gates import GateId
 from reaper.engine.observation import Known, Unknown
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, PolicyRepair
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
+from reaper.engine.policy_migrations import PolicyRepair
 from reaper.services import (
     app_settings,
     history_sync,

@@ -430,14 +430,10 @@ def run_tests(zone: Zone, workdir: Path, timeout: float) -> str:
 #: on that fixture could not see it either.
 REPAIR_SHIM_PROBE = r"""
 import json
-from reaper.engine.policy import (
-    MAX_SCORE,
-    SCHEMA_VERSION,
-    GateId,
-    RatingSource,
-    rebalance,
-    recover_rating_rules,
-)
+from reaper.engine.gates import GateId
+from reaper.engine.policy import SCHEMA_VERSION
+from reaper.engine.policy_migrations import rebalance, recover_rating_rules
+from reaper.engine.signals import MAX_SCORE
 
 def legacy(threshold=75, secondary=1000, **gate):
     row = {"gate": GateId.RATING_FLOOR.value, "enabled": True,
@@ -1030,8 +1026,8 @@ from reaper.engine.policy import (
     ProfileSettings,
     RatingRuleSpec,
     SignalSetting,
-    inspect,
 )
+from reaper.engine.policy_warnings import inspect
 from reaper.engine.signals import SignalId
 from reaper.ratings import RatingSource
 
@@ -1111,7 +1107,7 @@ print(json.dumps({"order": order, "cases": cases}))
 
 ZONES: dict[str, Zone] = {
     "policy-repair-shims": Zone(
-        module=Path("src/reaper/engine/policy.py"),
+        module=Path("src/reaper/engine/policy_migrations.py"),
         functions=("rebalance", "recover_rating_rules"),
         tests=(
             "tests/test_policy.py::TestRebalancingAnOldPolicy",
@@ -1210,7 +1206,7 @@ ZONES: dict[str, Zone] = {
     # the alternative and it would report per-slice kill rates that no longer add up to an
     # answer about the detector, so it is scoped whole.
     "policy-inspect": Zone(
-        module=Path("src/reaper/engine/policy.py"),
+        module=Path("src/reaper/engine/policy_warnings.py"),
         functions=("inspect",),
         tests=(
             "tests/test_policy.py",
