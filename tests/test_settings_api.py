@@ -1188,6 +1188,13 @@ class TestPlexStatus:
     def test_unlinking_when_nothing_is_linked_is_a_noop(self, client: TestClient) -> None:
         assert client.delete("/api/settings/plex").json() == {"removed": False}
 
+    def test_unlinking_a_linked_server_reports_the_removal(self, client: TestClient) -> None:
+        """The other arm of the same route. Only the no-op branch was covered, so the answer
+        an operator actually gets back after unlinking was never asserted."""
+        _link_plex(client)
+
+        assert client.delete("/api/settings/plex").json() == {"removed": True}
+
     def test_the_certificate_check_cannot_be_set_before_linking(self, client: TestClient) -> None:
         response = client.put("/api/settings/plex", json={"web_url": "", "verify_tls": False})
         assert response.status_code == 422

@@ -22,7 +22,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api import tags as api_tags
-from reaper.api.schemas import OverrideIn, WhitelistEntryOut
+from reaper.api.schemas import OverrideIn, RemovedOut, WhitelistEntryOut
 from reaper.clock import utcnow
 from reaper.db.models import Candidate, FirstFlagged, Snapshot, WhitelistEntry
 from reaper.services import retention, whitelist
@@ -231,7 +231,7 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
 
 
 @router.delete("/override/{media_key}")
-async def clear_override(request: Request, media_key: str) -> dict[str, bool]:
+async def clear_override(request: Request, media_key: str) -> RemovedOut:
     """Remove any override (spare or reap) -- the decision-neutral name for the same action."""
     async with _sessions(request)() as session:
         prior = await whitelist.override_for(session, media_key)
@@ -240,4 +240,4 @@ async def clear_override(request: Request, media_key: str) -> dict[str, bool]:
         await session.commit()
     if removed:
         _log_override(media_key, "cleared", prior=prior, spare_days=None)
-    return {"removed": removed}
+    return RemovedOut(removed=removed)

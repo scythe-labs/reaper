@@ -29,7 +29,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api import tags as api_tags
-from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
+from reaper.api.schemas import NO_PLEX_FORWARD, OkOut, PlexStartIn
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
     clear_session_cookie,
@@ -428,7 +428,7 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response) -> dict[str, bool]:
+async def logout(request: Request, response: Response) -> OkOut:
     # Revoke every session the jar can present, not just the first name carrying a cookie.
     # With two names in play a stale cookie used to absorb the logout -- its row was
     # already gone, so the delete was a no-op -- and the genuinely live session under the
@@ -438,7 +438,7 @@ async def logout(request: Request, response: Response) -> dict[str, bool]:
             await close_session(session, token)
         await session.commit()
     clear_session_cookie(response)
-    return {"ok": True}
+    return OkOut(ok=True)
 
 
 @router.post("/recover")

@@ -42,6 +42,7 @@ from reaper.api.auth import (
     _verify_admin_password,
     record_password_failure,
 )
+from reaper.api.schemas import JobRunOut, OkOut, RemovedOut
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
 from reaper.auth.sessions import (
@@ -479,11 +480,11 @@ async def update_instance(
 
 
 @router.delete("/instances/{instance_id}", tags=[api_tags.SERVICES])
-async def delete_instance(request: Request, instance_id: int) -> dict[str, bool]:
+async def delete_instance(request: Request, instance_id: int) -> RemovedOut:
     async with _factory(request)() as session:
         removed = await instances.delete_instance(session, instance_id)
         await session.commit()
-    return {"removed": removed}
+    return RemovedOut(removed=removed)
 
 
 async def _plex_section_paths(request: Request) -> dict[str, list[str]]:
@@ -827,7 +828,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
 
 
 @router.post("/jobs/{job_id}/run", tags=[api_tags.JOBS])
-async def run_job(request: Request, job_id: str) -> dict[str, str]:
+async def run_job(request: Request, job_id: str) -> JobRunOut:
     """Run an upkeep job now, whether or not it is on a schedule.
 
     A scheduled job is nudged to fire immediately; one the owner turned off is run once
@@ -850,7 +851,7 @@ async def run_job(request: Request, job_id: str) -> dict[str, str]:
         update_checker=request.app.state.update_checker,
     )
     log.info("jobs.run_now", job=job_id)
-    return {"status": "started", "job": job_id}
+    return JobRunOut(status="started", job=job_id)
 
 
 # ---------------------------------------------------------------------------
@@ -921,7 +922,7 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
 
 
 @router.post("/admin-password", tags=[api_tags.SECURITY])
-async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict[str, bool]:
+async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOut:
     """Set (or change) the admin password.
 
     This is the password that later confirms turning deletion on, and it doubles as the
@@ -974,7 +975,7 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
             await spend_recovery_mark(session, keep)
         await session.commit()
     log.info("safety.admin_password_set", username=username, via_recovery=via_recovery)
-    return {"ok": True}
+    return OkOut(ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1315,7 +1316,7 @@ async def generate_api_key(request: Request) -> ApiKeyOut:
 
 
 @router.delete("/general/api-key", tags=[api_tags.GENERAL])
-async def remove_api_key(request: Request) -> dict[str, bool]:
+async def remove_api_key(request: Request) -> RemovedOut:
     """Close the header-credential lane: delete the key, and stop honoring it now.
 
     Rotating replaces one working key with another, so an operator who generated a key for
@@ -1331,4 +1332,4 @@ async def remove_api_key(request: Request) -> dict[str, bool]:
         await session.commit()
     request.app.state.api_key_digest = None
     log.info("settings.api_key_removed")
-    return {"removed": True}
+    return RemovedOut(removed=True)

@@ -42,6 +42,7 @@ from reaper.api.auth import (
     record_password_failure,
 )
 from reaper.api.runs import reap_in_flight
+from reaper.api.schemas import OkOut, RestoreCancelOut
 from reaper.auth.ratelimit import password_throttle
 from reaper.buildinfo import build_version
 from reaper.config import Settings
@@ -139,7 +140,13 @@ async def _record_backup_taken(request: Request, created_at: str) -> None:
         await session.commit()
 
 
-@router.get("/download")
+# An archive, not JSON. Same published-shape correction as ``api/poster.py`` and
+# ``api/logs.py``'s download (rule 72).
+@router.get(
+    "/download",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
 async def download_backup(request: Request) -> StreamingResponse:
     """Build the backup and stream it to the browser as one downloadable file."""
     settings = _settings(request)
@@ -233,7 +240,7 @@ async def restore_prepare(request: Request) -> RestoreSummaryOut:
 
 
 @router.post("/restore/confirm")
-async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> dict[str, bool]:
+async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> OkOut:
     """Verify the admin password, then arm the staged restore.
 
     Gated exactly like arming deletion (:func:`reaper.api.settings.set_safety`): the
@@ -266,13 +273,13 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> dict[s
     except restore.RestoreError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
     log.warning("restore.confirmed")
-    return {"ok": True}
+    return OkOut(ok=True)
 
 
 @router.post("/restore/cancel")
 async def restore_cancel(
     request: Request, payload: RestoreCancelIn | None = None
-) -> dict[str, bool]:
+) -> RestoreCancelOut:
     """Discard a staged or armed restore. Turns off the "waiting to finish" state.
 
     With a ``token`` the discard is scoped to that staging and refuses to touch one replaced
@@ -290,7 +297,7 @@ async def restore_cancel(
     )
     if cleared:
         log.info("restore.canceled")
-    return {"ok": True, "cleared": cleared}
+    return RestoreCancelOut(ok=True, cleared=cleared)
 
 
 #: How long the stop waits after the response has been handed to the server. The browser is
@@ -322,7 +329,13 @@ async def _stop_after_response() -> None:
     _stop_this_process()
 
 
-@router.post("/restore/restart")
+# The body is built by hand so the stop can ride out on a background task, which a plain
+# return cannot carry. ``response_model`` is what names the shape in the published document;
+# without it the route publishes an EMPTY schema, which reads as "some JSON" and is worse
+# than the free-form map its siblings published. The function keeps returning the
+# ``JSONResponse``: moving the task onto a ``BackgroundTasks`` dependency would change when
+# the signal fires relative to the last byte, which is what the docstring below argues about.
+@router.post("/restore/restart", response_model=OkOut)
 async def restore_restart(request: Request) -> JSONResponse:
     """Stop Reaper, so the staged restore is applied on the way back up.
 

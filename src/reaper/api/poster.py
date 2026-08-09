@@ -98,7 +98,14 @@ async def close_artwork_client(app: FastAPI) -> None:
         await cached[1].aclose()
 
 
-@router.get("/poster/{rating_key}")
+# Image bytes, not JSON. Without this the route publishes ``application/json`` with an empty
+# schema, which tells a script author to parse a PNG as JSON (rule 72, with the two download
+# routes in ``api/logs.py`` and ``api/backup.py``).
+@router.get(
+    "/poster/{rating_key}",
+    response_class=Response,
+    responses={200: {"content": {"image/*": {}}}},
+)
 async def poster(request: Request, rating_key: int, kind: str = "poster") -> Response:
     """Return one item's Plex artwork as image bytes, or 404 so the UI shows a placeholder.
 

@@ -48,6 +48,45 @@ __all__ = [
 ]
 
 
+class OkOut(BaseModel):
+    """A route that either did the thing or raised. ``ok`` is always ``True``.
+
+    It carries no information and is not meant to: the routes below answer with a status code
+    and a refusal body when they refuse, so a caller reads the code. What this exists for is
+    the published document. A route annotated ``dict[str, bool]`` is typed there as a free-form
+    map with no title, which tells a script author to expect keys nobody sends."""
+
+    ok: bool
+
+
+class RemovedOut(BaseModel):
+    """Whether a record existed to remove. ``False`` is a normal answer, not a failure."""
+
+    removed: bool
+
+
+class RestoreCancelOut(BaseModel):
+    """Clearing a staged restore. Its own model rather than :class:`OkOut`, because it answers
+    a second question and a shared model would drop the answer off the wire."""
+
+    ok: bool
+    cleared: bool = Field(
+        description=(
+            "Whether a staging was actually removed. An ownership refusal and a call that "
+            "found nothing both report false, and neither is an error."
+        )
+    )
+
+
+class JobRunOut(BaseModel):
+    """A maintenance job accepted for a run. ``status`` is always ``started``: the job is
+    handed to the scheduler and this returns before it finishes, so this is an
+    acknowledgement rather than a result."""
+
+    status: str
+    job: str
+
+
 class CandidateLinkOut(BaseModel):
     """One Plex row an abstain could not choose between, with the ways to open it.
 
