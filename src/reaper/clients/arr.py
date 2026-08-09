@@ -25,19 +25,25 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-import structlog
-
-from reaper.clients.base import BaseClient, IntegrationError
+from reaper.clients.base import BaseClient
 from reaper.config import RuntimeSafety
-
-log = structlog.get_logger(__name__)
 
 
 class ArrClient(BaseClient):
-    """Shared Sonarr/Radarr behavior."""
+    """Shared Sonarr/Radarr behavior.
+
+    Every read below goes through ``get_list`` or ``get_dict``, which raise on a body of
+    the wrong shape rather than coercing it. That guard was written out eleven times here
+    and the reasoning six times; ``get_list``'s docstring now holds it once.
+    """
 
     service: ClassVar[str] = "arr"
     default_prefix: ClassVar[str] = "/api/v3"
+
+    # Declared, never assigned: only the subclasses carry a value, so a call site cannot
+    # reach ``exclusions`` on the base class and send the wrong *arr's spelling.
+    exclusion_param: ClassVar[str]
+    exclusion_path: ClassVar[str]
 
     def __init__(
         self,
@@ -64,22 +70,16 @@ class ArrClient(BaseClient):
         comes from the instance's stored ``api_path_prefix``, which nothing derives from
         this response (rule 24 -- the comment used to claim a gate that is not here).
         """
-        data = await self.get_json(f"{self.prefix}/system/status")
-        if not isinstance(data, dict):
-            raise IntegrationError(self.service, "system/status did not return an object")
-        return data
+        return await self.get_dict(f"{self.prefix}/system/status")
 
     async def tags(self) -> list[dict[str, Any]]:
         """Tags. A `reaper-keep` tag is a zero-integration whitelist: the owner
-        applies it in a UI they already use."""
-        data = await self.get_json(f"{self.prefix}/tag")
-        if not isinstance(data, list):
-            # A 200 whose body is not a list (a reverse proxy's HTML error page, a
-            # schema change) is never "no tags exist". Masking it as [] would let a
-            # keep-tag sync read an empty whitelist out of an error page -- and
-            # atomically replace a populated one with nothing.
-            raise IntegrationError(self.service, f"{self.prefix}/tag did not return a list")
-        return list(data)
+        applies it in a UI they already use.
+
+        The shape guard is what stops a keep-tag sync reading an empty whitelist out of
+        an error page and atomically replacing a populated one with nothing.
+        """
+        return await self.get_list(f"{self.prefix}/tag")
 
     async def root_folders(self) -> list[dict[str, Any]]:
         """Root folders, including `accessible`.
@@ -93,12 +93,15 @@ class ArrClient(BaseClient):
           because an unmounted volume makes media look vanished and a purge would then
           destroy library records.
         """
-        data = await self.get_json(f"{self.prefix}/rootfolder")
-        if not isinstance(data, list):
-            # A 200 whose body is not a list is never "there are none of these".
-            # See ``tags`` for the reasoning; this is the same defect (rule 72).
-            raise IntegrationError(self.service, f"{self.prefix}/rootfolder did not return a list")
-        return list(data)
+        return await self.get_list(f"{self.prefix}/rootfolder")
+
+    async def exclusions(self) -> list[dict[str, Any]]:
+        """The import exclusions this *arr holds, at its own spelling of the path.
+
+        Read after every delete-with-exclusion: the *arr answers 200 whether or not the
+        exclusion landed, so the executor re-reads this list and asserts the id is in it.
+        """
+        return await self.get_list(f"{self.prefix}{self.exclusion_path}")
 
 
 class SonarrClient(ArrClient):
@@ -109,18 +112,10 @@ class SonarrClient(ArrClient):
     exclusion_path: ClassVar[str] = "/importlistexclusion"
 
     async def series(self) -> list[dict[str, Any]]:
-        data = await self.get_json(f"{self.prefix}/series")
-        if not isinstance(data, list):
-            # A 200 whose body is not a list is never "there are none of these".
-            # See ``tags`` for the reasoning; this is the same defect (rule 72).
-            raise IntegrationError(self.service, f"{self.prefix}/series did not return a list")
-        return list(data)
+        return await self.get_list(f"{self.prefix}/series")
 
     async def series_by_id(self, series_id: int) -> dict[str, Any]:
-        data = await self.get_json(f"{self.prefix}/series/{series_id}")
-        if not isinstance(data, dict):
-            raise IntegrationError(self.service, f"series/{series_id} did not return an object")
-        return data
+        return await self.get_dict(f"{self.prefix}/series/{series_id}")
 
     async def episode_files(self, series_id: int) -> list[dict[str, Any]]:
         """Episode files for a series -- the unit of deletion for season pruning.
@@ -134,30 +129,10 @@ class SonarrClient(ArrClient):
         "unmonitored, files intact" is benign and resumable, while "files gone,
         still monitored" makes the *arr re-download everything we just removed.
         """
-        data = await self.get_json(f"{self.prefix}/episodefile", params={"seriesId": series_id})
-        if not isinstance(data, list):
-            # A 200 whose body is not a list is never "there are none of these".
-            # See ``tags`` for the reasoning; this is the same defect (rule 72).
-            raise IntegrationError(self.service, f"{self.prefix}/episodefile did not return a list")
-        return list(data)
+        return await self.get_list(f"{self.prefix}/episodefile", params={"seriesId": series_id})
 
     async def episodes(self, series_id: int) -> list[dict[str, Any]]:
-        data = await self.get_json(f"{self.prefix}/episode", params={"seriesId": series_id})
-        if not isinstance(data, list):
-            # A 200 whose body is not a list is never "there are none of these".
-            # See ``tags`` for the reasoning; this is the same defect (rule 72).
-            raise IntegrationError(self.service, f"{self.prefix}/episode did not return a list")
-        return list(data)
-
-    async def exclusions(self) -> list[dict[str, Any]]:
-        data = await self.get_json(f"{self.prefix}{self.exclusion_path}")
-        if not isinstance(data, list):
-            # A 200 whose body is not a list is never "there are none of these".
-            # See ``tags`` for the reasoning; this is the same defect (rule 72).
-            raise IntegrationError(
-                self.service, f"{self.prefix}{self.exclusion_path} did not return a list"
-            )
-        return list(data)
+        return await self.get_list(f"{self.prefix}/episode", params={"seriesId": series_id})
 
     async def unmonitor_season(self, series_id: int, season_number: int) -> None:
         """Stop monitoring one season, via the season-pass edit. Reversible.
@@ -213,32 +188,14 @@ class RadarrClient(ArrClient):
         Radarr returns a real ratings object -- imdb, tmdb, metacritic,
         rottenTomatoes, trakt -- so movie ratings cost us no extra call and no
         extra API key. (Sonarr does not: its ratings are flat TVDB.)
+
+        This is the read the shape guard was written for: coerced to [], an auth proxy's
+        error page read as an empty library.
         """
-        data = await self.get_json(f"{self.prefix}/movie")
-        if not isinstance(data, list):
-            # A 200 whose body is not a list is never "this instance holds no movies".
-            # Coerced to [], an auth proxy's JSON error page read as an empty library:
-            # every movie on that Radarr silently left the scan, and the snapshot stayed
-            # executable, so the operator was told a complete run over a partial library
-            # (rules 28 and 93). See ``tags`` -- same defect, same answer (rule 72).
-            raise IntegrationError(self.service, f"{self.prefix}/movie did not return a list")
-        return list(data)
+        return await self.get_list(f"{self.prefix}/movie")
 
     async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
-        data = await self.get_json(f"{self.prefix}/movie/{movie_id}")
-        if not isinstance(data, dict):
-            raise IntegrationError(self.service, f"movie/{movie_id} did not return an object")
-        return data
-
-    async def exclusions(self) -> list[dict[str, Any]]:
-        data = await self.get_json(f"{self.prefix}{self.exclusion_path}")
-        if not isinstance(data, list):
-            # A 200 whose body is not a list is never "there are none of these".
-            # See ``tags`` for the reasoning; this is the same defect (rule 72).
-            raise IntegrationError(
-                self.service, f"{self.prefix}{self.exclusion_path} did not return a list"
-            )
-        return list(data)
+        return await self.get_dict(f"{self.prefix}/movie/{movie_id}")
 
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True

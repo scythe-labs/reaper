@@ -441,6 +441,44 @@ class BaseClient:
                 f"expected JSON from {path}, got {response.headers.get('content-type')}",
             ) from exc
 
+    async def get_list(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> list[Any]:
+        """A GET whose body must be a JSON array. A body of any other shape raises.
+
+        A 200 carrying something else -- a reverse proxy's HTML error page, a schema
+        change -- is never "there are none of these". Coerced to ``[]``, an auth proxy's
+        JSON error page once read as an empty library: every movie on that Radarr
+        silently left the scan, the snapshot stayed executable, and the operator was told
+        a complete run over a partial library (rules 28 and 93).
+
+        There is deliberately no ``default=`` or ``coerce=`` parameter. That parameter is
+        the defect, and a helper that can be asked not to raise reopens it at every call
+        site at once. A genuinely empty array is still empty and still answers the
+        question.
+        """
+        data = await self.get_json(path, params=params, headers=headers)
+        if not isinstance(data, list):
+            raise IntegrationError(self.service, f"{path} did not return a list")
+        return list(data)
+
+    async def get_dict(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """A GET whose body must be a JSON object. See :meth:`get_list` for why."""
+        data = await self.get_json(path, params=params, headers=headers)
+        if not isinstance(data, dict):
+            raise IntegrationError(self.service, f"{path} did not return an object")
+        return data
+
     async def _mutate(
         self,
         method: str,

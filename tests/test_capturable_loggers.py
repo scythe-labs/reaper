@@ -82,7 +82,7 @@ class TestALoggerFrozenByAnEarlierTestIsStillCapturable:
 
 class TestTheGuardReachesEveryLoggerInTheTree:
     """A guard that SCANS is proven against the population it claims to cover, not against
-    one member of it (rule 145). The count is reconciled by hand: 50 files under
+    one member of it (rule 145). The count is reconciled by hand: 49 files under
     ``src/reaper`` declare a module-level logger, and ``grep -rl`` over the tree agrees.
 
     It was 47 before ``services/list_config.py`` (the operator's own protection lists) landed
@@ -91,7 +91,9 @@ class TestTheGuardReachesEveryLoggerInTheTree:
     retired lab engines left and took theirs, and 48 with ``api/plex.py``. Then 50, when the old
     single API routes module became five: three of the five log, so one logger left and three
     arrived. ``api/vocabulary.py`` and ``api/about.py`` declare none, because neither logs --
-    a split inherits its parent's logger only where it inherited something to say."""
+    a split inherits its parent's logger only where it inherited something to say. Then 49:
+    ``clients/arr.py`` declared one and never logged through it, and the line went with the
+    duplication it sat above."""
 
     @staticmethod
     def _modules_declaring_a_logger() -> set[str]:
@@ -108,8 +110,8 @@ class TestTheGuardReachesEveryLoggerInTheTree:
 
     def test_the_count_is_the_one_reconciled_by_hand(self) -> None:
         declared = self._modules_declaring_a_logger()
-        assert len(declared) == 50, (
-            f"expected 50 modules declaring a logger, found {len(declared)}. Bump the number "
+        assert len(declared) == 49, (
+            f"expected 49 modules declaring a logger, found {len(declared)}. Bump the number "
             "here AND in this class's docstring above, which states it again and which nothing "
             "asserts (rule 144). Leave the *Landed* rows in docs/SIMPLIFICATION_PLAN.md alone: "
             "their figures are historical deltas, so editing one makes a correct record false."
