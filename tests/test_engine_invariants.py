@@ -55,7 +55,7 @@ from reaper.engine.signals import (
     score,
 )
 from reaper.engine.verdict import STRUCTURAL_GATES
-from reaper.ratings import Rating, RatingSource
+from reaper.ratings import Rating, RatingSource, from_plex
 from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.snapshot import _explain, _verdict
 
@@ -79,6 +79,19 @@ def _hand_reap(evaluation: Evaluation, score_value: int, policy: PolicyBody) -> 
 def _imdb(value: float, votes: int) -> tuple[Rating, ...]:
     """One frozen IMDb rating, as the scan would carry it into ``Facts.ratings``."""
     return (Rating(source=RatingSource.IMDB, value=value, votes=votes, provider="imdb-dataset"),)
+
+
+def _plex_imdb(value: float) -> Rating:
+    """One IMDb rating as Plex serves it, with no vote count at all.
+
+    Built through the real reader rather than by hand: the claim these cases rest on is
+    ``from_plex``'s own -- it returns ``votes=None`` for *every* Plex-sourced rating, whatever
+    the source -- so transcribing a ``votes=None`` here would pin the transcription instead
+    (rule 119). The assert is what makes it evidence rather than a coincidence.
+    """
+    rating = from_plex(str(value), "imdb://image.rating")
+    assert rating is not None and rating.votes is None
+    return rating
 
 
 # --- generators -------------------------------------------------------------
@@ -705,6 +718,46 @@ class TestRatingGate:
         """Same set equality as the word orders above: a source added to the enum owes a
         decision about how it reads with no rating, not a default that happens to parse."""
         assert set(_MISS_TEXT) == set(RatingSource)
+
+    @pytest.mark.parametrize(
+        ("min_votes", "rating", "clears_the_vote_floor", "phrase"),
+        [
+            (0, _plex_imdb(7.4), True, "7.4 on IMDb, below the 7.5 you keep"),
+            (1, _plex_imdb(7.4), False, "7.4 on IMDb, too few to trust (you need 1)"),
+            (
+                1000,
+                Rating(source=RatingSource.IMDB, value=7.4, votes=1000, provider="imdb-dataset"),
+                True,
+                "7.4 on IMDb from 1,000 votes, below the 7.5 you keep",
+            ),
+        ],
+        ids=["no-vote-floor", "a-floor-of-one", "a-count-exactly-at-the-floor"],
+    )
+    def test_the_vote_clause_fires_on_the_floor_the_decision_itself_uses(
+        self, min_votes: int, rating: Rating, clears_the_vote_floor: bool, phrase: str
+    ) -> None:
+        """The three inclusive edges of the vote floor, each of which a mutant survived on.
+
+        The miss phrase and the decision now read one ``Rating.short_of_vote_floor``
+        (rule 104), and these are the cases that hold them there. A floor of 0 is no floor, so
+        the bar is missed on the score and "you need 0" would be a sentence about nothing; a
+        floor of 1 is the smallest ``RatingRuleSpec`` accepts on a source that counts votes,
+        and it still owes the clause; and a count exactly AT the floor clears it, so calling
+        that title short on votes would contradict the bar that just measured it.
+
+        Pinned as exact strings because both arms return the same ABSTAIN and differ only in
+        the sentence the operator reads (rule 21), and re-asserted against ``meets`` in the
+        same case because agreeing by accident is precisely what this pair did before. A floor
+        of ``0.0`` there clears on value trivially, which isolates the vote half.
+
+        Two of the three are reachable from a saved policy. The 0 case is not: ``RatingRuleSpec``
+        refuses a vote floor below 1 on IMDb outright. It is the ``RatingRule`` dataclass's own
+        default, it is what every percentage bar carries, and the predicate has to meet it.
+        """
+        bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=min_votes)
+
+        assert RatingFloorGate(rules=(bar,))._miss_phrase(bar, rating) == phrase
+        assert rating.meets(0.0, min_votes=min_votes) is clears_the_vote_floor
 
     def test_a_policy_with_no_bars_set_says_nothing_is_configured(self) -> None:
         """A rating gate switched on with an empty rule set still owes the operator a

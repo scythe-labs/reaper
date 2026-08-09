@@ -489,12 +489,9 @@ class RatingFloorGate:
         the "checked and did not fire, with the numbers" explainability the panel needs."""
         if rating is None:
             return f"no rating on {source_label(rule.source)} (you keep {rule.describe_bar()})"
-        too_few_votes = (
-            rule.min_votes > 0
-            and rating.has_meaningful_vote_count
-            and (rating.votes is None or rating.votes < rule.min_votes)
-        )
-        if too_few_votes:
+        # The same predicate `evaluate` decides the bar on, so the sentence cannot claim a
+        # vote floor was missed on a count `Rating.meets` counted as enough (rule 104).
+        if rating.short_of_vote_floor(rule.min_votes):
             return f"{rating.describe_for_user()}, too few to trust (you need {rule.min_votes:,})"
         return f"{rating.describe_for_user()}, below the {rule.threshold_text()} you keep"
 

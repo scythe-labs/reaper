@@ -1177,6 +1177,11 @@ ZONES: dict[str, Zone] = {
         module=Path("src/reaper/ratings.py"),
         functions=(
             "Rating.meets",
+            # Declared with `meets`, which used to carry this predicate inline. Hoisting a
+            # shared helper out of a zoned function moves its mutants somewhere no zone names
+            # unless the helper is named too -- the gap `describe_votes` opened once already
+            # (docs/LEARNINGS.md, rule 145).
+            "Rating.short_of_vote_floor",
             "Rating.has_meaningful_vote_count",
             "Rating.describe",
             "Rating.describe_for_user",
