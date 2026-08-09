@@ -338,6 +338,7 @@ export function ReapConfirm({
         <PlexTrashNotice
           known={warn.known}
           unreadable={warn.unreadable}
+          autoEmpties={warn.autoEmpties}
           acked={trashAcked}
           onAck={setTrashAcked}
         />

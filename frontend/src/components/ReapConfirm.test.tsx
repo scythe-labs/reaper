@@ -177,6 +177,53 @@ describe("the execute gate", () => {
     expect(screen.queryByText(/Plex/i)).not.toBeInTheDocument();
   });
 
+  it("stays silent when Plex empties its own trash and there is nothing in it", async () => {
+    // Plex ships this preference ON and most servers never change it, so on its own it is not
+    // a warning: it would stand in front of every reap and train the operator past the one
+    // that matters. It only ever rides on a trash that already warrants telling them.
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 0,
+      sections_unreadable: 0,
+      empties_after_scan: true,
+    });
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByText(/empties its own trash/i)).not.toBeInTheDocument();
+  });
+
+  it("says who does the emptying when the trash already holds records", async () => {
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 40,
+      sections_unreadable: 0,
+      empties_after_scan: true,
+    });
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
+    expect(screen.getByText(/empties its own trash after every scan/i)).toBeInTheDocument();
+  });
+
+  it("says nothing about auto-emptying when the preference could not be read", async () => {
+    // `null` is Unknown. Reading it as "Plex does not empty its own trash" would be the
+    // reassuring direction over a preference nobody checked (rule 93).
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 40,
+      sections_unreadable: 0,
+      empties_after_scan: null,
+    });
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
+    expect(screen.queryByText(/empties its own trash/i)).not.toBeInTheDocument();
+  });
+
   it("offers no phrase input at all while deletion is off", async () => {
     apiMock.safety.mockResolvedValue({ destructive_enabled: false });
     renderSheet();
