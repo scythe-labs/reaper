@@ -48,6 +48,7 @@ from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
+from reaper.db import KEY_CHUNK
 from reaper.db.models import (
     Candidate,
     FirstFlagged,
@@ -1311,11 +1312,6 @@ class Display:
     show_status: str | None = None
 
 
-#: How many rating keys go into one expanding ``IN`` against the watch mirror. Well under
-#: SQLite's bound-variable ceiling, and the same 500 the sibling batched reads use
-#: (``record_first_flagged_bulk``, ``season_watch_stats``).
-_WATCH_KEY_CHUNK = 500
-
 #: The "no display fields" default, as a singleton so it is not constructed per call.
 _NO_DISPLAY = Display()
 
@@ -1838,8 +1834,8 @@ async def record_first_flagged_bulk(
     if not keys:
         return
     existing: dict[str, FirstFlagged] = {}
-    for start in range(0, len(keys), 500):
-        chunk = keys[start : start + 500]
+    for start in range(0, len(keys), KEY_CHUNK):
+        chunk = keys[start : start + KEY_CHUNK]
         rows = (
             await session.execute(select(FirstFlagged).where(FirstFlagged.media_key.in_(chunk)))
         ).scalars()
@@ -2288,8 +2284,8 @@ async def _fold_merged_watch_stats(
         # variables in one statement; a library with enough merged listings to pass that
         # cap raised OperationalError, which is not an IntegrationError and so was caught
         # nowhere: the whole scan died rather than one fold being skipped.
-        for start in range(0, len(all_keys), _WATCH_KEY_CHUNK):
-            chunk = all_keys[start : start + _WATCH_KEY_CHUNK]
+        for start in range(0, len(all_keys), KEY_CHUNK):
+            chunk = all_keys[start : start + KEY_CHUNK]
             rows = (
                 await conn.execute(
                     text(

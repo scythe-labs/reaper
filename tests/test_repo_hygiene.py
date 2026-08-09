@@ -4723,3 +4723,251 @@ def test_the_css_walk_reads_the_forms_the_stylesheets_spell(tmp_path: Path) -> N
     assert bolding == {".a"}, bolding
     # `.a`'s only `[data-label]` rule is the media query switching it off, so it is not strutted.
     assert strutted == {".b"}, strutted
+
+
+# ---------------------------------------------------------------------------
+# Rule 94: a scan-sized ``IN`` is chunked
+# ---------------------------------------------------------------------------
+
+#: The membership operators SQLAlchemy spells a ``WHERE col IN (...)`` with. ``not_in`` and
+#: its legacy ``notin_`` alias expand identically -- one bound variable per element -- so a
+#: ban that read only ``in_`` would miss half the population it claims to cover (rule 147).
+_MEMBERSHIP_CALLS = frozenset({"in_", "not_in", "notin_"})
+
+#: The third spelling, and the one that hides: a placeholder list built by hand and pasted into
+#: the SQL, which is neither an ORM operator nor an ``expanding`` bindparam.
+#: ``imdb_dataset.lookup`` does exactly this. A walk collecting only the first two reported 17
+#: functions and had no count to pin for the eighteenth, which is rule 147's shape -- a form
+#: that never enters the walk is missing from the ban and from the count alike.
+#:
+#: Read against string literals only, so the ``#:`` comments spelling ``IN (...)`` in prose are
+#: not sites. Upper-case with a word boundary, so ``MIN(``, ``JOIN (`` and the rest do not match.
+_RAW_IN = re.compile(r"\bIN\s*\(")
+
+
+class _Membership(NamedTuple):
+    """What one function does with membership filters."""
+
+    sites: int
+    """How many it carries. Counted rather than flagged so a SECOND filter added inside an
+    already-classified function fails here too, instead of riding the first one's line."""
+    chunked: bool
+    """Whether its CODE reads ``KEY_CHUNK``. Not proof that the chunking is correct -- it is
+    what stops a line below claiming "chunked" about a function that does no chunking. Read
+    off the syntax tree rather than the text, because the text includes the comment saying
+    why the read is chunked, and a check that comment satisfies proves nothing (rule 147)."""
+
+
+class _MembershipWalk(ast.NodeVisitor):
+    """Collects membership filters, remembering which ``def`` each one sits inside."""
+
+    def __init__(self, rel: str, found: dict[str, _Membership]) -> None:
+        self._rel = rel
+        self._found = found
+        self._stack: list[ast.AST] = []
+
+    def _scope(self, node: ast.AST) -> None:
+        self._stack.append(node)
+        self.generic_visit(node)
+        self._stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._scope(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._scope(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._scope(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        operator = isinstance(func, ast.Attribute) and func.attr in _MEMBERSHIP_CALLS
+        expanding = (
+            isinstance(func, ast.Name)
+            and func.id == "bindparam"
+            and any(kw.arg == "expanding" for kw in node.keywords)
+        )
+        if operator or expanding:
+            self._record(node)
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        # Hand-written SQL, including the constant halves of an f-string. Recorded against the
+        # innermost enclosing def, which is where the placeholder list is built.
+        if isinstance(node.value, str) and _RAW_IN.search(node.value):
+            self._record(node)
+        self.generic_visit(node)
+
+    def _record(self, node: ast.AST) -> None:
+        names = [getattr(n, "name", "") for n in self._stack]
+        key = f"{self._rel}::{'.'.join(names) or '<module>'}"
+        enclosing = self._stack[-1] if self._stack else node
+        prior = self._found.get(key)
+        self._found[key] = _Membership(
+            sites=(prior.sites if prior else 0) + 1,
+            chunked=any(
+                isinstance(inner, ast.Name) and inner.id == "KEY_CHUNK"
+                for inner in ast.walk(enclosing)
+            ),
+        )
+
+
+def _membership_sites(root: Path) -> dict[str, _Membership]:
+    """Every ``IN``-shaped filter under ``root``, keyed by ``path::enclosing qualname``.
+
+    Three spellings reach one SQL construct and all three are collected: the ORM operators
+    above, ``bindparam(..., expanding=True)``, which is how the raw-SQL readers bind
+    ``IN :keys``, and a hand-built placeholder list pasted into the SQL text. Keyed on the
+    enclosing function rather than a line number, because line numbers move and a reviewer
+    needs to know which read is being classified.
+    """
+    found: dict[str, _Membership] = {}
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(REPO).as_posix()
+        _MembershipWalk(rel, found).visit(ast.parse(path.read_text(encoding="utf-8")))
+    return found
+
+
+#: Every membership filter in ``src/reaper``, and what bounds the list it expands. A line
+#: starting ``chunked`` means the read loops on ``KEY_CHUNK``; one starting ``bounded`` says
+#: what holds its input under SQLite's ceiling without chunking. Reconciled by hand, and by
+#: site count, so a filter added beside a classified one cannot ride its line (rule 145).
+_MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
+    "src/reaper/api/review.py::list_candidates": (
+        5,
+        "bounded: four over the operator's hand overrides, one over the page (limit le=500)",
+    ),
+    "src/reaper/api/review.py::_group_rollups": (2, "chunked"),
+    "src/reaper/api/review.py::_decided_keys": (2, "chunked"),
+    "src/reaper/api/review.py::group_detail": (1, "bounded: the seasons of one show"),
+    "src/reaper/services/condemned.py::_reap_overridden_rows": (
+        2,
+        "bounded: the operator's reap overrides, one row per hand click",
+    ),
+    "src/reaper/services/condemned.py::overridden_lane_shifts": (
+        2,
+        "bounded: the operator's overrides, one row per hand click",
+    ),
+    "src/reaper/services/executor.py::Executor.execute": (1, "chunked"),
+    "src/reaper/services/executor.py::Executor._rolling_30d_deletions": (
+        1,
+        "bounded: the fixed _TERMINAL_DELETE_KINDS set",
+    ),
+    "src/reaper/services/fairness.py::_evidence_index": (1, "chunked"),
+    "src/reaper/services/fairness.py::_distinct_episodes": (1, "chunked"),
+    "src/reaper/services/grace.py::grace_report": (1, "chunked"),
+    "src/reaper/services/imdb_dataset.py::ImdbRatings.lookup": (1, "chunked"),
+    "src/reaper/services/instances.py::arr_rows": (1, "bounded: two enum members"),
+    "src/reaper/services/retention.py::_doomed": (
+        2,
+        "bounded: both take a subquery, so nothing is bound at all",
+    ),
+    "src/reaper/services/retention.py::sweep_old_snapshots": (1, "bounded: SWEEP_BATCH ids"),
+    "src/reaper/services/season_scan.py::season_watch_stats": (3, "chunked"),
+    "src/reaper/services/snapshot.py::record_first_flagged_bulk": (1, "chunked"),
+    "src/reaper/services/snapshot.py::_fold_merged_watch_stats": (1, "chunked"),
+}
+
+
+def test_every_scan_sized_in_clause_is_chunked_or_classified() -> None:
+    """Rule 94, which was prose and nowhere in code until #556.
+
+    An expanding ``IN`` binds one variable per key and SQLite refuses a statement past its
+    ceiling, so a filter over a library-sized set is a scan or a report that dies outright
+    rather than one that runs slowly. The grace report shipped that way: nothing bounds the
+    condemned set, and the read raised ``OperationalError``, which is not an
+    ``IntegrationError`` and so was caught nowhere.
+
+    Reading the code is the only way to tell a scan-sized list from a two-element one, so this
+    does not try to: it collects the three spellings the tree uses and requires each site to
+    carry a written classification. A new one fails here, which is the point -- the site that
+    broke was missed because nothing made anyone look at it. A **fourth** spelling would be
+    missing from this walk and from its counts alike (rule 147), which is why the walk is
+    driven against each form in the test below rather than trusted.
+    """
+    found = _membership_sites(SRC)
+
+    missing = sorted(set(found) - set(_MEMBERSHIP_INVENTORY))
+    assert not missing, (
+        "membership filters with no classification:\n"
+        + "\n".join(missing)
+        + "\n\nChunk the read on `db.KEY_CHUNK` if its list is scan-sized, then add a line to "
+        "_MEMBERSHIP_INVENTORY saying which it is (rule 94)."
+    )
+    gone = sorted(set(_MEMBERSHIP_INVENTORY) - set(found))
+    assert not gone, (
+        "_MEMBERSHIP_INVENTORY classifies filters that no longer exist, so the list is "
+        "vouching for reads nobody can find:\n" + "\n".join(gone)
+    )
+    counts = {
+        key: (found[key].sites, expected)
+        for key, (expected, _why) in _MEMBERSHIP_INVENTORY.items()
+        if found[key].sites != expected
+    }
+    assert not counts, (
+        "these functions gained or lost a membership filter; re-read the classification "
+        f"before moving the count (found, classified): {counts}"
+    )
+    unchunked = sorted(
+        key
+        for key, (_n, why) in _MEMBERSHIP_INVENTORY.items()
+        if why.startswith("chunked") and not found[key].chunked
+    )
+    assert not unchunked, (
+        "classified as chunked, but the function never names KEY_CHUNK:\n" + "\n".join(unchunked)
+    )
+
+
+def test_the_membership_walk_reads_the_forms_the_tree_spells(tmp_path: Path) -> None:
+    """The guard above is only as wide as this walk (rule 147).
+
+    Driven against every spelling ``src/`` uses -- the three ORM operators, a raw-SQL
+    ``expanding`` bindparam, a hand-built placeholder list inside an f-string, several filters
+    in one function, a method inside a class -- and against the three that must NOT count: a
+    plain ``bindparam`` binds one value and cannot overflow anything, an unrelated method whose
+    name merely ends in the same letters is not a membership filter, and neither is SQL naming
+    a function that happens to end in those two letters.
+
+    The chunked flag is driven both ways too, and the negative case is the one that matters:
+    ``one`` carries ``KEY_CHUNK`` in a comment and nowhere in its code, which is exactly what
+    a chunking loop deleted from under its own explanatory comment looks like.
+    """
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "def one():\n"
+        "    # chunked on KEY_CHUNK, says the comment nothing here implements\n"
+        "    return T.a.in_(keys), T.b.not_in(keys), T.c.notin_(keys)\n"
+        "def two():\n"
+        "    return text('x IN :k').bindparams(bindparam('k', expanding=True))\n"
+        "def three():\n"
+        "    q = 'SELECT MIN(x) FROM t JOIN (SELECT 1) u'\n"
+        "    return text('x = :k').bindparams(bindparam('k')), obj.join_(keys), q\n"
+        "class C:\n"
+        "    def four(self):\n"
+        "        for chunk in batched(keys, KEY_CHUNK):\n"
+        "            yield T.a.in_(chunk)\n"
+        "    def five(self):\n"
+        "        marks = ', '.join(f':id{i}' for i in range(len(keys)))\n"
+        "        return text(f'SELECT 1 FROM t WHERE k IN ({marks})')\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        found = _membership_sites(scratch)
+    finally:
+        REPO = real
+
+    assert set(found) == {
+        "src/reaper/m.py::one",
+        "src/reaper/m.py::two",
+        "src/reaper/m.py::C.four",
+        "src/reaper/m.py::C.five",
+    }, found
+    assert found["src/reaper/m.py::one"].sites == 3
+    assert not found["src/reaper/m.py::one"].chunked
+    assert found["src/reaper/m.py::C.four"].chunked
+    # The placeholder list is attributed to the innermost def that builds it, not to its class.
+    assert found["src/reaper/m.py::C.five"].sites == 1

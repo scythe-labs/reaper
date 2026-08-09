@@ -106,6 +106,7 @@ import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from itertools import batched
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
@@ -117,6 +118,7 @@ from reaper.clients.base import IntegrationError, SafetyViolationError
 from reaper.clients.plex import declared_mutation
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
+from reaper.db import KEY_CHUNK
 from reaper.db.models import (
     ActionStep,
     Candidate,
@@ -1040,13 +1042,19 @@ class Executor:
         candidates_by_key = dict(condemned)
         planned_keys = {s.media_key for s in steps}
         missing = sorted(planned_keys - set(candidates_by_key))
-        if missing:
+        # Chunked (rule 94). `condemned` is the FROZEN scan-condemned set while the steps were
+        # planned from the effective one, so `missing` is exactly the honored hand reaps --
+        # bounded by whitelist rows, one per hand click, the same bound
+        # `condemned._reap_overridden_rows` carries. Chunked anyway because nothing in the type
+        # says so, and a later planner that admits a wider set would find this read already
+        # safe. Merged into a map keyed by media_key, so the chunks cannot reorder it.
+        for chunk in batched(missing, KEY_CHUNK, strict=False):
             extra = (
                 (
                     await self._session.execute(
                         select(Candidate).where(
                             Candidate.snapshot_id == run.snapshot_id,
-                            Candidate.media_key.in_(missing),
+                            Candidate.media_key.in_(chunk),
                         )
                     )
                 )

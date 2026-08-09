@@ -190,7 +190,7 @@ row moving is indistinguishable from one that never started.
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
 | 6 | Structural motion | **done** | 6 of 8, 2 dropped | The by-design ceiling. Exit task finished: every `path:NNN` in this document resolves against the tree |
 | 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
-| 8 | Dedup and carriers | not started | 0 of ~25 | |
+| 8 | Dedup and carriers | not started | 0 of ~25 | W6-2 landed early as #618: #556 made rule 94's bound a live defect, not a tidiness item |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
 
 Status vocabulary, and nothing else: `not started`, `in progress`, `blocked`, `done`. `blocked`
@@ -790,7 +790,7 @@ carries eight phase-7/8/9 citations that all shift when phase 5 deletes at `:202
 carries five, `main.py` four. Re-anchor to the **symbol plus a quoted fragment**: eight of these sit
 hundreds of lines inside `scan`, `simulate`, `list_candidates` or `ReviewQueue`, where the symbol
 alone locates nothing, and two pairs share a symbol (`season_scan.py:1099`/`:1147` in `gather`,
-the two `range(0, len(keys), _KEY_CHUNK)` loops in `_group_rollups`, `api/review.py`), so a bare symbol silently merges two sites into one and
+the two `range(0, len(keys), KEY_CHUNK)` loops in `_group_rollups`, `api/review.py`), so a bare symbol silently merges two sites into one and
 under-scopes W6-2's sweep. Phases 7 and 8 read those bodies, and a session that reads a stale line
 number edits the wrong code with green tests behind it.
 
@@ -1927,7 +1927,7 @@ gate instead."
 | Constraint | Where it is stated | How it is implemented | Fix |
 | --- | --- | --- | --- |
 | Rule 40's one control standard | `00-tokens.css:212`, in prose | 10 rule blocks re-declare the same 6 fields; 8 more re-declare the identical focus ring | One grouped base rule, ~70 lines, risk `visual` (source order) |
-| Rule 94's 500-key `IN` bound | prose only | `_KEY_CHUNK`, `_WATCH_KEY_CHUNK`, three bare `500` literals, one `_CHUNK = 200` whose comment already enumerates the others | One constant + a hygiene grep, ~10 lines |
+| Rule 94's 500-key `IN` bound | prose only | `_KEY_CHUNK`, `_WATCH_KEY_CHUNK`, three bare `500` literals, one `_CHUNK = 200` whose comment already enumerates the others | **Landed, #618** as `db.KEY_CHUNK` plus an AST gate |
 | Rule 56's paging contract | cited by all four loops | `clients/plex.py`'s `_iter_pages` hardened, `history_sync.py:380` with a backstop, `library_index.py:284` with one since #559, `seerr.py:345` and `:370` with **no backstop** | One `paged()` iterator, ~60 lines, risk `safety-path` |
 | Rule 88's case-fold | 3 docstrings cross-referencing each other | `normalize_label`, `_tag_key`, `_name_key` are all `x.strip().casefold()`, plus ~28 inline copies across 10 modules | One `fold()`, so the rule is greppable by symbol, ~16 lines |
 | The layering in *Architecture* | CLAUDE.md prose | Holds today, measured: 0 top-level SCCs, no `engine/ → services`, no upward `api/` import | A ~30-line AST test lands **green** and pins it |
@@ -1967,9 +1967,22 @@ enforced by nothing but the next author's memory.
 >
 > **The sweep is nine `IN` sites, not five.** The row inherits the plan's "three bare `500`
 > literals" and that is short by four: `_KEY_CHUNK` (`api/review.py`), `_WATCH_KEY_CHUNK`
-> (`snapshot.py:1319`), and bare literals at both `_group_rollups` chunk loops (`api/review.py`), `snapshot.py:1844`,
-> `imdb_dataset.py:341`, `services/fairness.py`'s `_evidence_index` and `_distinct_episodes` and `season_scan.py:873`. Under-scoping a sweep
+> (`snapshot.py`), and bare literals at both `_group_rollups` chunk loops (`api/review.py`),
+> `snapshot.record_first_flagged_bulk`,
+> `imdb_dataset.lookup`, `services/fairness.py`'s `_evidence_index` and `_distinct_episodes` and `season_scan.season_watch_stats`. Under-scoping a sweep
 > is rule 72's own failure mode, so count before extracting.
+>
+> **Landed as #618, out of band, because #556 is one of the nine.** The grace report read the
+> whole condemned set in one `IN` and nothing bounds that set, so this stopped being a tidiness
+> item. `db.KEY_CHUNK` is the one declaration, all nine sites read it, and `executor.execute`
+> was an unlisted tenth. The `_CHUNK = 200` and `300` above need no allow-list after all: they
+> bound multi-row INSERTs, which are not membership filters and never enter the walk.
+> **The gate cost more than "a hygiene grep".** A grep cannot tell a scan-sized list from a
+> two-element one, so it collects every `IN` by AST and requires each to carry a written
+> classification — 18 functions, 29 sites. Its first draft read source text and stayed green
+> with the chunking deleted, because the comment explaining the chunking still said `KEY_CHUNK`;
+> its second was blind to `imdb_dataset`'s hand-built placeholder list, a third spelling, so the
+> walk and the count agreed while both disagreed with the tree (rule 147).
 >
 > **W6-8's guard finds nothing at the obvious hook point.** The 15-second test never reaches
 > `connect()`: measured, it makes three `getaddrinfo` calls, opens zero INET sockets, and the httpx
