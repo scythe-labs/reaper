@@ -1954,6 +1954,10 @@ export const api = {
 
   runs: () => request<RunSummary[]>("/api/runs"),
   run: (id: number) => request<Run>(`/api/runs/${id}`),
+  /** A window of one run's journal, past the page the detail route carries. No component
+   *  reads this yet: the step table still draws the first page and says how many it is not
+   *  showing. It ships with the route so the whole plan stays reachable, which is what the
+   *  table's own paging will read when it is built. */
   runSteps: (id: number, offset = 0, limit = 50) =>
     request<RunSteps>(`/api/runs/${id}/steps?offset=${offset}&limit=${limit}`),
   /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned set; an

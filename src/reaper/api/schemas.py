@@ -463,7 +463,7 @@ class RunOut(BaseModel):
     size. Zero for a healthy library, and every surface hides it at zero, so an operator
     whose sources all answer never sees a new number anywhere."""
 
-    step_count: int = 0
+    step_count: int
     """How many journal rows this run holds in total. ``steps`` below carries a window of them,
     so this is what a surface counting them must read: ``len(steps)`` is the size of the page,
     never the size of the plan. It is NOT ``item_count`` either, which counts deduplicated
