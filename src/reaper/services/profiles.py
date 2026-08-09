@@ -323,9 +323,9 @@ async def _conversion_list_names(
 ) -> tuple[str | None, str | None, tuple[str, ...], dict[str, frozenset[str]]]:
     """The registry rows ``convert_list_protections`` must point its rules at, plus the media
     scope each of the operator's own Plex lists may keep on. Selected by
-    ``policy_migrations.conversion_list_names`` and ``policy_migrations.own_list_media_scope``, which own WHICH row
-    answers each half and WHICH policy a collection's rule belongs on, so the load path here and
-    the upgrade migration cannot answer either differently (rule 104).
+    ``policy_migrations.conversion_list_names`` and ``policy_migrations.own_list_media_scope``,
+    which own WHICH row answers each half and WHICH policy a collection's rule belongs on, so
+    the load path here and the upgrade migration cannot answer either differently (rule 104).
 
     ``plex_libraries`` is read best-effort. Its only effect is to NARROW a collection's rule to
     one policy, so losing it leaves the rule on both -- the wider protection, the keep direction

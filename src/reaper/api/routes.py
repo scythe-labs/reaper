@@ -1683,8 +1683,8 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
        so nobody mistakes it for what is in force.
 
     A third recovery runs on a body that loads perfectly: a rating bar written before the
-    bar moved off the gate row is restored (``policy_migrations.recover_rating_rules``), because that
-    body loads cleanly while keeping nothing. It comes back as an unsaved draft too.
+    bar moved off the gate row is restored (``policy_migrations.recover_rating_rules``),
+    because that body loads cleanly while keeping nothing. It comes back as an unsaved draft too.
     """
     async with _sessions(request)() as session:
         active = await active_policy(session, media_type)

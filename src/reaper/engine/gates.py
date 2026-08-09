@@ -744,8 +744,8 @@ class ServerPopularityGate:
 # never firing they were not simply retired: every list -- tag, collection, watchlist, IMDb
 # -- now protects through the operator's own keep rules on the ``on_list`` field, evaluated
 # by ``fields.CustomProtectGate``, so each list's strength is a per-list choice on Policy.
-# ``policy_migrations.convert_list_protections`` rewrites a stored body's gate rows into the equivalent
-# rules, and their `GateId`s survive above so a stored explanation still decodes.
+# ``policy_migrations.convert_list_protections`` rewrites a stored body's gate rows into the
+# equivalent rules, and their `GateId`s survive above so a stored explanation still decodes.
 
 
 @dataclass(frozen=True, slots=True)

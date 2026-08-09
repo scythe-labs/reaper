@@ -168,10 +168,10 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
             # The two list gates reach this by a different route and need their own sentence.
             # They are not unimplemented: they moved to Settings, Lists, and the loader leaves
             # the gate row in place exactly when it cannot find the list that gate was
-            # protecting (``policy_migrations.convert_list_protections``), so a scan stops rather than
-            # running a protection short. Telling that operator Reaper "has no implementation"
-            # for something called `whitelisted` names an id they have never seen on any
-            # screen and points at nothing they can do (rules 21, 25).
+            # protecting (``policy_migrations.convert_list_protections``), so a scan stops
+            # rather than running a protection short. Telling that operator Reaper "has no
+            # implementation" for something called `whitelisted` names an id they have never
+            # seen on any screen and points at nothing they can do (rules 21, 25).
             if setting.gate in LIST_GATES_NOW_KEEP_RULES:
                 raise ScanConfigError(
                     "A protection you set up is pointing at a list that is no longer there, so "
