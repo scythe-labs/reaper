@@ -90,9 +90,9 @@ const WHAT_HINT =
   'Sibling call sites: AboutPanel.tsx ("these details"), JobsPanel.tsx ("these jobs" on the ' +
   'panel, "the shelf status" on LeavingSoonRow), NotificationsPanel.tsx ("whether Discord is ' +
   'connected"), ServicesPanel.tsx ("your connections"); in PlexPanel.tsx: the library grid ' +
-  '("the library list") and the Leaving Soon group ("the Leaving Soon settings"), pinned in ' +
-  "PlexPanel.test.tsx. GeneralPanel.tsx, SecurityPanel.tsx, BackupPanel.tsx and PlexPanel's " +
-  "own status read take the default.";
+  '("the library list"), the watch history record and the Leaving Soon group ("the Leaving Soon ' +
+  'settings"), pinned in PlexPanel.test.tsx. GeneralPanel.tsx, SecurityPanel.tsx, ' +
+  "BackupPanel.tsx and PlexPanel's own status read take the default.";
 
 // The scan row's schedule line, from the fixture's cron. It is rendered from the same held row
 // the upkeep rows below it use, so a blinked read must not blank it.

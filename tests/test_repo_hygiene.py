@@ -3111,8 +3111,10 @@ def test_every_query_failure_branch_is_counted() -> None:
 #   SecurityPanel.tsx (1)    the security settings' never-loaded branch
 #
 # The five settings panels above were one entry, ``Settings.tsx (6)``, until that file became a
-# shell holding no read of its own. Same six branches, each still above a form that never
-# rendered; only the file that renders each one is now named.
+# shell holding no read of its own. Same six branches, each on a read that never landed with
+# nothing on screen to lose; only the file rendering each one is now named. The single entry said
+# "above a form that never rendered", which was never true of all six -- About is read-only and
+# the shelf-status branch sits above a status row.
 #
 # **#195's enumeration was not the whole population**, which is why this counts rather than
 # trusting the issue: it named 8 to fix and 9 to leave, called that 15, and did not reach the reap

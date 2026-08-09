@@ -24,10 +24,13 @@ import { SecurityPanel } from "./SecurityPanel";
 import { ServicesPanel } from "./ServicesPanel";
 import { SwitchConfirm } from "./SwitchConfirm";
 
-// Three names that moved out of this file and are still imported FROM it: `SetupWizard` reads
-// the Plex panel, `DiscordModal` the webhook check, `SetupPasswordStep` the password floor.
-// The name stays available at this path rather than sending three callers to three new ones.
-export { PlexPanel };
+// Two names that moved out of this file and are still imported FROM it: `DiscordModal` reads the
+// webhook check, `SetupPasswordStep` the password floor. The name stays available at this path
+// rather than sending two callers to two new ones.
+//
+// `PlexPanel` was a third until this split, re-exported for a `SetupWizard` that stopped reading
+// it when #384 broke first-start into four steps; the export outlived its only caller by a year
+// and the comment justifying it was still naming that caller.
 export { isDiscordWebhook } from "./NotificationsPanel";
 export { MIN_ADMIN_PASSWORD } from "./SecurityPanel";
 
@@ -84,11 +87,11 @@ export function Settings({
   // to be asked (rule 72). Each reports through its own `onDirtyChange`; the five are `useState`
   // setters and so are stable, which that prop requires.
   //
-  // The other four are spelled out below rather than left out, because `dirtyPanels` is a total
+  // The other five are spelled out below rather than left out, because `dirtyPanels` is a total
   // `Record<Panel, …>`: a panel missing from it does not compile, where an absent key used to read
   // as "holds nothing" and switch straight through. That is rule 103's one-declaration branch, and
   // it replaces a comment claiming these five "are the whole population" -- a claim nothing checked
-  // against the nine in `PANELS`, so the next section added would have been unguarded and silent
+  // against the ten in `PANELS`, so the next section added would have been unguarded and silent
   // (#156). `npm run build` runs `tsc --noEmit` and is a CI gate, so the compiler is the guard.
   //
   // The last two took a hop the first three did not: their drafts live in CHILD components
@@ -156,7 +159,7 @@ export function Settings({
   const pendingLabel = PANELS.find((p) => p.id === pendingSwitch)?.label ?? "";
   // The section being LEFT, so one string serves every panel that raises the shared sentence.
   const leavingLabel = PANELS.find((p) => p.id === panel)?.label ?? "";
-  // Nine labels stop fitting one line well above this, but the app already has exactly one
+  // Ten labels stop fitting one line well above this, but the app already has exactly one
   // definition of a narrow screen and a second would be worse than swapping a little early:
   // below this width the section rail is a bottom bar, so a compact settings header is the
   // same shape. Rendered as one or the other, never both hidden by CSS, so only the control

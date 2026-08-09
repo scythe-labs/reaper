@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Settings -> Services: the Radarr, Sonarr, Tautulli and Seerr connections Reaper reads from
-// and deletes through, one card per configured instance.
+// Settings -> Services: the Radarr, Sonarr, Tautulli and Seerr connections Reaper reads from, and
+// the two of them it deletes through, one card per configured instance.
 //
 // Nothing is edited in place. A card opens `ServiceModal`, whose scrim covers the section rail,
 // so no draft here can be lost to a section switch and this panel reports none upward

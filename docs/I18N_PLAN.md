@@ -256,9 +256,11 @@ opens in the why-panel.
 
 ### Stage 4 — extract the UI catalog
 
-The mechanical bulk: ~800 strings, the seven panels split out of `Settings.tsx` (142 between them)
-and `WhyPanel.tsx` (70) heaviest. The file count that used to sit here, 76, was measured before
-that split and is not recoverable by arithmetic, so it is gone rather than guessed. Attributes (`aria-label`, `title`, `placeholder`) and all 44 `announce()` sites
+The mechanical bulk: ~800 strings, `Settings.tsx` and the seven panels split out of it (142
+between them, measured before the split) and `WhyPanel.tsx` (70) heaviest. The shell kept a share
+of the 142 — the ten `PANELS` labels, three `aria-label`s and the two switch-confirm templates — so
+the panels do not hold all of it. The file count that used to sit here, 76, moved with the split
+and is not restated: re-measure it rather than adding seven. Attributes (`aria-label`, `title`, `placeholder`) and all 44 `announce()` sites
 included — a live region that announces in the wrong language is worse than one that says
 nothing.
 

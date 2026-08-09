@@ -4,8 +4,9 @@
 // room the database is taking.
 //
 // Read-only, so it holds no draft and `dirtyPanels` in Settings.tsx classifies it `false`. The
-// update check is the shared `useUpdateStatus` the masthead pill reads, so the pill and the row
-// here answer from one read rather than two that can disagree.
+// update check is the shared `useUpdateStatus` the masthead chip's light reads, so that light and
+// the row here answer from one read rather than two that can disagree. The *pill* is local to this
+// file, which is why the note further down names all three surfaces apart.
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
