@@ -41,14 +41,16 @@ log = structlog.get_logger(__name__)
 # the rest do not exist.
 DEFAULT_PAGE_SIZE = 100
 
-#: Hard stop on both walks below. ``skip >= total`` is their only normal exit, and ``total`` is a
-#: number the portal re-picks on every page, so nothing else bounds them: a proxy serving one
-#: cached full page with a large ``pageInfo.results`` is answered forever. At DEFAULT_PAGE_SIZE
-#: rows a page this is 100,000 requests, past any real portal, so it binds only on a server that
-#: is not advancing through the listing (rule 56; ``history_sync.MAX_HISTORY_PAGES`` is the
-#: model). Tripping it RAISES, where that model stops and warns: both walks here are
-#: complete-or-raise, and returning short would leave ``requested_by.build_request_index``
-#: claiming it read every portal in full.
+#: Hard stop on both walks below. ``skip >= total`` is their only normal exit and ``total`` is a
+#: number the portal re-picks on every page, so the walk's LENGTH is the server's to choose. A
+#: total that keeps rising by a page's worth is never caught at all; a merely absurd one is caught
+#: after millions of round trips against the operator's own Seerr. A total that is large but fixed
+#: terminates on its own, which is why the trip below reads the page count and not the total. At
+#: DEFAULT_PAGE_SIZE rows a page this cap is 100,000 requests, past any real Seerr, so it binds
+#: only on a server that is not advancing through the listing (rule 56;
+#: ``history_sync.MAX_HISTORY_PAGES`` is the model). Tripping it RAISES, where that model stops and
+#: warns: both walks here are complete-or-raise, and returning short would leave
+#: ``requested_by.build_request_index`` claiming it read every Seerr in full.
 MAX_PAGES = 1_000
 
 
@@ -367,9 +369,7 @@ class SeerrClient(BaseClient):
                 # Only reachable while the reported total keeps outrunning ``skip``, which is a
                 # portal that is not advancing through the listing.
                 raise IntegrationError(
-                    self.service,
-                    "the request list could not be read to the end: this portal kept sending "
-                    f"pages past {len(out)} requests",
+                    self.service, f"the request list never finished, after {len(out)} requests"
                 )
         log.info("seerr.requests_loaded", count=len(out), filter=filter_)
         return out
@@ -411,9 +411,7 @@ class SeerrClient(BaseClient):
                 # The same loop, twenty lines up (rule 72). Also the only bound when a caller
                 # passes ``take=0``, where ``skip`` never advances at all.
                 raise IntegrationError(
-                    self.service,
-                    "the account list could not be read to the end: this portal kept sending "
-                    f"pages past {len(out)} accounts",
+                    self.service, f"the account list never finished, after {len(out)} accounts"
                 )
         log.info("seerr.users_loaded", count=len(out))
         return out
