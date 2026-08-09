@@ -390,12 +390,12 @@ class TestEveryRefusalIsOnTheRecord:
     """A refusal was the loudest thing the guard did and the quietest thing in the log.
 
     Nothing was written at the point of refusal, so the only trace was whatever the caller
-    made of the exception, and three callers make very little of it: ``sync_shelves``
-    catches ``PlexError`` per library and continues, and the executor's
-    ``_best_effort_refresh`` and ``_finalize_plex`` catch ``Exception`` deliberately,
-    because a reap must not fail on a follow-up. A blocked write could therefore reach the
-    operator as one line naming Plex and nothing else, indistinguishable from Plex being
-    unreachable.
+    made of the exception. The executor's ``_best_effort_refresh`` and ``_finalize_plex``
+    catch ``Exception`` deliberately, because a reap must not fail on a follow-up, and each
+    logs the refusal's own sentence under an event naming the wrong cause -- so what was
+    missing is a discriminator, not the words. ``sync_shelves._reconcile`` catches
+    ``PlexError`` alone, so a shelf refusal escapes it untouched today; the arms pinned by
+    the class above are what keep it that way, and C14 weighs collapsing them.
 
     ``reason`` is the discriminator, not the sentence (rules 92/93): the message is
     operator copy and will be reworded, so anything reading these lines matches on the

@@ -189,11 +189,15 @@ def refuse_mutation(event: str, method: str, path: str, *, reason: str, message:
 
     A refusal is the loudest thing either guard does and it was the quietest thing in the
     log: nothing was written at the point of refusal, so the only trace was whatever the
-    caller made of the exception. Three callers make very little of it. ``sync_shelves``
-    catches ``PlexError`` per library and continues, and the executor's
-    ``_best_effort_refresh`` and ``_finalize_plex`` catch ``Exception`` deliberately,
-    because a reap must not fail on a follow-up. So a guard refusal could reach the
-    operator as one line naming Plex, indistinguishable from Plex being unreachable.
+    caller made of the exception. The executor's ``_best_effort_refresh`` and
+    ``_finalize_plex`` catch ``Exception`` deliberately, because a reap must not fail on a
+    follow-up, and each logs the guard's own sentence under an event naming the wrong
+    cause. What was missing there is a discriminator, since rules 92/93 forbid reading the
+    sentence. ``sync_shelves._reconcile`` catches ``PlexError`` alone, so a shelf refusal
+    escapes it untouched **today** -- the eight ``except SafetyViolationError: raise`` arms
+    in ``clients/plex.py`` are what keep it from becoming one, and collapsing those into a
+    shared wrapper is exactly what checkpoint C14 weighs. This line is the insurance
+    against that, written before the wrapper rather than after it.
 
     Raising from here rather than at each site is what makes that structural. A refusal
     added later cannot arrive without its log line, and the ``reason`` is the discriminator
