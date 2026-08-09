@@ -3046,6 +3046,42 @@ trap in it.
   which raises *after* the temp table is committed and is invisible against a fresh database,
   because a fresh database has no index to trip over.
 
+## Three survivors on one predicate, and not one of them a defect (2026-08-09)
+
+The `engine-gates` zone does not declare `RatingFloorGate._miss_phrase` (#598), so reaching it
+took a supplementary invocation of the same runner. It left **3 survivors out of 14 mutants**,
+all on one three-clause predicate: `min_votes > 0` widened to `>= 0`, the same token narrowed to
+`> 1`, and `votes < min_votes` widened to `<=`.
+
+**All three read as live operator-copy defects, and not one of them was.** Under the mutants the
+why-panel prints "too few to trust (you need 0)" for a bar with no vote floor, and drops the "too
+few" clause entirely under a floor of 1. Driven at those three states the shipped code prints
+neither: it returns the right sentence every time. A survivor describes what the *mutant* does,
+and where the mutated function returns an operator string, that string is unusually easy to read
+as a bug report about the original — it is fluent, specific, and exactly the kind of sentence
+rule 21 exists to stop. All three were carried into a fix task as defects to fix, and all three
+were cases to write. **Read a survivor as a missing case until the original has been driven and
+its output printed.**
+
+**The finding underneath was real, and it was rule 104.** `Rating.meets` decides whether a bar
+clears; `_miss_phrase` tells the operator why it did not. Each spelled out the same three clauses
+in a different clause order, and they agree on all 288 source/votes/floor combinations — which is
+the state the rule is about, because two copies that agree are not one derivation, and the next
+edit to either is what makes the panel contradict the decision. Hoisting both onto one
+`Rating.short_of_vote_floor` took `_miss_phrase` from 14 mutants to 2 and killed the three
+survivors by **deleting** them, the same trade `describe_bar` made against this zone in July.
+
+**Which re-opens the gap that trade opened last time.** Mutants hoisted out of a declared function
+land in a helper no zone names, so the `ratings` zone declares `short_of_vote_floor` beside
+`meets`. The general form is worth stating once: **a rule 104 hoist moves mutable surface, so the
+zone that owned it owes the helper a declaration in the same change.**
+
+**One of the three states cannot be reached from a saved policy at all.** `RatingRuleSpec` refuses
+a vote floor below 1 on a source that counts votes, so `min_votes=0` on an IMDb bar exists only as
+the `RatingRule` dataclass's own default. That argues for pinning the boundary rather than against
+it: the dataclass default is 0, every percentage bar carries 0, and one validator is the only
+thing standing between them.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
