@@ -21,7 +21,13 @@ export type GateMeta = {
    *  counts, so its copy has to stay readable. The docs' protections-table guard excludes
    *  these, because that table lists the switches an operator can set. **It does not mean
    *  the id is inert**: `season_progression` fires on every TV scan and `custom` on every
-   *  keep rule the operator wrote, which is why they need copy at all. */
+   *  keep rule the operator wrote, which is why they need copy at all.
+   *
+   *  It is also what `PolicyEditor` reads to decide that turning a row off REMOVES it: a
+   *  policy carrying one of these cannot be saved in either switch position. That makes this
+   *  flag the browser's copy of `engine.gates.POLICY_AUTHORABLE_GATES`, and
+   *  `tests/test_api_type_mirror.py` fails on either set drifting from the other, in either
+   *  direction (rules 103, 144). */
   retired?: boolean;
 };
 
@@ -136,14 +142,20 @@ export const GATE_META: Record<string, GateMeta> = {
   // of `unmanaged` got backwards -- it reasoned each reader out, correctly, and left the next
   // id added to the engine to be printed raw.
   //
-  // None of the four can reach `PolicyEditor`'s leftover-row notice, whose copy is about a
-  // gate whose LIST is gone: `PolicyBody._drop_retired_gates` strips `unmanaged` and
-  // `others_watching` from every stored body on load, and `GateSettingIn._must_be_authorable`
-  // refuses `season_progression` and `custom`, which no policy row builds. That notice is in
-  // fact unreachable for EVERY id right now, including the two it was written for:
-  // `api/policy.py`'s `_policy_out` rebuilds each row as a `GateSettingIn`, so the same
-  // validator rejects a stored `whitelisted` on the way OUT and the route 500s (#627). The
-  // point here is only that these four cannot make it say something wrong.
+  // `PolicyEditor`'s leftover-row notice is about a gate whose LIST is gone, and the two ids
+  // it was written for reach it now: `api/policy.py`'s `_policy_out` serves each loaded row
+  // through `GateSettingOut`, the same model without the save boundary's refusal, so a stored
+  // `whitelisted` arrives instead of taking the route down with it (#627).
+  //
+  // Of the four below, `unmanaged` and `others_watching` still cannot reach it at all:
+  // `PolicyBody._drop_retired_gates` strips both from every stored body on load. The other
+  // two can, and only out of a hand-edited row -- `GateSettingIn._must_be_authorable` refuses
+  // `season_progression` and `custom` on every save, and no shim writes them. There the
+  // notice's "Add its list again" clause names nothing, which is the shape of the trade: that
+  // row used to 500 the same page, and the sentence's other half is the exit that works
+  // (`scan_runner.build_gates` cannot build either id, and turning the row off removes it).
+  // Keying the notice on a second, browser-side list of which ids are list-shaped would buy
+  // one clause and cost a set that can drift from the server's (rule 144).
   // NOT "Your season rules", which names a lever that does not always exist. Every season on
   // disk is held under this id when the guard cannot be ANSWERED -- `progress_is_establishable`
   // is False whenever the watch mirror reaches back less far than `in_progress_hold_days`,

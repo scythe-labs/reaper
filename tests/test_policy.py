@@ -20,7 +20,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel, ValidationError
 
-from reaper.api.schemas import GateSettingIn, PolicyIn
+from reaper.api.schemas import GateSettingIn, GateSettingOut, PolicyIn
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
@@ -769,6 +769,26 @@ class TestDefaultPolicy:
             GateSettingIn(gate=gate, enabled=True)
 
         assert gate.value in str(caught.value)
+
+    @pytest.mark.parametrize("gate", sorted(set(GateId) - _BUILDABLE_GATES))
+    def test_the_same_gate_is_still_carried_on_the_way_out(self, gate: GateId) -> None:
+        """The twin of the refusal above, and the two together are the whole of #627.
+
+        ``PolicyOut.body`` was typed as the request model, so this refusal ran on the
+        RESPONSE as well and ``GET /api/policy`` raised on the one stored shape the loader
+        preserves on purpose -- an enabled ``whitelisted``/``curated_list`` whose replacement
+        keep rule cannot be named. Refusing a write of these ids and serving one that is
+        already stored are different questions, and only the first has an operator asking
+        for something that does not exist.
+
+        **This pins the model contract, not the wiring.** Point ``_policy_out`` back at
+        ``GateSettingIn`` and leave this model in place and this test stays green;
+        ``tests/test_api.py::TestPolicyPersistence`` ``::test_a_leftover_list_protection_
+        still_opens_the_editor`` is the one that goes red, and it is what pins the route.
+        Said here because a docstring naming the whole of #627 above a one-line model
+        assertion reads as the proof and is not one (rule 118).
+        """
+        assert GateSettingOut(gate=gate, enabled=True).gate is gate
 
     @pytest.mark.parametrize("gate", sorted(PolicyBody.RETIRED_GATES))
     def test_a_retired_gate_cannot_take_an_install_offline(self, gate: GateId) -> None:
@@ -3957,8 +3977,17 @@ class TestConvertListProtections:
         refuses the scan on it rather than silently skipping (rule 38).
 
         The refusal is the operator's own words and names no gate id: they never saw
-        `whitelisted` on any screen, and what they can do about it is open Policy and save
-        (rule 21).
+        `whitelisted` on any screen (rule 21).
+
+        **What it tells them to do, and in which order, is the load-bearing part.** It used
+        to say to open Policy and save first, then add the list. Doing that loses the
+        protection for good: the save boundary holds Save while the row is there, so the only
+        way to reach a save is to take the row off, and the saved body then carries neither
+        the gate nor ``keep_tags`` -- nothing left for this conversion to fire on, and a list
+        added afterwards attaches no rule of its own. The order asserted here is the one
+        ``tests/test_api.py::TestPolicyPersistence::
+        test_adding_the_list_back_first_is_what_keeps_the_protection`` drives end to end, so
+        the sentence and the working sequence are one fact (rules 25, 144).
         """
         converted = self._convert(self._legacy(), tag=None, imdb=None)
 
@@ -3971,6 +4000,9 @@ class TestConvertListProtections:
             build_gates(PolicyBody.model_validate(converted))
         assert "whitelisted" not in str(raised.value)
         assert "curated_list" not in str(raised.value)
+        assert "Add the list back on Settings, Lists, then open Policy and save." in str(
+            raised.value
+        )
 
     def test_on_curated_list_rules_respell_as_on_list(self) -> None:
         legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())

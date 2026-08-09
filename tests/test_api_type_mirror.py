@@ -540,3 +540,53 @@ class TestEveryGateIdHasOperatorCopy:
         )
         for gate in self._declared():
             assert f"\n  {gate}: {{" in source, f"{gate} has no GATE_META entry"
+
+    def _marked_retired(self) -> set[str]:
+        """Every id ``GATE_META`` marks ``retired``.
+
+        Comments are stripped first, and each entry is read brace-depth aware, so
+        ``server_popularity``'s nested ``window`` object is part of its entry rather than an
+        entry of its own (rule 147). A file this stops finding entries in fails the set
+        comparison below rather than matching nothing.
+        """
+        text = _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", self._source()))
+        start = text.find("export const GATE_META")
+        assert start != -1, "policyMeta.ts no longer declares `export const GATE_META`."
+        body, entry = text[text.index("{", start) + 1 :], re.compile(r"(\w+)\s*:\s*\{")
+        found: set[str] = set()
+        cursor = 0
+        while (head := entry.search(body, cursor)) is not None:
+            depth, end = 1, head.end()
+            while end < len(body) and depth:
+                depth += {"{": 1, "}": -1}.get(body[end], 0)
+                end += 1
+            if re.search(r"\bretired\s*:\s*true\b", body[head.end() : end - 1]):
+                found.add(head.group(1))
+            cursor = end
+        return found
+
+    def test_the_browser_marks_exactly_the_ids_no_policy_row_can_carry(self) -> None:
+        """``retired`` is the browser's copy of ``POLICY_AUTHORABLE_GATES``, inverted.
+
+        It stopped being decoration in #627. ``PolicyEditor``'s protection switch reads it to
+        decide that turning a row OFF removes the row, because a policy carrying one of these
+        ids is refused by the save boundary in either position -- so the two sets drifting
+        breaks the page in whichever direction they drift: a live protection whose switch
+        deletes its own row, or a leftover whose switch writes a body that cannot be saved.
+
+        ``hand_spare`` is excluded because it is not a gate at all: ``api/simulate.py`` tallies
+        hand spares under it and no policy body can carry it.
+        """
+        from reaper.api.simulate import HAND_SPARE_TALLY_ID
+        from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
+
+        unauthorable = {member.value for member in GateId} - {
+            gate.value for gate in POLICY_AUTHORABLE_GATES
+        }
+
+        assert self._marked_retired() - {HAND_SPARE_TALLY_ID} == unauthorable, (
+            "policyMeta.ts's `retired` flags and engine.gates.POLICY_AUTHORABLE_GATES "
+            "disagree. Marking an authorable gate retired makes its switch delete the row "
+            "instead of turning the protection off; leaving an unauthorable one unmarked "
+            "puts a body the save boundary refuses behind the Save button."
+        )

@@ -541,11 +541,26 @@ class ExecuteRunIn(BaseModel):
     confirmation_phrase: str
 
 
-class GateSettingIn(BaseModel):
+class GateSettingOut(BaseModel):
+    """One protection's row as it is SERVED, which is every id a stored body can hold.
+
+    Wider than ``GateSettingIn`` below by exactly one thing: it does not ask whether the id
+    is authorable. A stored body may carry ``whitelisted`` or ``curated_list`` long after
+    both stopped being switches, because ``policy_migrations.convert_list_protections``
+    leaves an ENABLED one in place when its replacement keep rule cannot be named -- keeping
+    the cover and letting ``scan_runner.build_gates`` refuse the scan loudly, rather than
+    withdrawing a live protection in silence (rule 38). That row has to reach the editor, or
+    the one page that can clear it 500s on the way to rendering (#627).
+    """
+
     gate: GateId
     enabled: bool = True
     threshold: int = 0
     window_days: int = Field(default=365, ge=1)
+
+
+class GateSettingIn(GateSettingOut):
+    """The same row on the way IN, where the id must be one a policy may carry."""
 
     @field_validator("gate")
     @classmethod
@@ -565,11 +580,25 @@ class GateSettingIn(BaseModel):
         dropping an id from a *stored* body is safe only for a gate that could never keep a
         file, and widening that would put a real protection one typo away from vanishing
         (rule 38/117).
+
+        **Input only, which is why the served body is typed off the parent.** This ran on
+        the way out too, since ``PolicyOut.body`` was a ``PolicyIn``, so a stored row this
+        refuses took ``GET /api/policy`` down with it -- and the operator's one exit is that
+        page (#627). The refusal itself is unchanged: nothing may WRITE one of these ids.
         """
         if v not in POLICY_AUTHORABLE_GATES:
+            # No gate id in the sentence. An operator reads this as "Can't save this: ..." on
+            # the policy page, where the row it is about is labeled in their own words ("On a
+            # list you curate yourself"), so the slug names nothing on screen (rule 21).
+            # ``scan_runner.build_gates`` already refuses to print the same id for the same
+            # state and says why; this is that decision applied to its sibling (rule 144).
+            # It went from unreachable to routine when the response stopped being validated
+            # through here: the editor re-validates the loaded draft on mount, so an upgraded
+            # install meets this before touching anything. The 422's ``loc`` still carries
+            # ``body.gates.<i>.gate``, so an API caller can still tell which row.
             raise ValueError(
-                f'There is no "{v.value}" protection to switch on. '
-                "Remove it from the policy and save again."
+                "That protection is left over from an older version and can't be saved. "
+                "Turn it off, then save."
             )
         return v
 
@@ -644,7 +673,22 @@ class ConditionIn(BaseModel):
     value: int | str | bool
 
 
-class PolicyIn(BaseModel):
+class PolicyBodyOut(BaseModel):
+    """A policy body as it is SERVED: exactly what is loaded, gate rows included.
+
+    ``PolicyIn`` below is this model with the gate ids narrowed to the ones a save may
+    write, and that is the only difference between the two. The split exists because the
+    response used to be typed as the request: ``_policy_out`` rebuilt every loaded row as a
+    ``GateSettingIn``, so the one stored shape the loader deliberately preserves -- an
+    enabled ``whitelisted`` or ``curated_list`` whose replacement keep rule cannot be named
+    -- raised out of ``GET /api/policy`` and locked the operator out of the editor that
+    clears it (#627). Serving it is what makes ``PolicyEditor``'s leftover-row notice
+    reachable.
+
+    Widening on the way out only. Saving that body back is still refused, so the row can
+    leave a stored policy only by the operator's own act.
+    """
+
     name: str = "default"
     media_type: str = "movie"
     condemn_at: int = Field(ge=1, le=100)
@@ -665,7 +709,7 @@ class PolicyIn(BaseModel):
     keep_specials: bool = True
     protect_incomplete_seasons: bool = True
     flag_keep_conflicts: bool = True
-    gates: list[GateSettingIn]
+    gates: list[GateSettingOut]
     signals: list[SignalSettingIn]
     protect_conditions: list[ConditionIn] = Field(default_factory=list)
     # The engine spec is reused directly (not a parallel *In model) so its lane/numeric
@@ -676,6 +720,18 @@ class PolicyIn(BaseModel):
     # per-source vote-floor validation runs on the wire.
     keep_rating_rules: list[RatingRuleSpec] = Field(default_factory=list)
     keep_rating_match: Literal["any", "all"] = "any"
+
+
+class PolicyIn(PolicyBodyOut):
+    """A policy body on the way IN: every field above, with the gate ids narrowed.
+
+    Narrowing, never widening, so anything that accepts a served body accepts this one and
+    the save boundary is the strict end of the pair. ``list`` is invariant, which is the
+    whole of the ignore below -- ``GateSettingIn`` is a subclass of ``GateSettingOut``, and
+    a redeclaration is how Pydantic is told to run the stricter row model here.
+    """
+
+    gates: list[GateSettingIn]  # type: ignore[assignment]
 
 
 class PolicyValidateIn(PolicyIn):
@@ -714,7 +770,13 @@ class SeasonShapeOut(BaseModel):
 class PolicyOut(BaseModel):
     policy_hash: str
     name: str
-    body: PolicyIn
+    body: PolicyBodyOut
+    """The body the editor opens on, which is what was LOADED and not what a save accepts.
+
+    Typed off the served model rather than the request one: a stored gate row the loader
+    kept on purpose has to reach the page that removes it, and typing this as ``PolicyIn``
+    made the response validate through the save boundary and 500 instead (#627).
+    """
 
     default_signals: list[SignalSettingIn] = []
     """The SHIPPED bounds for this media type's signals, so the editor can offer a way back.

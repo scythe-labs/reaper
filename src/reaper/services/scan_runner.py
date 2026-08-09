@@ -173,11 +173,23 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
             # implementation" for something called `whitelisted` names an id they have never
             # seen on any screen and points at nothing they can do (rules 21, 25).
             if setting.gate in LIST_GATES_NOW_KEEP_RULES:
+                # **The order in this sentence is the whole of it, and it used to be backwards.**
+                # It said to open Policy and save first, then add the list. Following that
+                # loses the protection for good: the editor cannot save while the row is
+                # there (the save boundary refuses the id, so Save is held), the only way to
+                # reach a save is to turn the row off, and that writes a body with neither the
+                # gate nor `keep_tags` -- so `has_legacy_list_protections` is False forever and
+                # the conversion can never fire again. Adding the list afterwards attaches no
+                # keep rule (`api/lists.py add_list` says so outright), so those titles end up
+                # covered by nothing. Adding it FIRST is what makes the next load convert the
+                # gate into an `on_list` rule naming it, which is the outcome this whole path
+                # exists to reach (rules 25, 144;
+                # `tests/test_api.py` drives both orders).
                 raise ScanConfigError(
                     "A protection you set up is pointing at a list that is no longer there, so "
-                    "the scan stopped instead of leaving titles unprotected. Open Policy and "
-                    "save to finish moving it, then add the list back on Settings, Lists if "
-                    "you still want it."
+                    "the scan stopped instead of leaving titles unprotected. Add the list back "
+                    "on Settings, Lists, then open Policy and save. Turning that protection off "
+                    "instead drops it for good."
                 )
             raise ScanConfigError(
                 f'Policy enables the "{setting.gate.value}" protection, but Reaper has no '

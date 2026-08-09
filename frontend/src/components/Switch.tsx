@@ -5,12 +5,15 @@
 // remain only where the user is picking items from a list (filters, bulk selection),
 // which is a different gesture and should look like one.
 
+import { REMOVES_ITS_ROW } from "../focus";
+
 export function Switch({
   checked,
   onChange,
   disabled,
   ariaLabel,
   describedBy,
+  removesRow,
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
@@ -23,6 +26,16 @@ export function Switch({
    *  `QuantityInput` and `Segmented` already take this; the switch needed it once a warning
    *  anchored on one (#224). */
   describedBy?: string | undefined;
+  /** This switch takes its own row out of the list when it is turned off, so
+   *  `useRemovalFocus` can find where to leave focus once the row it was standing on is
+   *  gone. Only the policy editor's leftover protection is one: every other switch has two
+   *  positions and removes nothing, and marking one that does not would send focus somewhere
+   *  no row was removed from.
+   *
+   *  Spelled with the explicit `undefined` for the same reason `describedBy` above is: under
+   *  `exactOptionalPropertyTypes` a caller reading the flag off an optional field can only
+   *  pass it through if the target accepts it. */
+  removesRow?: boolean | undefined;
 }) {
   return (
     <span className="switch">
@@ -33,6 +46,7 @@ export function Switch({
         disabled={disabled}
         aria-label={ariaLabel}
         aria-describedby={describedBy}
+        {...(removesRow ? REMOVES_ITS_ROW : {})}
         onChange={(e) => onChange(e.target.checked)}
       />
       <span className="slider" aria-hidden="true" />

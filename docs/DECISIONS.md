@@ -798,7 +798,10 @@ persist. **A repair the migration declines is where the shim earns its place**, 
 conversion declines deliberately: it keeps an enabled gate whose replacement list is missing,
 because an `on_list` rule naming no list reads as a green "checked, did not fire", so persisting
 that output would store a body `build_gates` refuses. The row stays legacy, the shim reports it,
-and the editor is where the operator is told.
+and the editor is where the operator is told. That last clause needs the response typed off
+`PolicyBodyOut`, the request model without the authorable check: while `PolicyOut.body` was a
+`PolicyIn`, the row the shim keeps took `GET /api/policy` down with it and the operator was told
+nothing (#627).
 
 Writing it is safe only because the conversion is verdict-preserving: `CustomProtectGate` answers
 an `on_list` match with PROTECT and `decide_verdict` honors it before score or coverage, the same

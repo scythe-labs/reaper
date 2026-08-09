@@ -1361,6 +1361,42 @@ describe("the controls a screen reader has to tell apart", () => {
     expect(screen.queryByLabelText("Add a keep tag")).not.toBeInTheDocument();
   });
 
+  // The other half of #627. The notice on that row tells the operator to turn the leftover
+  // off, and turning it off has to produce a body a save accepts -- the boundary refuses the
+  // id in EITHER switch position (`GateSettingIn._must_be_authorable`), so storing
+  // `enabled: false` would leave every validate, simulate and save 422-ing with the page
+  // still saying the switch is the way out. Off means the row leaves the body.
+  it("takes a leftover protection out of the body when it is turned off", async () => {
+    const user = userEvent.setup();
+    renderEditor({
+      body: {
+        ...body(),
+        gates: [{ gate: "whitelisted", enabled: true, threshold: 0, window_days: 0 }],
+      },
+    });
+
+    const leftover = await screen.findByRole("switch", { name: "On a list you curate yourself" });
+    expect(screen.getByText(/A leftover from an older version/)).toBeInTheDocument();
+
+    await user.click(leftover);
+
+    // The whole row goes, not just the switch: there is no such protection to show off.
+    expect(
+      screen.queryByRole("switch", { name: "On a list you curate yourself" }),
+    ).not.toBeInTheDocument();
+    // The control that was pressed went with the row, so focus has to be put somewhere or it
+    // falls to `<body>` and the next Tab restarts at the top of a ~1,900-line form (#173).
+    // Save, because the removal is a draft edit and pressing it is what makes it real.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Save changes" }));
+    });
+    // ...and the draft the page is now working against is one the server accepts. Read off
+    // the validate call because that is the same body the Save button posts.
+    await waitFor(() => {
+      expect(apiMock.validatePolicy.mock.calls.at(-1)?.[0].gates).toEqual([]);
+    });
+  });
+
   it("gives two lean keep rules on one field Remove buttons that answer to different names", async () => {
     // Two lean rules on one field is a supported setup -- `addLean` runs the name through
     // `uniqueName` precisely because they collide -- and the rows differ on screen. Named by
