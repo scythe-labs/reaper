@@ -343,14 +343,20 @@ the case that will hit this first.
 lands under rule 145 adds another. Phase 6 splits two routers and phase 8 creates `api/deps.py` and
 moves `LAUNCHER_CONF_NAME` — both move populations that phase 3's gates count. Grep for the counter
 before closing a PR that adds or removes a member. **The phase-3 counters, by name:**
-`_EXPECTED_LAYERED_MODULES` (**79** modules under the four packages), the logger counter in
-`tests/test_capturable_loggers.py` (**48**, and it is the one phase 6 had to bump that this list
-did not name), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (the three sites W9 deletes). The module
-figure has moved three times already: #599's deletion took it to 76 without this paragraph
-noticing, phase 6's `api/plex.py` took it to 77, and its `policy_migrations` / `policy_warnings`
-pair took it to 79. Each gate's failure message now names its prose siblings, since
-nothing asserts them. The logger counter has not moved with any of them: a split inherits its
-parent's loggers rather than declaring new ones, so W2 motion moves one counter and not both.
+`_EXPECTED_LAYERED_MODULES` (**83** modules under the four packages), the logger counter in
+`tests/test_capturable_loggers.py` (**50**), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (the three
+sites W9 deletes, one of which moved file in #612). The module figure has moved five times:
+#599's deletion took it to 76 without this paragraph noticing, phase 6's `api/plex.py` took it to
+77, its `policy_migrations` / `policy_warnings` pair to 79, and `routes.py` becoming five modules
+to 83. Each gate's failure message now names its prose siblings, since nothing asserts them.
+
+**The logger counter moved too, and this paragraph said it would not.** It read "a split inherits
+its parent's loggers rather than declaring new ones, so W2 motion moves one counter and not both",
+which held for #609 and broke on #612: five modules cut from one file are five *modules*, and
+three of them log, so one logger left and three arrived. What survives of that claim is narrower
+and is the useful half — a split inherits its parent's logger only where it inherited something to
+say, which is why `api/vocabulary.py` and `api/about.py` declare none. **Both counters move on a
+split; only the module figure moves on every split.**
 
 **S8. Every PR diffs the behavioral baseline, and an unexplained line is a regression.** Phase 1
 freezes what the app currently *decides* about a real library. The test suite does not cover
