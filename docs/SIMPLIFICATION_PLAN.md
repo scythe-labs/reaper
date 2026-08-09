@@ -758,6 +758,12 @@ W2's eight rows, one PR each, in ascending order of coupling: `season_scan` → 
 The last two are **not** pure motion, and the last one is a component extraction. Land them as
 their own work or drop them.
 
+**Both are dropped, and both are filed.** `ReviewQueue.tsx` is #606 and `PlexPanel.tsx` is #607,
+each carrying the correction's evidence rather than the row's. Phase 6 therefore tops out at
+**6 of 8**, which is the by-design ceiling *Progress* already names. The decision is recorded here
+rather than only in the issues, because a row that vanishes from a plan reads as one nobody
+noticed.
+
 **The `api/routes.py` split needs a decision before it needs a session** (C6): the file draws four
 banners and the proposal names four modules, and they are not the same four. *Vocabulary* has no
 home and there is no simulate banner. The invariant to hold is the same set of method, path,
@@ -1245,9 +1251,9 @@ Each of these files draws its own seams already, in banner comments or in the fa
 | `engine/policy.py` | 2,263 | `+policy_migrations.py` (~530), `+policy_warnings.py` (~1,030) | The two halves import the model and nothing imports them back. No cycle exists |
 | `components/Settings.tsx` | 3,086 | 6 panels to their own files; the barrel keeps `PANELS`, the dirty record and the shell (~180) | **The tests are already split per panel** (6 files). Three sibling panels were already extracted. Only the source never followed |
 | `api/settings.py` | 2,025 | `api/plex.py` (~630, 12 routes) | **Landed, and it is 14 routes as the correction says, not 12.** 698 lines out, settings 2,044 to 1,344. The **sorted** document is byte-identical either side, same 96 operations; the one thing that moves is `paths` insertion order, which nothing reads. Reported as plain "byte-identical" first, which is the reassuring direction rule 144 warns about. `plex.py` **imports** the request accessors from `settings.py` rather than copying them, so phase 8's `api/deps.py` still collapses five copies and not six |
-| `components/PlexPanel.tsx` | 1,244 | 3 sections out (~450) | The file draws the seams as banner comments, and the rule-146 dirty contract is computed from connection-section drafts only, so the other three cannot break it |
+| `components/PlexPanel.tsx` | 1,244 | 3 sections out (~450) | **Dropped from phase 6, filed as #607, and read the correction below before this cell.** It claimed the file draws the seams as banner comments; the banners are inside the function body. The rule-146 dirty contract half is the part that holds |
 | `App.tsx` | 1,225 | 5 components to `components/` (~520) | **Landed.** 497 lines out, 1,225 to 728. Two carry the "exported for its tests" comment, as the correction says, and both were false on arrival: in `components/` every file exports its component, so the export carries no signal, and `WhyPanelFallback` is no longer "below". `NAV` moves with `SectionNav`; `ReapSheetLoader` does not move, since `Dashboard` renders it and not `ReapBar`. The query-failure map moves App 8 to 7 and gains `SectionNav` 1, total conserved |
-| `components/ReviewQueue.tsx` | 2,654 | `QueueFilterBar` (~330), `queueChips.tsx` (~60), delete the re-export shim | The filter block never reads `override`, `verdict` or a candidate. The shim's own comment calls itself transitional |
+| `components/ReviewQueue.tsx` | 2,654 | `QueueFilterBar` (~330), `queueChips.tsx` (~60), delete the re-export shim | **Dropped from phase 6, filed as #606, and read the correction below before this cell.** It claimed the filter block never reads `override`, `verdict` or a candidate; it reads the tab `verdict` at six sites. The shim's own comment calling itself transitional is the part that holds |
 | `services/season_scan.py` | 2,060 | `guard_result` + `no_key_reason` to `season_evidence.py` (~145) | **Landed.** Both are pure, and `api/routes.py` imported the 2k-line I/O module solely to call `guard_result`; that import is gone. The move was 152 lines and the served OpenAPI document is byte-identical either side |
 
 **One caveat that applies only to `routes.py`.** Roughly ten cross-module comments cite
