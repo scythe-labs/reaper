@@ -181,8 +181,10 @@ const SITES: Site[] = [
     classInTsx: "why-head",
     // One file, and it used to be two: the item panel and the show panel drew this head
     // separately until `PanelHead` collapsed them, and the show panel renders it from there
-    // now. The other `.why` panels put their own app-written copy in this heading, so a title
-    // from outside the app reaches it through `PanelHead` alone.
+    // now. A media TITLE reaches this selector through `PanelHead` alone. `ScalesPanel.tsx`
+    // also puts outside text under `.why-head h2` -- a requester's display name, through
+    // `ProfileName` -- and that is covered by its own row on `.scales-head-id h2` rather
+    // than here. The other two `.why` heads carry app-written copy.
     seenIn: ["components/WhyPanel.tsx"],
   },
   {
