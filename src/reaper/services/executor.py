@@ -107,7 +107,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from itertools import batched
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import Any, Protocol, cast
 
 import structlog
 from sqlalchemy import Update, or_, select, update
@@ -115,7 +115,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clients.base import IntegrationError, SafetyViolationError
-from reaper.clients.plex import declared_mutation
+from reaper.clients.plex import ActiveStream, PlexSectionPaths, declared_mutation
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
 from reaper.db import KEY_CHUNK
@@ -133,9 +133,6 @@ from reaper.services import list_config, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
 from reaper.services.profiles import live_policy_hash
-
-if TYPE_CHECKING:
-    from reaper.clients.plex import ActiveStream, PlexSectionPaths
 
 log = structlog.get_logger(__name__)
 
@@ -207,6 +204,14 @@ _NO_APPROVED_SIZE_REASON = (
     "what you approved. Kept."
 )
 _NO_APPROVED_SIZE_CHECK = "No size was recorded for it at scan time. Kept."
+
+#: The size re-read's two checklist lines. Both send paths reach both, and the sentence an
+#: operator reads must not depend on which one they are looking at, so each is written once
+#: here rather than twice at the branches (rule 144). The *reason* beside each stays
+#: per-path and is written inline: it names the server that answered and what it could not
+#: confirm, which is what makes the two readable as different events (rule 21).
+_CHECK_SIZE_UNCONFIRMED = "Couldn't confirm its current size. Kept."
+_CHECK_GREW_SINCE_APPROVED = "It grew since you approved it. Kept."
 
 
 def size_confirmed(candidate: Candidate) -> bool:
@@ -2142,7 +2147,7 @@ class Executor:
                 delete,
                 "Radarr did not report this movie's current size, so Reaper cannot "
                 "confirm it is still the file that was approved. Kept.",
-                check="Couldn't confirm its current size. Kept.",
+                check=_CHECK_SIZE_UNCONFIRMED,
             )
         if (
             approved_size is not None
@@ -2154,7 +2159,7 @@ class Executor:
                 f"the file is bigger now ({_gb(live_size)}) than when it was approved "
                 f"({_gb(approved_size)}), so it was likely upgraded since the "
                 "scan. Kept. Run a new scan to review it at its current size.",
-                check="It grew since you approved it. Kept.",
+                check=_CHECK_GREW_SINCE_APPROVED,
             )
 
         # The exclusion decision was frozen into the plan the operator approved
@@ -2375,7 +2380,7 @@ class Executor:
                 delete,
                 "Sonarr did not report a size for every file in this season, so Reaper "
                 "cannot confirm it is still what was approved. Kept.",
-                check="Couldn't confirm its current size. Kept.",
+                check=_CHECK_SIZE_UNCONFIRMED,
             )
         live_total = sum(size for size in live_sizes if size is not None)
         if approved_size is not None and _grew_materially(approved_size, live_total):
@@ -2384,7 +2389,7 @@ class Executor:
                 f"this season is bigger now ({_gb(live_total)}) than when it was approved "
                 f"({_gb(approved_size)}), so its files likely changed since "
                 "the scan. Kept. Run a new scan to review it at its current size.",
-                check="It grew since you approved it. Kept.",
+                check=_CHECK_GREW_SINCE_APPROVED,
             )
 
         # 1. Unmonitor (reversible), then VERIFY it actually took before any file is touched.

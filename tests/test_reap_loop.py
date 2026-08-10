@@ -54,6 +54,8 @@ from reaper.services import list_config, whitelist
 from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
+    _CHECK_GREW_SINCE_APPROVED,
+    _CHECK_SIZE_UNCONFIRMED,
     ExecutionError,
     Executor,
     ReapGateway,
@@ -725,6 +727,7 @@ class TestSizeDriftReRead:
         assert report.skipped == 1
         assert report.state is RunState.COMPLETED  # a skip is a protection, not a failure
         assert "bigger now" in report.outcomes[0].detail
+        assert report.outcomes[0].checks[0].label == _CHECK_GREW_SINCE_APPROVED
 
     async def test_a_movie_whose_size_cannot_be_read_is_kept(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
@@ -735,6 +738,7 @@ class TestSizeDriftReRead:
 
         assert radarr.delete_calls == []
         assert report.skipped == 1
+        assert report.outcomes[0].checks[0].label == _CHECK_SIZE_UNCONFIRMED
 
     async def test_a_movie_radarr_reports_as_zero_bytes_is_kept(
         self, session: AsyncSession
@@ -787,6 +791,10 @@ class TestSizeDriftReRead:
         assert sonarr.unmonitor_calls == []
         assert sonarr.delete_calls == []
         assert report.skipped == 1
+        assert "bigger now" in report.outcomes[0].detail
+        # The same sentence the movie case above asserts, and the movie's was the only one
+        # anything read: a grep for this season's wording found it in `executor.py` alone.
+        assert report.outcomes[0].checks[0].label == _CHECK_GREW_SINCE_APPROVED
 
     async def test_a_season_with_an_unreadable_file_size_is_kept(
         self, session: AsyncSession
@@ -806,6 +814,7 @@ class TestSizeDriftReRead:
 
         assert sonarr.unmonitor_calls == []
         assert report.skipped == 1
+        assert report.outcomes[0].checks[0].label == _CHECK_SIZE_UNCONFIRMED
 
     async def test_a_season_whose_files_all_report_zero_bytes_is_kept(
         self, session: AsyncSession

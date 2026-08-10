@@ -294,6 +294,7 @@ here first and never reconstructed later.
 | #676 | 8 | W3, `clients/plex.py`; C14 | `PlexClient._call` | no | **C14's option 5, built against the test that was written first.** 18 sites adopt one helper; the eight `except SafetyViolationError: raise` arms become one declaration inside it, and five structural opt-outs stay bespoke and say why in place. **The value is the arm, not the lines**: a refusal is not a Plex failure, and re-labeling it `PlexError` tells the caller Plex is unwell and invites it to degrade, which `leaving_soon._reconcile` does per library. Eight methods each carried the arm by hand, so a ninth inherited nothing; now one cannot arrive without it, and a test drives exactly that through `_call` with a body carrying no arm anywhere near it. **Every operator message is byte-identical, proven rather than read**: the 22 `PlexError` templates were extracted by AST at the base and reconstructed at the tip from each site's `what=`, and the two inventories diff clean. **The red demonstration is nine tests, not one**: deleting the arm from `_call` fails all eight per-method cases plus the helper's own, which is what says the collapse did not quietly weaken them. **Five opt-outs, matching C14's measurement exactly**: `_connect` builds the server the helper assumes, `active_streams`'s message is the fail-closed reasoning rather than a verb phrase, `trash_count`'s own read raises `PlexError` that a shared mapping would wrap twice, `aclose` maps nothing because there is no caller left to tell, and `is_refreshing` degrades to a warning rather than raising. **The review caught that list naming a method that does not exist** (`refresh_running`), in the one place whose job is to be checked against the tree, and in two ungenerated copies of it (rule 144). **`asyncio.to_thread` is load-bearing and the docstring says why**: it copies the context, and the journalled-intent flag is a `ContextVar`, so a bare shared executor reads it unset and refuses every journalled write, silently, since both executor sites swallow it. S3's three suites ran alone: 277 passed, exit 0. **C9 is done, driven against a live server, and an earlier draft of this cell said the box could not do it** -- no `reaper.db`, no Plex to reach -- which was false both ways and came from reading a truncated directory listing as absence. One probe ran twice, this branch's `plex.py` and the base's, same server, deletion off and the shelf's read-only opt-in off: all eight guarded write methods raised `SafetyViolationError` on both trees, never `PlexError`, with the operator sentence byte-identical across all sixteen refusals and the two summaries diffing clean. Zero mutating requests reached the wire either time, the GET-shaped `refresh` and the `emptyTrash` PUT both classified and blocked, 8 `plex.write_blocked` lines logged per run at reason `not_armed`. The probe carried a kill switch below the guard, a patched `requests` adapter raising on any mutation rather than sending it, so a guard that failed to refuse would have been caught there instead of at the server; it never fired |
 | #669 | 8 | W6-4 | `reaper.text.fold`, `test_the_comparison_form_of_a_name_is_one_derivation` | no | Rule 88's comparison form as one function, adopted at every site spelling the composite. **Every count written down was low**: measured at the tip it is 37 expressions over 33 lines in 14 modules, against the row's "~28 across 10" and the correction's "30 across 11", plus five more in frozen `alembic/` revisions that are out of the walk. **No exemption list**, which is the design: `fold(value)` is `value.strip().casefold()` exactly, so adoption is behavior-identical by construction, and the gate bans the COMPOSITE only, so the three already-stripped bare `.casefold()` sites need no entry. **The correction's reason for those three is wrong and is the more frightening one** -- it says they omit `strip()` on purpose, where each reads input a line above already stripped -- and it is amended in place. `normalize_label`, `_tag_key` and `_name_key` delegate rather than being deleted, each keeping the domain reason a generic docstring should not absorb. **What the walk cannot see is stated in its own docstring** (rule 147): a bare `.casefold()` on unstripped input, or `.strip().lower()`, of which 16 are deliberate and two more fold PATHS. Driven red by putting one site back. **The `func.lower` divergence is made louder, not repaired**: `_refuse_name_twice` compares SQLite's ASCII-only `lower()` against Python's `casefold`, and the `NOCASE` collation behind it is ASCII-only too, so both layers answer the same way today; named at both ends. **`libraries_for_ids` had no test at all** and is the entire input to the stale-mapping guard, whose two callers fold the other side, so a one-sided fold would warn the operator their correct mapping is wrong. Placement is top-level `src/reaper/text.py`, so `_EXPECTED_LAYERED_MODULES` stays 83, `_EXPECTED_LAYER_EDGES` does not move and the logger count stays 49. Rule 88 names the symbol now, and `docs/LEARNINGS.md`'s "only comparison form" sentence survives only because the helper delegates, which it now says |
 | #677 | 8 | W9, the workaround half | `scan_runner.build_gates`, `scan_runner.build_reap_gateway`, `simulate._replay_simulation`, `_DEFERRED_CROSS_PACKAGE_IMPORTS` | no | Four of the five deferred imports W9 measured as breaking no cycle are promoted to module level; the fifth is killed below. **The runtime graph does not move**: 679 edges and the same two cycles either side, because `test_repo_hygiene.py`'s walk counts a function-local import as an edge already, which is what "breaks no cycle" meant. What moves is the top-level graph, 674 edges to 677, still acyclic, and all 116 modules import in their own subprocess. `_DEFERRED_CROSS_PACKAGE_IMPORTS` 3 to 1. `_EXPECTED_LAYERED_MODULES` (84), `_EXPECTED_SOURCE_MODULES` (116), `_KNOWN_IMPORT_CYCLES` (2) and the logger count (49) are all unmoved, each re-derived from the tree rather than read off this document. **`launcher.py:559` gets the sentence it never had**: promoting it makes `main`, `api.settings` and `api.plex` raise ImportError and moves both declared cycles into the top-level graph, so it is one of TWO deferrals left in `src/` that genuinely close a cycle. The other is `services/lists.py:64`, whose own comment already says why, and it is invisible to all three gates: same-package, so the deferred-import walk skips it, and `TYPE_CHECKING`, so the cycle walk does. Pre-existing on `dev`. A first draft of this row called the launcher one exhaustive and the review measured the second. `:531`'s environment-ordering reason was already written and holds |
+| #PRNUM | 8 | W3, executor size interlock (killed as written); W9's `executor.py:137` (kill reversed) | `_CHECK_GREW_SINCE_APPROVED`, `_CHECK_SIZE_UNCONFIRMED`, `_DEFERRED_CROSS_PACKAGE_IMPORTS` | no | **The extraction was built twice and measured, then killed; the rule 144 half lands.** Reason-only is +7 lines and turns one operator sentence into a two-slot template; whole-branch is +9 and returns `StepOutcome | None`. The sentinel is the measurement: dropping the check at one call site fails exactly ONE test of 4,235, on `assert [(42, 3)] == []`, a real unmonitor reaching Sonarr. `_grew_materially` was already the one declaration of the predicate, so the extraction guards nothing that can drift and adds a fail-open shape one test wide. **Two byte-identical `check=` sentences, not one**, and the second sits in the unreadable-size branch the row exempts; both become constants beside `_NO_APPROVED_SIZE_CHECK`. All four sites pinned, each driven red alone against a swapped literal, each naming a different test; the season's two had no assertion at all, which is why a grep for its wording finds only `executor.py`. **The empty-list premise is real, narrower than the row, and driven both ways**: the paths agree for a measured item, diverge only under the allowance, and only on "the server listed nothing at all", which one `sizeOnDisk` field cannot express separately from "listed but unsized" — an unmeasured season whose files Sonarr lists and will not size is deleted exactly as the movie is. **C9 driven**, 9 scenarios, deletion ARMED so the interlock is the only thing left to stop the run, real Radarr/Sonarr clients over real HTTP to a loopback stub, kill switch below the guard raising on any mutating request that leaves it. Both trees, distinct executor fingerprints, summaries diff clean: 4 drift scenarios skip with zero mutating requests, 2 controls delete, 3 premise scenarios identical. **W9's `TYPE_CHECKING` kill is reversed by the owner** because the price it refused, a driven pass plus a C9 read, was already being paid by this PR; its measurement was right. `_DEFERRED_CROSS_PACKAGE_IMPORTS` 1 to **0**, and its written classification leaves with the site. `_EXPECTED_LAYERED_MODULES` (84), `_EXPECTED_SOURCE_MODULES` (116), `_KNOWN_IMPORT_CYCLES` (2) and the logger count (49) re-derived and unmoved |
 | #678 | 8 | W9, the finding-body corrections | none, prose only | no | Three claims in W9 that a reader would act on. **The header's counts**: 108 modules is 116, and 514 edges is a number no walk in the repository reproduces, since an edge count depends on how `from package import name` resolves; the line now points at the gate that measures it instead. "Zero top-level cycles" holds, measured under all three conventions either side of #671. **The cycle arithmetic**: "8" is 9 and "6 of them" is 7, both re-measured at `80d8a39~1`; two cycles survive the move rather than one, the second being `api.plex → api.settings → launcher → main`, which phase 6 created after W9 was measured; and `services.list_config ↔ services.lists` is a tenth needing `TYPE_CHECKING` counted, not the ninth. **The `LAUNCHER_CONF_NAME` bullet** gets a landed note: the closure was 304 to 278, never 347, and "which owns uvicorn, the tray and AppKit" is wrong about the cost, all three being deferred inside `launcher.py` and none of them ever in that closure. The 26 that left are `reaper.launcher` plus 25 stdlib. Both frontend cycles were re-checked and both still stand exactly as written, `PosterFallback` included at 12 lines |
 | #679 | 8 | W3, the two panel heads | `PanelHead`, `PanelHead.test.tsx` | no | One head, two panels, and **the row named the one character in the block that was never divergent**: the `↗` is `JumpPill`'s and both heads already shared it. Measured, the two differ by the item panel's inline `title-ext` SVG, which the show panel's title link lacks, and by the pill order, Tautulli/Seerr/Radarr/Sonarr against Sonarr/Tautulli/Seerr. The finding body is corrected in place. **Owner decision: unify both**, so the show panel gains the arrow and the order is the item panel's, which is the panel the queue opens most and therefore the pixel-for-pixel unchanged one. Mocked up and approved before any TSX moved. **The extraction is what makes the pin possible**: the two copies stayed wrong because every test read one panel, so all six assertions render BOTH and compare them, 5 of 6 driven red against the pre-extraction show panel (the sixth is the unmatched-title branch, which never diverged). Two source assertions carry the half a render cannot see, since a re-pasted head spelling itself the same way renders identically; they ban `why-head`, `title-link`, `title-ext` and `JumpPill` in `ShowPanel.tsx` and state their own bound (rule 147). Pill LABELS are deliberately outside that ban: "Sonarr" is an ordinary word in this panel's prose. **Rule 64 reached one place**: `index-outside-text.test.ts` named both files as rendering `why-head` and now names one. `ScalesPanel`'s `scales-ext` arrow is a third copy of the same path and is deferred in writing at `PanelHead`: a person is not a title, its link wraps the heading rather than sitting inside it, and it already carries the arrow, so nothing is diverged there. **S1 holds with no wire change at all**, `EXPECTED_INTERFACES` and `EXPECTED_PAIRS` re-verified against the tree at 94 and 92 |
 
@@ -314,7 +315,7 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | W5-2 | The carrier is already passed whole and `_judge_item` already takes it as one parameter, so the row buys zero parameters and zero net lines. Three of the movie lane's overlapping fields are identity-path join keys, and `snapshot.py` is never split | Phase 8, measured before building |
 | W5-5 | The collapse turns `PUT /api/profile {}` from a 422 into a 200 that resets every deletion cap to the shipped default, on a route an API key can write. The wire model's required fields are the protection. Reclassified `safety-path`; a seven-pair bounds test lands instead | Phase 8, measured before building |
 | W5-6 | Any extraction is a 13-parameter helper replacing a 13-key constructor (S5), and the incident the row cites was in the loop rather than the constructor. The parity sweep already compares all 13 keys across both sites; a `NUMBERS` derivation lands instead | Phase 8, measured before building |
-| W9's `executor.py:137` `TYPE_CHECKING` import | `services/executor.py` imports `reaper.clients.plex` at `:118`, so the block names two more symbols from a module the runtime graph already has an edge to. Measured: deleting it moves no graph, changes nothing a module import loads, and cannot change behavior, both names being read only in a `Protocol`'s annotations under `from __future__ import annotations`. Against nothing, any diff in `services/executor.py` is `safety-path` and buys a driven pass plus a C9 owner read, which is the trade S5 says to refuse. `_DEFERRED_CROSS_PACKAGE_IMPORTS` keeps the site with that reason written on it | Phase 8, measured on a patched tree |
+| W3's executor size-interlock extraction | Built twice and measured. Reason-only is +7 lines and splits one operator sentence into a two-slot template (rule 21); whole-branch is +9 and returns `StepOutcome | None`, and dropping that sentinel at one call site fails exactly one test of 4,235 while a real unmonitor reaches Sonarr. `_grew_materially` is already the predicate's one declaration, so the extraction guards nothing that can drift. The rule 144 half is real and lands: two byte-identical `check=` sentences, one of them in the branch the row exempts | Phase 8, measured on two patched trees |
 | W3's cache-database row | Two bootstraps not three, two stamps in one spelling not three in two, and "~90 lines" matches nothing (418-line cluster, 25 to 35 removable). Merging two opposite stale-shape policies would need a per-caller flag, which is the one thing that must never be shared. The lock is extracted instead, and it carries the fix for a `dev` defect the row does not name | Phase 8, measured before building |
 
 ## Execution
@@ -384,13 +385,15 @@ which moves populations that phase 3's gates count. **`LAUNCHER_CONF_NAME` does 
 paragraph used to say it did**: the layering walk covers the four packages only, and `launcher.py`
 and `config.py` sit outside it, so moving a constant between them moves neither the module figure
 nor the logger count. Measured on a patched tree, not reasoned. The counter that half does move is
-`_DEFERRED_CROSS_PACKAGE_IMPORTS`, from 3 to **1** rather than to 0: two of W9's three sites went,
-and the third was killed. Grep for the counter
+`_DEFERRED_CROSS_PACKAGE_IMPORTS`, from 3 to **0**: two of W9's three sites went at #677, and the
+third was killed there and un-killed later, once a PR was already paying the driven pass its kill
+had refused to buy. Grep for the counter
 before closing a PR that adds or removes a member. **The phase-3 counters, by name:**
 `_EXPECTED_LAYERED_MODULES` (**84** modules under the four packages), the logger counter in
-`tests/test_capturable_loggers.py` (**49**), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (**1** site,
-`executor.py`'s type-only import of a module it already imports at module level; of the two that
-went, one had moved file in #612). **Phase 8 added a fourth counter**,
+`tests/test_capturable_loggers.py` (**49**), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (**0** sites,
+empty; of the three that went, one had moved file in #612). Empty is the interesting state for
+that one, not a broken one: every cross-package edge in the four packages runs at import time now,
+so the runtime graph is the whole truth about them. **Phase 8 added a fourth counter**,
 `_EXPECTED_SOURCE_MODULES` (**116**), which counts every module under `src/reaper` rather than
 the 84 under the four packages, so a new module moves both and each gate's failure message names
 the other. Its neighbor `_KNOWN_IMPORT_CYCLES` is a set, not a count. The module figure has moved
@@ -1453,10 +1456,50 @@ here is preventing a future divergence.
 
   > **Landed, #652.** `BaseClient.get_list` and `get_dict`, which the six sibling guards in
   > `clients/seerr.py` adopted in the same commit.
-- `services/executor.py:2101,2328` — the size interlock written twice, and the season copy has
+- `services/executor.py:2150,2381` — the size interlock written twice, and the season copy has
   grown an empty-list guard the movie copy has no analogue for. Extract the growth branch only;
   the unreadable-size branch's copy genuinely differs per path and rule 21 wants that. Risk
   `safety-path`, 8 pinning tests.
+
+  > **Killed as written at #PRNUM; the rule 144 half lands instead.** The extraction was built
+  > twice and measured, not argued from the diff. Extracting the reason sentence alone is +7 lines
+  > (13 in, 6 out) and splits one operator sentence into a template with two interpolated
+  > fragments, so neither sentence can be read whole anywhere (rule 21). Extracting the whole
+  > branch, which is what the row asks for, is +9 lines and returns `StepOutcome | None`, so each
+  > call site carries a sentinel check the send path did not have before. **That sentinel is the
+  > measurement that decided it**: dropping the check at one call site leaves 4,234 tests passing
+  > and fails exactly one, `test_an_upgraded_season_is_kept_before_anything_is_sent`, on
+  > `assert [(42, 3)] == []` — a real unmonitor reaching Sonarr. One test out of 4,235 stands
+  > between a forgotten `is not None` and a mutation, to save nothing: `_grew_materially` is
+  > already the one declaration of the predicate, and it is the only part that can drift.
+  >
+  > **What was actually duplicated is a sentence, and the row exempts the branch holding half of
+  > it.** Two `check=` strings are byte-identical across the two paths, not one:
+  > `"It grew since you approved it. Kept."` and `"Couldn't confirm its current size. Kept."`,
+  > the second sitting in the unreadable-size branch the row rules out. The *reasons* beside them
+  > do differ per path and the row is right about those. Both sentences become module constants
+  > beside the file's existing `_NO_APPROVED_SIZE_CHECK`, which is the shape this file already
+  > uses for exactly this.
+  >
+  > **The season's copy was unread by anything**, which is why a grep finds it in `executor.py`
+  > alone: its test asserts the files survive, never the message. All four sites are pinned now,
+  > each driven red on its own by swapping its constant for a different literal, and each names a
+  > different test.
+  >
+  > **The empty-list premise is real and narrower than the row states, measured by driving it.**
+  > For a *measured* item the two paths already agree: `_payload_size` reads a movie's absent or
+  > zero `sizeOnDisk` as unreadable and the guard above the growth check keeps it, which is the
+  > movie's analogue. They diverge only under the unmeasured allowance, and only on one case.
+  > Driven, deletion armed, real HTTP: an unmeasured movie whose Radarr reports no size is
+  > DELETED; an unmeasured season Sonarr lists no files for is KEPT. But an unmeasured season
+  > whose files Sonarr lists and will not size is DELETED too, so the season's unconditional guard
+  > covers "the server listed nothing at all" and nothing wider. A movie has no list, so
+  > `_payload_size` folds that case and "listed but unsized" into one `None` and the movie path
+  > cannot tell them apart from one field. Making its guard unconditional is one clause wide and
+  > was driven: it keeps the unmeasured movie. It also keeps the population the allowance exists
+  > to reap, since a movie's only comparable source is the same Radarr `sizeOnDisk` the scan
+  > failed to read. That is a decision about the allowance's contract, for the owner, not a
+  > defect to fix under a dedup.
 - `WhyPanel.tsx:1316` vs `ShowPanel.tsx:69` — the same panel head, written twice and diverged in
   two places. The divergence should be **decided**, not inherited.
 
@@ -2440,14 +2483,18 @@ question is which breaks earn their keep, and most do not.
   > ImportError, and the two cycles `_KNOWN_IMPORT_CYCLES` declares move into the top-level
   > graph. That edge closes both.
   >
-  > **Killed: `executor.py:137`.** `services/executor.py` imports `reaper.clients.plex` at
-  > `:118`, so the `TYPE_CHECKING` block below it names two more symbols from a module the
-  > runtime graph already has an edge to. Deleting it moves no graph, changes nothing a module
-  > import loads, and cannot change behavior: both names are used only in a `Protocol`'s
-  > annotations, under `from __future__ import annotations`. Against that, any diff in
-  > `services/executor.py` is `safety-path` and buys a driven pass plus a C9 owner read, which
-  > is the trade S5 says to refuse. The gate keeps the site with that reason written on it
-  > instead of a deletion pending.
+  > **Killed at #677, un-killed by the owner, and landed at #PRNUM.** The kill's measurement was
+  > right and is not what changed: `services/executor.py` imports `reaper.clients.plex` at `:118`,
+  > so the `TYPE_CHECKING` block below it named two more symbols from a module the runtime graph
+  > already had an edge to, and deleting it moves no graph, changes nothing a module import loads,
+  > and cannot change behavior, both names being read only in a `Protocol`'s annotations under
+  > `from __future__ import annotations`. What the kill refused was the *price*: any diff in
+  > `services/executor.py` is `safety-path` and buys a driven pass plus a C9 read, which S5 says
+  > not to spend on zero. #PRNUM was already spending both for the size interlock in the same
+  > file, so the price was zero a second time. The two names move up to the `:118` import that
+  > was already loading their module. `TYPE_CHECKING` leaves the `typing` import with them, having
+  > no other reader in the file. `_DEFERRED_CROSS_PACKAGE_IMPORTS` goes 1 to **0**, and the
+  > written classification the kill attached to the site goes with the site.
 - **Both frontend cycles are one borrowed symbol each.** `PolicyEditor ↔ PolicyRuleEditors` exists
   because the deliberate split left three lookup tables behind, and the same file re-exports
   `humanDays` from `format.ts` whose own comment says it moved there to break a cycle back through

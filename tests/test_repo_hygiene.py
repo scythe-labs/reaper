@@ -4121,16 +4121,12 @@ _EXPECTED_LAYER_EDGES = frozenset(
 #: violation hides from a runtime graph, so a new one is a decision made here by hand, never a
 #: number bumped to make a red test go green.
 #:
-#: **One left of the three wave 9 found, and it hides nothing.** `services/executor.py` imports
-#: `reaper.clients.plex` at module level already, so the `TYPE_CHECKING` block below that import
-#: names two more symbols from a module the runtime graph holds an edge to either way. Wave 9
-#: proposed deleting it beside the other two; it was killed instead, having been measured to
-#: move neither graph, nor what a module import loads, nor behavior.
-_DEFERRED_CROSS_PACKAGE_IMPORTS = frozenset(
-    {
-        ("reaper/services/executor.py", "reaper.clients.plex", "TYPE_CHECKING"),
-    }
-)
+#: **Empty, all three of wave 9's gone.** The last was `services/executor.py`'s `TYPE_CHECKING`
+#: block, which named two symbols from `reaper.clients.plex` while the line above it imported
+#: that same module at runtime, so the deferral hid nothing from any graph. Empty is the
+#: interesting state for this set, not a broken one: every cross-package edge in the four
+#: packages now runs at import time, so the runtime graph is the whole truth about them.
+_DEFERRED_CROSS_PACKAGE_IMPORTS: frozenset[tuple[str, str, str]] = frozenset()
 
 
 class _Edge(NamedTuple):
