@@ -410,6 +410,14 @@ def stage_upload(settings: Settings, archive_path: Path) -> RestoreSummary:
 # ---------------------------------------------------------------------------
 
 
+#: What every failure in the three prepare steps below answers with, declared once so the
+#: four raise sites cannot drift into four different sentences (rule 144). The operator's
+#: question is the same at all four and so is the answer: :data:`READY_MARKER` is written
+#: last (see :func:`arm`), so a raise here leaves it unwritten and :func:`swap_if_ready`
+#: returns having touched nothing (rule 126).
+_PREPARE_FAILED = "Reaper couldn't prepare this backup. Nothing was restored."
+
+
 def _force_destructive_off(db_path: Path) -> None:
     """Set ``destructive_enabled = false`` in the staged database.
 
@@ -428,7 +436,7 @@ def _force_destructive_off(db_path: Path) -> None:
         )
         con.commit()
     except sqlite3.OperationalError as exc:
-        raise RestoreError("Reaper couldn't prepare this backup to restore.") from exc
+        raise RestoreError(_PREPARE_FAILED) from exc
     finally:
         con.close()
 
@@ -474,7 +482,7 @@ def _force_recovery_off(conf_path: Path) -> None:
     except OSError as exc:
         # Refuse rather than arm the target: this is the one failure here that would leave
         # the operator with a live way in they did not ask for (the prime directive).
-        raise RestoreError("Reaper couldn't prepare this backup to restore.") from exc
+        raise RestoreError(_PREPARE_FAILED) from exc
     log.warning("restore.recovery_disarmed")
 
 
@@ -503,7 +511,7 @@ def _purge_auth_state(db_path: Path) -> None:
     try:
         for table in AUTH_BEARING_TABLES:
             if not _TABLE_NAME.match(table):  # pragma: no cover -- guards the f-string below
-                raise RestoreError("Reaper couldn't prepare this backup to restore.")
+                raise RestoreError(_PREPARE_FAILED)
             present = con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
             ).fetchone()
@@ -511,7 +519,7 @@ def _purge_auth_state(db_path: Path) -> None:
                 con.execute(f"DELETE FROM {table}")  # noqa: S608 -- identifier checked above
         con.commit()
     except sqlite3.OperationalError as exc:
-        raise RestoreError("Reaper couldn't prepare this backup to restore.") from exc
+        raise RestoreError(_PREPARE_FAILED) from exc
     finally:
         con.close()
 

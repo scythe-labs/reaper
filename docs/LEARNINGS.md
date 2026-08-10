@@ -3088,6 +3088,37 @@ the `RatingRule` dataclass's own default. That argues for pinning the boundary r
 it: the dataclass default is 0, every percentage bar carries 0, and one validator is the only
 thing standing between them.
 
+## What the callee already enforces is not what the duplication costs (2026-08-10)
+
+Six hand-written `PlexClient(...)` constructions, four of them argument-for-argument identical,
+and the finding proposing a helper had already answered itself: `safety` is keyword-only and
+required, so no copy can drop the transport guard. Measured, the helper nets four to six lines
+and reaches four of the six sites, which is not worth its risk.
+
+**The argument the signature cannot enforce is the one worth a gate.** `verify` carries the
+operator's per-instance TLS switch and defaults to `True`. An omission there does not widen
+anything, so it reads as harmless, and the cost is agreement: an operator whose server carries a
+self-signed certificate gets one surface that cannot reach it while every other surface can, with
+nothing announcing the difference. The same shape had already happened once in this tree with
+`api_path_prefix` on the *arr clients. **So when judging a "written N times" finding, sort the
+repeated arguments by what the callee can refuse on its own.** The required ones are already
+bound; the defaulted ones are the population a gate has to cover, and it should cover every class
+with that parameter, not the one class the finding named.
+
+## A module at 93% can have every failure arm of a safety step unreached (2026-08-10)
+
+`services/restore.py`'s arm step runs three prepare functions before it writes the marker that
+lets the next boot swap. Each maps its failure to one operator sentence. Behind 4,279 passing
+tests and 93% line coverage for the module, **no test drove any of the three**, and no test
+anywhere asserted the sentence. Line coverage said so plainly and nobody had read it: the
+uncovered lines were exactly the three `except` bodies.
+
+The reason generalizes past this file. A staging flow's happy path is heavily tested because
+every other test needs it as setup, and that traffic is what carries the percentage. The arms
+that only a failure reaches are cheap to leave, and they are also where the operator-facing
+sentence lives, so a reword lands with nothing to catch it. **Read the missing-line list, not the
+percentage, on any module whose job is to refuse.**
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

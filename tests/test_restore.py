@@ -27,7 +27,7 @@ import sqlite3
 import stat
 import tarfile
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -470,6 +470,96 @@ class TestArm:
         pending = settings.data_dir / restore.PENDING_DIR
         assert stat.S_IMODE((pending / "secret.key").stat().st_mode) == 0o600
         assert stat.S_IMODE((pending / "secret.salt").stat().st_mode) == 0o600
+
+
+class TestAPrepareStepThatFails:
+    """``arm`` runs three prepare steps, and a failure in any of them must leave the swap
+    unarmed and say one sentence.
+
+    Every one of these three arms was unreached by the whole suite before this class:
+    ``_force_destructive_off``, ``_force_recovery_off`` and ``_purge_auth_state`` each raise
+    :data:`~reaper.services.restore._PREPARE_FAILED`, and nothing drove any of them. Asserted
+    against the declaration rather than a copy of its text, so this file cannot become a
+    fifth spelling of the sentence (rule 144).
+
+    ``is_armed`` is the half that carries the sentence's claim: READY is written last, so
+    "nothing was restored" is a property of the code and not a hope (rule 126).
+    """
+
+    def test_a_staged_database_that_cannot_take_the_read_only_write_refuses_the_arm(
+        self, tmp_path: Path
+    ) -> None:
+        settings = _settings(tmp_path)
+        summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+        staged_db = settings.data_dir / restore.PENDING_DIR / "reaper.db"
+        con = sqlite3.connect(staged_db)
+        try:
+            con.execute("DROP TABLE app_setting")
+            con.commit()
+        finally:
+            con.close()
+
+        with pytest.raises(RestoreError) as excinfo:
+            restore.arm(settings, summary.token)
+        assert str(excinfo.value) == restore._PREPARE_FAILED
+        assert restore.is_armed(settings) is False
+
+    def test_a_staged_launcher_conf_that_cannot_be_rewritten_refuses_the_arm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The one prepare step that is not about the database, and the one whose failure the
+        # module refuses over rather than shrugging at: a conf left carrying REAPER_RECOVERY
+        # would arm recovery on the target. Only the conf write is broken, so the READY write
+        # two lines later would still succeed if the raise ever stopped happening.
+        settings = _settings(tmp_path)
+        conf = b"REAPER_RECOVERY=true\n"
+        summary = restore.stage_upload(
+            settings,
+            _make_archive(tmp_path / "backup.reaper", extra_member=("launcher.conf", conf)),
+        )
+        real_write_text = Path.write_text
+
+        def refuse(self: Path, data: str, *args: Any, **kwargs: Any) -> int:
+            if self.name == "launcher.conf":
+                raise OSError("read-only file system")
+            return real_write_text(self, data, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", refuse)
+
+        with pytest.raises(RestoreError) as excinfo:
+            restore.arm(settings, summary.token)
+        assert str(excinfo.value) == restore._PREPARE_FAILED
+        assert restore.is_armed(settings) is False
+
+    def test_a_staged_database_whose_auth_purge_fails_refuses_the_arm(self, tmp_path: Path) -> None:
+        # The step that must not be skippable: the backup's sessions and recovery tokens ride
+        # in unless this clears them (rule 12/75). A trigger reaching a table that is not
+        # there is how the DELETE is made to fail without touching the two steps before it.
+        settings = _settings(tmp_path)
+        summary = restore.stage_upload(
+            settings, _make_archive(tmp_path / "backup.reaper", with_auth=True)
+        )
+        staged_db = settings.data_dir / restore.PENDING_DIR / "reaper.db"
+        con = sqlite3.connect(staged_db)
+        try:
+            con.execute(
+                "CREATE TRIGGER block BEFORE DELETE ON auth_session "
+                "BEGIN INSERT INTO no_such_table VALUES (1); END"
+            )
+            con.commit()
+        finally:
+            con.close()
+
+        with pytest.raises(RestoreError) as excinfo:
+            restore.arm(settings, summary.token)
+        assert str(excinfo.value) == restore._PREPARE_FAILED
+        assert restore.is_armed(settings) is False
+        # The rows are still there, which is what says the purge aborted rather than half-ran.
+        con = sqlite3.connect(staged_db)
+        try:
+            assert con.execute("SELECT count(*) FROM auth_session").fetchone()[0] == 1
+        finally:
+            con.close()
 
 
 # --- the boot swap -----------------------------------------------------------
