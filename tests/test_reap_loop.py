@@ -835,6 +835,9 @@ class TestSizeDriftReRead:
         assert sonarr.unmonitor_calls == []
         assert report.skipped == 1
         assert report.outcomes[0].checks[0].label == _CHECK_SIZE_UNCONFIRMED
+        # Sonarr listed a file and would not size it, which IS a size problem. This is the
+        # arm the empty-list skip above was folded into, so it is pinned from both sides.
+        assert "did not report a size" in report.outcomes[0].detail
 
     async def test_a_season_whose_files_all_report_zero_bytes_is_kept(
         self, session: AsyncSession
@@ -866,11 +869,16 @@ class TestSizeDriftReRead:
     async def test_a_season_sonarr_reports_no_files_for_is_kept(
         self, session: AsyncSession
     ) -> None:
-        """An empty answer is not a confirmation.
+        """An empty answer is not a confirmation, and it is not a size problem either.
 
         `sum([])` is 0, which sails through the growth check and marks the step verified
         having proven nothing -- while consuming the canary, because the plan is ordered
         smallest-first and a zero-size season sorts to the front. Rule 1.
+
+        The copy is pinned because this arm used to share the unreadable-size arm's
+        sentence, which sent an operator to Sonarr to look for a file with a missing size
+        when Sonarr held no files at all (issue #682). The season is kept either way, so
+        only an assertion on the wording can tell the two apart (rule 118).
         """
         snapshot_id = await _snapshot_one(
             session, media_key="sonarr:1:42:3", rating_key=800, media_type="season", size=0
@@ -883,6 +891,15 @@ class TestSizeDriftReRead:
         assert sonarr.unmonitor_calls == []
         assert sonarr.delete_calls == []
         assert report.skipped == 1
+        outcome = report.outcomes[0]
+        assert outcome.detail == (
+            "Sonarr no longer lists any file for season 3, so there is nothing to delete. Kept."
+        )
+        # The same opening as the post-unmonitor skip's line, which
+        # ``TestASeasonWithNothingLeftToDelete`` pins verbatim: one fact, two moments in
+        # the sequence, so reword both or neither (rule 144).
+        assert outcome.checks[0].label == "No files left to remove. Kept."
+        assert "size" not in outcome.detail  # nothing about a size was wrong
 
     async def test_a_drift_skip_does_not_consume_the_canary(self, session: AsyncSession) -> None:
         """The skipped item touched no file, so the next item still gets the canary's
@@ -4343,7 +4360,12 @@ class TestASeasonWithNothingLeftToDelete:
         # the operator the season was untouched when it was not.
         assert "left unmonitored" in outcome.detail
         assert "nothing was sent" not in outcome.detail
-        assert any("left unmonitored" in c.label for c in outcome.checks)
+        # Verbatim, because the pre-unmonitor skip's line opens the same way and differs
+        # only in this clause. ``test_a_season_sonarr_reports_no_files_for_is_kept`` pins
+        # that one: reword both or neither (rule 144).
+        assert (
+            outcome.checks[-1].label == "No files left to remove. The season was left unmonitored."
+        )
 
     async def test_the_verified_unmonitor_keeps_its_state(self, session: AsyncSession) -> None:
         """The unmonitor already took, and it is still in force. Overwriting its VERIFIED mark
