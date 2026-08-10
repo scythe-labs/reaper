@@ -60,7 +60,7 @@ concurrency:
 jobs:
   analyze:
     name: Analyze
-    runs-on: [self-hosted, reaper-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read

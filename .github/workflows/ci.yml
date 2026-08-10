@@ -56,9 +56,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Every job here runs on the `reaper-ci` self-hosted pool: four Linux x64 runners, so the
-# code lane's two parallel jobs and the gate around them fit in one wave. `pr-validation.yml`
-# and `codeql.yml` name the same pool.
+# The Python lanes run on the `reaper-ci` self-hosted pool, four Linux x64 runners:
+# `check`, `hygiene`, and the two bash jobs around them. `check` measured 221s there
+# against 307s on ubuntu-latest for the same tree. `pr-validation.yml` names the same pool.
+#
+# **`frontend`, `docker` and `site` stay on ubuntu-latest, each for its own reason**, and the
+# first two were measured on the pool rather than assumed. The runners are containers with no
+# docker socket mounted, so `docker build` reaches no daemon. The four share one host, and
+# `PolicyEditor.test.tsx` failed once under that contention and passed on a re-run of the
+# same commit; a required check that flakes is worse than a slower one. `site` has never run
+# on the pool at all. `codeql.yml` is hosted for a fourth reason: the runner image carries
+# Node 10.19, and CodeQL's TypeScript parser needs 14 or newer.
 #
 # **This is a public repository, so a pull request from a fork proposes running a stranger's
 # code on that hardware.** The setting that holds it shut is Settings -> Actions -> General
@@ -259,7 +267,7 @@ jobs:
           uv run alembic check
 
   frontend:
-    runs-on: [self-hosted, reaper-ci]
+    runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.code == 'true'
     defaults:
@@ -351,7 +359,7 @@ jobs:
   # otherwise a broken COPY order, a stale lock, or a bad base image reaches main green.
   # needs: ensures the image is never built from code that failed lint, type, or test.
   docker:
-    runs-on: [self-hosted, reaper-ci]
+    runs-on: ubuntu-latest
     needs: [changes, check, frontend]
     if: needs.changes.outputs.code == 'true'
     permissions:
@@ -444,7 +452,7 @@ jobs:
   # would build perfectly well while saying the wrong thing.
   site:
     name: Manual site
-    runs-on: [self-hosted, reaper-ci]
+    runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.site == 'true'
     defaults:
