@@ -508,6 +508,141 @@ def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
     )
 
 
+# The set form, ``PRAGMA journal_mode=WAL``, never the read at db/session.py:49. The read is
+# how the boot log says which mode the database settled on; the set is what writes.
+_JOURNAL_MODE_SET = re.compile(r"PRAGMA\s+journal_mode\s*=", re.IGNORECASE)
+#: One site, ``db.session._configure_sqlite``. Pinned as a count as well as a file set, because
+#: a file set alone cannot tell a second site inside the same module from none (rule 145).
+_JOURNAL_MODE_SET_SITES = 1
+
+
+def test_the_journal_mode_pragma_is_set_in_exactly_one_module() -> None:
+    """``PRAGMA journal_mode=WAL`` WRITES the file it is pointed at.
+
+    Header bytes 18 and 19 flip and persist, so the app's pragma set may only ever reach a
+    database Reaper owns. Three sqlite connections in ``src/`` deliberately issue no journal
+    pragma, and each reads or writes a file nobody has vouched for yet:
+    ``db.schema_gate.stored_revision`` reads the database unpacked from an operator-supplied
+    ``.reaper`` inside the rule 74 artifact gate, before the schema is checked and before the
+    operator confirms, and ``restore``'s ``_force_destructive_off`` and ``_purge_auth_state``
+    run on that same staged file a moment later. Adding the set to any of them turns a read of
+    an unverified artifact into a write against it.
+
+    **What the matcher accepts and refuses** (rule 147). It takes any casing and any spacing
+    around the ``=``, and it reads the line with backticked spans stripped, so a comment
+    quoting the pragma is not an offender: ``db/session.py`` itself has two occurrences and
+    only one is code. It cannot see a pragma assembled at runtime (``"PRAGMA " + name``), and
+    nothing in the tree spells one that way. ``tests/`` is out of scope on purpose:
+    ``test_startup_log.py`` sets ``journal_mode=DELETE`` to drive the boot log's WAL check.
+    """
+    sites = [
+        f"{p.relative_to(REPO)}:{n}"
+        for root in (SRC, REPO / "alembic")
+        for p in sorted(root.rglob("*.py"))
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if _JOURNAL_MODE_SET.search(_strip_prose(line))
+    ]
+    files = {site.rsplit(":", 1)[0] for site in sites}
+    assert files == {"src/reaper/db/session.py"} and len(sites) == _JOURNAL_MODE_SET_SITES, (
+        "PRAGMA journal_mode=WAL writes the database it is pointed at, so only "
+        "db.session._configure_sqlite may issue it. Sites found:\n  "
+        + "\n  ".join(sites)
+        + "\n\nA connection that reads or writes an operator-supplied backup "
+        "(db/schema_gate.py, services/restore.py) must not adopt the app's pragma set: that "
+        "would write to an artifact the rule 74 gate has not verified yet."
+    )
+
+
+#: A quotation of the app's busy timeout is a seconds figure within 120 characters of the
+#: pragma's name or of a ``db.session`` citation, either order. Both anchors are needed and
+#: neither is enough alone: two of the five copies never name the pragma
+#: (``scan_runner.scan_running``, ``scheduler.sweep_old_snapshots``), and one never cites
+#: ``db.session`` (``imdb_dataset.load``, which is about ``cache.db``, whose engine listens to
+#: the same ``_configure_sqlite``). The window is what keeps the walk honest: whitespace is
+#: normalized over the whole file first, so a sentence-shaped chunk runs to thousands of
+#: characters in ``main.py``, and ``\d+s`` also reads every status-code plural in ``src/``
+#: (``404s``, ``409s``, ``429s``, ``500s``, ``502s``). Measured at this tip, no plural sits
+#: within 130 characters of either anchor, and the window is what keeps it that way.
+_BUSY_TIMEOUT_QUOTED = re.compile(
+    r"(?:db[./]session|busy[_ ]timeout).{0,120}?\b(\d+)s\b"
+    r"|\b(\d+)s\b.{0,120}?(?:db[./]session|busy[_ ]timeout)",
+    re.IGNORECASE,
+)
+#: Module -> how many of its passages quote the value. The figure itself is derived from the
+#: declaration rather than written here, so this cannot drift from it; the count is the part a
+#: set of module names cannot hold, since the walk collects passages and a second copy inside an
+#: already-listed module would hide behind the first (rule 147). ``services/retention.py`` sets
+#: its own 30000 on the connection it opens for ``VACUUM`` and states no figure for it. A figure
+#: that is deliberately not ``db.session``'s would need a second column here, not a new row.
+_BUSY_TIMEOUT_PROSE = {
+    "services/executor.py": 1,
+    "services/imdb_dataset.py": 1,
+    "services/retention.py": 1,
+    "services/scan_runner.py": 1,
+    "services/scheduler.py": 1,
+}
+
+
+def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> None:
+    """Rule 144: one fact, seven places, and only one of them is code.
+
+    ``PRAGMA busy_timeout=5000`` in ``db.session._configure_sqlite`` is how long every app
+    connection waits for a write lock. Five docstrings quote that number as the reason
+    something else is the way it is, a sixth rests on it without a figure, and the one on the
+    deletion path is the load-bearing one:
+    ``executor._commit_journal`` gives the journal two attempts with no sleep between them
+    *because* the timeout already waited inside each. Move the pragma and that reasoning is
+    silently wrong, on the write that records what was deleted.
+
+    Checked against the declaration rather than against a copy here, so this test cannot drift
+    from it either, and the failure names every file so the sweep is the fix rather than a note
+    asking the next author to remember.
+
+    **What the walk cannot see, named rather than implied** (rule 147). A copy carrying no
+    figure is invisible to it, and ``snapshot.py``'s "far inside that budget" is one: it names
+    both anchors and no number, so it goes stale silently. ``backup.py`` and ``retention.py``
+    each carry a second figure-less mention, both describing their own connection's timeout
+    rather than the app's. A copy spelling the value in words ("five seconds") is invisible the
+    same way, which is what the per-module count below turns into a failure rather than a quiet
+    pass. ``docs/LEARNINGS.md`` quotes both timeouts as ``5 s`` and ``30 s`` and is deliberately
+    out of scope: it records what was measured on the tree of the day, and rewriting a
+    measurement to match a later default would falsify it.
+    """
+    declaration = re.search(
+        r"PRAGMA\s+busy_timeout\s*=\s*(\d+)", (SRC / "db" / "session.py").read_text("utf-8")
+    )
+    assert declaration, "db/session.py no longer declares a busy timeout, so nothing anchors this"
+    declared = str(int(declaration.group(1)) // 1000)
+
+    quoted: dict[str, list[str]] = {}
+    for path in sorted(SRC.rglob("*.py")):
+        prose = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+        figures = [before or after for before, after in _BUSY_TIMEOUT_QUOTED.findall(prose)]
+        if figures:
+            quoted[str(path.relative_to(SRC))] = figures
+
+    offenders = [
+        f"{rel} quotes {', '.join(f + 's' for f in sorted(figures))}, "
+        f"expected {_BUSY_TIMEOUT_PROSE[rel]} x {declared}s"
+        for rel, figures in sorted(quoted.items())
+        if rel in _BUSY_TIMEOUT_PROSE and sorted(figures) != [declared] * _BUSY_TIMEOUT_PROSE[rel]
+    ]
+    offenders += [
+        f"{rel} no longer quotes it" for rel in sorted(_BUSY_TIMEOUT_PROSE.keys() - quoted.keys())
+    ]
+    offenders += [
+        f"{rel} is a new copy" for rel in sorted(quoted.keys() - _BUSY_TIMEOUT_PROSE.keys())
+    ]
+    assert not offenders, (
+        f"db.session._configure_sqlite declares the busy timeout at {declared}s and these "
+        "modules restate it in prose:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nCorrect every one in the same change, or give the new module its own count in "
+        "_BUSY_TIMEOUT_PROSE. src/reaper/services/executor.py's copy is the reason the "
+        "journal write takes two attempts with no sleep between them."
+    )
+
+
 # Reaper-owned identifiers and prose are American English. The allowlist covers names owned
 # by someone else and spelled British at the source, which keep their real spelling.
 _BRITISH = re.compile(
@@ -4121,16 +4256,12 @@ _EXPECTED_LAYER_EDGES = frozenset(
 #: violation hides from a runtime graph, so a new one is a decision made here by hand, never a
 #: number bumped to make a red test go green.
 #:
-#: **One left of the three wave 9 found, and it hides nothing.** `services/executor.py` imports
-#: `reaper.clients.plex` at module level already, so the `TYPE_CHECKING` block below that import
-#: names two more symbols from a module the runtime graph holds an edge to either way. Wave 9
-#: proposed deleting it beside the other two; it was killed instead, having been measured to
-#: move neither graph, nor what a module import loads, nor behavior.
-_DEFERRED_CROSS_PACKAGE_IMPORTS = frozenset(
-    {
-        ("reaper/services/executor.py", "reaper.clients.plex", "TYPE_CHECKING"),
-    }
-)
+#: **Empty, all three of wave 9's gone.** The last was `services/executor.py`'s `TYPE_CHECKING`
+#: block, which named two symbols from `reaper.clients.plex` while the line above it imported
+#: that same module at runtime, so the deferral hid nothing from any graph. Empty is the
+#: interesting state for this set, not a broken one: every cross-package edge in the four
+#: packages now runs at import time, so the runtime graph is the whole truth about them.
+_DEFERRED_CROSS_PACKAGE_IMPORTS: frozenset[tuple[str, str, str]] = frozenset()
 
 
 class _Edge(NamedTuple):
@@ -4321,9 +4452,14 @@ def test_every_deferred_cross_package_import_is_named() -> None:
     graph a tool draws does not have the edge at all.
 
     `docs/SIMPLIFICATION_PLAN.md`'s wave 9 measured all three of these and found that none
-    breaks the cycle it looks like it was written for. Two are gone. This list is what made
-    that deletion visible: without it the walk skips the sites, the count never moves, and the
-    gate is blind to the one change it exists to watch.
+    breaks the cycle it looks like it was written for. All three are gone. This list is what
+    made that deletion visible: without it the walk skips the sites, the count never moves, and
+    the gate is blind to the one change it exists to watch.
+
+    **Empty, and still a live assertion.** It fires on any deferred cross-package import that
+    arrives. What it cannot notice on its own is a walk that collects nothing, since an empty
+    walk equals an empty expectation; `test_the_four_packages_import_only_downward` is what
+    covers that, pinning the module count and a non-empty edge set off the same walk.
     """
     deferred = frozenset(
         (e.path, e.target, e.deferred) for e in _cross_package_edges() if e.deferred
@@ -4332,7 +4468,7 @@ def test_every_deferred_cross_package_import_is_named() -> None:
         "the deferred cross-package imports moved.\n"
         f"  new:  {sorted(deferred - _DEFERRED_CROSS_PACKAGE_IMPORTS) or 'none'}\n"
         f"  gone: {sorted(_DEFERRED_CROSS_PACKAGE_IMPORTS - deferred) or 'none'}\n\n"
-        "One that went away is wave 9 landing, and the entry comes out. A NEW one needs a\n"
+        "The set is empty, so anything here at all is NEW, and a new one needs a\n"
         "reason written down: it is a cross-package dependency that no import graph will show,\n"
         "so if it is here to break a cycle, name the cycle.\n"
         "docs/SIMPLIFICATION_PLAN.md's S7 paragraph restates this set's size in prose, and\n"
@@ -4424,7 +4560,7 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: Every `.py` file under `src/reaper`, which is the population the cycle walk parses. Pinned
 #: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
-#: A different population from that constant, which counts the 83 under the four packages only.
+#: A different population from that constant, which counts the 84 under the four packages only.
 _EXPECTED_SOURCE_MODULES = 116
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
