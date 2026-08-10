@@ -183,9 +183,11 @@ plain PROTECT on this gate did not, so emptying `prunable` would have retired th
 conflict and turned a season a hand reap was refused on into one it deletes — has lapsed with the
 row above: both are overrulable now, so the encoding decides what the panel says, not what a reap
 may do (rule 143). Only the blanket hold carries the flag; a season an actually-visible viewer
-holds stays a definite keep. `season_scan.gather`'s own `in_progress_hold_days` default moved 0 →
-180 to match the policy's, since 0 is a value no shipped policy has and every test omitting it was
-exercising that unbounded claim (rule 141). **There are three causes now, not one**, and they
+holds stays a definite keep. `season_scan.gather` used to carry its own `in_progress_hold_days`
+default, moved 0 → 180 to match the policy's, since 0 is a value no shipped policy has and every
+test omitting it was exercising that unbounded claim (rule 141). That default is gone with the
+other eight: `gather` takes `season_evidence.SeasonPolicy`, which declares no default for any of
+the nine, so there is nothing left to omit. **There are three causes now, not one**, and they
 share the encoding above because they are one question with three answers missing: the reach
 (`progress_established`), a season whose plays stopped being readable (`progress_unreadable`,
 `watch_evidence`), and a season with no Plex rating key at all this scan

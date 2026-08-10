@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from collections.abc import Set as AbstractSet
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -34,7 +35,7 @@ from reaper.db.session import create_cache_engine
 from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Unknown
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
 from reaper.engine.signals import Score, SignalConfig
 from reaper.engine.signals import score as score_signals
 from reaper.ratings import Rating, RatingSource
@@ -46,6 +47,17 @@ from reaper.services.snapshot import _explain, _verdict
 from tests._fakes import FakeSonarr, FakeTautulli, show_library
 
 GB = 1024**3
+
+
+def _season_policy(**edits: Any) -> season_evidence.SeasonPolicy:
+    """The shipped TV policy's nine season settings, with whichever ones a test varies.
+
+    Built through the real ``from_body`` off ``DEFAULT_TV_POLICY`` rather than spelled out,
+    so the settings a test does not vary are the shipped values and not a second copy of
+    them (rule 119). ``season_scan.gather`` held that copy as seven keyword defaults until
+    it took the carrier.
+    """
+    return replace(season_evidence.SeasonPolicy.from_body(DEFAULT_TV_POLICY), **edits)
 
 
 def _season(
@@ -1236,8 +1248,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -1301,8 +1312,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -1358,8 +1368,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -1405,12 +1414,12 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(
+                keep_last_seasons=2, keep_first_season=True, keep_in_progress=False
+            ),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
-            keep_in_progress=False,
             watch_marks={},
         )
         assert sonarr.episodes_called == []  # the fan-out was skipped
@@ -1428,12 +1437,12 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(
+                keep_last_seasons=2, keep_first_season=True, keep_in_progress=True
+            ),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
-            keep_in_progress=True,
             watch_marks={},
         )
         assert sonarr_on.episodes_called == [42]
@@ -1514,8 +1523,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -1589,8 +1597,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -1668,8 +1675,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -1708,8 +1714,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -1746,8 +1751,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -1782,8 +1786,7 @@ class TestGatherEndToEnd:
                 reach_days=4000,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=2,
-                keep_first_season=True,
+                season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
@@ -1827,8 +1830,7 @@ class TestGatherEndToEnd:
                 reach_days=0,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=2,
-                keep_first_season=True,
+                season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
@@ -1911,10 +1913,10 @@ class TestGatherEndToEnd:
                 reach_days=reach_days,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=2,
-                keep_first_season=True,
+                season_policy=_season_policy(
+                    keep_last_seasons=2, keep_first_season=True, in_progress_hold_days=200
+                ),
                 window_days=365,
-                in_progress_hold_days=200,
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
@@ -2031,8 +2033,7 @@ class TestGatherEndToEnd:
                 reach_days=4000,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=0,  # nothing shields season 4 but the mid-binge guard
-                keep_first_season=False,
+                season_policy=_season_policy(keep_last_seasons=0, keep_first_season=False),
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
@@ -2125,8 +2126,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=0,
-            keep_first_season=False,
+            season_policy=_season_policy(keep_last_seasons=0, keep_first_season=False),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -2177,8 +2177,7 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
@@ -2226,8 +2225,7 @@ class TestGatherEndToEnd:
                 reach_days=0,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=2,
-                keep_first_season=True,
+                season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
@@ -2260,8 +2258,7 @@ class TestGatherEndToEnd:
             reach_days=0,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,

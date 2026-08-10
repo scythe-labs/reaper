@@ -1097,24 +1097,22 @@ async def gather(
     reach_days: int,
     active_rating_keys: set[int],
     activity_degraded: bool,
-    keep_last_seasons: int,
-    keep_first_season: bool,
+    # The nine season settings as the one carrier ``plan_from_frozen`` and ``_judge_series``
+    # already take, rather than nine loose fields this frame repacked into it. Required and
+    # defaultless, because ``SeasonPolicy`` declares no default for any of the nine, so a
+    # caller cannot omit one and plan against a value the operator never chose. Seven of the
+    # nine defaulted here, and what those defaults cost was rule 141's reading rather than a
+    # widening: five were the protective pole, so an omission overrode the operator's edit in
+    # the keeping direction, and the two that could widen are ``season_lookahead`` at 0 and
+    # ``in_progress_hold_days`` at 180. #499 brought the carrier into this frame as a local
+    # and ``_judge_series`` took it as a parameter; this signature kept the loose copy until
+    # now, which is what left two roads from a ``PolicyBody`` to the planner.
+    season_policy: season_evidence.SeasonPolicy,
     window_days: int,
     whitelisted: set[str],
     degrade: Any,
     requested: dict[str, str] | None = None,
     request_index: requested_by.RequestIndex | None = None,
-    keep_last_scope: str = "all",
-    season_lookahead: int = 0,
-    keep_in_progress: bool = True,
-    # Mirrors ``TvPolicy.in_progress_hold_days``'s own default, which is what the only
-    # production caller passes (``services.snapshot.scan``). It read 0 here, a value no
-    # shipped policy has, and 0 means the hold never expires -- so every caller that omitted
-    # it was exercising an unbounded claim the mirror cannot support (rule 141).
-    in_progress_hold_days: int = 180,
-    keep_specials: bool = True,
-    protect_incomplete_seasons: bool = True,
-    flag_keep_conflicts: bool = True,
     membership_index: lists.MembershipIndex | None = None,
     allowed_sections: set[int] | None = None,
     # The most watch evidence ever measured for each item, read once by the caller (which
@@ -1141,21 +1139,6 @@ async def gather(
     """
     if not sonarrs:
         return []
-
-    # The nine season settings, gathered into the carrier the plan derivation takes. Built
-    # once here so every show in this scan is judged against one object, and so the shape the
-    # scan plans with is the shape the simulator replays with (``services.season_evidence``).
-    season_policy = season_evidence.SeasonPolicy(
-        keep_last_seasons=keep_last_seasons,
-        keep_first_season=keep_first_season,
-        keep_last_scope=keep_last_scope,
-        season_lookahead=season_lookahead,
-        keep_in_progress=keep_in_progress,
-        in_progress_hold_days=in_progress_hold_days,
-        keep_specials=keep_specials,
-        protect_incomplete_seasons=protect_incomplete_seasons,
-        flag_keep_conflicts=flag_keep_conflicts,
-    )
 
     # The scan passes its already-loaded index so movies and seasons read the same
     # frozen list state; a direct caller (tests) gets a fresh load.
@@ -1228,18 +1211,20 @@ async def gather(
             plan = plan_series_prune(
                 series_title=str(series.get("title") or ""),
                 seasons=seasons,
-                keep_last=keep_last_seasons,
-                keep_first_season=keep_first_season,
-                apply_keep_last=_keep_last_applies(series, keep_last_scope, request_index),
+                keep_last=season_policy.keep_last_seasons,
+                keep_first_season=season_policy.keep_first_season,
+                apply_keep_last=_keep_last_applies(
+                    series, season_policy.keep_last_scope, request_index
+                ),
                 # keep_specials must reach this offline pass too: with it off, a show whose
                 # only removable season is Season 0 has something to act on and must not be
                 # counted fully-protected before the evidence pass ever sees it. The other
                 # toggles are passed for symmetry; without watch evidence the sequential
                 # guard and the conflict detector protect nothing here either way.
-                keep_in_progress=keep_in_progress,
-                keep_specials=keep_specials,
-                protect_incomplete=protect_incomplete_seasons,
-                flag_keep_conflicts=flag_keep_conflicts,
+                keep_in_progress=season_policy.keep_in_progress,
+                keep_specials=season_policy.keep_specials,
+                protect_incomplete=season_policy.protect_incomplete_seasons,
+                flag_keep_conflicts=season_policy.flag_keep_conflicts,
                 airing_seasons=airing_seasons(series, seasons),
             )
             fully = not plan.prunable
@@ -1492,7 +1477,7 @@ async def gather(
     # payload is O(viewers x seasons), and the read side is measured in `docs/LEARNINGS.md`
     # under "What frozen season evidence costs".
     season_coros = [_seasons_for(rk) for rk in fallback_keys]
-    episode_coros = [_episodes_for(item) for item in work] if keep_in_progress else []
+    episode_coros = [_episodes_for(item) for item in work] if season_policy.keep_in_progress else []
     fanned = await gather_reaped(*season_coros, *episode_coros)
     for rk, seasons in fanned[: len(season_coros)]:
         resolved_shows[rk] = seasons
