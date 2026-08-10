@@ -35,13 +35,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
-from reaper.api.auth import (
-    _client_ip,
-    _throttled,
-    _verify_admin_password,
-    record_password_failure,
+from reaper.api.deps import (
+    client_ip,
+    require_admin_password,
+    runtime_settings,
+    secret_box,
+    session_factory,
 )
-from reaper.api.deps import runtime_settings, secret_box, session_factory
 from reaper.api.schemas import (
     NO_PLEX_FORWARD,
     PlexServerChoiceOut,
@@ -52,7 +52,6 @@ from reaper.api.schemas import (
 # Private on purpose, and imported rather than copied: this router keeps ``api/settings.py``'s
 # prefix, so it validates an operator-typed URL through that file's own checks.
 from reaper.api.settings import _require_web_url, _required_web_url
-from reaper.auth.ratelimit import password_throttle
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.plextv import PlexConnection, PlexTvClient, connection_identity
@@ -682,9 +681,9 @@ async def reset_watch_evidence(
     numbers is on the source side, in Tautulli.
 
     **Gated on the admin password, exactly like arming deletion
-    (:func:`reaper.api.settings.set_safety`) and
-    confirming a restore (:func:`reaper.api.backup.restore_confirm`)** -- the same per-IP and
-    per-account lockout, the same Argon2 concurrency gate, and the same refusal when no
+    (:func:`reaper.api.settings.set_safety`) and confirming a restore
+    (:func:`reaper.api.backup.restore_confirm`)** -- literally the same gate, since all three
+    call :func:`reaper.api.deps.require_admin_password`, plus the same refusal when no
     password has been set at all. It earns that gate on blast radius: the record is the only
     thing that can tell a title whose plays went unreadable apart from one nobody ever
     watched, so discarding it withdraws that protection from every title at once, and the
@@ -699,20 +698,20 @@ async def reset_watch_evidence(
     ``set_safety`` is the shape this follows; ``restore_confirm`` binds a token because it has
     a staged artifact to bind one to.
     """
-    keys = (f"ip:{_client_ip(request)}", "account:watch-evidence-reset")
+    keys = (f"ip:{client_ip(request)}", "account:watch-evidence-reset")
     async with session_factory(request)() as session:
         if not await admin_password.has_password(session):
             raise HTTPException(
                 400,
                 "Set an admin password first. It's what confirms forgetting the record.",
             )
-        _throttled(password_throttle, *keys)
-        ok = await _verify_admin_password(session, payload.password or "")
-        if not ok:
-            record_password_failure(password_throttle, keys, gate="forget_watch_record")
-            raise HTTPException(403, "That password didn't match. The record was kept.")
-        for key in keys:
-            password_throttle.record_success(key)
+        await require_admin_password(
+            session,
+            payload.password or "",
+            keys=keys,
+            gate="forget_watch_record",
+            refusal="That password didn't match. The record was kept.",
+        )
         forgotten = await watch_evidence.forget_all(session)
         await session.commit()
     return WatchEvidenceResetOut(forgotten=forgotten)

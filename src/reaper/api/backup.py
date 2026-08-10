@@ -34,16 +34,14 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from reaper.api import tags as api_tags
-from reaper.api.auth import (
-    _client_ip,
-    _throttled,
-    _verify_admin_password,
-    record_password_failure,
+from reaper.api.deps import (
+    client_ip,
+    require_admin_password,
+    runtime_settings,
+    session_factory,
 )
-from reaper.api.deps import runtime_settings, session_factory
 from reaper.api.runs import reap_in_flight
 from reaper.api.schemas import OkOut, RestoreCancelOut
-from reaper.auth.ratelimit import password_throttle
 from reaper.buildinfo import build_version
 from reaper.config import Settings
 from reaper.secrets import env_key_active, key_file_path
@@ -229,9 +227,9 @@ async def restore_prepare(request: Request) -> RestoreSummaryOut:
 async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> OkOut:
     """Verify the admin password, then arm the staged restore.
 
-    Gated exactly like arming deletion (:func:`reaper.api.settings.set_safety`): the
-    same per-IP and per-account lockout and Argon2 concurrency gate, because a restore is
-    as consequential as arming and its confirm is a password-guessing surface too. The
+    Gated exactly like arming deletion (:func:`reaper.api.settings.set_safety`): literally the
+    same gate, :func:`reaper.api.deps.require_admin_password`, because a restore is as
+    consequential as arming and its confirm is a password-guessing surface too. The
     ``token`` from the prepare summary binds this confirm to the exact backup reviewed, so
     a backup swapped in by another session since cannot be armed by this password (rule 73).
     On success the staged database is forced read-only, its inherited sessions are cleared,
@@ -239,20 +237,20 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> OkOut:
     for with ``restore/restart`` or by restarting the container themselves.
     """
     settings = runtime_settings(request)
-    keys = (f"ip:{_client_ip(request)}", "account:restore")
+    keys = (f"ip:{client_ip(request)}", "account:restore")
     async with session_factory(request)() as session:
         if not await admin_password.has_password(session):
             raise HTTPException(
                 400,
                 "Set an admin password first. It's what confirms a restore.",
             )
-        _throttled(password_throttle, *keys)
-        ok = await _verify_admin_password(session, payload.password or "")
-        if not ok:
-            record_password_failure(password_throttle, keys, gate="restore")
-            raise HTTPException(403, "That password didn't match. Nothing was restored.")
-        for key in keys:
-            password_throttle.record_success(key)
+        await require_admin_password(
+            session,
+            payload.password or "",
+            keys=keys,
+            gate="restore",
+            refusal="That password didn't match. Nothing was restored.",
+        )
 
     try:
         await asyncio.to_thread(restore.arm, settings, payload.token)
