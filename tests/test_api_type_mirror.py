@@ -44,9 +44,11 @@ import reaper.api
 REPO = Path(__file__).resolve().parents[1]
 API_TS = REPO / "frontend" / "src" / "api.ts"
 
-#: The modules whose Pydantic models the browser mirrors. ``api.*`` is the wire layer and wins
-#: any name collision with the two engine modules, which the browser also mirrors directly:
-#: ``PolicyBody``/``ProfileSettings`` exist in BOTH, and the browser's copy is the wire one.
+#: The modules whose Pydantic models the browser mirrors. ``api.*`` is the wire layer, and the
+#: two engine modules the browser also mirrors directly are kept in a second bucket, so a name
+#: living in both is a pairing question rather than a clash -- ``ALIAS`` is where those are
+#: written down. This used to name ``PolicyBody``/``ProfileSettings`` as existing in both; the
+#: wire spells them ``PolicyBodyOut`` and ``ProfileSettingsIO``, so no name is shared today.
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
@@ -194,7 +196,7 @@ def _server_models() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     """
     wire: dict[str, set[str]] = {}
     inner: dict[str, set[str]] = {}
-    homes: dict[str, type[BaseModel]] = {}
+    homes: dict[tuple[str, str], type[BaseModel]] = {}
     collisions: list[str] = []
     names = [f"{WIRE_PACKAGE}{m.name}" for m in pkgutil.iter_modules(reaper.api.__path__)]
     for module_name in [*names, *INNER_MODULES]:
@@ -207,10 +209,15 @@ def _server_models() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 and value is not BaseModel
                 and value.__module__ == module_name
             ):
-                prior = homes.get(value.__name__)
+                # Keyed per BUCKET, because only a same-bucket collision masks: ``wire``
+                # and ``inner`` are separate dicts, so an engine model sharing a name with a
+                # wire model overwrites nothing. Keying on the name alone would forbid the
+                # engine/wire pairing ``ALIAS`` exists to describe.
+                seen = "wire" if bucket is wire else "inner"
+                prior = homes.get((seen, value.__name__))
                 if prior is not None and prior is not value:
                     collisions.append(f"{value.__name__}: {prior.__module__} and {module_name}")
-                homes[value.__name__] = value
+                homes[(seen, value.__name__)] = value
                 bucket[value.__name__] = set(value.model_fields)
     assert collisions == [], (
         "two different models share one class name, so this walk keeps only the one imported "
