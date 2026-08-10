@@ -692,6 +692,50 @@ class TestUpkeepJobsRecordTheirLastRun:
         assert last["ok"] is False
         assert last["result"] == "Couldn't refresh lists"
 
+    async def test_an_unreadable_list_registry_records_not_ok(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A stored row whose body will not parse stops the pass, and the stop is recorded.
+
+        ``strict=True`` is what stops it: this pass retires, so a row read as absent would
+        disable the membership it is still protecting with (rules 65/91, 115). The stop used
+        to be recorded by a handler wrapped around that one read, spelling the same log
+        event, the same ``ok=False`` and the same result the job's own catch-all writes. What
+        this pins is the row landing, not which arm wrote it.
+        """
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
+        async with main_factory() as session:
+            session.add(
+                ListConfig(
+                    name="Keep these",
+                    source="plex_collection",
+                    config_json="{not json",
+                    enabled=True,
+                    created_at=utcnow(),
+                )
+            )
+            await session.commit()
+
+        synced = False
+
+        async def fine(*args: object, **kwargs: object) -> dict[str, int]:
+            nonlocal synced
+            synced = True
+            return {}
+
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fine)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
+
+        assert synced is False, "an unreadable registry must stop the pass before it syncs"
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't refresh lists"
+
     async def test_a_fresh_skip_still_records_a_run(
         self,
         cache_engine: AsyncEngine,
