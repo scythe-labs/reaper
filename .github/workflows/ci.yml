@@ -57,8 +57,12 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Every job here runs on the `reaper-ci` self-hosted pool, four Linux x64 runners, as does
-# `pr-validation.yml`'s title check. `check` measured 211s there against 307s on ubuntu-latest
-# for the same tree.
+# `pr-validation.yml`'s title check. `check` measured 211s there against 247s on ubuntu-latest
+# for the same tree. **That 36s is the whole speed case, and it is smaller than it looks**:
+# `check` and `frontend` run in parallel, so a run costs whichever is slower, and hosted
+# minutes are free and unlimited on a public repository. Nobody should re-derive this from
+# `gh run view --json jobs`, whose per-job window includes queue time and reported the gap as
+# 96s.
 #
 # `codeql.yml` is the one workflow still hosted, for a reason measured on the pool rather than
 # assumed: the runner image is built on Ubuntu 20.04, whose system Node is 10.19, and CodeQL's
@@ -78,9 +82,12 @@ concurrency:
 # host needs a periodic prune. Nothing in CI does it.
 #
 # `frontend` shares the pool with `check`, and both saturate the host: `pytest -n auto` and
-# vitest each size their worker pool from the full core count a container sees. Under that,
-# `PolicyEditor.test.tsx` failed once and passed on a re-run of the same commit. Capping one
-# side's workers is the lever if it returns.
+# vitest each size their worker pool from the full core count a container sees, so two jobs
+# on one host ask for twice the cores that exist. `frontend` took 187s under that against 104s
+# hosted, and `PolicyEditor.test.tsx` failed once and passed on a re-run of the same commit.
+# So the pool is slower on this job than the runner it replaced, and the 36s won on `check`
+# is spent here. Giving the containers `--cpus` limits, or capping vitest's workers, is what
+# would make the pool win outright.
 #
 # The pool is not elastic. If every runner is offline a job queues rather than failing, and
 # a queued required check reads the same as a slow one.
