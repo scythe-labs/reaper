@@ -55,6 +55,7 @@ from reaper.services import (
 )
 from reaper.services import snapshot as snapshot_service
 from reaper.services.snapshot import Progress, ProgressFn
+from reaper.text import fold
 
 if TYPE_CHECKING:
     from reaper.services.executor import ReapGateway
@@ -515,7 +516,7 @@ def _flag(row: Any, name: str) -> bool | None:
     except (TypeError, ValueError):
         pass
     if isinstance(value, str):
-        token = value.strip().casefold()
+        token = fold(value)
         if token in _TRUE_TOKENS:
             return True
         if token in _FALSE_TOKENS:

@@ -474,6 +474,38 @@ def test_http_clients_are_only_constructed_in_clients() -> None:
     assert not offenders, "construct HTTP clients only in clients/:\n" + "\n".join(offenders)
 
 
+def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
+    """Rule 88, as a gate. ``reaper.text.fold`` is the trim-then-casefold every name
+    comparison takes, and it was spelled inline at 33 places across 14 modules.
+
+    **It bans the composite only.** A bare ``.casefold()`` on a value a line above already
+    stripped is not an offender: ``fields._split_csv``, ``fields._shared`` and
+    ``list_config._clean_config`` all read input their caller stripped, so folding again
+    would be identical and an exemption entry for each would be a skip list nobody rereads.
+
+    **What it cannot catch, stated rather than implied**: a new site written as a bare
+    ``.casefold()`` on unstripped input, or as ``.strip().lower()``. Sixteen ``.strip()
+    .lower()`` sites exist today and are deliberate -- env tokens, hostnames, media types,
+    hex colors -- and two more fold PATHS (``identity.to_basename``, ``to_segments``), whose
+    docstrings say why lower is the right answer there.
+
+    ``alembic/`` is out of scope: those revisions are frozen and five of them carry the
+    idiom.
+    """
+    offenders = [
+        f"{p.relative_to(REPO)}:{n}"
+        for p in SRC.rglob("*.py")
+        if p != SRC / "text.py"
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if ".strip().casefold()" in _strip_prose(line)
+    ]
+    assert not offenders, (
+        "call reaper.text.fold instead of spelling .strip().casefold() again -- one "
+        "derivation, because a name folded on one side of a comparison and not the other "
+        "stops matching and says nothing (rule 88):\n" + "\n".join(offenders)
+    )
+
+
 # Reaper-owned identifiers and prose are American English. The allowlist covers names owned
 # by someone else and spelled British at the source, which keep their real spelling.
 _BRITISH = re.compile(

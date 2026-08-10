@@ -54,6 +54,7 @@ from reaper.engine.policy_migrations import (
     recover_rating_rules,
 )
 from reaper.services import app_settings
+from reaper.text import fold
 
 log = structlog.get_logger(__name__)
 
@@ -394,7 +395,7 @@ async def _default_with_own_lists(
         log.warning("policy.default_lists_unreadable")
         return default, True
     carried = {
-        str(c.value).strip().casefold()
+        fold(str(c.value))
         for c in default.protect_conditions
         if c.field == "on_list" and isinstance(c.value, str)
     }
@@ -405,8 +406,8 @@ async def _default_with_own_lists(
     extra = tuple(
         ConditionSpec(field="on_list", op=Op.EQ, value=name)
         for name in dict.fromkeys(own)
-        if name.strip().casefold() not in carried
-        and default.media_type in scope.get(name.strip().casefold(), BOTH_MEDIA_TYPES)
+        if fold(name) not in carried
+        and default.media_type in scope.get(fold(name), BOTH_MEDIA_TYPES)
     )
     if not extra:
         return default, False

@@ -59,6 +59,7 @@ from reaper.clock import humanize_days, humanize_window
 from reaper.engine import fields
 from reaper.engine.gates import Facts
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.text import fold
 
 MAX_SCORE = 100
 
@@ -647,9 +648,9 @@ def evaluate_keep(
         # The membership form: flat, per the spec (GradedKeepSpec.value). Both sides of the
         # name match are case-folded (rule 88), and the fact is the multi convention's
         # comma-joined list, split the way `fields.evaluate` splits it.
-        wanted = config.value.strip().casefold()
+        wanted = fold(config.value)
         if isinstance(observation, Known) and isinstance(observation.value, str):
-            names = {part.strip().casefold() for part in observation.value.split(",")}
+            names = {fold(part) for part in observation.value.split(",")}
             on_it = wanted in names
             return KeepResult(
                 config.name,

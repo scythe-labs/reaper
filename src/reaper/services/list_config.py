@@ -38,6 +38,7 @@ from reaper.engine.policy_migrations import DEFAULT_IMDB_PRESET, DEFAULT_KEEP_TA
 from reaper.services import app_settings
 from reaper.services import lists as lists_service
 from reaper.services.lists import ListSource
+from reaper.text import fold
 
 log = structlog.get_logger(__name__)
 
@@ -86,7 +87,7 @@ class ListDefinition:
         out: list[str] = []
         for entry in raw:
             tag = str(entry)
-            key = tag.strip().casefold()
+            key = fold(tag)
             if key in seen:
                 continue
             seen.add(key)
@@ -272,8 +273,15 @@ async def _refuse_name_twice(session: AsyncSession, name: str, *, this_row: int 
 
     Case-folded on both sides (rule 88), the comparison every reader of a list name makes:
     two lists whose names differ only in case are one list to a keep rule naming either.
+
+    **This is the one comparison that crosses into SQL, and the two halves are not the same
+    function.** ``func.lower()`` runs in SQLite and is ASCII-only; ``text.fold`` is Python's
+    ``casefold``. They agree on every ASCII name and part on the rest, so a German list named
+    ``STRASSE`` is not refused against one named ``Straße``. The ``NOCASE`` collation behind
+    this check is ASCII-only as well, so both layers already answer the same way and the
+    refusal is consistent with what the column will actually enforce.
     """
-    stmt = select(ListConfig.id).where(func.lower(ListConfig.name) == name.strip().casefold())
+    stmt = select(ListConfig.id).where(func.lower(ListConfig.name) == fold(name))
     if this_row is not None:
         stmt = stmt.where(ListConfig.id != this_row)
     if (await session.execute(stmt)).first() is not None:

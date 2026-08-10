@@ -44,6 +44,7 @@ from reaper.engine.gates import (
     lifetime_shortfall,
 )
 from reaper.engine.observation import Known, Observation, Unknown
+from reaper.text import fold
 
 
 class Lane(enum.StrEnum):
@@ -839,8 +840,8 @@ def _compare(op: Op, value: object, target: object, *, multi: bool = False) -> b
                 # stores, and the owner types the target by hand. A multi-valued fact
                 # matches when ANY of its elements equals the target.
                 if multi:
-                    return target.strip().casefold() in _split_csv(value)
-                return value.strip().casefold() == target.strip().casefold()
+                    return fold(target) in _split_csv(value)
+                return fold(value) == fold(target)
             return bool(value == target)
         case Op.IN:
             if not isinstance(target, str):
@@ -851,7 +852,7 @@ def _compare(op: Op, value: object, target: object, *, multi: bool = False) -> b
             # nothing. A multi-valued fact matches on any shared element.
             if multi and isinstance(value, str):
                 return not targets.isdisjoint(_split_csv(value))
-            return str(value).strip().casefold() in targets
+            return fold(str(value)) in targets
         case Op.CONTAINS:
             return isinstance(target, str) and target.lower() in str(value).lower()
 

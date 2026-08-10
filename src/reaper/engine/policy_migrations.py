@@ -32,6 +32,7 @@ from reaper.engine.gates import GateId
 from reaper.engine.policy import SCHEMA_VERSION, PolicyBody
 from reaper.engine.signals import MAX_SCORE
 from reaper.ratings import RatingSource
+from reaper.text import fold
 
 
 class PolicyRepair(enum.StrEnum):
@@ -301,14 +302,14 @@ def conversion_list_names(
     SQLAlchemy and the upgrade migration through raw SQL -- and a second copy of this
     selection is exactly what drifted (rule 104).
     """
-    wanted = {t.strip().casefold() for t in keep_tags if t.strip()}
+    wanted = {fold(t) for t in keep_tags if t.strip()}
 
     def carries_a_wanted_tag(config_json: str | None) -> bool:
         held = _config_value(config_json, "tags")
         if not isinstance(held, list):
             return False
         # Case-folded on both sides, the comparison every reader of a tag makes (rule 88).
-        return bool(wanted & {str(t).strip().casefold() for t in held})
+        return bool(wanted & {fold(str(t)) for t in held})
 
     tag = next(
         (
@@ -361,7 +362,7 @@ def library_media_types(
         title = lib.get("title")
         media = _PLEX_KIND_TO_MEDIA.get(str(lib.get("kind")))
         if isinstance(title, str) and title.strip() and media is not None:
-            out.setdefault(title.strip().casefold(), set()).add(media)
+            out.setdefault(fold(title), set()).add(media)
     return {title: frozenset(media) for title, media in out.items()}
 
 
@@ -395,7 +396,7 @@ def own_list_media_scope(
     type and drop its rule off the policy it keeps on; the union keeps both, fail-open."""
     scope: dict[str, set[str]] = {}
     for source, name, config_json in rows:
-        key = name.strip().casefold()
+        key = fold(name)
         if source == "plex_watchlist":
             scope.setdefault(key, set()).update(BOTH_MEDIA_TYPES)
             continue
@@ -403,7 +404,7 @@ def own_list_media_scope(
             continue
         library = _config_value(config_json, "library")
         held = (
-            library_types.get(str(library).strip().casefold())
+            library_types.get(fold(str(library)))
             if isinstance(library, str) and library.strip()
             else None
         )
@@ -523,7 +524,7 @@ def convert_list_protections(
         for name in collection_list_names:
             # A single-library collection's rule lands only on the policy for its library's
             # type; an unknown/ambiguous library keeps it on both (#545, fail-open).
-            if media_type in scope.get(name.strip().casefold(), BOTH_MEDIA_TYPES):
+            if media_type in scope.get(fold(name), BOTH_MEDIA_TYPES):
                 new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": name})
     # The IMDb chart is movies only, so its rule lands on the movie body alone (#539).
     if legacy_gates.get("curated_list") and imdb_list_name and media_type == "movie":
@@ -563,10 +564,10 @@ def convert_list_protections(
         if not isinstance(rows, list):
             rows = []
         spelled = {
-            str(r.get("value", "")).strip().casefold()
+            fold(str(r.get("value", "")))
             for r in rows
             if isinstance(r, dict) and r.get("field") == "on_list"
         }
-        rows.extend(r for r in new_rules if str(r["value"]).strip().casefold() not in spelled)
+        rows.extend(r for r in new_rules if fold(str(r["value"])) not in spelled)
         body["protect_conditions"] = rows
     return body

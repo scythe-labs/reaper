@@ -2116,10 +2116,17 @@ enforced by nothing but the next author's memory.
 > default is one fact written twice and agrees only because of that gate (rule 104). Landed
 > at #668, which carries the measurements.
 >
-> **W6-4's `fold()` must skip three sites** that omit `strip()` on purpose (`engine/fields.py:821`,
-> `:1000`, `services/list_config.py`'s `_clean_config`). The count is 30 inline copies across 11 modules. And
-> `list_config.py`'s `_refuse_name_twice` compares SQL `func.lower()` against Python `casefold()` — ASCII-only against
-> full Unicode — which a shared `fold()` makes greppable and leaves wrong.
+> **W6-4's `fold()` leaves three sites alone** — `engine/fields.py`'s `_split_csv` and `_shared`,
+> and `list_config._clean_config`. The correction used to say they "omit `strip()` on purpose",
+> which is the wrong reason and the more frightening one: each reads input a line above already
+> stripped, so folding again would be behavior-identical. They stay because the gate bans the
+> COMPOSITE only, which keeps the exemption list empty. `list_config._refuse_name_twice` compares
+> SQL `func.lower()` against Python `casefold()`, ASCII-only against full Unicode, which a shared
+> `fold()` makes greppable and leaves wrong; the `NOCASE` collation behind it is ASCII-only too,
+> so both layers answer the same way today and the divergence is named at both ends rather than
+> repaired. `alembic/` carries the idiom in five frozen revisions and is out of the walk. Measured
+> at the tip rather than quoted: **33 lines, 37 expressions, 14 modules**, against the row's "~28
+> across 10" and this block's "30 across 11". Landed at #669.
 >
 > **W6-6 is three workflows with path lists, not four copies of one.** codeql restates the same
 > list twice (the rule 7/24 falsehood); docs-deploy carries a different one against `ci.yml`'s
