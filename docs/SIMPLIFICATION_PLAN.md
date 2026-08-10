@@ -190,7 +190,7 @@ row moving is indistinguishable from one that never started.
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
 | 6 | Structural motion | **done** | 6 of 8, 2 dropped | The by-design ceiling. Exit task finished: every `path:NNN` in this document resolves against the tree |
 | 7 | Wire contract | **done** | 8 of 8 | C7, C11 and C8 all settled. Eight items, not ~5: W8-3 measures 20 unread fields and W8-4's anonymous payloads are 11 routes over 4 shapes. W8-1 took two PRs, the route's shape then the rollup |
-| 8 | Dedup and carriers | **in progress** | 5 of ~25 | W6-2 landed early as #618: #556 made rule 94's bound a live defect, not a tidiness item. The three already-drifted rows still open are the executor's size interlock (`safety-path`, gated on C9), the two panel heads (a divergence to decide, not inherit), and W3's parameter objects. **C14 is settled** and `_call` is unblocked, the pinning test having landed at #659. W9's `LAUNCHER_CONF_NAME` half is scouted and NOT built: measured, it breaks 7 of 9 cycles and moves neither counter S7 says it moves |
+| 8 | Dedup and carriers | **in progress** | 5 landed, 3 killed | W6-2 landed early as #618: #556 made rule 94's bound a live defect, not a tidiness item. The three already-drifted rows still open are the executor's size interlock (`safety-path`, gated on C9), the two panel heads (a divergence to decide, not inherit), and W3's parameter objects. **C14 is settled** and `_call` is unblocked, the pinning test having landed at #659. W9's `LAUNCHER_CONF_NAME` half is scouted and NOT built: measured, it breaks 7 of 9 cycles and moves neither counter S7 says it moves |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
 
 Status vocabulary, and nothing else: `not started`, `in progress`, `blocked`, `done`. `blocked`
@@ -297,6 +297,9 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | Finding | Killed because | Found by |
 | --- | --- | --- |
 | W1.1-l | `TautulliClient.metadata` is not dead. `scripts/validate_ingest.py:290` reads `added_at` through it for the dormancy-derivation check, and `docs/LEARNINGS.md` cites that harness. The row measured "no caller" over `src/` alone | Phase 5, PR 1 |
+| W5-2 | The carrier is already passed whole and `_judge_item` already takes it as one parameter, so the row buys zero parameters and zero net lines. Three of the movie lane's overlapping fields are identity-path join keys, and `snapshot.py` is never split | Phase 8, measured before building |
+| W5-5 | The collapse turns `PUT /api/profile {}` from a 422 into a 200 that resets every deletion cap to the shipped default, on a route an API key can write. The wire model's required fields are the protection. Reclassified `safety-path`; a seven-pair bounds test lands instead | Phase 8, measured before building |
+| W5-6 | Any extraction is a 13-parameter helper replacing a 13-key constructor (S5), and the incident the row cites was in the loop rather than the constructor. The parity sweep already compares all 13 keys across both sites; a `NUMBERS` derivation lands instead | Phase 8, measured before building |
 
 ## Execution
 
@@ -1964,6 +1967,50 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 > `PlexPollOut` and `PlexLinkPollOut`, which is the shape a re-anchor cannot see, and the duplicate **masks the mirror test**:
 > `_server_models` buckets on `__name__`, so the two classes collide into one key and a future
 > divergence is checked against only the survivor.
+
+> **Killed: W5-2, the `Display` collapse.** `_judge_item` already takes the carrier as ONE
+> parameter and both packs already pass it whole, so the row removes no parameter and no net
+> line. `Display` is 15 fields today and the correction's 16 was right for the tree it was
+> written against: #600 took `poster_url` out of `Display`, out of `RawItem` and out of both
+> packs, which is the same reason `RawItem`'s overlap is 9 rather than 10. `SeasonJudgment`
+> shares 14 of the 15. **Three of the movie lane's nine are join keys read on the identity
+> path** — `imdb_id`, `tmdb_id` and `year`, at `snapshot.py:345`, `:346`, `:372`, `:439`,
+> `:440`, `:518` and `:527` — so nesting them files a join key under a docstring opening
+> "None of them decide anything" and turns `item.imdb_id` into the spelling rule 29/106's
+> sweep greps for. The season half is clean and nets to zero, which S5 names by name, and the
+> 15-line unpack survives any version of the row because `library` is written as
+> `library_title`. `snapshot.py` is never split, so nothing downstream is owed the shrink.
+> **Not the same work as W3c's `_judge_item` line**: that one is about 27 parameters and this
+> row removes zero of them.
+
+> **Killed: W5-5's collapse. A test replaces it**, `tests/test_api.py`'s
+> `test_the_wire_and_the_domain_state_the_same_bounds`. The correction's verdict is right and
+> its stated reason is not: `main.py`'s validation handler already strips `"Value error, "`
+> and reshapes, so a collapsed route answers the byte-identical sentence and only `loc` moves,
+> `[]` to `["body"]`, which nothing reads. What the collapse actually costs is that
+> `ProfileSettings` defaults all seven fields where `ProfileSettingsIO` requires five, so
+> **`PUT /api/profile {}` goes from a 422 to a 200 that saves the shipped defaults over every
+> cap the operator narrowed**, on a route in the API-key write allowlist
+> (`api/middleware.py`), with nothing in the suite pinning it: both existing cap tests GET the
+> full body first, mutate one key and PUT it back. `settings_recovered` is wire-only and dies
+> with the collapse; simulated against the mirror, `test_no_paired_type_has_lost_or_gained_a_field`
+> reds on it. **The row is reclassified `safety-path`** — the fields are the four deletion caps
+> plus the unmeasured allowance, and the failure direction is silently widening one. Rule 131's
+> ask is met by asserting the seven `ge`/`le` pairs agree, which is CLAUDE.md's "write the gate
+> instead" clause.
+
+> **Killed: W5-6's collapse. A gate replaces it**,
+> `test_every_field_of_the_answer_is_compared_across_the_two_tiers`. Two verbatim copies, not
+> three, as the correction says: `_refused` is the refusal shape, the only site passing
+> `stale_kind`/`stale_reason` and the only one omitting three of the counts. `SimulationOut` is
+> 15 fields, not 14. Any extraction takes the same 13 locals as parameters and returns the
+> model, which is S5's parameter object that nets to zero. **The incident the row cites was in
+> the loop, not the constructor**: `gone` was incremented in the abstain arm ~30 lines above the
+> `return`, so a shared constructor would not have prevented it and would not prevent its
+> recurrence. The two loops are correctly different and must stay so, since a policy edit can
+> move a row condemn → protect while a threshold change cannot. Cross-site drift is already
+> gated by the two-tier parity sweep over all 13 keys; the one hole was `NUMBERS` mirroring
+> `SimulationOut` by hand with no rule-103 guard, and that is what lands.
 
 ## Wave 6: a rule stated in prose that nothing enforces
 

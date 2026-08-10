@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from reaper import logbuffer
+from reaper.api.schemas import ProfileSettingsIO
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
@@ -47,6 +48,7 @@ from reaper.engine.policy import (
     DEFAULT_TV_POLICY,
     GateSetting,
     PolicyBody,
+    ProfileSettings,
     SignalSetting,
     combine_hashes,
 )
@@ -919,6 +921,46 @@ class TestTheProfileControlsTheCaps:
         settings = client.get("/api/profile").json()
         settings["grace_days"] = 3
         assert client.put("/api/profile", json=settings).status_code == 422
+
+    def test_the_wire_and_the_domain_state_the_same_bounds(self) -> None:
+        """The caps are declared twice: ``ProfileSettingsIO`` on the wire and
+        ``ProfileSettings`` in the domain, every ``ge``/``le`` transcribed rather than
+        derived from the other (rule 131). The two do not collapse into one model, because
+        the wire requires the five fields the domain defaults -- that is what makes the
+        test below a 422 -- and ``settings_recovered`` is wire-only. So the bounds are held
+        to one answer here instead."""
+        shared = [
+            name for name in ProfileSettingsIO.model_fields if name in ProfileSettings.model_fields
+        ]
+        assert len(shared) == 7, "a cap arrived or left; these seven are the population"
+        assert set(ProfileSettingsIO.model_fields) - set(shared) == {"settings_recovered"}
+
+        for name in shared:
+            wire = ProfileSettingsIO.model_fields[name].metadata
+            domain = ProfileSettings.model_fields[name].metadata
+            assert wire == domain, (
+                f"{name} is bounded {wire} in api/schemas.py's ProfileSettingsIO and "
+                f"{domain} in engine/policy.py's ProfileSettings"
+            )
+
+    def test_a_body_missing_the_caps_is_refused_rather_than_reset(self, client: TestClient) -> None:
+        """A partial save is a 422 because the wire model gives those five fields no
+        default. A route taking ``ProfileSettings`` instead would answer 200 and write the
+        shipped defaults over whatever the operator narrowed, taking a tightened
+        ``max_items_per_run`` of 3 back to 10 and forcing ``caps_enabled`` on.
+        ``/api/profile`` sits in the API-key write allowlist (``api/middleware.py``), so
+        reaching it needs no browser."""
+        response = client.put("/api/profile", json={})
+
+        assert response.status_code == 422
+        missing = {detail["loc"][-1] for detail in response.json()["detail"]}
+        assert missing == {
+            "max_items_per_run",
+            "max_bytes_per_run",
+            "max_items_per_30d",
+            "max_bytes_per_30d",
+            "grace_days",
+        }
 
 
 class TestLimitsNobodySavedDoNotBoundAReap:
