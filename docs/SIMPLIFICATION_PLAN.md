@@ -190,7 +190,7 @@ row moving is indistinguishable from one that never started.
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
 | 6 | Structural motion | **done** | 6 of 8, 2 dropped | The by-design ceiling. Exit task finished: every `path:NNN` in this document resolves against the tree |
 | 7 | Wire contract | **done** | 8 of 8 | C7, C11 and C8 all settled. Eight items, not ~5: W8-3 measures 20 unread fields and W8-4's anonymous payloads are 11 routes over 4 shapes. W8-1 took two PRs, the route's shape then the rollup |
-| 8 | Dedup and carriers | **in progress** | 16 findings landed, 7 killed, 13 open, W11 not started | **The count is findings, and it was PRs until a completeness audit measured it.** 19 sub-PRs closed 16 findings: five closed none (#659 pins what #676 then built, #678 corrects prose, #686 follows up an already-killed row, #683 and #687 land the surviving halves of rows they kill), two closed one each and were never counted (#616, #618, rows written at the audit), and two closed two each (#653, #681). **Open, by ID**: W3b-2 scheduler decorator, W3b-4 `<SetRow>`, W3b-6 the Plex PIN flow twice, W3b-8 `leaving_soon`'s Plex client, W3b-9 `app_settings`' stored-wins-else-env-seed, W3b-10′ the operator-string half of the killed pragma row, W3b-11 four frontend hooks, W3b-12 `App.tsx`'s focus slots, W5-1 and W5-3 (both **`safety-path`**, so C9 recurs), W6-1 the CSS control standard, W9-4 both frontend cycles, W9-5 `clients/errors.py`, W9-6 `reap_in_flight`. **W11 is in this phase's scope and has not been started**: no rows, no IDs, ~45 named duplications over five lanes, and the original ~25 denominator never contained it. **C14 is settled.** W9 took three PRs, all landed: 9 cycles to 2, and neither counter S7 named moved. W3's `api/deps.py` took two, both landed (#670, #681). **W3b-4 is no longer counted here: it folds into phase 9's W4.1** (owner, 2026-08-10). 22 of its 40 `.set-row` sites are in `GeneralPanel.tsx`, which W4.1 rewrites, and `<SetRow>` and `FIELDS` describe the same rows, so whichever landed second would be written against the other. One PR does both. `:495` stated the collision and never ordered it; there is no order to settle now |
+| 8 | Dedup and carriers | **in progress** | 16 findings landed, 7 killed, 13 open, W11 44 unstarted | **The count is findings, and it was PRs until a completeness audit measured it.** 19 sub-PRs closed 16 findings: five closed none (#659 pins what #676 then built, #678 corrects prose, #686 follows up an already-killed row, #683 and #687 land the surviving halves of rows they kill), two closed one each and were never counted (#616, #618, rows written at the audit), and two closed two each (#653, #681). **Open, by ID**: W3b-2 scheduler decorator, W3b-4 `<SetRow>`, W3b-6 the Plex PIN flow twice, W3b-8 `leaving_soon`'s Plex client, W3b-9 `app_settings`' stored-wins-else-env-seed, W3b-10′ the operator-string half of the killed pragma row, W3b-11 four frontend hooks, W3b-12 `App.tsx`'s focus slots, W5-1 and W5-3 (both **`safety-path`**, so C9 recurs), W6-1 the CSS control standard, W9-4 both frontend cycles, W9-5 `clients/errors.py`, W9-6 `reap_in_flight`. **W11 is in this phase's scope and has not been started**: it is **44 items over seven lanes**, enumerated `W11-1` to `W11-44` on 2026-08-10 because it had no IDs and the phase could not name what was left. The original `~25` denominator never contained it. Two of the 44 are defects rather than duplications, W11-15 and W11-40. **What subset lets the wave read `done` is an open scoping call for the owner.** **C14 is settled.** W9 took three PRs, all landed: 9 cycles to 2, and neither counter S7 named moved. W3's `api/deps.py` took two, both landed (#670, #681). **W3b-4 is no longer counted here: it folds into phase 9's W4.1** (owner, 2026-08-10). 22 of its 40 `.set-row` sites are in `GeneralPanel.tsx`, which W4.1 rewrites, and `<SetRow>` and `FIELDS` describe the same rows, so whichever landed second would be written against the other. One PR does both. `:495` stated the collision and never ordered it; there is no order to settle now |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding. W4.1 absorbed phase 8's W3b-4, so its one PR closes both |
 | 10 | Issues that land here | not started | 1 of 8 | #682 landed at #692. `ISSUE_LANDING_PLAN.md` holds the per-issue reasoning and dies when #552 merges |
 
@@ -222,7 +222,8 @@ forever while being genuinely complete. Phase 6 tops out at 6 of 8 by design: it
 | C14 | **settled** | Owner, 2026-08-09: **option 5, plus a log line at the guard.** **Option 5 is written out here because the numbering pointed at a transcript and the next session could not resolve it**: `_call` covers reads AND writes and carries the `except SafetyViolationError: raise` arm itself, so the eight per-method arms become one declaration and the five structural opt-outs stay bespoke. Re-confirmed by the owner on 2026-08-10 when the reference was found dangling, against a list of the four shapes the surviving evidence admits. Landed at #676. The pinning test for the eight `except SafetyViolationError: raise` arms lands first (#659), then `_call` is built against it. And every blocked write is recorded at the point of refusal, whatever the reason, so a refusal survives a caller that swallows it. That second half is the owner's addition and is the better one: the arms protect eight methods, the guard log covers every write either guard ever refuses, including ones nobody has written yet. It lives in the two guards rather than at 23 call sites, and `refuse_mutation` raises as well as logs so a refusal added later cannot arrive without its line. The evidence the read rested on follows. |
 | C9 | **satisfied per PR; the first drive is #676's** | Recurring by design, so it never reads "settled" once. **The mechanics are recorded here because a session concluded the drive was impossible and it is not**: `data/` on the dev box holds a real `reaper.db` and a linked Plex server, and a probe reaches the guard by decrypting `plex_server.token_enc` through `SecretBox` the way `main.lifespan` does, then calling the guarded methods with `RuntimeSafety(destructive_enabled=False)`. A fake token is what fails: `_connect` runs first, takes a 401, and raises its own `PlexError`, which is one of the five opt-outs behaving correctly and says nothing about the interlock. Two things bound the cost. `_connect` issues a GET, so no probe is network-silent. And the probe patches `requests`' adapter to raise on any mutating request, an independent net below the guard, so the run stays write-free even in the failure case it exists to look for. #676's drive is on its Landed row, and #681's is on its own: same shape against a different interlock, a throwaway database under `/tmp` rather than the real one, with the kill switch patching the three functions BELOW the password gate instead of the HTTP adapter |
 | C14, the measurement | — | The evidence behind the read, measured against a tree identical to `dev`. **The finding and its correction are both wrong on most counts**: 23 `to_thread` sites, not 24 (the 24th is the module docstring, so the correction's figure is the right one); **five** structural opt-outs plus the write shape, not three or four, the unnamed fifth being `trash_count`'s `except PlexError: raise` at `plex.py:896`, which is the same re-raise-first shape as the eight write arms; **eight** byte-identical `except` arms, not 19; and ~50 net lines, not ~100. **The eight `except SafetyViolationError: raise` arms are unpinned, proven rather than argued**: the full suite with all eight deleted is 4,161 passed / 1 skipped / exit 0, identical to baseline. The correction's reason is wrong and its conclusion right — those files DO construct a refusing safety state, since `RuntimeSafety()` defaults `destructive_enabled=False`, but they inject `client._server`, so `_connect` returns early and `GuardedSession` is never built. **The blast radius is six of the eight, not eight**: `refresh_path` and `empty_trash` are already inside the executor's deliberate `except Exception`, whose docstrings promise "never raises", so converting those two is observably a no-op. What is actually traded away is an HTTP 500 on the Leaving Soon "Update now" button becoming a 200 carrying the same sentence an unreachable Plex produces (rules 92/93). **The `to_thread` constraint is confirmed and its stated reason is imprecise**: `asyncio.to_thread` copies the context, `loop.run_in_executor` does not do it for you, and a bare shared executor makes `_declared` read `False` inside the worker so every journalled write is refused. That is fail-closed in both directions, and both executor sites swallow it into a `log.warning`, so it is a silent breakage rather than a safety hole. Six options were put to the owner, from "do not build it" to "re-base `SafetyViolationError` outside `Exception`" |
-| C4, C5, C9, C10 | not started | — |
+| C4, C5, C10 | not started | — |
+| C4, C5, and the phase they gate | **owed, and phase 5 closed without them** | Both are mandatory phase-5 checkpoints and phase 5 reads `done` with no recorded owner decision for either. A mandatory checkpoint records **what the owner decided**, so "never held" and "held and not written down" are indistinguishable here and the second is not recoverable. Named rather than quietly carried: closing phase 8 on a counter is the failure this document already ruled out, and closing phase 5 on one is the same failure one phase earlier. C3's owner read has now stood open through five phases on the same footing |
 
 Replace this row with one row per checkpoint as it is reached. A mandatory checkpoint (C4, C5,
 C7, C9, C11, C13, C14) records **what the owner decided**, not that they looked. The decision is
@@ -2867,77 +2868,119 @@ disagreement.
 
 Landable, small, and none of it changes behavior unless marked.
 
-**Control-flow shape.** A `PlexItem | None` re-tested per field at **22 sites in 3 modules**,
-where every inline fallback is byte-identical to the dataclass default (~20 lines). The same raw
-field re-parsed 3 to 5 times inside one loop body in `_raw_items` (~12). `field.type` dispatched
+**44 items across seven lanes, enumerated 2026-08-10 so the phase can count them.** The wave sat
+in phase 8's scope line from the day the plan was written and was never given IDs, so the phase
+had no way to name what was left and its Progress cell read as two items remaining. The ID below
+is the index and the sentence carrying it is the finding body; nothing is restated. Every count
+in every sentence is the second pass's and none has been re-derived since, so measure before you
+build (rule 145's own lesson, and the phase has already found a `~28 across 10` that was 33 across
+13 and a `three literals` that was nine sites). **Two of the 44 are not duplications**: W11-15 is
+an unbounded fan-out and W11-40 is two tables that grow for the life of the install. Both are
+defects, and neither's value is the lines it saves. **What subset lets this wave read `done` is a
+scoping call for the owner**, not a measurement.
+
+**Control-flow shape.** **W11-1** A `PlexItem | None` re-tested per field at **22 sites in 3
+modules**, where every inline fallback is byte-identical to the dataclass default (~20 lines).
+**W11-2** The same raw field re-parsed 3 to 5 times inside one loop body in `_raw_items` (~12).
+**W11-3** `field.type` dispatched
 by four separate if-ladders plus two inline ternaries in `PolicyRuleEditors.tsx`, so a new
 `FieldType` is silently wrong in six places with no compile error, and **no test pins the
-conversions** (~20, `behavior`). `_kept_phrase`'s 12 `if` arms, six of which return a bare
-constant, where the pinning test is *already* a parametrized table over exactly those pairs (~20).
-`scan.py`'s `condemned` counter kept in lockstep by hand with `len(condemned_keys)`.
-`breakdown.py`'s (count, bytes, unknown) triple written four times plus three parallel dicts
-re-zipped (~15). `build_sources`' Radarr and Sonarr loops differing by two class names (~14).
-`sync_protection_lists`' four parallel slug sets and four hand-written sweep calls (~10,
+conversions** (~20, `behavior`). **W11-4** `_kept_phrase`'s 12 `if` arms, six of which return a
+bare constant, where the pinning test is *already* a parametrized table over exactly those pairs
+(~20).
+**W11-5** `scan.py`'s `condemned` counter kept in lockstep by hand with `len(condemned_keys)`.
+**W11-6** `breakdown.py`'s (count, bytes, unknown) triple written four times plus three parallel
+dicts re-zipped (~15). **W11-7** `build_sources`' Radarr and Sonarr loops differing by two class
+names (~14).
+**W11-8** `sync_protection_lists`' four parallel slug sets and four hand-written sweep calls (~10,
 `safety-path`: rule 115's `when=` predicates survive verbatim).
 
-**Concurrency and caching.** Two identical bounded poll loops in the executor (~10). A lazy
+**Concurrency and caching.** **W11-9** Two identical bounded poll loops in the executor (~10).
+**W11-10** A lazy
 `app.state` getter written four times, and two detached-background-job blocks that share their
-whole shape (~45; the cancel-and-await asymmetry is rule 128 and must stay a parameter). Elapsed
-milliseconds computed 11 times, 7 of them inside `run_scan` (~15). `_maintenance_specs` rebuilt
-from six threaded dependencies at four call sites, once per job per reschedule (~40). Two
+whole shape (~45; the cancel-and-await asymmetry is rule 128 and must stay a parameter).
+**W11-11** Elapsed
+milliseconds computed 11 times, 7 of them inside `run_scan` (~15). **W11-12** `_maintenance_specs`
+rebuilt
+from six threaded dependencies at four call sites, once per job per reschedule (~40). **W11-13**
+Two
 `Retry-After` parsers that differ on a negative header (~10; the two *caps* are deliberate and
-stay). The cooperative-yield stride spelled two ways at four sites. Concurrency bounds written per
+stay). **W11-14** The cooperative-yield stride spelled two ways at four sites. **W11-15**
+Concurrency bounds written per
 caller, with `services/fairness.py`'s `_enrich_titles` fanning out up to 80 live Seerr calls unbounded while
 `auth/ratelimit.py:200` ships an unused `ConcurrencyGate` (~20, `behavior`: adding the bound is a
 fix, so ship it separately).
 
-**Frontend state.** Four query keys declared 2 to 5 times as literals with **divergent** options,
+**Frontend state.** **W11-16** Four query keys declared 2 to 5 times as literals with
+**divergent** options,
 including three different `staleTime`s for `general-settings` and three different refetch
-intervals for `scanStatus`, while four other keys already have shared hooks (~40). The
-running-to-not-running falling edge hand-written six times (~20). `ServiceModal`'s two
+intervals for `scanStatus`, while four other keys already have shared hooks (~40). **W11-17** The
+running-to-not-running falling edge hand-written six times (~20). **W11-18** `ServiceModal`'s two
 structurally identical map-plus-suggestion state machines, carrying the same `exhaustive-deps`
-disable twice (~25). The switch-confirm *caller* written twice, where the component half was
-already extracted (~15). Six navigation callbacks drilled 3 to 4 levels over a destination type
-`navIntent.ts` says is already one value (~40). Three hand-rolled 250 ms debounces. The
+disable twice (~25). **W11-19** The switch-confirm *caller* written twice, where the component
+half was
+already extracted (~15). **W11-20** Six navigation callbacks drilled 3 to 4 levels over a
+destination type
+`navIntent.ts` says is already one value (~40). **W11-21** Three hand-rolled 250 ms debounces.
+**W11-22** The
 parent-Back-guard ref mirror written three times.
 
-**Frontend components and CSS.** The `.field-sm` triplet typed 21 times across 7 files, which is
+**Frontend components and CSS.** **W11-23** The `.field-sm` triplet typed 21 times across 7 files,
+which is
 the modal-side sibling of wave 3's `.set-row` finding and the same rule 72 sweep (~40).
-`WhyPanelFallback` and `ScalesPanelFallback` as the same 30-line component twice, with a comment
-saying so (~28). Four decision tones written three times each across two CSS files, 12 blocks for
-4 declaration sets (~28, `visual`). The `role="progressbar"` wrapper three times, each carrying a
-comment pointing at the other two (~24). The Scales balance bar computed and marked up twice
-verbatim (~14). Two duplicated SVGs where one is already exported. The chip dismiss button as
+**W11-24** `WhyPanelFallback` and `ScalesPanelFallback` as the same 30-line component twice, with
+a comment
+saying so (~28). **W11-25** Four decision tones written three times each across two CSS files, 12
+blocks for
+4 declaration sets (~28, `visual`). **W11-26** The `role="progressbar"` wrapper three times, each
+carrying a
+comment pointing at the other two (~24). **W11-27** The Scales balance bar computed and marked up
+twice
+verbatim (~14). **W11-28** Two duplicated SVGs where one is already exported. **W11-29** The chip
+dismiss button as
 three near-copies, where one comment says outright it "borrows" the other's shape (~14).
-Pluralization inline **64 times** beside a `format.ts` that already implements it twice, and 14
+**W11-30** Pluralization inline **64 times** beside a `format.ts` that already implements it twice,
+and 14
 sites calling `.toLocaleString()` where `count()` exists (~20).
 
-**Errors and messages.** Four `IntegrationError` sentences raised twice each in `clients/base.py`
+**Errors and messages.** **W11-31** Four `IntegrationError` sentences raised twice each in
+`clients/base.py`
 plus a third copy in `public.py`, with the explanatory comment duplicated verbatim (~20; the
-`unreachable (…)` wording is hand-constructed in five test sites and is load-bearing). Two inner
-handlers in `refresh_curated_lists` that duplicate the outer catch-all exactly (~12). A dead
+`unreachable (…)` wording is hand-constructed in five test sites and is load-bearing). **W11-32**
+Two inner
+handlers in `refresh_curated_lists` that duplicate the outer catch-all exactly (~12). **W11-33** A
+dead
 refusal branch in `restore.py:201` whose only content is a sentence its sole caller already
-refused 12 lines earlier, plus one prepare-failure sentence written verbatim four times. The
-cron-refusal sentence written twice **in one function**, pinned by nothing. Three `except` arms
-raising the identical 400. Four verbatim copies of one panel-load-failure sentence (the fifth,
+refused 12 lines earlier, plus one prepare-failure sentence written verbatim four times.
+**W11-34** The
+cron-refusal sentence written twice **in one function**, pinned by nothing. **W11-35** Three
+`except` arms
+raising the identical 400. **W11-36** Four verbatim copies of one panel-load-failure sentence (the
+fifth,
 which drops "Reload to try again", is deliberate: #195, a reload inside an editor takes unsaved
-edits with it). Three identity entries in `CHECK_COPY` that the fallback already produces. The
+edits with it). **W11-37** Three identity entries in `CHECK_COPY` that the fallback already
+produces. **W11-38** The
 `instanceof ApiError` unwrap ritual five times.
 
-**Data model.** `whitelist.overrides()` and `spare_expiries()` are two full scans of one table
+**Data model.** **W11-39** `whitelist.overrides()` and `spare_expiries()` are two full scans of one
+table
 always issued back to back at four call sites, while a third function in the same file already
-selects all three columns in one statement (~15). `ActionStep.run_id` has no index, SQLite does
+selects all three columns in one statement (~15). **W11-40** `ActionStep.run_id` has no index,
+SQLite does
 not auto-index a foreign key, and `action_step`/`reap_run` are never swept because retention
 deletes only snapshots and excludes every snapshot a run points at, so both tables grow for the
-life of the install (one additive `create_index` revision). An `IntPk` annotation beside the
+life of the install (one additive `create_index` revision). **W11-41** An `IntPk` annotation beside
+the
 existing `UtcTimestamp` idiom renders byte-identical DDL for 13 models.
 
-**Build and startup.** The uv bootstrap written three times, the ghcr login and image name in four
+**Build and startup.** **W11-42** The uv bootstrap written three times, the ghcr login and image
+name in four
 jobs across three workflows, the store-credential probe byte-identical in two workflows plus a
 third shape, provenance baked twice in one workflow, and the macOS boot probe written twice inside
-one step (~85 lines total, all `ci`). "Install root, else repo root" spelled three times, with
+one step (~85 lines total, all `ci`). **W11-43** "Install root, else repo root" spelled three
+times, with
 `main.py`'s SPA mount ("leave a stale second copy of the UI") re-inlining `launcher.py`'s three-parent walk from a different module that happens
-to sit at the same depth, so moving either file breaks one of them silently. `preflight → migrate
+to sit at the same depth, so moving either file breaks one of them silently. **W11-44** `preflight → migrate
 → serve` written three times where only `serve` is genuinely per-environment (~23, `behavior`, and
 it is a deletion tool's boot path, so rank it last).
 
