@@ -431,7 +431,9 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
 
     def test_the_writer_and_the_declaration_name_the_same_keys(self) -> None:
         """Every object in the document, against the model that types it. Collected rather
-        than asserted per block, so a failure names each disagreement instead of the first."""
+        than asserted per block, so a failure names each disagreement instead of the first,
+        and the message names both files, since whichever one a reader is holding the fix is
+        usually in the other (rule 144)."""
         document = _written_explanation()
 
         wrong = [
@@ -441,7 +443,12 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
             if (declared := _declared(label, model)) != keys
         ]
 
-        assert not wrong, "\n".join(wrong)
+        assert not wrong, (
+            "services/snapshot.py's _explain and engine/explanation.py's models describe one "
+            "document and disagree about it. A written-only key is DROPPED on read "
+            '(pydantic\'s extra="ignore"); a declared-only key reads None forever.\n'
+            + "\n".join(wrong)
+        )
 
     def test_the_two_gate_flags_ride_on_the_unknown_list_alone(self) -> None:
         """The exception above, stated positively. ``_explain`` writes ``defers_to_owner``

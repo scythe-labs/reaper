@@ -18,6 +18,17 @@ consent to reasons the panel never rendered", and for that class of row they cou
 These are Pydantic models rather than plain dataclasses because the validation IS the readability
 test: what the panel can render is exactly what the model accepts. ``api.schemas`` re-exports them
 so the wire names and the published OpenAPI components are unchanged.
+
+**They declare the document; ``services.snapshot._explain`` writes it, and the two are held
+together by a test rather than by one of them generating the other.**
+``test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared`` walks every object the
+writer produces against the model that types it. Making the writer build these models instead was
+measured and refused: the three ``mode="before"`` validators below exist to keep an illegible
+STORED byte from blanking the panel, and on the write side they turn a writer's own value into
+``None`` with nothing raising. ``Explanation(match=MatchOut(...))`` yields ``match=None`` today,
+because ``_thaw_match`` reads a submodel instance as "not a mapping" -- which drops the merged
+listing keys ``executor._equivalent_keys`` hands the streaming veto, and clears the bad-match hold
+on a hand reap.
 """
 
 from __future__ import annotations

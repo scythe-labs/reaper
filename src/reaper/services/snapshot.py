@@ -1625,6 +1625,15 @@ def _explain(
     Plus a ``match`` block that says how (or whether) the item was bound to its Plex row --
     "bound by TMDB id 12345", or "kept: two Plex items share this id" -- so a file that was
     spared for a *matching* reason is not mistaken for one nobody looked at.
+
+    **Hand-typed on purpose, and held to the read side by a test rather than built from it.**
+    ``engine.explanation`` declares what this document is, and
+    ``test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared`` fails when a key
+    here is not declared there, or the other way round. That declaration is also the WIRE model
+    (``api.schemas.CandidateDetail``) and its validators are deliberately lenient about an
+    illegible stored byte, so building this from it would weld the on-disk format to the API and
+    let a writer's value be normalized to ``None`` at write time, where no reader can recover it.
+    Measured under the simplification plan's W5-1, which is killed on that measurement.
     """
     return json.dumps(
         {
