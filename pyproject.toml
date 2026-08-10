@@ -160,8 +160,8 @@ branch = true
 # SQLAlchemy's async bridge runs the body of every session-using coroutine inside a
 # greenlet, and coverage does not trace one unless it is named here. Without it the
 # report was blind to most route and service bodies -- it recorded a line carrying an
-# `await` and dropped its neighbors, so `record_password_failure` read as unreached in
-# all four password gates that in fact have tests asserting the exact 403 each one
+# `await` and dropped its neighbors, so `deps._record_password_failure` read as unreached
+# in all four password gates that in fact have tests asserting the exact 403 each one
 # raises. It understated the suite by 2.8 points and, worse, made the codecov patch
 # gate unusable: a genuinely untested line was indistinguishable from an artifact.
 concurrency = ["thread", "greenlet"]

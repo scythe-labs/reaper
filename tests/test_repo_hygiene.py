@@ -474,6 +474,50 @@ def test_http_clients_are_only_constructed_in_clients() -> None:
     assert not offenders, "construct HTTP clients only in clients/:\n" + "\n".join(offenders)
 
 
+def test_the_admin_password_lockout_is_reached_through_one_function() -> None:
+    """Rules 11/98 as a gate: only ``api/deps.py`` reaches the lockout or the verify.
+
+    Four routes ask for the admin password before doing something consequential, and each
+    used to run the same four steps by hand: check the lockout, verify, record the failure,
+    clear both keys on success. Copying them is how a fifth gate arrives with three of the
+    four, and the step most easily dropped is the one no route-level test used to reach --
+    ``record_success``, whose absence makes a near-miss cost the operator a real lockout.
+
+    Prose cannot bind an author who never read it, so the ban is on the names instead: a route
+    that can reach neither the throttle nor the verify cannot get the ritual wrong. Two names
+    are banned rather than one, and the second is the one that matters. Banning
+    ``password_throttle`` alone stops a gate with three of the four steps; a gate calling
+    ``admin_password.verify`` straight is a gate with **none** of them, and every one of these
+    routers already imports that module, so it is the shorter mistake to make.
+
+    **Measured against the spellings, not assumed (rule 147).** The matcher is a substring test
+    over `_strip_prose`, so it catches the dotted form
+    (``ratelimit.password_throttle.record_failure(...)``), the fully qualified form, and an
+    ``import ... as`` rebinding, which is caught at the import line. What it does not catch is a
+    name assembled at runtime (``getattr(ratelimit, "password_" + "throttle")``). An earlier
+    version of this docstring named the first two as blind spots and both were already covered;
+    the escape it missed is the one now banned on the second line.
+    """
+    allowed = {
+        "password_throttle": {SRC / "auth" / "ratelimit.py", SRC / "api" / "deps.py"},
+        "admin_password.verify": {SRC / "api" / "deps.py"},
+    }
+    offenders = [
+        f"{p.relative_to(REPO)}:{n}  {banned}"
+        for banned, exempt in allowed.items()
+        for p in SRC.rglob("*.py")
+        if p not in exempt
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if banned in _strip_prose(line)
+    ]
+    assert not offenders, (
+        "reach the admin-password gate through reaper.api.deps.require_admin_password, "
+        "which is the whole ritual -- lockout check, verify, record the failure, clear both "
+        "keys on success -- rather than spelling any part of it again (rule 11/98):\n"
+        + "\n".join(sorted(offenders))
+    )
+
+
 def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
     """Rule 88, as a gate. ``reaper.text.fold`` is the trim-then-casefold every name
     comparison takes, and it was spelled 37 times over 33 lines in 13 modules.
