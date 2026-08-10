@@ -413,7 +413,7 @@ def stage_upload(settings: Settings, archive_path: Path) -> RestoreSummary:
 #: What every failure in the three prepare steps below answers with, declared once so the
 #: four raise sites cannot drift into four different sentences (rule 144). The operator's
 #: question is the same at all four and so is the answer: :data:`READY_MARKER` is written
-#: last (see :func:`arm`), so a raise here leaves it unwritten and :func:`swap_if_ready`
+#: last (see :func:`arm`), so a raise here leaves it unwritten and :func:`apply_pending_restore`
 #: returns having touched nothing (rule 126).
 _PREPARE_FAILED = "Reaper couldn't prepare this backup. Nothing was restored."
 
