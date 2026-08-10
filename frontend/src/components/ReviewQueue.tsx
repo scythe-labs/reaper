@@ -46,12 +46,12 @@ import { announce } from "../announce";
 import { useBackGuard } from "../backnav";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
-import type { Focus } from "../navIntent";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
 import { CardOpen } from "./CardOpen";
 import { FilterMenu } from "./FilterMenu";
+import { PosterFallback } from "./PosterFallback";
 import { ReapConfirm } from "./ReapConfirm";
 import { KeptByShowNote, OverrideControls, OverrideMark } from "./OverrideControls";
 import {
@@ -254,14 +254,7 @@ export function Poster({ url, alt }: { url: string | null; alt: string }) {
   if (!url || broken) {
     return (
       <div className="poster poster-empty" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
-          <path d="M4 5h16v14H4z" stroke="currentColor" strokeWidth="1.6" />
-          <path
-            d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4"
-            stroke="currentColor"
-            strokeWidth="1.2"
-          />
-        </svg>
+        <PosterFallback size={20} />
       </div>
     );
   }
@@ -1371,7 +1364,7 @@ export function ReviewQueue({
   /** What a jump into this queue aimed it at (navIntent.ts): the search box's contents, so the
    *  list behind an opened panel is the title that was opened rather than the whole lane.
    *  Acted on once per `nonce`, so returning to Review later does not re-seed the box. */
-  focus?: Focus<{ search: string }> | null;
+  focus?: { search: string; nonce: number } | null;
   selectedId: number | null;
   selectedGroupKey: string | null;
   onSelect: (id: number) => void;

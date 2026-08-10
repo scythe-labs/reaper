@@ -753,20 +753,16 @@ async def scan(
                 reach_days=context.reach_days,
                 active_rating_keys=context.active_rating_keys,
                 activity_degraded=context.activity_degraded,
-                keep_last_seasons=tv_policy.keep_last_seasons,
-                keep_first_season=tv_policy.keep_first_season,
+                # The scan and the simulator now reach the planner's nine season settings
+                # through one road, ``SeasonPolicy.from_body``. Unpacking the body into nine
+                # keywords here was the second road, and a field added to the season card
+                # had to be written onto both (rule 144).
+                season_policy=season_evidence.SeasonPolicy.from_body(tv_policy),
                 window_days=tv_policy.popularity_window_days(),
                 whitelisted=tag_only_whitelist,
                 degrade=context.degrade,
                 requested=requested,
                 request_index=request_index,
-                keep_last_scope=tv_policy.keep_last_scope,
-                season_lookahead=tv_policy.season_lookahead,
-                keep_in_progress=tv_policy.keep_in_progress,
-                in_progress_hold_days=tv_policy.in_progress_hold_days,
-                keep_specials=tv_policy.keep_specials,
-                protect_incomplete_seasons=tv_policy.protect_incomplete_seasons,
-                flag_keep_conflicts=tv_policy.flag_keep_conflicts,
                 membership_index=membership_index,
                 allowed_sections=allowed_sections,
             ),
@@ -1625,6 +1621,17 @@ def _explain(
     Plus a ``match`` block that says how (or whether) the item was bound to its Plex row --
     "bound by TMDB id 12345", or "kept: two Plex items share this id" -- so a file that was
     spared for a *matching* reason is not mistaken for one nobody looked at.
+
+    **Hand-typed on purpose, and held to the read side by a test rather than built from it.**
+    ``engine.explanation`` declares what this document is, and
+    ``test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared`` fails when a key
+    here is not declared there, or the other way round.
+
+    Building this from that declaration was measured and refused (the simplification plan's
+    W5-1). It is the WIRE model too (``api.schemas.CandidateDetail.explanation``), so an alias
+    or ``exclude_none`` change made for the API would reach disk. And its validators are
+    deliberately lenient about an illegible stored byte, which on this side normalizes a
+    writer's own value to ``None`` where no reader can recover it.
     """
     return json.dumps(
         {
