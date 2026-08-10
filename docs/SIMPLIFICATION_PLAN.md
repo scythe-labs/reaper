@@ -192,6 +192,7 @@ row moving is indistinguishable from one that never started.
 | 7 | Wire contract | **done** | 8 of 8 | C7, C11 and C8 all settled. Eight items, not ~5: W8-3 measures 20 unread fields and W8-4's anonymous payloads are 11 routes over 4 shapes. W8-1 took two PRs, the route's shape then the rollup |
 | 8 | Dedup and carriers | **in progress** | 17 landed, 7 killed | W6-2 landed early as #618: #556 made rule 94's bound a live defect, not a tidiness item. The two already-drifted rows still open are the executor's size interlock (`safety-path`) and W3's parameter objects; the two panel heads landed at #679. **C14 is settled** and `_call` is unblocked, the pinning test having landed at #659. W9's `LAUNCHER_CONF_NAME` half landed at #671, the first of its three PRs: measured, 9 cycles to 2, and it moves neither counter S7 said it would. W3's `api/deps.py` is two PRs: the request accessors landed at #670, and the admin-password gate follows as its own `safety-path` PR, which owes a C9 drive like every other |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
+| 10 | Issues that land here | not started | 1 of 8 | #682 landed at #692. `ISSUE_LANDING_PLAN.md` holds the per-issue reasoning and dies when #552 merges |
 
 Status vocabulary, and nothing else: `not started`, `in progress`, `blocked`, `done`. `blocked`
 carries the reason in *Notes* and the checkpoint or decision that unblocks it. **`done` means every
@@ -469,6 +470,7 @@ earlier at a cost that is named in each. **The numbers are frozen** — see *How
 | 7 | Wire contract | W8, W4.3, W7-2 | `behavior`, `safety-path` | Two-language commits; smaller files make them tractable |
 | 8 | Dedup and carriers | W3, W5, W9, W6-1/2/3/4/7, W11 | up to `safety-path` | The bulk. Every safety-path item is its own PR |
 | 9 | Declaration tax | W4.1, W4.2 | `behavior` | Most leverage, widest blast radius, smallest tree |
+| 10 | Issues that land here | none | up to `behavior` | Not a wave. Tracker work that must ride this branch because its fix sites moved |
 
 **One PR is one session.** A phase is several. A session whose context has been compacted stops
 before a `safety-path` merge rather than pushing through.
@@ -927,6 +929,44 @@ off `create_app(settings).openapi()`; an HTTP fetch needs a booted, authenticate
 counters, so phase 7's edits to those lines are thrown away either way. It goes last because a
 generator lands against the smallest, most settled schema surface, and because W4.3's `Literal`
 types (phase 7) must precede it.
+
+### Phase 10 — issues that land here
+
+**Not a wave, and the only phase whose items came from the tracker rather than from the audit.**
+Eight open issues have to be fixed on this branch rather than on `dev`, because the branch moved or
+deleted the code their fix sites name. A `dev`-side fix would be re-resolved by hand during the
+weekly merge, against a diff nobody can review twice.
+
+**[`docs/ISSUE_LANDING_PLAN.md`](ISSUE_LANDING_PLAN.md) holds the reasoning per issue, the
+measurement behind each lane call, and the seventeen that wait for `dev` instead.** Read it before
+starting one. It dies when #552 merges; these rows do not, so they say what to do and it says why.
+
+**The rule that decided every row: measure the collision at the fix SITE, never at the file.** A
+file the branch touched is not a collision; a file whose fix site the branch replaced, moved or
+deleted is. `git diff origin/dev...HEAD -- <path>` and read the hunk headers against the line the
+fix needs. That rule moved five rows between lanes on review, in both directions.
+
+| # | Issue | Why it must land here |
+| --- | --- | --- |
+| 1 | **#682** | **Landed at #692.** The branch's own hunk replaced the exact `check=` string |
+| 2 | #691 | `Status/Need More Info`. #692's armed-executor rig against a stub Sonarr is what settles it, which is the reason it belongs here. Confirmed means one copy fix; unreachable means close `Reviewed/Invalid` and write the refutation |
+| 3 | #624 | The strongest collision of the eight: the branch replaced the whole `lsStatus` closure, five lines becoming thirty, and moved `LeavingSoonRow` into `JobsPanel.tsx`. The defect survives the rewrite, and the issue's own "Where" names lines that no longer exist |
+| 4 | #584 | `_sync_libraries` moved out of `api/settings.py` into `api/plex.py`, and `test_settings_api.py` changed inside the class the test would go in |
+| 5 | #598 | The branch removes two entries from the same `functions=` tuple this fix appends to, and re-points two other zones' `module=` at files the proposed drift check has to read |
+| 6 | #685 | Not because the test file is long. **Both of the gate's inputs moved**: `.claude/rules/*.md` and `CLAUDE.md`. A gate written against `dev`'s scopes asserts the wrong pairs the day it lands |
+| 7 | #558 | All four fix sites of half one were rewritten onto `buildinfo.env_flag`, and `_TRUE`/`_FALSE` deleted from both modules. Half two is genuinely untouched and could go either way; doing both here keeps one issue in one place |
+| 8 | #622 | **A safety consequence.** The branch added a THIRD fatal stderr-only refusal (`preflight.main` writing `schema_gate.refusal`). A fix written on `dev` covers two and leaves the branch's third invisible on a frozen desktop build, which is the fail-open class the issue exists for |
+
+**Three issue bodies this branch invalidates, fixed here because the branch created them.** #554
+sends a reader to `engine/calibration.py` and #553 to `engine/backtest.py`; the branch deletes
+both. The wrong-population lesson survives verbatim at `docs/LEARNINGS.md`, so #554's citation is
+repointed there with the pre-deletion sha named. #553 also cites `api/settings.py` for the new-Plex-id
+comment, which now lives in `api/plex.py`. **Do #554's repoint before #552 goes ready**: it is the
+one that asks someone to open a file that will not be there.
+
+**Nothing here is a wave, so nothing here has a `> Landed` block on a finding body.** Each item
+closes its issue in the #552 merge, not before, since an operator on `dev` can still hit all of
+them. #660 and #654 are the precedent for that wording.
 
 ### Review checkpoints
 
