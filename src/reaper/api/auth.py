@@ -19,9 +19,6 @@ has logged in. Everything here is exempt from the session requirement (see
 
 from __future__ import annotations
 
-import math
-from collections.abc import Sequence
-
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -29,7 +26,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
-from reaper.api.deps import runtime_settings, secret_box, session_factory
+from reaper.api.deps import (
+    client_ip,
+    refuse_if_waiting,
+    runtime_settings,
+    secret_box,
+    session_factory,
+    throttled,
+)
 from reaper.api.schemas import NO_PLEX_FORWARD, OkOut, PlexServerChoiceOut, PlexStartIn
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
@@ -38,10 +42,8 @@ from reaper.auth.cookie import (
     read_session_tokens,
     set_session_cookie,
 )
-from reaper.auth.proxy import client_ip
 from reaper.auth.ratelimit import (
     RateLimiter,
-    Throttle,
     argon2_gate,
     login_throttle,
     plex_poll_limit,
@@ -57,7 +59,6 @@ from reaper.auth.sessions import (
 )
 from reaper.config import RuntimeSafety
 from reaper.db.models import AppUser, AuthProvider, PlexServer
-from reaper.services import admin_password
 from reaper.services.login import (
     LoginError,
     UserView,
@@ -78,93 +79,15 @@ def _safety(request: Request) -> RuntimeSafety:
     return RuntimeSafety(destructive_enabled=False)
 
 
-def _client_ip(request: Request) -> str:
-    # The peer address, with one deliberate carve-out: when the operator turned on
-    # reverse-proxy trust (Settings -> General) and the peer IS a listed proxy,
-    # X-Forwarded-For is honored -- see auth.proxy.client_ip for the walk. From any
-    # other peer that header is attacker-controlled and ignored, because trusting it
-    # would let a single host dodge the per-IP lockout by rotating a spoofed value.
-    # The per-username lock (below) still runs alongside either way.
-    return client_ip(request)
-
-
-def _throttled(throttle: Throttle, *keys: str) -> None:
-    """Raise 429 if any of ``keys`` is currently locked out, else return.
-
-    Checked *before* any password work happens, so a locked-out attacker never
-    reaches the expensive Argon2 verify -- that is what the throttle is for.
-    """
-    retry = max((throttle.retry_after(k) for k in keys), default=0.0)
-    _refuse_if_waiting(retry)
-
-
 def _rate_limited(limiter: RateLimiter, key: str) -> None:
     """Count this call against ``key``'s window and raise 429 once it is over the cap.
 
-    The Plex sign-in pair has no password to get wrong, so :func:`_throttled` above never
-    fires on it -- a flood there is made of calls that all *succeed*. This is the bound
-    that does apply: it counts every call, not just refused ones (S-1).
+    The Plex sign-in pair has no password to get wrong, so
+    :func:`reaper.api.deps.throttled` never fires on it -- a flood there is made of calls
+    that all *succeed*. This is the bound that does apply: it counts every call, not just
+    refused ones (S-1).
     """
-    _refuse_if_waiting(limiter.retry_after(key))
-
-
-def _refuse_if_waiting(retry: float) -> None:
-    """Turn a positive wait into the one 429 both limits answer with."""
-    if retry > 0.0:
-        seconds = max(1, math.ceil(retry))
-        raise HTTPException(
-            429,
-            "Too many attempts. Please wait and try again.",
-            headers={"Retry-After": str(seconds)},
-        )
-
-
-def record_password_failure(throttle: Throttle, keys: Sequence[str], *, gate: str) -> None:
-    """Count a wrong password against every key, and say which interlock it was.
-
-    Four routes are gated on the admin password -- arming deletion, changing that
-    password, forgetting the watch record, and confirming a restore -- and each recorded
-    the failure silently. So a hundred attempts to arm deletion from a borrowed session
-    left no trace whatever, while the one that eventually succeeded logged
-    ``safety.destructive_set``. The local login has warned on its lockout crossing all
-    along (``auth.local_locked_out``); this is that same line for its four siblings
-    (rule 72).
-
-    The throttle KEY and the gate, never ``payload.password``: an attempted password is
-    of no use to anyone reading this and is the one thing here that must never be
-    written down (rule 13).
-    """
-    locked_for = 0.0
-    for key in keys:
-        locked_for = max(locked_for, throttle.record_failure(key))
-    if locked_for > 0:
-        log.warning("auth.password_locked_out", gate=gate, retry_after=math.ceil(locked_for))
-    else:
-        log.debug("auth.password_rejected", gate=gate)
-
-
-def _busy_hashing() -> HTTPException:
-    """The one 503 every password-hashing route sheds load with."""
-    return HTTPException(
-        503,
-        "The server is busy checking passwords. Please try again shortly.",
-        headers={"Retry-After": "2"},
-    )
-
-
-async def _verify_admin_password(session: AsyncSession, password: str) -> bool:
-    """Check the admin password, turning a full Argon2 gate into a 503 rather than a
-    "wrong password".
-
-    The distinction matters: a capacity refusal must never reach the lockout counters, or
-    a server under load would lock out the operator who typed the right password. The gate
-    itself is taken inside ``admin_password.verify``, which is the only place that knows
-    how many hashes the call will run (S-4).
-    """
-    try:
-        return await admin_password.verify(session, password)
-    except admin_password.PasswordVerificationBusyError as exc:
-        raise _busy_hashing() from exc
+    refuse_if_waiting(limiter.retry_after(key))
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +220,7 @@ async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -
     install's egress address into plex.tv's own rate limiting -- which would lock the real
     operator out of Plex sign-in entirely (S-1).
     """
-    _rate_limited(plex_start_limit, _client_ip(request))
+    _rate_limited(plex_start_limit, client_ip(request))
     start = await start_plex_login(
         session_factory(request), safety=_safety(request), forward_url=payload.forward_url()
     )
@@ -308,7 +231,7 @@ async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -
 async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -> PlexPollOut:
     # Far looser than /plex/start: one real sign-in polls every two seconds for up to five
     # minutes, so the cap has to clear ~150 calls without touching an honest browser.
-    _rate_limited(plex_poll_limit, _client_ip(request))
+    _rate_limited(plex_poll_limit, client_ip(request))
     try:
         result = await poll_plex_login(
             session_factory(request),
@@ -352,13 +275,13 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
 
 @router.post("/local")
 async def local(request: Request, payload: LocalLoginIn, response: Response) -> UserOut:
-    ip = _client_ip(request)
+    ip = client_ip(request)
     # Key the lockout on both the source IP and the attempted username, so neither
     # a single host hammering many names nor many hosts hammering one name slips
     # through. Truncated to bound the key length against a hostile username.
     user_key = f"user:{payload.username[:64]}"
     ip_key = f"ip:{ip}"
-    _throttled(login_throttle, ip_key, user_key)
+    throttled(login_throttle, ip_key, user_key)
 
     # Shed load before hashing: if too many Argon2 verifications are already in
     # flight, refuse quickly rather than adding to the CPU pile-up. This is a
@@ -435,8 +358,8 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
     # No Argon2 here -- recovery redeems a random single-use token, so brute force
     # is already near-hopeless -- but a per-IP cap still stops a token-guessing
     # flood from tying up the endpoint.
-    ip_key = f"ip:{_client_ip(request)}"
-    _throttled(recover_throttle, ip_key)
+    ip_key = f"ip:{client_ip(request)}"
+    throttled(recover_throttle, ip_key)
 
     async with session_factory(request)() as session:
         if not await redeem_recovery_token(session, payload.token):

@@ -35,17 +35,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import launcher
 from reaper.api import tags as api_tags
-from reaper.api.auth import (
-    _busy_hashing,
-    _client_ip,
-    _throttled,
-    _verify_admin_password,
-    record_password_failure,
+from reaper.api.deps import (
+    busy_hashing,
+    client_ip,
+    require_admin_password,
+    runtime_settings,
+    secret_box,
+    session_factory,
 )
-from reaper.api.deps import runtime_settings, secret_box, session_factory
 from reaper.api.schemas import JobRunOut, OkOut, RemovedOut
 from reaper.auth.proxy import parse_proxy_networks
-from reaper.auth.ratelimit import argon2_gate, password_throttle
+from reaper.auth.ratelimit import argon2_gate
 from reaper.auth.sessions import (
     resolve_session_from_cookies,
     session_via_recovery,
@@ -872,11 +872,12 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     one click. If no admin password has been set yet, enabling is refused with a message
     pointing at the password step.
 
-    The verify runs behind the same per-IP + per-account lockout and Argon2 concurrency
-    gate as login (``password_throttle`` / ``argon2_gate``): arming is a password-guessing
-    surface too, and Argon2 is expensive by design.
+    The check runs through :func:`reaper.api.deps.require_admin_password`. That is the same
+    per-IP + per-account lockout shape as login and the same Argon2 concurrency gate
+    (``argon2_gate``), on its own counter (``password_throttle``, not ``login_throttle``):
+    arming is a password-guessing surface too, and Argon2 is expensive by design.
     """
-    keys = (f"ip:{_client_ip(request)}", "account:safety-arm")
+    keys = (f"ip:{client_ip(request)}", "account:safety-arm")
     async with session_factory(request)() as session:
         if payload.enabled:
             # Refused before the password is even looked at, because no password makes this
@@ -894,13 +895,13 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
                     400,
                     "Set an admin password first. It's what confirms turning deletion on.",
                 )
-            _throttled(password_throttle, *keys)
-            ok = await _verify_admin_password(session, payload.password or "")
-            if not ok:
-                record_password_failure(password_throttle, keys, gate="arm_deletion")
-                raise HTTPException(403, "That password didn't match. Deletion stays off.")
-            for key in keys:
-                password_throttle.record_success(key)
+            await require_admin_password(
+                session,
+                payload.password or "",
+                keys=keys,
+                gate="arm_deletion",
+                refusal="That password didn't match. Deletion stays off.",
+            )
         await app_settings.set_destructive_enabled(session, enabled=payload.enabled)
         await session.commit()
         safety = await app_settings.runtime_safety(session, runtime_settings(request))
@@ -928,7 +929,7 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
     same transaction as the new hash, so a second change from that session asks for the
     password like any other, and the mark cannot outlive the reset it was for.
     """
-    keys = (f"ip:{_client_ip(request)}", "account:admin-password")
+    keys = (f"ip:{client_ip(request)}", "account:admin-password")
     async with session_factory(request)() as session:
         # Preserve the caller's own cookie so changing your password does not log you out
         # of the tab you are using; every *other* session for that admin is still revoked.
@@ -938,16 +939,17 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
         _, keep = await resolve_session_from_cookies(session, request.cookies)
         via_recovery = await session_via_recovery(session, keep)
         if await admin_password.has_password(session) and not via_recovery:
-            _throttled(password_throttle, *keys)
-            ok = await _verify_admin_password(session, payload.current_password or "")
-            if not ok:
-                record_password_failure(password_throttle, keys, gate="change_password")
-                raise HTTPException(403, "The current password didn't match. Nothing was changed.")
-            for key in keys:
-                password_throttle.record_success(key)
-        # Hashing the NEW password is one more Argon2 run, so it takes its own slot.
+            await require_admin_password(
+                session,
+                payload.current_password or "",
+                keys=keys,
+                gate="change_password",
+                refusal="The current password didn't match. Nothing was changed.",
+            )
+        # Hashing the NEW password is one more Argon2 run, so it takes its own slot. Not part
+        # of the gate above: the verify has already passed, so a refusal here records nothing.
         if not argon2_gate.acquire():
-            raise _busy_hashing()
+            raise busy_hashing()
         try:
             username = await admin_password.set_password(
                 session, payload.password, keep_session_token=keep

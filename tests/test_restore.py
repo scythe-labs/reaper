@@ -630,6 +630,24 @@ class TestApi:
         assert response.status_code == 403, response.text
         assert client.get("/api/settings/backup").json()["restore_armed"] is False
 
+    def test_repeated_wrong_confirm_passwords_are_locked_out(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Confirming a restore is gated exactly like arming, so it locks out exactly like
+        arming: past the threshold it answers 429 instead of running another Argon2 verify
+        (rule 11/98, and rule 72 for its three siblings). The staging stays un-armed through
+        all six, which is the part that matters to the operator's live data."""
+        archive = _make_archive(tmp_path / "up.reaper").read_bytes()
+        client.post("/api/settings/backup/restore/prepare", content=archive)
+        codes = [
+            client.post(
+                "/api/settings/backup/restore/confirm", json={"password": f"wrong-{n}"}
+            ).status_code
+            for n in range(6)
+        ]
+        assert codes == [403] * 5 + [429]
+        assert client.get("/api/settings/backup").json()["restore_armed"] is False
+
     def test_with_no_admin_password_set_confirm_points_at_the_password_step(
         self, client: TestClient, tmp_path: Path
     ) -> None:

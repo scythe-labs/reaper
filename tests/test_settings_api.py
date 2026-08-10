@@ -25,6 +25,7 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
 from reaper.api.plex import PlexUpdateIn, update_plex_settings
+from reaper.auth.ratelimit import argon2_gate
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.clock import utcnow
@@ -908,6 +909,167 @@ class TestSafety:
         ]
         assert codes[:5] == [403] * 5
         assert codes[5] == 429
+
+
+class TestTheAdminPasswordGate:
+    """The one gate four routes ask through: ``deps.require_admin_password``.
+
+    Arming deletion, changing the arming password, forgetting the watch record and confirming
+    a restore all call it. The two tests those routes already had cover one gate each; these
+    cover the properties that only exist because it is ONE function, and that a fifth caller
+    would otherwise have to re-derive by hand (rule 11/98, rule 118).
+    """
+
+    def test_repeated_wrong_current_passwords_are_locked_out(self, client: TestClient) -> None:
+        """Changing the arming credential is a password-guessing surface like arming itself,
+        so past the threshold it answers 429 instead of running another Argon2 verify."""
+        codes = [
+            client.post(
+                "/api/settings/admin-password",
+                json={"password": "brandnew12345", "current_password": f"wrong-{n}"},
+            ).status_code
+            for n in range(6)
+        ]
+        assert codes == [403] * 5 + [429]
+        # The shared per-IP key is locked too, so arming from this address is 429 rather than
+        # 403. That the OTHER gates still answer is asserted below, from a second address.
+        assert (
+            client.put(
+                "/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD}
+            ).status_code
+            == 429
+        )
+
+    def test_the_right_password_clears_every_key_it_was_checked_against(
+        self, client: TestClient
+    ) -> None:
+        """The success path resets both keys, so a near-miss costs the operator nothing.
+
+        Four wrong attempts sit one under the threshold. If the success cleared neither key,
+        or only the per-IP one, the fifth wrong attempt below would be a 429. It is a 403, so
+        the count restarted on both. Written because this is the step an extraction drops
+        without any other test noticing: every existing throttle test stops at the lockout and
+        never comes back through a success (rule 118).
+        """
+        for n in range(4):
+            assert (
+                client.put(
+                    "/api/settings/safety", json={"enabled": True, "password": f"wrong-{n}"}
+                ).status_code
+                == 403
+            )
+        armed = client.put(
+            "/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD}
+        )
+        assert armed.status_code == 200, armed.text
+
+        for n in range(4):
+            assert (
+                client.put(
+                    "/api/settings/safety", json={"enabled": True, "password": f"again-{n}"}
+                ).status_code
+                == 403
+            ), f"attempt {n} after a success was throttled, so the success cleared nothing"
+
+    def test_a_busy_argon2_gate_is_not_a_wrong_password(self, client: TestClient) -> None:
+        """Rule 11/98's hardest clause: a full gate answers 503 and must never register as a
+        failed attempt, or the load-shedding defense becomes the lockout.
+
+        Asserted black-box, because ``Throttle._buckets`` is private and reading it would pin
+        the implementation rather than the behavior. Four real failures sit one under the
+        threshold of five. If a 503 counted it would be the fifth, and the next wrong password
+        would come back 429. It comes back 403, so none of the three counted.
+        """
+        for n in range(4):
+            assert (
+                client.post(
+                    "/api/settings/admin-password",
+                    json={"password": "brandnew12345", "current_password": f"wrong-{n}"},
+                ).status_code
+                == 403
+            )
+
+        taken = argon2_gate.acquire(argon2_gate.limit)
+        assert taken == argon2_gate.limit
+        try:
+            for _ in range(3):
+                busy = client.post(
+                    "/api/settings/admin-password",
+                    json={"password": "brandnew12345", "current_password": "wrong-again"},
+                )
+                assert busy.status_code == 503, busy.text
+                assert busy.headers["Retry-After"] == "2"
+        finally:
+            argon2_gate.release(taken)
+
+        still_counting = client.post(
+            "/api/settings/admin-password",
+            json={"password": "brandnew12345", "current_password": "wrong-5th"},
+        )
+        assert still_counting.status_code == 403, still_counting.text
+
+    def test_a_lockout_at_one_gate_leaves_the_other_gates_open(
+        self, client: TestClient, settings: Settings
+    ) -> None:
+        """Each gate carries its own ``account:`` key, and that is what bounds a lockout.
+
+        An ``account:`` key is not scoped to an address, so it refuses from everywhere at once.
+        Were the four collapsed onto one, five wrong watch-record passwords from any host on
+        the internet would lock the operator out of arming deletion from their own machine.
+        This is the assertion the per-route tests cannot reach: they share both keys.
+
+        Driven from a SECOND address, because all four gates deliberately share the per-IP key
+        (one guesser at one secret is one guesser, wherever they knock) and that shared key
+        would otherwise mask the account keys entirely.
+        """
+        for n in range(6):
+            client.post("/api/settings/watch-evidence/reset", json={"password": f"wrong-{n}"})
+        assert (
+            client.post(
+                "/api/settings/watch-evidence/reset", json={"password": "wrong-again"}
+            ).status_code
+            == 429
+        )
+
+        elsewhere = TestClient(client.app, client=("203.0.113.7", 44321))
+        elsewhere.headers["X-Reaper-CSRF"] = "1"
+        elsewhere.cookies.update(client.cookies)
+
+        # Locked out of forgetting the watch record from here too: that is the account key
+        # doing its job across addresses.
+        assert (
+            elsewhere.post(
+                "/api/settings/watch-evidence/reset", json={"password": "wrong"}
+            ).status_code
+            == 429
+        )
+        # The other three still answer on their merits, which is the point.
+        assert (
+            elsewhere.put(
+                "/api/settings/safety", json={"enabled": True, "password": "wrong"}
+            ).status_code
+            == 403
+        )
+        assert (
+            elsewhere.post(
+                "/api/settings/admin-password",
+                json={"password": "brandnew12345", "current_password": "wrong"},
+            ).status_code
+            == 403
+        )
+        assert (
+            elsewhere.post(
+                "/api/settings/backup/restore/confirm", json={"password": "wrong"}
+            ).status_code
+            == 403
+        )
+        # And the right password still arms, so the lockout next door cost nothing real.
+        assert (
+            elsewhere.put(
+                "/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD}
+            ).status_code
+            == 200
+        )
 
 
 class TestSetupStatus:

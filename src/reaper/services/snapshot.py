@@ -2401,7 +2401,7 @@ async def sync_protection_lists(
     # Every provider reads a different service, and each one already fails soft on its
     # own, so they refresh concurrently -- the whole pass takes as long as the slowest
     # provider instead of the sum. The database writes inside lists.sync stay atomic per
-    # list; SQLite allows one writer at a time, and the busy_timeout pragma (see
+    # list; SQLite allows one writer at a time, and the 5s busy_timeout pragma (see
     # db/session.py) queues the brief overlapping writes -- each provider's write is a
     # few hundred rows, far inside that budget.
     runs: list[Coroutine[Any, Any, None]] = []
