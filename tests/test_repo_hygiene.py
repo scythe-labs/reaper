@@ -6003,11 +6003,15 @@ def test_the_membership_walk_reads_the_forms_the_tree_spells(tmp_path: Path) -> 
 
 
 #: Every argument a Sonarr or Radarr client must be handed, beyond the URL and the key.
-#: Omitting one is not a crash: the client falls back to its own default, which is
-#: ``/api/v3`` for the path and ``verify=True`` for TLS. Both are the *narrow* direction, so
+#: Omitting ``api_path_prefix`` or ``verify`` is not a crash: the client falls back to its own
+#: default, ``/api/v3`` for the path and ``True`` for TLS. Both are the *narrow* direction, so
 #: the failure is a scan that reads nothing or a Test Connection that validates a path the
-#: scan will never send to, never a wider deletion.
+#: scan will never send to, never a wider deletion. ``safety`` is the one that crashes, being
+#: keyword-only and required, so this gate can only ever report on the other two.
 _ARR_CONSTRUCTION_ARGS = frozenset({"safety", "verify", "api_path_prefix"})
+
+#: The two classes the argument set above belongs to.
+_ARR_CLIENTS = ("RadarrClient", "SonarrClient")
 
 #: Reconciled by hand against the tree, so a site that leaves the walk is noticed rather
 #: than silently dropping out of the assertion below (rule 145). **Six, which is three
@@ -6018,14 +6022,15 @@ _ARR_CONSTRUCTION_ARGS = frozenset({"safety", "verify", "api_path_prefix"})
 _EXPECTED_ARR_CONSTRUCTIONS = 6
 
 
-def _arr_construction_sites(root: Path) -> dict[str, set[str]]:
-    """Every ``RadarrClient(...)`` / ``SonarrClient(...)`` call under ``src/``, by address.
+def _client_construction_sites(root: Path, names: tuple[str, ...]) -> dict[str, set[str]]:
+    """Every ``<name>(...)`` call under ``src/`` for the given client classes, by address.
 
-    Reads the call node and inspects its keywords, rather than anchoring on the text after
-    the paren: three of the four sites wrap across five lines and one is a single line, so a
-    line-oriented matcher reads one spelling and misses the rest (rule 147). A ``**kwargs``
-    splat would defeat this, and none exists; if one arrives it is recorded as passing
-    nothing, and the assertion below names it.
+    Two gates read this, the *arr one below over six sites and the TLS one over 21. Reads the
+    call node and inspects its keywords, rather than anchoring on the text after the paren:
+    most sites wrap across several lines and some are a single line, so a line-oriented
+    matcher reads one spelling and misses the rest (rule 147). A ``**kwargs`` splat would
+    defeat this, and none exists; if one arrives it is recorded as passing nothing, and the
+    caller's membership assertion names it.
     """
     found: dict[str, set[str]] = {}
     for path in sorted(root.rglob("*.py")):
@@ -6033,7 +6038,7 @@ def _arr_construction_sites(root: Path) -> dict[str, set[str]]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                 continue
-            if node.func.id not in ("RadarrClient", "SonarrClient"):
+            if node.func.id not in names:
                 continue
             rel = path.relative_to(REPO).as_posix()
             found[f"{rel}:{node.lineno} {node.func.id}"] = {
@@ -6051,7 +6056,7 @@ def test_every_arr_client_is_built_with_the_same_arguments() -> None:
     someone who never read that note, which is what this is (rule 72, and CLAUDE.md's "write
     the gate instead" -- a shared constructor would only bind the sites that call it).
     """
-    sites = _arr_construction_sites(SRC)
+    sites = _client_construction_sites(SRC, _ARR_CLIENTS)
     assert len(sites) == _EXPECTED_ARR_CONSTRUCTIONS, (
         f"expected {_EXPECTED_ARR_CONSTRUCTIONS} *arr client constructions under src/, walked "
         f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass "
@@ -6075,10 +6080,13 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
 
     The tree spells these two ways -- one call per line, and one wrapped across five -- and a
     matcher anchored on the text after the paren reads the first and misses the second. This
-    drives both, plus the two forms that must NOT be collected: a same-named method call
-    (``self.RadarrClient(...)`` is an Attribute, not a Name) and an unrelated client. The
+    drives both, plus the form that must NOT be collected under any name set: a same-named
+    method call, ``self.RadarrClient(...)`` being an Attribute rather than a Name. The
     ``**kwargs`` splat is the one shape that defeats the argument check rather than the walk,
     so it is collected as passing nothing and the membership assertion is what names it.
+
+    The ``TautulliClient`` call is collected by the TLS name set and not by the *arr one, off
+    one scratch file read twice. A matcher serving two populations is proven in both.
     """
     scratch = tmp_path / "src" / "reaper"
     scratch.mkdir(parents=True)
@@ -6102,7 +6110,8 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
     global REPO
     real, REPO = REPO, tmp_path
     try:
-        found = _arr_construction_sites(scratch)
+        found = _client_construction_sites(scratch, _ARR_CLIENTS)
+        wider = _client_construction_sites(scratch, _TLS_CLIENTS)
     finally:
         REPO = real
 
@@ -6114,6 +6123,92 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
     assert found["src/reaper/m.py:2 RadarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
     assert found["src/reaper/m.py:4 SonarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
     assert found["src/reaper/m.py:12 RadarrClient"] == set()
+
+    # The same matcher under the wider name set. The Tautulli call the *arr walk must not
+    # collect is one this one must, and the attribute form stays out of both.
+    assert set(wider) == set(found) | {"src/reaper/m.py:14 TautulliClient"}, wider
+    assert wider["src/reaper/m.py:14 TautulliClient"] == {"safety", "verify"}
+
+
+#: What every client built from an address the operator typed must be handed. ``safety`` is
+#: the transport guard's state, keyword-only and required (``BaseClient.__init__``,
+#: ``PlexClient.__init__``), so omitting it raises ``TypeError`` and this gate never sees it.
+#: ``verify`` is that instance's TLS switch and falls back to ``True``, so dropping it costs
+#: agreement rather than safety. An operator whose server sits behind a self-signed
+#: certificate gets one surface that cannot reach it while every other surface can, and
+#: nothing announces the difference.
+_TLS_CLIENT_ARGS = frozenset({"safety", "verify"})
+
+#: Every class in ``clients/`` that is CONSTRUCTED against an address the operator stored.
+#: This list is the walk's real bound and no count can cover it, since a class the matcher
+#: never names contributes zero sites and the number below never moves (rule 145). So the
+#: four classes that also declare ``verify`` are excluded in writing rather than by omission:
+#:
+#: * ``PlexTvClient`` reaches plex.tv, an address nobody configured, and declares no
+#:   ``verify`` at all.
+#: * ``GuardedSession`` is the transport plexapi rides, built inside ``PlexClient`` from the
+#:   ``verify`` that client was already handed.
+#: * ``BaseClient`` and ``ArrClient`` are base classes with no direct construction anywhere.
+#:
+#: ``_ProbeClient`` IS in: it probes one advertised address of the operator's own server, and
+#: both callers thread that server's stored switch into it.
+_TLS_CLIENTS = (
+    "PlexClient",
+    "RadarrClient",
+    "SeerrClient",
+    "SonarrClient",
+    "TautulliClient",
+    "_ProbeClient",
+)
+
+#: Reconciled by hand against the tree, so a site that leaves the walk is noticed rather than
+#: silently dropping out of the assertion (rule 145). **Twenty-one**: six ``PlexClient``, five
+#: ``TautulliClient``, three ``SeerrClient``, one ``_ProbeClient``, and the six ``*arr`` the
+#: gate above counts separately. The six Plex ones are W3b-8's population, by AST at this tip.
+_EXPECTED_TLS_CONSTRUCTIONS = 21
+
+
+def test_every_client_carries_the_operators_own_tls_setting() -> None:
+    """W3b-8's six ``PlexClient`` constructions, and the fifteen siblings beside them.
+
+    The row proposed folding the six into one helper. Measured, that nets about six lines
+    and binds only the callers that adopt it, which is the reasoning
+    ``test_every_arr_client_is_built_with_the_same_arguments`` already wrote down one gate up.
+    So the row is killed and its obligation lands here instead, widened to every client built
+    against a stored address (rule 72). The *arr gate stays separate because it requires a
+    third argument these do not have.
+
+    **Two spellings are out of reach rather than covered** (rule 147): the walk matches an
+    ``ast.Name``, so ``some_module.PlexClient(...)`` and ``from … import PlexClient as PC``
+    are invisible to it. Neither is in the tree, checked by AST across ``src/`` at this tip,
+    and the count above cannot see one arriving because a site the walk never collected is
+    missing from both halves. Reading the whole call is what the shared walk already does;
+    resolving a local alias per file is what ``_pending_pin_construction_sites`` does already.
+
+    **The ceiling on the check itself**: it reads that ``verify`` was PASSED, not what was
+    passed. ``verify=True`` written by hand would satisfy it and mean the opposite. All 21
+    sites pass a stored value today (``server.verify_tls``, ``row.verify_tls``, ``r
+    .verify_tls``, ``plex_verify``, ``verify``), and a literal there is a code review's job.
+    """
+    sites = _client_construction_sites(SRC, _TLS_CLIENTS)
+    assert len(sites) == _EXPECTED_TLS_CONSTRUCTIONS, (
+        f"expected {_EXPECTED_TLS_CONSTRUCTIONS} client constructions under src/ for "
+        f"{sorted(_TLS_CLIENTS)}, walked {len(sites)}: {sorted(sites)}. A new one is fine and "
+        f"must pass {sorted(_TLS_CLIENT_ARGS)}; bump the number here AND in "
+        "docs/SIMPLIFICATION_PLAN.md's W3b-8 kill block, which states it in prose (rule 144). "
+        "A new client CLASS built against a stored address belongs in _TLS_CLIENTS, or the "
+        "walk cannot see any of its sites and this count cannot tell you."
+    )
+    missing = {
+        site: sorted(_TLS_CLIENT_ARGS - args)
+        for site, args in sites.items()
+        if not args.issuperset(_TLS_CLIENT_ARGS)
+    }
+    assert not missing, (
+        f"these clients are built without passing the operator's stored TLS setting: {missing}. "
+        "`verify` then falls back to True, so a server the operator excused from certificate "
+        "checks becomes unreachable from this one surface and reachable from every other."
+    )
 
 
 #: The one place a pending plex.tv PIN is written, ``plex_link.start_pin``.
