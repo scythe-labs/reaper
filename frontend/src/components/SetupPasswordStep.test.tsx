@@ -2,11 +2,10 @@
 // The wizard's password step, and who hears its one error region.
 //
 // The step is a second drawing of `AdminPasswordForm`: same two boxes, same two complaints, same
-// single region carrying whichever one is live. What it had drifted on is the half that is not
-// visible in a diff -- the live complaints were `role="alert"`, and one of them renders
-// `{pw.length} so far`, so its text changed inside a live region on every keystroke and the whole
-// string was re-announced each time, on the form that sets the key arming deletion. Both arms are
-// driven here, because the fix is a branch and only one side of it is the interesting one.
+// single region carrying whichever one is live. What it had drifted on is the half a diff does
+// not show. Its live complaints were `role="alert"` and its boxes carried no `aria-invalid`;
+// `SetupPasswordStep.tsx` holds the reason for both. Both arms of each are driven here, because
+// the fix is a branch and only one side of it is the interesting one.
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,6 +58,21 @@ describe("the wizard's password step", () => {
     // through `aria-describedby`, and it rewrites itself on the next keystroke.
     expect(complaint).not.toHaveAttribute("role");
     expect(box()).toHaveAccessibleDescription(/Use at least 12 characters/i);
+    expect(box()).toHaveAttribute("aria-invalid", "true");
+    expect(confirmBox()).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("marks the confirm box, not the one above it, when the two disagree", async () => {
+    // The other box's flag, and the other complaint. Each is on its own predicate, so a short
+    // password stays marked short whichever sentence the shared region is carrying.
+    const person = renderStep();
+
+    await person.type(box(), "a-long-enough-one");
+    await person.type(confirmBox(), "a-long-enough-onf");
+
+    expect(confirmBox()).toHaveAttribute("aria-invalid", "true");
+    expect(box()).not.toHaveAttribute("aria-invalid");
+    expect(confirmBox()).toHaveAccessibleDescription(/don't match/i);
   });
 
   it("still announces a submit that failed, which is a reaction", async () => {

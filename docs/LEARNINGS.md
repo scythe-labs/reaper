@@ -3097,35 +3097,40 @@ times, and it was measured for a dedup. The dedup is a kill. What the measuremen
 is that **three of the four computed the fingerprint at the wrong end, and the comparison cannot
 tell.**
 
-`testedWith()` read back inside `onSuccess` runs after the response lands, so it fingerprints
-whatever the operator typed while the request was out. The stored `of` and the live `testedWith()`
-then match **by construction**, whatever moved, and the badge vouches for an address that was
-never tried. Read at issuance instead (React Query's `onMutate`, whose return reaches `onSuccess`
-as context) the two disagree and the badge withdraws, which is the honest answer.
+`testedWith()` called inside `onSuccess` runs after the response lands. It fingerprints whatever
+the operator typed while the request was out. The stored `of` and the live `testedWith()` then
+match **by construction**, whatever moved, and the badge vouches for an address that was never
+tried. Computed at issuance instead (React Query's `onMutate`, whose return reaches `onSuccess` as
+context) the two disagree and the badge withdraws, which is the honest answer.
 
 **The comparison is what made this invisible.** Three tests already drove the staleness direction
-at the one site that had it right, editing the host and the key after a pass and asserting the
-badge goes. Every one of them passes with the fingerprint read at either end, because they change
-the boxes while nothing is in flight. The discriminating case is the retype *during* the request,
-and no test in the suite drove it. So the one site written correctly was correct by the author's
-reasoning alone, and its three siblings copied the shape without it.
+at the one site that had it right. Two edit the host and the key after a pass and assert the badge
+goes; the third types back to the tested value and asserts it returns. All three pass with the
+fingerprint computed at either end, because they change the boxes while nothing is in flight. The
+discriminating case is the retype *during* the request, and no test in the suite drove it. So the
+one site written correctly was correct by its author's reasoning alone, and its three siblings
+copied the shape without it.
 
-**The fix is greppable and the extraction is not worth building**, so a hygiene gate holds the
-family: `of:` handed a call, anywhere but on an `onMutate` line. Its first draft bounded the value
-at the first comma and so read `of: [kind, baseUrl()].join(" ")` as innocent, which is fail-open
-and was caught by the matcher's own spellings test rather than by anything in the tree. Walking
-the value to its own bracket depth is exact and no longer a regex.
+**A gate over the family took three drafts, and the first two were fail-open.** The obvious
+question is "was a call evaluated here", and it is the wrong one twice over. A regex bounded at
+the first comma reads `of: [kind, baseUrl()].join(" ")` as innocent. Bounding it properly by
+bracket depth fixes that case and still passes the same fingerprint inlined as a template literal,
+which is the identical defect with no call in it at all. Both drafts read green over a working
+demonstration of the bug. The version that holds inverts the question: `of:` may be handed a name
+or a path of names, and everything else fails. **A gate that hunts for the shape of the defect is
+open by omission; one that allows the shape of the fix is closed by default.**
 
 ## The five-times duplication with nothing behind it (2026-08-10)
 
-Five settings panels report a draft upward through the same four lines, and rule 146 is written
-about exactly that signal. The count was the only figure in its finding that held, and it was the
-sub-item worth the least: 20 lines out against 32 back, and what the rule asks is per-site anyway.
-The signal must be declared above every early return, and every early-return state re-read as one
-the report still fires in, which is a claim about each panel's own branches. All five already say
-so in a comment naming theirs. **A hook cannot carry an obligation whose subject is the call
-site**, so the shared four lines are the part with no leverage in them, and the per-panel comments
-are the part doing the work.
+Five surfaces report a draft upward through the same four lines, three settings panels and two
+children of panels, and rule 146 is written about exactly that signal. The count was the only
+figure in its finding that needed no correction, and it was the sub-item worth the least: 20 lines
+out against 29 back, and what the rule asks is per-site anyway. The signal must be declared above
+every early return, and every early-return state re-read as one the report still fires in, which
+is a claim about each surface's own branches. All five satisfy it, and the five answers differ:
+two name the branches their report survives, two say they have no early return above it, and one
+has three returns that all sit below. **A hook cannot carry an obligation whose subject is the
+call site**, so the shared four lines are the part with no leverage in them.
 
 ## Prior art
 

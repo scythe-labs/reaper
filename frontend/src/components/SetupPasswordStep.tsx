@@ -121,14 +121,14 @@ export function SetupPasswordStep({
           />
         </label>
 
-        {/* `standing` on the live ones, the same arrangement `AdminPasswordForm` uses and for
-            the same measured reason: they explain why the button is off WHILE THE OPERATOR
-            TYPES, and the first of them renders `{pw.length} so far`, so its text changes
-            inside a live region on every keystroke and the whole string is re-announced each
-            time, on the form that sets the key arming deletion. Nothing is lost by not
-            interrupting: both boxes point here through `aria-describedby`, so the complaint is
-            read as the description of the box the operator is standing in. A failed submit is a
-            reaction and keeps `role="alert"`, which is what `owner === null` selects. */}
+        {/* `standing` on the live ones, the arrangement `AdminPasswordForm` uses and for its
+            reason. They explain why the button is off while the operator types, and the first
+            renders `{pw.length} so far`, so a live region re-announces the whole string on every
+            keystroke. That is around eleven interruptions on the way to a valid password, on the
+            form that sets the key arming deletion. Nothing is lost by not interrupting: both
+            boxes point here through `aria-describedby`, so the complaint is read as the
+            description of the box the operator is standing in. A failed submit is a reaction and
+            keeps `role="alert"`, which is what `owner === null` selects. */}
         {error && (
           <Notice tone="error" id={ERROR_ID} standing={owner !== null}>
             {error}

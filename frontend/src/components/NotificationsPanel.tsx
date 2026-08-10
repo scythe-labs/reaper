@@ -92,11 +92,10 @@ export function NotificationsPanel({
     // Test the URL typed in the box (the one about to be saved) if there is one; otherwise
     // test the already-stored webhook, so a saved channel can be verified without re-pasting.
     mutationFn: () => api.testWebhook(url.trim() ? url.trim() : null),
-    // What this request is ABOUT, captured when it is issued rather than read back at success
-    // time, the same as `ServiceModal`'s own test (rule 72). The box stays live while the
-    // request is out, so reading `testedWith()` at success files the answer against whatever
-    // is typed by then: paste a second webhook while the first is being sent to and "Passed"
-    // lands beside a channel nobody tried (rule 85).
+    // What this request is ABOUT, captured when it is issued rather than computed at success
+    // time, the same as `ServiceModal`'s own test (rule 72). The box stays live while the request
+    // is out. `testedWith()` called at success would fingerprint whatever is typed by then, so a
+    // second webhook pasted mid-send gets "Passed" for a channel nobody tried (rule 85).
     onMutate: () => ({ of: testedWith() }),
     onSuccess: (r, _v, issued) => {
       setTest({ result: r, of: issued.of });

@@ -736,8 +736,8 @@ describe("what the connection badge vouches for", () => {
     // goes, which is the honest answer.
     //
     // Three siblings copy this pairing (`DiscordModal`, `NotificationsPanel`, `ServicesPanel`)
-    // and all three read it at success time until this branch pinned the shape; a hygiene gate
-    // holds all four now (`test_a_held_test_result_is_stamped_when_the_request_is_issued`).
+    // and all three computed it at success time until this branch pinned the shape; a hygiene
+    // gate holds all four now (`test_a_held_test_result_is_stamped_when_its_request_is_issued`).
     let land!: (r: unknown) => void;
     apiMock.testInstance.mockReturnValue(
       new Promise((resolve) => {
@@ -767,6 +767,14 @@ describe("what the connection badge vouches for", () => {
     });
 
     expect(badge()).toBeNull();
+
+    // The second half, and the reason an absence alone is not the assertion: a result that was
+    // never stored is also absent here. Typing back to the address the request WAS about brings
+    // the badge, so what is being read is a held result filed under the right fingerprint rather
+    // than nothing at all.
+    await user.type(hostBox(), "{backspace}");
+
+    expect(badge()!.textContent).toContain("Passed");
   });
 });
 
