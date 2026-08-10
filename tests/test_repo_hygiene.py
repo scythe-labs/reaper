@@ -5717,6 +5717,83 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
     assert found["src/reaper/m.py:12 RadarrClient"] == set()
 
 
+#: The one place a pending plex.tv PIN is written, ``plex_link.start_pin``.
+#:
+#: Two flows wrote their own before W3b-6 merged them, and the merge buys exactly one
+#: thing: a third flow cannot arrive without the expiry sweep and without a ``purpose``.
+#: Both matter. The sweep is the only thing bounding the table, and ``purpose`` is the
+#: fence between an open sign-in route and an admin-only link route, so a row created
+#: without one is a row either poller might spend. A docstring saying "go through
+#: ``start_pin``" binds nobody who has not read it, which is what this counts instead
+#: (rule 72, and CLAUDE.md's "write the gate instead").
+_PENDING_PIN_CONSTRUCTION_SITE = "src/reaper/services/plex_link.py"
+
+
+def _pending_pin_construction_sites(root: Path) -> set[str]:
+    """Every ``PendingPlexLogin(...)`` call under ``src/``, by address.
+
+    Reads the call node, and both spellings of it: the bare name the tree imports today,
+    and the ``models.PendingPlexLogin(...)`` attribute form a new module is as likely to
+    write. Anchoring on the bare name alone would read the site that already complies and
+    go blind to the one this exists to catch (rule 147).
+    """
+    found: set[str] = set()
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            if name == "PendingPlexLogin":
+                found.add(f"{path.relative_to(REPO).as_posix()}:{node.lineno}")
+    return found
+
+
+def test_a_pending_plex_pin_is_written_in_exactly_one_place() -> None:
+    sites = _pending_pin_construction_sites(SRC)
+    assert len(sites) == 1 and next(iter(sites)).startswith(_PENDING_PIN_CONSTRUCTION_SITE), (
+        f"expected one PendingPlexLogin construction, in {_PENDING_PIN_CONSTRUCTION_SITE}, "
+        f"walked {sorted(sites)}. A new plex.tv PIN flow calls plex_link.start_pin with its "
+        "own purpose rather than inserting a row: start_pin is what sweeps expired pendings "
+        "and what sets the TTL, and a hand-written row gets neither."
+    )
+
+
+def test_the_pending_pin_walk_reads_both_spellings(tmp_path: Path) -> None:
+    """Rule 147: the walk is proven against the form the tree does NOT use today, since
+    that is the one a second site would arrive in."""
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "def bare():\n"
+        "    session.add(PendingPlexLogin(pin_id=1, purpose='login'))\n"
+        "def qualified():\n"
+        "    session.add(\n"
+        "        models.PendingPlexLogin(\n"
+        "            pin_id=2,\n"
+        "            purpose='link',\n"
+        "        )\n"
+        "    )\n"
+        "def unrelated():\n"
+        "    return select(PendingPlexLogin), AuthSession(token_hash=h)\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        found = _pending_pin_construction_sites(scratch)
+    finally:
+        REPO = real
+
+    assert found == {"src/reaper/m.py:2", "src/reaper/m.py:5"}, found
+
+
 #: The six configuration values ``snapshot.scan`` holds once per media type and hands to
 #: ``_judge_item``. Movies are judged under the movie policy and seasons under the TV one:
 #: separate keep rules, separate gates, separate condemn threshold, separate scoring window.
