@@ -326,6 +326,8 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | W3's executor size-interlock extraction | Built twice and measured. Reason-only is +7 lines and splits one operator sentence into a two-slot template (rule 21); whole-branch is +9 and returns `an optional StepOutcome`, and dropping that sentinel at one call site fails exactly one test of 4,235 while a real unmonitor reaches Sonarr. `_grew_materially` is already the predicate's one declaration, so the extraction guards nothing that can drift. The rule 144 half is real and lands: two byte-identical `check=` sentences, one of them in the branch the row exempts | Phase 8, measured on two patched trees |
 | W3's cache-database row | Two bootstraps not three, two stamps in one spelling not three in two, and "~90 lines" matches nothing (418-line cluster, 25 to 35 removable). Merging two opposite stale-shape policies would need a per-caller flag, which is the one thing that must never be shared. The lock is extracted instead, and it carries the fix for a `dev` defect the row does not name | Phase 8, measured before building |
 | W3's pragma unification, the sqlite half of the `backup`/`restore`/`retention` row | `_configure_sqlite` is already one declaration for both engines, and the correction takes `_read_revision` and `retention`'s `isolation_level=None` out of scope. What is left is two one-line `busy_timeout` calls whose values differ by design and three sites needing no pragma, so a `(connection, ms)` helper replaces one line with one line. The duplication is the VALUE: `5000` is quoted as prose in five docstrings, none derived. Two gates land instead. The row's operator-string half stays open | Phase 8, measured before building |
+| W9-5, `clients/errors.py` | The closure is identical either side of the cut, measured for all 13 modules that import `IntegrationError` alone: each reaches `clients/base.py` through a client it already imports, so zero modules leave any closure. The population is 13 and not 12, and the closure is 339 and not 384, of which httpx2 is 24. A leaf module moves two counters and its re-export is one name importable from two places (rule 103/144), against a measured benefit of nothing | Phase 8, measured before building |
+| W9-6, moving `reap_in_flight` | All three importers of `api/backup.py` import `api/runs.py` in the same breath, so the 35 modules the cut drops from `api.backup`'s closure are paid by nobody, and `reaper.main` loads 928 either way. All six writers of `app.state.reap_status` are in `api/runs.py`, so every destination splits the reader off: `api/deps.py` separates `reap_in_flight` from `_reap_status`, its own create-instead-of-refuse twin, and a new module costs +1 on both counters and still leaves the writes behind. The row's "only such edge" is five, and `auth` in its exempt set has had no importer since W9-2 | Phase 8, measured before building |
 | W3c, all six parameter objects | Every keyword at every production call site classified: `build_season_facts` assembles its 24 from 18 locals a carrier would hold one frame up, `_judge_item`'s two sites unpack off two different record types, `scan`'s 12 pass-through arguments come from four unrelated sources, and `plan_series_prune` has 87 test call sites resting on the defaults the correction calls the protection. The match record is the one clean pass-through and holds two identity-path join keys, which is W5-2's reason. `gather`'s nine policy fields stay open as W5-3. The real hazard is the twelve parallel `movie_*`/`tv_*` locals, and a gate closes it from `tests/` | Phase 8, measured before building |
 
 ## Execution
@@ -2673,11 +2675,66 @@ question is which breaks earn their keep, and most do not.
 - **12 modules import `clients/base.py` for `IntegrationError` alone** and pay a 384-module httpx
   closure. `api/scan.py` is the clean case. A leaf `clients/errors.py` with a re-export during the
   move keeps every `except` clause identical.
-- **`api/runs.py:422 reap_in_flight` is run state living in an HTTP router**, imported by
+
+  > **Killed. The closure is identical either side of the cut, for all 13, measured one module at
+  > a time.** The correction below said the transitive path survives; this is that claim as
+  > numbers. Every one of the 13 reaches `clients/base.py` through a client it imports for real
+  > work anyway, so cutting the direct edge removes **zero** modules from **every** one of their
+  > closures: `api/scan.py` 55 either side through `services.scan_runner`, `api/fairness.py` 32
+  > through `clients.seerr`, `services.update_check` 6 through `clients.public`,
+  > `services.library_index` 10 through `clients.plex`, `services.plex_link` and `services.login`
+  > through `clients.plextv`. Not one is the leaf the row imagines.
+  >
+  > **Three figures in the row are wrong, and the population is 13.** 23 modules name
+  > `IntegrationError`: one defines it, two name it in a comment
+  > (`services/grace.py:111`, `services/history_sync.py:481`), 20 import it, and **13** import it
+  > and nothing else. 14 if `errors.py` also carried `SafetyViolationError`, which is the only way
+  > `services/executor.py:117` joins them. The closure is **339** modules, not 384, of which
+  > httpx2 is **24**; the rest is stdlib plus tenacity and structlog, so "a 384-module httpx
+  > closure" misnames what would be saved even if anything were.
+  >
+  > **The cost is a module and a second declaration, against a benefit of nothing.**
+  > `_EXPECTED_LAYERED_MODULES` and `_EXPECTED_SOURCE_MODULES` both move for a leaf holding one
+  > `class`, and the re-export the row proposes to keep `except` clauses identical is one name
+  > importable from two places, which is the shape rule 103 and rule 144 exist to catch. Graph
+  > tidiness does not buy that.
+- **`api/runs.py:472 reap_in_flight` is run state living in an HTTP router**, imported by
   `main.py` and by `api/backup.py`, which thereby depends on an 801-line router for one boolean.
   It is the only `api → api` edge that is not `schemas`, `tags` or `auth`. Risk `behavior`: it
-  gates a database-lock interaction, and `tests/test_scheduler.py:356` names the chain in prose,
+  gates a database-lock interaction, and `tests/test_scheduler.py:357` names the chain in prose,
   so that comment moves too.
+
+  > **Killed. Nothing imports `api/backup.py` without importing `api/runs.py` too, so the edge
+  > this removes is paid by no one.** Cutting it does move the graph, unlike the row above:
+  > `api.backup`'s static closure goes 73 to 38, dropping every client and the whole
+  > executor/planner/snapshot chain. That figure has no consumer. All three importers of
+  > `api/backup.py` already import `api/runs.py` in the same breath: `main.py` at `:30` and
+  > `:50`, `tests/test_restore.py` at `:39` and `:41`, and `tests/test_api_type_mirror.py`
+  > through the `pkgutil` walk over `reaper.api` that its own wire check runs on. A process
+  > loads 928 modules through `reaper.main` either way.
+  >
+  > **Every writer is in `api/runs.py`, so every destination splits the reader off from them.**
+  > `app.state.reap_status` is written at six sites, all in that file: `_reap_status` creates it
+  > (`:464`), `execute_run` claims the slot and resets every field in one synchronous stretch
+  > (`:539`) then releases it (`:602`, `:728`), and `stop_run` reads it back (`:753`). The
+  > correction's "created fresh by `create_app`" is the one thing in it that does not hold:
+  > nothing in `main.py` touches `reap_status`, and `_reap_status` makes one lazily on first
+  > reach. Its conclusion survives anyway, a fresh app having no status to reset. `api/deps.py`
+  > is the destination that costs no new module and it is the worst one,
+  > separating `reap_in_flight` from `_reap_status`, which is the same `getattr` written to
+  > create rather than to refuse. A new `api/reap_state.py` holding the model and both accessors
+  > keeps that pair together and still leaves the six writes behind, for +1 on both module
+  > counters. `services/` would put a response model and a `FastAPI`-typed accessor below the
+  > layer that serves them.
+  >
+  > **"The only such edge" is five, and one of the three names exempting them is dead.**
+  > Excluding `schemas`, `tags` and `deps`, the `api → api` edges are `backup → runs`,
+  > `runs:32 → scan`, `plex:54 → settings`, `simulate:30 → policy` and `simulate:31 → review`.
+  > The correction found the second and stopped. Nothing under `src/reaper/api/` imports
+  > `api/auth.py` at all since W9-2 moved its six helpers to `deps`, so the row's exempt set
+  > reads `schemas`, `tags`, `deps` today. **The layering gate cannot see any of the five**:
+  > `test_the_four_packages_import_only_downward` walks cross-*package* edges, and all five are
+  > inside one package.
 
 > **Corrected, wave 9. Four claims are wrong and one buys nothing.**
 >
