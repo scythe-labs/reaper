@@ -230,17 +230,6 @@ class TestDesktopHelpers:
     def test_the_platform_gate(self, platform: str, frozen: bool, expected: str | None) -> None:
         assert launcher.desktop_platform(platform, frozen=frozen) == expected
 
-    def test_a_flag_reads_the_environment_else_its_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("REAPER_TRAY", raising=False)
-        assert launcher.desktop_flag("REAPER_TRAY", default=True) is True
-        assert launcher.desktop_flag("REAPER_TRAY", default=False) is False
-        monkeypatch.setenv("REAPER_TRAY", "false")
-        assert launcher.desktop_flag("REAPER_TRAY", default=True) is False
-        monkeypatch.setenv("REAPER_TRAY", "1")
-        assert launcher.desktop_flag("REAPER_TRAY", default=False) is True
-
     def test_writing_replaces_in_place_and_appends_the_rest(self, tmp_path: Path) -> None:
         (tmp_path / "launcher.conf").write_text(
             "# a note the operator wrote\nREAPER_PORT=8421\nREAPER_TRAY=true\n",
@@ -301,6 +290,11 @@ class TestTrayChoice:
             ("darwin", None, False, False),  # source runs stay plain
             ("darwin", "false", True, False),
             ("win32", "1", False, True),  # a dev run can opt in while testing
+            # A typo is not an answer. It used to read as False, which on the .app buys an
+            # install with no menu-bar icon -- and `LSUIElement` hides the Dock one, so that
+            # icon is the only route to Quit.
+            ("darwin", "ture", True, True),
+            ("win32", "enabled", True, True),
         ],
     )
     def test_the_default_follows_the_install_shape(

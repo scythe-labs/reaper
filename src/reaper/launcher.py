@@ -46,12 +46,11 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
 
-from reaper.buildinfo import frozen_bundle, install_root
+from reaper.buildinfo import env_flag, frozen_bundle, install_root
 
 if TYPE_CHECKING:
     import uvicorn
 
-_TRUE = {"1", "true", "yes", "on"}
 
 #: buildinfo.json key -> the environment value it seeds. Operator-set values win:
 #: everything is ``setdefault``, so an env override behaves exactly as in the container.
@@ -223,14 +222,6 @@ def desktop_platform(platform: str | None = None, *, frozen: bool | None = None)
     return None
 
 
-def desktop_flag(key: str, *, default: bool) -> bool:
-    """The value the launcher resolved this boot. ``load_launcher_conf`` seeded the
-    file into the environment before serving, so the environment is the effective
-    record; the file only matters again at the next start."""
-    raw = os.environ.get(key, "").strip().lower()
-    return raw in _TRUE if raw else default
-
-
 def write_conf_values(data_dir: Path, values: MutableMapping[str, str]) -> None:
     """Set keys in ``launcher.conf``, preserving everything else the operator wrote.
 
@@ -322,10 +313,7 @@ def _browser_wanted(env: MutableMapping[str, str], *, frozen: bool) -> bool:
     """Open the operator's browser once the server is up? On for a frozen binary
     (a double-click gives no other signal it worked), off everywhere else; the
     ``REAPER_LAUNCH_BROWSER`` env value overrides either default."""
-    configured = env.get("REAPER_LAUNCH_BROWSER", "").strip().lower()
-    if configured:
-        return configured in _TRUE
-    return frozen
+    return env_flag("REAPER_LAUNCH_BROWSER", default=frozen, env=env)
 
 
 def _open_browser_when_up(port: int) -> None:
@@ -374,10 +362,7 @@ def _tray_wanted(platform: str, env: MutableMapping[str, str], *, frozen: bool) 
     a service snapd already shows."""
     if platform not in ("win32", "darwin"):
         return False
-    configured = env.get("REAPER_TRAY", "").strip().lower()
-    if configured:
-        return configured in _TRUE
-    return frozen
+    return env_flag(DESKTOP_TRAY_KEY, default=frozen, env=env)
 
 
 def _tray_backend() -> ModuleType | None:
@@ -577,10 +562,7 @@ def main() -> None:
         image = _tray_image() if backend is not None else None
         if backend is not None and image is not None:
             server = uvicorn.Server(uvicorn.Config(create_app, **_serve_kwargs(host, port)))
-            dock = (
-                sys.platform == "darwin"
-                and os.environ.get("REAPER_DOCK_ICON", "").strip().lower() in _TRUE
-            )
+            dock = sys.platform == "darwin" and env_flag(DESKTOP_DOCK_KEY, default=False)
             error = _serve_with_tray(backend, server, port, image, dock_icon=dock)
             if error is not None:
                 _say("Reaper stopped unexpectedly. Open it again to restart.", frozen=frozen)

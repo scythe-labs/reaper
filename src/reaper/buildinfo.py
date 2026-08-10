@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -26,7 +27,34 @@ from typing import Literal
 from reaper import __version__
 
 _TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
 _SHORT = 7
+
+
+def env_flag(key: str, *, default: bool, env: Mapping[str, str] | None = None) -> bool:
+    """One environment value read as a boolean, for every env boolean Reaper has.
+
+    Eight tokens, four each way, case- and whitespace-insensitive. **Anything else falls
+    to ``default``**, which is the direction that matters: reading an unrecognized value
+    as False silently buys whatever False means at that key, and on a frozen macOS build
+    ``REAPER_TRAY=ture`` bought an app with no menu-bar icon, which is its only route to
+    Quit (``LSUIElement`` hides the Dock one).
+
+    ``env`` is for a caller holding a mapping rather than the process environment; the
+    launcher resolves both before it serves.
+
+    The pydantic ``Settings`` booleans deliberately do NOT read through this. An
+    unrecognized value there raises and refuses the boot, which for
+    ``destructive_actions_enabled`` and ``recovery`` is the strongest answer available.
+    ``scan_runner``'s three-state token pair is likewise its own, and says why in place.
+    """
+    raw = (os.environ if env is None else env).get(key, "").strip().lower()
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+    return default
+
 
 InstallKind = Literal["container", "snap", "desktop", "source"]
 
@@ -91,7 +119,7 @@ def build_version() -> str:
 def is_release() -> bool:
     """Whether this build was cut from a release, which is also its update channel:
     a release follows published releases, everything else follows the dev branch."""
-    return os.environ.get("REAPER_RELEASE", "").strip().lower() in _TRUE
+    return env_flag("REAPER_RELEASE", default=False)
 
 
 def version_number() -> str:
