@@ -169,13 +169,18 @@ def _env_seeded_getters() -> set[str]:
     parameter whose annotation mentions ``Settings``. Matching the ANNOTATION rather than the
     parameter's name is what keeps a getter visible that spells the argument something else.
 
+    ``ast.walk`` rather than the module's ``body``, so a definition nested in a class or a
+    ``try:`` is collected too. The count pin cannot cover that hole: a member that never entered
+    the walk leaves the population at seven, so the subtraction finds nothing missing and the
+    gate reads green while the new getter has no case at all (rule 147).
+
     Two things are invisible to it, and neither is spelled in the module today: a getter that
     reaches the environment through something other than a parameter, and one that reads its
     row through a helper other than ``_get``. Either would need this widened.
     """
     source = Path(app_settings.__file__).read_text(encoding="utf-8")
     found = set()
-    for node in ast.parse(source).body:
+    for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) or node.name == "_get":
             continue
         reads_a_row = any(
