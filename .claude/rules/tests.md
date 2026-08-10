@@ -132,10 +132,10 @@ it — 40 green instead of 41 red (#167). So where a member's behavior forks on 
 every branch, and treat the branch the default state hands you for free as the one a missing
 declaration hides behind. Scope the walk, too: `rglob` honors no ignore file, so it descends
 into gitignored agent worktrees, whole repo copies inside the repo root, and into session
-scratch beside them. Ask git what is in the checkout rather than hand-keeping a skip list
-beside `.gitignore`, which is what `_repo_text_files` does. A skip list has to match on the
-REPO-relative path besides: `path.parts` of the absolute one matches the worktree the suite is
-*running in* and silently empties the walk.
+scratch beside them. `_repo_text_files` asks git for the checkout's files instead, which is the
+form to copy: a skip list hand-kept beside `.gitignore` goes stale every time the ignore file
+grows. A skip list has to match on the REPO-relative path besides, since `path.parts` of the
+absolute one matches the worktree the suite is *running in* and silently empties the walk.
 
 **147. A guard that scans SOURCE TEXT is bounded by the syntax it can parse, so it is proven
 against every FORM the tree spells the thing in, not only against every member the walk found.**

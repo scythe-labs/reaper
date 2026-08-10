@@ -5,7 +5,9 @@ loads them, or a human who never reads them, breaks the rule silently. Every rul
 is one that can be checked mechanically, so it costs nothing to enforce and catches humans
 and agents alike. A rule that needs judgment stays prose; only the greppable ones live here.
 
-These are filesystem checks -- no app boot, no fixtures, no network.
+These are filesystem checks over this checkout, and they reach no network. Two things they do
+reach: ``reaper.engine.gates`` is imported for the one guard that derives its expectation by
+running the gate, and ``git`` is run to list the files ``_repo_text_files`` walks.
 """
 
 from __future__ import annotations
@@ -81,6 +83,11 @@ _ALLOWED_CONTROL_BYTES = frozenset(b"\t\n\r")
 # change under the cache mid-session. Every caller builds a new list from the result and none
 # sorts or appends in place, so the cached value needs no defensive copy. Cost: the text walk
 # pins about 23 MiB per xdist worker for the session.
+#
+# One exception, and it is the reason it is written down. Both walks read the module global
+# ``REPO``, and ``test_the_repo_walk_never_reads_a_gitignored_file`` repoints it at a synthetic
+# tree, so there the cache CAN go stale. It calls ``cache_clear`` on both sides of the swap.
+# A later swap that skips the clear serves that two-file walk to every gate downstream.
 @lru_cache
 def _source_files_to_scan() -> list[Path]:
     """Every hand-written source and instruction file, for the byte-level scan below."""
@@ -1221,9 +1228,10 @@ def test_the_log_path_matcher_reads_every_spelling_it_claims() -> None:
 def _repo_text_files() -> list[tuple[Path, str]]:
     """Every readable text file git considers part of THIS checkout, with its contents.
 
-    The population comes from git, not from ``rglob``, which honors no ignore file. Three
-    gitignored directories sit inside the repo root and every gate below reads whatever this
-    walk hands it. ``.claude/worktrees/`` holds agent worktrees, entire repo copies, so a raw
+    The population comes from git, not from ``rglob``, which honors no ignore file. Gitignored
+    directories sit inside the repo root and every gate below reads whatever this walk hands
+    it. Three of them are the ones that bit. ``.claude/worktrees/`` holds agent worktrees,
+    entire repo copies, so a raw
     walk judges other branches' files as if they were ours, and a worktree's ``.git`` is a
     *file*, so skipping that name does not stop the descent. ``.claude/review-findings/`` is
     session handoff scratch. ``.dev-logs/`` is whatever the dev servers last printed, and a
@@ -1253,7 +1261,9 @@ def _repo_text_files() -> list[tuple[Path, str]]:
         cwd=REPO,
         stdout=subprocess.PIPE,
         check=True,
-    ).stdout.decode()
+        # ``-z`` was chosen so an odd filename survives the split; a strict decode would give
+        # that back, raising out of the walk and taking every gate built on it with it.
+    ).stdout.decode(errors="surrogateescape")
     found: list[tuple[Path, str]] = []
     for name in listing.split("\0"):
         if not name:
@@ -1269,7 +1279,9 @@ def _repo_text_files() -> list[tuple[Path, str]]:
     return found
 
 
-def test_the_repo_walk_never_reads_a_gitignored_file(tmp_path: Path) -> None:
+def test_the_repo_walk_never_reads_a_gitignored_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Rule 145: the count is pinned over a tree whose membership is controlled.
 
     Counting the real checkout would pin a number that moves with every file added, so the
@@ -1278,9 +1290,17 @@ def test_the_repo_walk_never_reads_a_gitignored_file(tmp_path: Path) -> None:
     a gate would read as a launch site. Neither is reachable from a branch, so a walk that
     collects them is red in every checkout that has them and green in CI forever.
 
-    ``.gitignore`` itself is in the expected set because it is untracked and not ignored,
-    which is the half of the invocation ``--cached`` alone would drop.
+    **Each half of the invocation owns one member of the expected set**, or a flag can be
+    dropped and this still reads green. ``kept.md`` is staged, so only ``--cached`` reaches
+    it; ``.gitignore`` is untracked and not ignored, so only ``--others`` does. Dropping
+    ``--exclude-standard`` adds the other two back.
+
+    The git config is scrubbed because ``--exclude-standard`` reads ``core.excludesFile``,
+    which would otherwise let a developer's global ignore file decide this expected set
+    (rule 119).
     """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "absent-global"))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "absent-system"))
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # noqa: S607
     (tmp_path / ".gitignore").write_text("scratch/\n*.log\n", encoding="utf-8")
     (tmp_path / "kept.md").write_text("source\n", encoding="utf-8")
@@ -1289,6 +1309,7 @@ def test_the_repo_walk_never_reads_a_gitignored_file(tmp_path: Path) -> None:
     (tmp_path / "noisy.log").write_text(
         'uvicorn reaper.main:create_app --factory --port "8420"\n', encoding="utf-8"
     )
+    subprocess.run(["git", "add", "kept.md"], cwd=tmp_path, check=True)  # noqa: S607
 
     global REPO
     real, REPO = REPO, tmp_path
