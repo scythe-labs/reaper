@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Things this codebase derived twice, or transcribed once and left to drift.
 
-Four of the same shape, each low severity on its own and each a way for two parts of the
+Five of the same shape, each low severity on its own and each a way for two parts of the
 engine to disagree about one number:
 
 * the frozen-evidence field list was hand-maintained beside the dataclass it mirrors (R-1);
@@ -11,29 +11,40 @@ engine to disagree about one number:
   ``engine.dormancy`` derivation every surviving lane takes;
 * the streamed dataset download opted out of the retry every other read gets (I-5);
 * a whole second condemn/protect/abstain decision function sat in the engine, reachable
-  only from its own tests (H-2).
+  only from its own tests (H-2);
+* the stored why-panel document is written by hand in ``services.snapshot._explain`` and
+  declared as models in ``engine.explanation``, and the reader drops what it does not
+  name (W5-1).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import json
+from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
+from typing import Any, get_args
 
 import httpx
 import httpx2
 import pytest
 import respx
+from pydantic import BaseModel
 
 from reaper.clients.base import IntegrationError
 from reaper.clients.public import PublicClient
 from reaper.clock import utcnow
-from reaper.engine import facts_codec
+from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
-from reaper.engine.gates import Facts
+from reaper.engine.explanation import Explanation, read_explanation
+from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.signals import KeepResult, Score, SignalId, SignalResult, SignalState
 from reaper.services.fairness import WatchEvidence
+from reaper.services.snapshot import _explain
 
 NOW = utcnow()
 
@@ -275,3 +286,204 @@ class TestThereIsOnlyOneDecisionFunction:
         """A Seerr account with no Plex link has history Reaper cannot see. Every caller
         guards the ``None`` itself before acting; here it is simply zero."""
         assert WatchEvidence(plays_by_user={7: 3}, distinct_watchers=1).plays_by(None) == 0
+
+
+# ---------------------------------------------------------------------------
+# W5-1: the stored explanation, written by hand and declared elsewhere
+# ---------------------------------------------------------------------------
+
+
+#: The two keys ``_explain`` writes on ``protections_unknown`` and on neither of the other
+#: two protection lists. One model types all three, and ``GateOutcomeOut``'s own docstring
+#: rests on the asymmetry: an entry in the other two reads ``None`` for a reason that is not
+#: the third state, so a reader must take the flag off ``protections_unknown``. Stated here
+#: as the one exception to "the writer names what the reader declares", so the walk below
+#: has no hole in it.
+_UNKNOWN_ONLY_GATE_FLAGS = frozenset({"defers_to_owner", "unestablishable"})
+
+
+def _nested_models(model: type[BaseModel]) -> dict[str, type[BaseModel]]:
+    """Each field of ``model`` holding another model, or a list of one, as ``{key: model}``.
+
+    Derived off the declaration rather than listed, so a block added to ``Explanation``
+    enters the walk below without anyone extending it. A hand-written list is the failure
+    rule 145 names: a member the walk never collected is missing from the guard and from
+    the proof of the guard alike.
+    """
+    found: dict[str, type[BaseModel]] = {}
+    for name, field in model.model_fields.items():
+        for annotation in (field.annotation, *get_args(field.annotation)):
+            if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                found[name] = annotation
+    return found
+
+
+def _written_explanation() -> dict[str, Any]:
+    """One stored explanation from the real writer, with every block populated at once.
+
+    **A shape, not a scan.** No single item produces a merged bind *and* a list of
+    candidate rows *and* all three protection lists; the subject here is which keys are
+    written, and a realistic vector leaves half of them unexercised. Every optional
+    argument is passed a value that is not its default for the same reason (rule 141).
+    """
+    evaluation = Evaluation(
+        results=[
+            GateResult(
+                gate=GateId.STREAMING_NOW,
+                outcome=PROTECT,
+                detail="someone is watching it right now",
+            ),
+            GateResult(
+                gate=GateId.MIN_DORMANCY,
+                outcome=ABSTAIN,
+                detail="untouched for 5 years, past the 3 years it has to sit unwatched first",
+            ),
+            GateResult(
+                gate=GateId.SEASON_PROGRESSION,
+                outcome=ABSTAIN,
+                detail="watched more than a season your rule keeps",
+                blocked=True,
+                defers_to_owner=True,
+                unestablishable=False,
+            ),
+        ]
+    )
+    frozen = Score(
+        value=52.0,
+        coverage=0.875,
+        results=[
+            SignalResult(
+                signal=SignalId.UNWATCHED,
+                pressure=31.4,
+                weight=40,
+                detail="untouched for 5 years",
+                evaluated=True,
+                state=SignalState.ADDS,
+                floor=90,
+                saturate_at=730,
+            )
+        ],
+        base_value=67.0,
+        keep_discount=15.0,
+        keep_results=[
+            KeepResult(
+                name="Rated well",
+                discount=15.0,
+                max_discount=20,
+                detail="rated 8.1 by 40,000 people",
+                evaluated=True,
+            )
+        ],
+    )
+    document: dict[str, Any] = json.loads(
+        _explain(
+            evaluation,
+            frozen,
+            DEFAULT_MOVIE_POLICY,
+            plex_rating_key=4242,
+            matched_by=identity.MatchedBy.MERGED_LISTINGS,
+            match_detail="one file listed twice in Plex",
+            match_status=identity.MatchStatus.MATCHED,
+            merged_rating_keys=(4242, 4243),
+            match_candidates=(4242, 4243),
+            watch_blind=False,
+        )
+    )
+    return document
+
+
+def _blocks(document: dict[str, Any]) -> Iterator[tuple[str, set[str], type[BaseModel]]]:
+    """Every object in the written document, as ``(label, its keys, the model typing it)``.
+
+    A declared block the writer never wrote is skipped rather than raising here: the
+    top-level comparison already names it, and a ``KeyError`` mid-walk would fail the run
+    before the rest of the document was read.
+    """
+    yield "<top level>", set(document), Explanation
+    for key, model in _nested_models(Explanation).items():
+        value = document.get(key)
+        if isinstance(value, list):
+            for index, entry in enumerate(value):
+                yield f"{key}[{index}]", set(entry), model
+        elif isinstance(value, dict):
+            yield key, set(value), model
+
+
+def _declared(label: str, model: type[BaseModel]) -> set[str]:
+    """The keys the writer owes this block: its model's fields, less the stated exception."""
+    fields = set(model.model_fields)
+    if label.startswith(("protections_fired", "protections_checked")):
+        return fields - _UNKNOWN_ONLY_GATE_FLAGS
+    return fields
+
+
+class TestTheStoredExplanationIsWrittenAsItIsDeclared:
+    """``snapshot._explain`` builds the why-panel document by hand; ``engine.explanation``
+    declares it as pydantic models. The declaration is the READ side, so it drops any key it
+    does not name -- pydantic's ``extra="ignore"`` -- and that is exactly how ``keeps`` and
+    ``match`` were written on every scan for months while the panel rendered neither.
+
+    Nothing pinned the key set before this class. The baseline fixture reads eight of the
+    thirteen top-level keys and three fields of a signal row (``tests/_policy_lab.py``), so a
+    key added on one side alone was invisible to the whole suite -- and it is invisible in
+    both directions, since a field declared and never written reads ``None`` forever.
+    """
+
+    def test_the_writer_and_the_declaration_name_the_same_keys(self) -> None:
+        """Every object in the document, against the model that types it. Collected rather
+        than asserted per block, so a failure names each disagreement instead of the first."""
+        document = _written_explanation()
+
+        wrong = [
+            f"{label}: written-only {sorted(keys - declared)}, "
+            f"declared-only {sorted(declared - keys)}"
+            for label, keys, model in _blocks(document)
+            if (declared := _declared(label, model)) != keys
+        ]
+
+        assert not wrong, "\n".join(wrong)
+
+    def test_the_two_gate_flags_ride_on_the_unknown_list_alone(self) -> None:
+        """The exception above, stated positively. ``_explain`` writes ``defers_to_owner``
+        and ``unestablishable`` on every ``protections_unknown`` entry and on no other, which
+        is what lets ``api.review._chip`` read a missing key as "this row cannot say" instead
+        of as a gate with no opinion. One entry can appear in two lists -- an unestablishable
+        season PROTECT does -- and only the ``protections_unknown`` copy carries the flags."""
+        document = _written_explanation()
+
+        assert all(
+            set(entry) >= _UNKNOWN_ONLY_GATE_FLAGS for entry in document["protections_unknown"]
+        )
+        assert all(
+            _UNKNOWN_ONLY_GATE_FLAGS.isdisjoint(entry)
+            for key in ("protections_fired", "protections_checked")
+            for entry in document[key]
+        )
+
+    def test_the_walk_covers_every_block_the_declaration_holds(self) -> None:
+        """Rule 145: the assertion above can only fail on a block the walk collected, so the
+        population it collected is pinned rather than assumed. Seven objects over five
+        models, counted by hand against the fixture: the document, its ``match``, one signal,
+        one keep, and one entry in each of the three protection lists."""
+        document = _written_explanation()
+
+        assert set(_nested_models(Explanation)) == {
+            "match",
+            "signals",
+            "keeps",
+            "protections_fired",
+            "protections_checked",
+            "protections_unknown",
+        }
+        assert len(list(_blocks(document))) == 7
+
+    def test_the_reader_reads_back_what_the_writer_wrote(self) -> None:
+        """The round trip the key sets exist to protect. ``read_explanation`` is the one
+        definition of "unreadable" for this document (rule 104) and both the panel and the
+        hand-reap path run it, so a writer the reader refuses holds every file. The two
+        blocks the reader used to drop are asserted by value, not by presence."""
+        body = read_explanation(_written_explanation())
+
+        assert body is not None
+        assert body.match is not None and body.match.merged_rating_keys == [4242, 4243]
+        assert [keep.name for keep in body.keeps] == ["Rated well"]
