@@ -50,6 +50,7 @@ from reaper.auth.sessions import (
     session_via_recovery,
     spend_recovery_mark,
 )
+from reaper.buildinfo import env_flag
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.config import RuntimeSafety, Settings
@@ -1121,10 +1122,17 @@ def _desktop_out() -> DesktopSettingsOut | None:
     platform = launcher.desktop_platform()
     if platform is None:
         return None
+    # The value the launcher resolved this boot. `load_launcher_conf` seeded the file into
+    # the environment before serving, so the environment is the effective record; the file
+    # only matters again at the next start.
+    #
+    # `default=True` is the same fact `launcher._tray_wanted` writes as `return frozen`, and
+    # the two agree only because the guard above returns None off a frozen build, which is
+    # the one shape where `frozen` is False (rule 104).
     return DesktopSettingsOut(
         platform=platform,
-        tray=launcher.desktop_flag(launcher.DESKTOP_TRAY_KEY, default=True),
-        dock_icon=launcher.desktop_flag(launcher.DESKTOP_DOCK_KEY, default=False),
+        tray=env_flag(launcher.DESKTOP_TRAY_KEY, default=True),
+        dock_icon=env_flag(launcher.DESKTOP_DOCK_KEY, default=False),
     )
 
 

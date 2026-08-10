@@ -2101,13 +2101,19 @@ enforced by nothing but the next author's memory.
 > skip function-local ones, or it is red on day one. `clients → engine` is a live edge the prose
 > does not predict; pin or exempt it deliberately.
 >
-> **W6-7's `env_flag()` already exists** as `launcher.py:226 desktop_flag`, called from two places.
-> The row is adopt-at-six-readers, not write-one. Neither `_TRUE` nor `_FALSE` is the right
-> unification: fail-closed for the update check is "do not dial out", and for the tray it is the
-> opposite, since on a frozen build the icon is the only route to Quit. Widen `desktop_flag` so an
-> unrecognized value falls to `default` rather than to False. A live divergence sits beside it:
-> `api/settings.py:1126` reports the tray as `default=True` while `launcher.py:379` defaults to
-> `frozen`, so a source run on macOS tells the operator the tray is on and never starts one.
+> **W6-7's `env_flag()` already exists** as `desktop_flag`, called from two places. The row is
+> adopt-at-six-readers, not write-one. Widen it so an unrecognized value falls to `default`
+> rather than to False, since on a frozen build the tray icon is the only route to Quit.
+>
+> **Two claims in this paragraph were measured while building it and are wrong.** The
+> incompatible-unification argument does not hold: `raw not in _FALSE` and
+> `env_flag(key, default=True)` are the same function on every input, so the update check
+> adopts the widened helper byte-identically and no second vocabulary is needed. And the
+> "live divergence" is REFUTED rather than latent: `_desktop_out` returns `None` whenever
+> `launcher.desktop_platform()` is, which it always is off a frozen build, so the tray field
+> is `null` and the panel renders nothing. What is true is the smaller thing, that the tray
+> default is one fact written twice and agrees only because of that gate (rule 104). Landed
+> at #668, which carries the measurements.
 >
 > **W6-4's `fold()` must skip three sites** that omit `strip()` on purpose (`engine/fields.py:821`,
 > `:1000`, `services/list_config.py`'s `_clean_config`). The count is 30 inline copies across 11 modules. And
@@ -2308,7 +2314,7 @@ the question is which breaks earn their keep, and most do not.
   import, the same symbol imported again inside a function, and a third function-local import),
   verified empirically. `executor.py:135` `TYPE_CHECKING`-imports a module already imported at
   `:117`. `api/simulate.py`'s `_replay_simulation` function-local `build_gates` import breaks nothing and carries no comment, unlike
-  `launcher.py:551` and `:569`, which name their reasons and stay.
+  `launcher.py:536` and `:558`, which name their reasons and stay.
 - **Both frontend cycles are one borrowed symbol each.** `PolicyEditor ↔ PolicyRuleEditors` exists
   because the deliberate split left three lookup tables behind, and the same file re-exports
   `humanDays` from `format.ts` whose own comment says it moved there to break a cycle back through

@@ -17,7 +17,13 @@ import respx
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
-from reaper.services.update_check import _MAX_NOTES, DEFAULT_REPO, UpdateChecker, _newer
+from reaper.services.update_check import (
+    _MAX_NOTES,
+    DEFAULT_REPO,
+    UpdateChecker,
+    _enabled,
+    _newer,
+)
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
@@ -500,3 +506,40 @@ class TestRoute:
         body = response.json()
         assert body["update_available"] is None
         assert body["current"] == "dev (abc1234)"
+
+
+class TestOnlyAnExplicitFalseTurnsTheCheckOff:
+    """``update_check._enabled`` used to read ``raw not in _FALSE``, so anything the
+    vocabulary did not recognize left the check ON. It reads ``env_flag(default=True)``
+    now, and the table below is what says the two agree on every input -- written out
+    rather than re-deriving the retired expression (rule 119).
+
+    The same change moved the tray the other way: an unrecognized value there now falls to
+    its default instead of to False. This test is what keeps that widening from reaching a
+    check that leaves the operator's network.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            (None, True),  # nothing set: the check is on, as it shipped
+            ("", True),
+            ("   ", True),
+            ("false", False),
+            ("FALSE", False),
+            ("0", False),
+            ("no", False),
+            ("off", False),
+            ("true", True),
+            ("ture", True),  # a typo does not silently turn it off, and never did
+            ("2", True),
+        ],
+    )
+    def test_the_vocabulary_did_not_move(
+        self, monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: bool
+    ) -> None:
+        if raw is None:
+            monkeypatch.delenv("REAPER_UPDATE_CHECK", raising=False)
+        else:
+            monkeypatch.setenv("REAPER_UPDATE_CHECK", raw)
+        assert _enabled() is expected

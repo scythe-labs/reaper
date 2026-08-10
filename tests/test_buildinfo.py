@@ -39,3 +39,42 @@ class TestBuildVersion:
         # No baked commit and no readable .git (the shipped container's case).
         monkeypatch.setattr(buildinfo, "_commit_from_git_dir", lambda: None)
         assert buildinfo.build_version() == "dev"
+
+
+class TestTheEnvBooleanVocabulary:
+    """``env_flag`` is the one reading of an environment value as a boolean, for the six
+    raw reads that each spelled it themselves. Not one test anywhere passed an
+    unrecognized value to any of them, which is the hole this class exists to close."""
+
+    @pytest.mark.parametrize("raw", ["1", "true", "TRUE", " yes ", "on"])
+    def test_a_true_token_is_true_whatever_the_default(self, raw: str) -> None:
+        assert buildinfo.env_flag("K", default=False, env={"K": raw}) is True
+        assert buildinfo.env_flag("K", default=True, env={"K": raw}) is True
+
+    @pytest.mark.parametrize("raw", ["0", "false", "No", " OFF "])
+    def test_a_false_token_is_false_whatever_the_default(self, raw: str) -> None:
+        assert buildinfo.env_flag("K", default=True, env={"K": raw}) is False
+        assert buildinfo.env_flag("K", default=False, env={"K": raw}) is False
+
+    @pytest.mark.parametrize("raw", ["ture", "enabled", "2", "yes please"])
+    def test_an_unrecognized_value_falls_to_the_default(self, raw: str) -> None:
+        """The ``default=True`` half is the load-bearing one (rule 141): where the default
+        is False, a hardcoded False and a fall-to-default are the same output.
+
+        ``""`` and ``"  "`` are deliberately not in this table. Both already fell to the
+        default at every site before this helper existed, so they cannot fail here and
+        would read as coverage of the case that could."""
+        assert buildinfo.env_flag("K", default=True, env={"K": raw}) is True
+        assert buildinfo.env_flag("K", default=False, env={"K": raw}) is False
+
+    def test_an_absent_key_is_the_default(self) -> None:
+        assert buildinfo.env_flag("MISSING", default=True, env={}) is True
+        assert buildinfo.env_flag("MISSING", default=False, env={}) is False
+
+    def test_the_process_environment_is_the_default_source(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``env=`` is for the launcher, which holds a mapping. Everyone else reads
+        ``os.environ``, and passing an empty mapping must not be how that happens."""
+        monkeypatch.setenv("K", "on")
+        assert buildinfo.env_flag("K", default=False) is True
