@@ -1895,6 +1895,68 @@ here is preventing a future divergence.
   comments already say they mirror each other), the upward dirty-report idiom **5 times**, the
   "a test result and the fingerprint it vouches for" pattern **3 times** (each fixed separately,
   in #178 twice and #264), the admin-password confirm form **twice** with a recorded drift.
+
+  > **Killed: all four extractions. Two defects the duplication was hiding land instead, with a
+  > gate over the third sub-item's whole family.** Each sub-item was measured as its own decision.
+  > Three of the four counts are wrong, and the one that holds is the one with nothing under it.
+  >
+  > **The ladder is two ladders at four sites, and the row's three name neither pairing.**
+  > `Backdrop` (`ReviewQueue.tsx:213`) and `WhyHero` (`WhyPanel.tsx:343`) share the art-then-poster
+  > ladder: a `?kind=art` seed, a `fellBack` ref, a reset effect and a one-step `onError`.
+  > `Poster` (`ReviewQueue.tsx:246`) shares a different one with `ScalesPanel`'s own `Poster`
+  > (`:28`), a boolean that swaps in `PosterFallback`, and the row does not name that second site
+  > at all. Grepped two ways, on `Backdrop|WhyHero` and on `onError` across every `.tsx`; the
+  > first spelling finds three of the four and the second finds all four. Lifting the art ladder
+  > takes **37 lines** out of the two components and puts **41** back, 33 of them a new leaf
+  > module (both callers already import the three React hooks, so nothing is saved there) and 8 in
+  > call, import and `onError={onError}` lines. That is +4, or -8 if the hook is hidden inside
+  > `PosterFallback.tsx` instead of earning a file, which would make an SVG leaf two unrelated
+  > things. S5 either way. The second ladder is 29 lines over two components whose markup shares
+  > nothing: `div.poster.poster-empty` against `span.scales-poster`, one with an `alt` and a reset
+  > effect and one with neither, so the shared component takes wrapper, class, alt and size to
+  > serve two call sites.
+  >
+  > **The dirty-report count is right, and it is the sub-item with nothing behind it.** Five, at
+  > `GeneralPanel:419`, `PlexPanel:558`, `NotificationsPanel:137`, `SecurityPanel`'s
+  > `AdminPasswordForm:156` and `RestoreCard`'s `RestoreFlow:321`. Grepped on `onDirtyChange` and
+  > again on `Dirty`, which agree. The duplicated region is **4 lines** each, 20 in all, against a
+  > hook of 9 in a module of 22 plus 10 lines of call and import: +12. What rule 146 actually asks
+  > of these is per-site and a hook cannot carry it, since the obligation is that the signal is
+  > declared above every early return and that each early-return state is re-read as one the
+  > report still fires in. All five already answer it in a comment naming their own branches, and
+  > all five were re-checked here. `PlexPanel` has no early return above its report at all.
+  >
+  > **The test-result pairing is four sites, and three of them were wrong.** `testedWith` is
+  > declared in `ServiceModal`, `ServicesPanel`, `DiscordModal` and `NotificationsPanel`; grepped
+  > on `testedWith` and again on `setTest(`, which agree. Only `ServiceModal` captured the
+  > fingerprint in `onMutate`, and its own comment says why: the boxes stay live while the request
+  > is out, so reading `testedWith()` back at success time files the answer against an address it
+  > was never asked about. The other three read it at success time. On the two webhook surfaces
+  > the fingerprint is `url.trim()` off a box that is never disabled during the send, so pasting a
+  > second webhook while the first is being tested leaves "Passed" beside a channel nobody sent
+  > to. On `ServicesPanel` it is the instance's own address, which moves when the Edit modal over
+  > the card saves a new one. All three are on `dev` (`Settings.tsx:1155` and `:2427` before the
+  > panel split, `DiscordModal.tsx:63`), all three are fixed here, and **`ServiceModal`'s own
+  > `onMutate` was unpinned**: the three tests in *what the connection badge vouches for* all
+  > compare the held result against the boxes, which reading the fingerprint at either end
+  > satisfies. A fourth drives the retype while the request is in flight. The extraction is still
+  > a kill at +23: `ServiceModal` holds a union result type, `reachedAt`/`openedWith` beside the
+  > fingerprint, and three read sites against one apiece elsewhere. A hygiene gate binds the
+  > family instead, which is what the row's "each fixed separately" is asking for.
+  >
+  > **The admin-password form is two, and the drift is three things, all on `dev`.** The
+  > declaration's own comment says the length floor is stated once by "the placeholder, the live
+  > message, and the server rule", and the placeholder was the literal `at least 12 characters`
+  > (rule 7/24, and rule 144's one ungenerated copy of a claim whose siblings are all derived).
+  > `SetupPasswordStep`'s error region was not `standing` while holding `{pw.length} so far`, so
+  > its text changed inside a live region on every keystroke, which is exactly what #394 fixed at
+  > the sibling and never swept here (rule 72). Its two boxes carried no `aria-invalid` where the
+  > sibling's do. All three are fixed; the extraction is not built, at +15 for 11 lines out. The
+  > two forms are three boxes against two, three complaint branches against two, and a `valid`
+  > that carries `needCurrent` on one side only. The fourth difference, "The passwords don't
+  > match." against "The two passwords don't match.", is measured and left: neither form is on
+  > screen while the other is, and a claim with no number in it cannot drift in the direction rule
+  > 144 is about.
 - `App.tsx:196` — three parallel focus slots whose own comment reads "Rule 72: three of these now,
   and a fourth belongs in the same three places". One value keyed on `view` retires the obligation.
 

@@ -3088,6 +3088,45 @@ the `RatingRule` dataclass's own default. That argues for pinning the boundary r
 it: the dataclass default is 0, every percentage bar carries 0, and one validator is the only
 thing standing between them.
 
+## A staleness comparison is satisfied at either end, and only one of them is honest (2026-08-10)
+
+Four surfaces show a connection-test badge only while the result still describes what is on
+screen. Each stores `{ result, of }`, where `of` is a fingerprint of everything the test was sent,
+and each renders the badge on `test.of === testedWith()`. That is one derivation written four
+times, and it was measured for a dedup. The dedup is a kill. What the measurement found instead
+is that **three of the four computed the fingerprint at the wrong end, and the comparison cannot
+tell.**
+
+`testedWith()` read back inside `onSuccess` runs after the response lands, so it fingerprints
+whatever the operator typed while the request was out. The stored `of` and the live `testedWith()`
+then match **by construction**, whatever moved, and the badge vouches for an address that was
+never tried. Read at issuance instead (React Query's `onMutate`, whose return reaches `onSuccess`
+as context) the two disagree and the badge withdraws, which is the honest answer.
+
+**The comparison is what made this invisible.** Three tests already drove the staleness direction
+at the one site that had it right, editing the host and the key after a pass and asserting the
+badge goes. Every one of them passes with the fingerprint read at either end, because they change
+the boxes while nothing is in flight. The discriminating case is the retype *during* the request,
+and no test in the suite drove it. So the one site written correctly was correct by the author's
+reasoning alone, and its three siblings copied the shape without it.
+
+**The fix is greppable and the extraction is not worth building**, so a hygiene gate holds the
+family: `of:` handed a call, anywhere but on an `onMutate` line. Its first draft bounded the value
+at the first comma and so read `of: [kind, baseUrl()].join(" ")` as innocent, which is fail-open
+and was caught by the matcher's own spellings test rather than by anything in the tree. Walking
+the value to its own bracket depth is exact and no longer a regex.
+
+## The five-times duplication with nothing behind it (2026-08-10)
+
+Five settings panels report a draft upward through the same four lines, and rule 146 is written
+about exactly that signal. The count was the only figure in its finding that held, and it was the
+sub-item worth the least: 20 lines out against 32 back, and what the rule asks is per-site anyway.
+The signal must be declared above every early return, and every early-return state re-read as one
+the report still fires in, which is a claim about each panel's own branches. All five already say
+so in a comment naming theirs. **A hook cannot carry an obligation whose subject is the call
+site**, so the shared four lines are the part with no leverage in them, and the per-panel comments
+are the part doing the work.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

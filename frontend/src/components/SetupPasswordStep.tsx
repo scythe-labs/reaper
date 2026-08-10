@@ -99,6 +99,10 @@ export function SetupPasswordStep({
             value={pw}
             maxLength={128}
             onChange={(e) => setPw(e.target.value)}
+            // One region carries both complaints, so each box describes itself with the live
+            // one only while it is the one about IT. `aria-invalid` stays on this box's own
+            // predicate: a short password is short whichever complaint is showing.
+            aria-invalid={tooShort ? true : undefined}
             aria-describedby={owner === "pw" ? ERROR_ID : undefined}
           />
           <span className="help">At least {MIN_ADMIN_PASSWORD} characters.</span>
@@ -112,12 +116,21 @@ export function SetupPasswordStep({
             value={confirm}
             maxLength={128}
             onChange={(e) => setConfirm(e.target.value)}
+            aria-invalid={mismatch ? true : undefined}
             aria-describedby={owner === "confirm" ? ERROR_ID : undefined}
           />
         </label>
 
+        {/* `standing` on the live ones, the same arrangement `AdminPasswordForm` uses and for
+            the same measured reason: they explain why the button is off WHILE THE OPERATOR
+            TYPES, and the first of them renders `{pw.length} so far`, so its text changes
+            inside a live region on every keystroke and the whole string is re-announced each
+            time, on the form that sets the key arming deletion. Nothing is lost by not
+            interrupting: both boxes point here through `aria-describedby`, so the complaint is
+            read as the description of the box the operator is standing in. A failed submit is a
+            reaction and keeps `role="alert"`, which is what `owner === null` selects. */}
         {error && (
-          <Notice tone="error" id={ERROR_ID}>
+          <Notice tone="error" id={ERROR_ID} standing={owner !== null}>
             {error}
           </Notice>
         )}
