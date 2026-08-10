@@ -172,7 +172,6 @@ class TestTheSchedulerIsUpkeepOnly:
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -225,7 +224,6 @@ class TestTheSchedulerIsUpkeepOnly:
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -260,7 +258,6 @@ class TestTheSchedulerIsUpkeepOnly:
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -300,17 +297,21 @@ class TestTheSchedulerIsUpkeepOnly:
         vacuums that, while the real one is never compacted. The arity is the same either
         way, so APScheduler's own argument check cannot see it.
 
-        The scheduler is given a folder that is not the engine's (rule 141) -- pinning the
-        path the engine was built from would hold just as well if the job derived its own.
+        Asserted against ``settings.database_path.parent`` -- the folder that declaration puts
+        the database in -- rather than against the value handed to ``build_scheduler``, which
+        no longer takes one. The sweep folder used to arrive beside ``settings`` as its own
+        argument, and this test passed a different folder to prove the job read the argument
+        (rule 141). One source means the two cannot diverge, so what is left to pin is that
+        the sweep and the engine resolve to the same place. The settings folder is nested
+        under ``tmp_path`` and is not the default, so a wiring that grabbed either would fail.
         """
-        db_dir, sweep_dir = tmp_path / "db", tmp_path / "swept"
+        db_dir = tmp_path / "db"
         db_dir.mkdir()
         settings = Settings(data_dir=db_dir, secret_key="k")
         engine = create_engine(settings)
         factory = create_session_factory(engine)
         sched = scheduler.build_scheduler(
             engine,
-            sweep_dir,
             session_factory=factory,
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -321,7 +322,8 @@ class TestTheSchedulerIsUpkeepOnly:
 
         job = next(j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID)
 
-        assert list(job.args)[:2] == [factory, sweep_dir]
+        assert list(job.args)[:2] == [factory, settings.database_path.parent]
+        assert settings.database_path.parent not in (tmp_path, Path("data"))
         await engine.dispose()
 
     async def test_the_snapshot_sweep_is_handed_a_way_to_ask_whether_a_reap_is_live(
@@ -337,7 +339,6 @@ class TestTheSchedulerIsUpkeepOnly:
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,

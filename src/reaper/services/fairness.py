@@ -769,6 +769,13 @@ async def _enrich_accounts(
 #: still appear, named by their type and date instead -- the count is never truncated.
 _TITLE_LOOKUP_CAP = 80
 
+#: How many of those lookups may be in flight at once. The cap bounds the total work, not the
+#: burst: every target used to start at the same instant, and httpx's default pool of 100 sits
+#: above the cap, so one Scales load could open 80 sockets to a single portal. Same figure and
+#: same reasoning as ``season_scan.RESOLVE_CONCURRENCY``: enough to collapse the round trips,
+#: few enough that a modest self-hosted portal sees a handful of parallel reads.
+_TITLE_LOOKUP_CONCURRENCY = 8
+
 
 async def _enrich_titles(
     seerrs: Sequence[SeerrClient], unmatched: Sequence[UnmatchedTitle]
@@ -780,16 +787,19 @@ async def _enrich_titles(
     the per-report cap) simply keeps ``title=None`` and the row shows a generic label. Titles
     are resolved on the portal the request came from, since that portal certainly has TMDB
     access configured; any other reachable portal is an acceptable fallback (all proxy the
-    same TMDB). Bounded by the not-in-scan count and the cap, so the added calls are bounded."""
+    same TMDB). Bounded by the not-in-scan count and the cap, and by
+    ``_TITLE_LOOKUP_CONCURRENCY`` in flight at once."""
     targets = [u for u in unmatched if u.tmdb_id is not None][:_TITLE_LOOKUP_CAP]
     if not targets or not seerrs:
         return
     by_portal = {c.instance_key: c for c in seerrs}
+    bound = asyncio.Semaphore(_TITLE_LOOKUP_CONCURRENCY)
 
     async def _one(u: UnmatchedTitle) -> None:
         client = by_portal.get(u.portal_key) or seerrs[0]
         try:
-            info = await client.title(tmdb_id=u.tmdb_id or 0, media_type=u.media_type)
+            async with bound:
+                info = await client.title(tmdb_id=u.tmdb_id or 0, media_type=u.media_type)
         except IntegrationError as exc:
             log.warning("fairness.title_unreadable", tmdb=u.tmdb_id, error=str(exc))
             return

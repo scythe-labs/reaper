@@ -372,7 +372,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     scheduler = build_scheduler(
         cache_engine,
-        settings.data_dir,
         session_factory=factory,
         secret_box=box,
         settings=settings,
@@ -406,7 +405,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cache_engine=cache_engine,
         secret_box=box,
         update_checker=app.state.update_checker,
-        data_dir=settings.data_dir,
         scan_cron=scan_cron,
         maintenance=maintenance_schedules,
     )

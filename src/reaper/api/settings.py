@@ -794,7 +794,6 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 job_id,
                 cron,
                 cache_engine=request.app.state.cache_engine,
-                data_dir=runtime_settings(request).data_dir,
                 session_factory=session_factory(request),
                 secret_box=secret_box(request),
                 settings=runtime_settings(request),
@@ -832,7 +831,6 @@ async def run_job(request: Request, job_id: str) -> JobRunOut:
         request.app.state.scheduler,
         job_id,
         cache_engine=request.app.state.cache_engine,
-        data_dir=runtime_settings(request).data_dir,
         session_factory=session_factory(request),
         secret_box=secret_box(request),
         settings=runtime_settings(request),
@@ -1178,7 +1176,6 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
         cache_engine=request.app.state.cache_engine,
         secret_box=secret_box(request),
         update_checker=request.app.state.update_checker,
-        data_dir=runtime_settings(request).data_dir,
         scan_cron=scan_cron,
         maintenance=maintenance,
     )

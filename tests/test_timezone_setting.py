@@ -119,7 +119,6 @@ class TestReschedulingMovesEveryJob:
         box = SecretBox(resolve_secret_key(settings))
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=async_factory,
             secret_box=box,
             settings=settings,
@@ -138,7 +137,6 @@ class TestReschedulingMovesEveryJob:
                 cache_engine=engine,
                 secret_box=box,
                 update_checker=UpdateChecker(),
-                data_dir=tmp_path,
                 scan_cron="0 2 * * *",
                 maintenance={},
             )
@@ -175,7 +173,6 @@ class TestReschedulingMovesEveryJob:
         box = SecretBox(resolve_secret_key(settings))
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=async_factory,
             secret_box=box,
             settings=settings,
@@ -196,7 +193,6 @@ class TestReschedulingMovesEveryJob:
                 cache_engine=engine,
                 secret_box=box,
                 update_checker=UpdateChecker(),
-                data_dir=tmp_path,
                 scan_cron="not a cron",
                 maintenance={bad_job: "also not a cron"},
             )
@@ -233,7 +229,6 @@ class TestReschedulingMovesEveryJob:
         box = SecretBox(resolve_secret_key(settings))
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=async_factory,
             secret_box=box,
             settings=settings,
@@ -252,7 +247,6 @@ class TestReschedulingMovesEveryJob:
                     cache_engine=engine,
                     secret_box=box,
                     update_checker=UpdateChecker(),
-                    data_dir=tmp_path,
                     scan_cron=None,
                     maintenance={"refresh_ratings": "0 5 * * *", "retired_job": "0 6 * * *"},
                 )

@@ -638,7 +638,6 @@ def apply_scan_schedule(
 
 def _maintenance_specs(
     cache_engine: AsyncEngine,
-    data_dir: Path,
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
@@ -651,9 +650,13 @@ def _maintenance_specs(
     ``update_checker`` is the app's own instance, not a fresh one: the job and the About
     route share one cache, so a scheduled check leaves the answer ready for the next page
     load instead of the two asking GitHub separately.
+
+    The data folder comes off ``settings`` rather than beside it. Every caller in this family
+    passed ``settings.data_dir`` next to the same ``settings``, and two sources for one folder
+    is how the ratings download and the snapshot sweep end up in different directories.
     """
     return {
-        "refresh_ratings": (refresh_ratings, [cache_engine, data_dir, session_factory]),
+        "refresh_ratings": (refresh_ratings, [cache_engine, settings.data_dir, session_factory]),
         "refresh_curated_lists": (
             refresh_curated_lists,
             [cache_engine, session_factory, settings, secret_box],
@@ -677,7 +680,6 @@ def apply_maintenance_schedule(
     cron: str | None,
     *,
     cache_engine: AsyncEngine,
-    data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
     settings: Settings,
@@ -693,7 +695,6 @@ def apply_maintenance_schedule(
     """
     specs = _maintenance_specs(
         cache_engine,
-        data_dir,
         session_factory=session_factory,
         secret_box=secret_box,
         settings=settings,
@@ -717,7 +718,6 @@ def run_maintenance_now(
     job_id: str,
     *,
     cache_engine: AsyncEngine,
-    data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
     settings: Settings,
@@ -731,7 +731,6 @@ def run_maintenance_now(
     """
     specs = _maintenance_specs(
         cache_engine,
-        data_dir,
         session_factory=session_factory,
         secret_box=secret_box,
         settings=settings,
@@ -780,7 +779,6 @@ async def catch_up_on_startup(cache_engine: AsyncEngine, data_dir: Path) -> None
 
 def build_scheduler(
     cache_engine: AsyncEngine,
-    data_dir: Path,
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
@@ -804,7 +802,6 @@ def build_scheduler(
 
     specs = _maintenance_specs(
         cache_engine,
-        data_dir,
         session_factory=session_factory,
         secret_box=secret_box,
         settings=settings,
@@ -833,7 +830,7 @@ def build_scheduler(
             start_date=utcnow() + timedelta(seconds=SNAPSHOT_SWEEP_STARTUP_DELAY_S),
             jitter=SNAPSHOT_SWEEP_JITTER_S,
         ),
-        args=[session_factory, data_dir, reap_running],
+        args=[session_factory, settings.data_dir, reap_running],
         id=SNAPSHOT_SWEEP_JOB_ID,
         replace_existing=True,
     )
@@ -849,7 +846,6 @@ def apply_stored_schedules(
     cache_engine: AsyncEngine,
     secret_box: SecretBox,
     update_checker: UpdateChecker,
-    data_dir: Path,
     scan_cron: str | None,
     maintenance: dict[str, str | None],
 ) -> None:
@@ -903,7 +899,6 @@ def apply_stored_schedules(
                 job_id,
                 cron,
                 cache_engine=cache_engine,
-                data_dir=data_dir,
                 session_factory=session_factory,
                 secret_box=secret_box,
                 settings=settings,

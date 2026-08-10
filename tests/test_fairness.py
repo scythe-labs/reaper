@@ -11,6 +11,7 @@ Names and titles here are placeholders -- the aggregation does not care what the
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -1025,6 +1026,55 @@ class TestEnrichAccounts:
         good = FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
         out = await fairness._enrich_accounts([good], {None})
         assert out == {}
+
+
+class TestEnrichTitles:
+    async def test_the_lookups_are_bounded_rather_than_all_starting_at_once(self) -> None:
+        """One Scales load must not open a socket per not-in-scan title. The per-report cap is
+        80 and httpx's pool allows 100, so nothing below the semaphore bounds the burst.
+
+        Driven with more targets than the bound and a portal that counts what is in flight, so
+        an unbounded fan-out peaks at the target count instead. The peak is asserted against
+        the constant rather than a literal 8, and against the target count too, so raising the
+        constant to the target count cannot make this pass by widening the bound away."""
+        targets = fairness._TITLE_LOOKUP_CONCURRENCY * 3
+        in_flight = 0
+        peak = 0
+
+        class _WatchingSeerr(FakeSeerr):
+            async def title(self, *, tmdb_id: int, media_type: str) -> TitleInfo:
+                nonlocal in_flight, peak
+                in_flight += 1
+                peak = max(peak, in_flight)
+                # One yield is a full pass through the ready queue: every task that is not
+                # held at the semaphore reaches this point before the first one resumes.
+                await asyncio.sleep(0)
+                in_flight -= 1
+                return TitleInfo(title=f"Title {tmdb_id}", year=2020)
+
+        unmatched = [
+            fairness.UnmatchedTitle(
+                title=None,
+                year=None,
+                media_type="movie",
+                is_4k=False,
+                requested_at=None,
+                available_at=None,
+                reason=UNMATCHED_AFTER_SCAN,
+                requested_by=[],
+                request_count=1,
+                tmdb_id=i,
+                portal_key="p1",
+            )
+            for i in range(targets)
+        ]
+
+        await fairness._enrich_titles([_WatchingSeerr([], instance_key="p1")], unmatched)
+
+        assert peak <= fairness._TITLE_LOOKUP_CONCURRENCY
+        assert peak < targets
+        # Every row still gets its name: the bound throttles, it never drops a lookup.
+        assert [u.title for u in unmatched] == [f"Title {i}" for i in range(targets)]
 
 
 class TestBuildReportReadsNoAccounts:
