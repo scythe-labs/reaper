@@ -992,8 +992,10 @@ The probe that *discovered* this was itself bitten by it — its cleanup step ma
 tags case-sensitively, found nothing, and left two labels on a real item.
 
 ⇒ Casefold every label comparison. `normalize_label()` in `clients/plex.py` is the only
-comparison form, and removal re-reads the item to remove the tag under the exact
-spelling Plex is using.
+comparison form for a label, and removal re-reads the item to remove the tag under the
+exact spelling Plex is using. It delegates to `reaper.text.fold` now, which is the same
+derivation for every name comparison in the tree and keeps its own docstring for the
+Plex-specific reason.
 
 ### `batchMultiEdits().addLabel()` PRESERVES existing labels (verified)
 

@@ -300,10 +300,14 @@ every call — trash, refresh, count, and refresh-status, not just label and col
 Where only a title is known and it is ambiguous, ask each same-titled library in turn
 (`lists.PlexCollection` is the model), never the first match.
 
-**88. Case-fold both sides of every label, tag, collection, or list-name match.** When one side
-of a lookup is lower-cased, the other must be too. Lower-casing the source but not the
-operator's configured value is a fail-open protection bug: the protection stops matching and
-nothing announces it. Every new name-matching path ships a mixed-case test.
+**88. Case-fold both sides of every label, tag, collection, or list-name match, through
+`reaper.text.fold`.** When one side of a lookup is lower-cased, the other must be too.
+Lower-casing the source but not the operator's configured value is a fail-open protection bug:
+the protection stops matching and nothing announces it. Every new name-matching path ships a
+mixed-case test. The helper is named here because greppability is the point of it having a
+name, and `test_repo_hygiene.py` bans spelling `.strip().casefold()` again in `src/`. Folding a
+PATH is a different job with a different answer (`identity.to_basename`, `to_segments`), and so
+is a token that is not a name.
 
 **114. A sleep, retry budget, or allocation whose size comes from a remote server is clamped** —
 to a ceiling *and* to the caller's remaining deadline. `notify/discord.py`'s `_MAX_RETRY_AFTER`

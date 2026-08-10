@@ -43,6 +43,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import ListConfig
 from reaper.services import list_config, list_rules, lists, scan_runner, snapshot
 from reaper.services.snapshot import WHITELIST_STALE_AFTER
+from reaper.text import fold
 
 router = APIRouter(prefix="/api", tags=[api_tags.LISTS])
 
@@ -135,7 +136,7 @@ async def get_configured(request: Request) -> list[ListConfigOut]:
     return [
         _out(
             row,
-            [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])],
+            [ListPolicyUseOut(**u) for u in uses.get(fold(row.name), [])],
         )
         for row in rows
     ]
@@ -163,7 +164,7 @@ async def add_list(request: Request, body: ListConfigIn) -> ListConfigOut:
         # ships and the ones an upgrade migrated are named by the policy body directly (the
         # default body, ``convert_list_protections``), not from here.
         uses = await list_rules.usage(session)
-        return _out(row, [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])])
+        return _out(row, [ListPolicyUseOut(**u) for u in uses.get(fold(row.name), [])])
 
 
 @router.patch("/lists/configured/{list_id}")
@@ -184,7 +185,7 @@ async def edit_list(request: Request, list_id: int, body: ListConfigPatch) -> Li
             request.app.state.cache_engine, await list_config.definitions(session)
         )
         uses = await list_rules.usage(session)
-        return _out(row, [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])])
+        return _out(row, [ListPolicyUseOut(**u) for u in uses.get(fold(row.name), [])])
 
 
 @router.post("/lists/sync")

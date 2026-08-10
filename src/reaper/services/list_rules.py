@@ -37,6 +37,7 @@ from reaper.clock import utcnow
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.policy import PolicyBody
 from reaper.services import profiles
+from reaper.text import fold
 
 log = structlog.get_logger(__name__)
 
@@ -46,7 +47,7 @@ MEDIA_TYPES = ("movie", "tv")
 def _names_equal(a: object, b: str) -> bool:
     """Both sides case-folded (rule 88): the rule's value and the list's name are each the
     operator's typing, at different times."""
-    return str(a).strip().casefold() == b.strip().casefold()
+    return fold(str(a)) == fold(b)
 
 
 async def _save(session: AsyncSession, media_type: str, body: PolicyBody) -> None:
@@ -68,7 +69,7 @@ async def _save(session: AsyncSession, media_type: str, body: PolicyBody) -> Non
 
 async def rename_list(session: AsyncSession, old: str, new: str) -> None:
     """Re-spell every rule naming the list, both strengths, both policies."""
-    if old.strip().casefold() == new.strip().casefold():
+    if fold(old) == fold(new):
         return
     for media_type in MEDIA_TYPES:
         active = await profiles.active_policy(session, media_type)
@@ -134,13 +135,13 @@ async def usage(session: AsyncSession) -> dict[str, list[dict[str, object]]]:
         active = await profiles.active_policy(session, media_type)
         for c in active.body.protect_conditions:
             if c.field == "on_list":
-                key = str(c.value).strip().casefold()
+                key = fold(str(c.value))
                 out.setdefault(key, []).append(
                     {"media_type": media_type, "strength": "hard", "points": None}
                 )
         for k in active.body.graded_keeps:
             if k.field == "on_list" and k.value is not None:
-                key = k.value.strip().casefold()
+                key = fold(k.value)
                 out.setdefault(key, []).append(
                     {"media_type": media_type, "strength": "lean", "points": k.max_discount}
                 )

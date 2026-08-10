@@ -55,6 +55,7 @@ from reaper.clients.public import PublicClient
 from reaper.clock import from_epoch, utcnow
 from reaper.engine import identity
 from reaper.engine.observation import Absent, Known, Observation
+from reaper.text import fold
 
 if TYPE_CHECKING:
     # Annotation only. ``list_config`` imports this module at runtime, so the runtime
@@ -303,7 +304,7 @@ def _tag_key(tag: str) -> str:
     through here, on BOTH sides, so a keep tag can never fail to match the label it
     names -- the ``plex.normalize_label`` of the *arr side.
     """
-    return tag.strip().casefold()
+    return fold(tag)
 
 
 def _name_key(name: str) -> str:
@@ -313,7 +314,7 @@ def _name_key(name: str) -> str:
     case-folded, or a library the operator spells "movies" never matches the configured
     "Movies" and their keep collection reads as a missing library.
     """
-    return name.strip().casefold()
+    return fold(name)
 
 
 @dataclass(frozen=True, slots=True)

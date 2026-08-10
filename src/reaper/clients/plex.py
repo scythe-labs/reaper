@@ -53,6 +53,7 @@ from reaper.clients.base import (
 from reaper.config import RuntimeSafety
 from reaper.engine.identity import PlexFile, PlexItem, parse_guids, to_basename
 from reaper.ratings import Rating, from_plex
+from reaper.text import fold
 
 if TYPE_CHECKING:
     from plexapi.server import PlexServer
@@ -396,7 +397,7 @@ def normalize_label(tag: str) -> str:
     Comparing raw tags therefore silently fails to match a label that is present, so
     every comparison goes through here.
     """
-    return tag.strip().casefold()
+    return fold(tag)
 
 
 @dataclass(frozen=True)

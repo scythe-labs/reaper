@@ -99,6 +99,7 @@ from reaper.services.display_meta import (
 )
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.season_pruning import SPECIALS_SEASON, SeriesPrunePlan, plan_series_prune
+from reaper.text import fold
 
 log = structlog.get_logger(__name__)
 
@@ -1317,7 +1318,7 @@ async def gather(
         )
         if plex_library is not None:
             key = (item.source.instance_id, plex_library)
-            if plex_library.strip().casefold() in identity.libraries_for_ids(
+            if fold(plex_library) in identity.libraries_for_ids(
                 ids, tv_index, identity.SHOW_ID_PRIORITY
             ):
                 mapped_lib_hits.add(key)
