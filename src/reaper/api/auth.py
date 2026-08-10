@@ -26,9 +26,10 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
+from reaper.api.deps import runtime_settings, secret_box, session_factory
 from reaper.api.schemas import NO_PLEX_FORWARD, OkOut, PlexServerChoiceOut, PlexStartIn
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
@@ -54,8 +55,7 @@ from reaper.auth.sessions import (
     resolve_session_from_cookies,
     session_via_recovery,
 )
-from reaper.config import RuntimeSafety, Settings
-from reaper.crypto import SecretBox
+from reaper.config import RuntimeSafety
 from reaper.db.models import AppUser, AuthProvider, PlexServer
 from reaper.services import admin_password
 from reaper.services.login import (
@@ -72,25 +72,10 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/auth", tags=[api_tags.SIGN_IN])
 
 
-def _factory(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
-
-
-def _settings(request: Request) -> Settings:
-    settings: Settings = request.app.state.settings
-    return settings
-
-
 def _safety(request: Request) -> RuntimeSafety:
     # The Plex client here only signs in and reads -- it never deletes -- so it is built
     # read-only regardless of whether deletion is enabled elsewhere.
     return RuntimeSafety(destructive_enabled=False)
-
-
-def _box(request: Request) -> SecretBox:
-    box: SecretBox = request.app.state.secret_box
-    return box
 
 
 def _client_ip(request: Request) -> str:
@@ -262,7 +247,7 @@ async def context(request: Request) -> AuthContext:
     Deliberately low-detail. It reveals only whether setup is still pending and
     which sign-in methods can succeed -- nothing about *who* the admins are.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         user_count = int(
             (await session.execute(select(func.count()).select_from(AppUser))).scalar_one()
         )
@@ -281,7 +266,7 @@ async def context(request: Request) -> AuthContext:
 @router.get("/me")
 async def me(request: Request) -> UserOut:
     """The signed-in admin, or 401. The SPA calls this to decide login vs app."""
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         user, token = await resolve_session_from_cookies(session, request.cookies)
         # Read the mark before the commit: this is the same answer the password route will
         # act on, and the Security panel grays out its current-password box from it.
@@ -314,7 +299,7 @@ async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -
     """
     _rate_limited(plex_start_limit, _client_ip(request))
     start = await start_plex_login(
-        _factory(request), safety=_safety(request), forward_url=payload.forward_url()
+        session_factory(request), safety=_safety(request), forward_url=payload.forward_url()
     )
     return PlexStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
 
@@ -326,8 +311,8 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
     _rate_limited(plex_poll_limit, _client_ip(request))
     try:
         result = await poll_plex_login(
-            _factory(request),
-            _box(request),
+            session_factory(request),
+            secret_box(request),
             pin_id=payload.pin_id,
             safety=_safety(request),
             user_agent=request.headers.get("user-agent"),
@@ -387,7 +372,7 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
         )
     try:
         result = await login_local(
-            _factory(request),
+            session_factory(request),
             username=payload.username,
             password=payload.password,
             user_agent=request.headers.get("user-agent"),
@@ -425,7 +410,7 @@ async def logout(request: Request, response: Response) -> OkOut:
     # With two names in play a stale cookie used to absorb the logout -- its row was
     # already gone, so the delete was a no-op -- and the genuinely live session under the
     # other name stayed valid in the database after the operator had asked to sign out.
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         for token in read_session_tokens(request.cookies):
             await close_session(session, token)
         await session.commit()
@@ -453,7 +438,7 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
     ip_key = f"ip:{_client_ip(request)}"
     _throttled(recover_throttle, ip_key)
 
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         if not await redeem_recovery_token(session, payload.token):
             await session.commit()
             recover_throttle.record_failure(ip_key)
@@ -493,7 +478,7 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
     # secret with no remaining use. Deleting it earlier would take the operator's only
     # written copy on a path that can still roll the redemption back (rule 125) -- the
     # no-admin 409 above does exactly that, and leaves the file where it was.
-    clear_recovery_file(_settings(request).data_dir)
+    clear_recovery_file(runtime_settings(request).data_dir)
 
     recover_throttle.record_success(ip_key)
     log.warning("auth.recovery_login", user=target.username)

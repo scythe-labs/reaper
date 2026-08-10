@@ -19,9 +19,10 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
+from reaper.api.deps import session_factory
 from reaper.api.schemas import OverrideIn, RemovedOut, WhitelistEntryOut
 from reaper.clock import utcnow
 from reaper.db.models import Candidate, FirstFlagged, Snapshot, WhitelistEntry
@@ -33,11 +34,6 @@ from reaper.services.snapshot import record_first_flagged_bulk
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api", tags=[api_tags.REVIEW])
-
-
-def _sessions(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
 
 
 def _out(entry: WhitelistEntry) -> WhitelistEntryOut:
@@ -210,7 +206,7 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
     Switching decision in place is fine: reaping an already-spared item flips it to reap.
     A reap never overrides a hard safety gate; that is enforced at scan time, not here.
     """
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         title = await _resolve_title(session, payload.media_key)
         prior = await whitelist.override_for(session, payload.media_key)
         entry = await whitelist.set_override(
@@ -233,7 +229,7 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
 @router.delete("/override/{media_key}")
 async def clear_override(request: Request, media_key: str) -> RemovedOut:
     """Remove any override (spare or reap) -- the decision-neutral name for the same action."""
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         prior = await whitelist.override_for(session, media_key)
         removed = await whitelist.remove_override(session, media_key=media_key)
         await _sync_grace_clocks(session, media_key, cleared_spare=prior == "spare")

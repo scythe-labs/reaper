@@ -22,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
-from reaper.api.review import _sessions
+from reaper.api.deps import session_factory
 from reaper.api.schemas import (
     ConditionIn,
     GateSettingOut,
@@ -287,7 +287,7 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
     bar moved off the gate row is restored (``policy_migrations.recover_rating_rules``),
     because that body loads cleanly while keeping nothing. It comes back as an unsaved draft too.
     """
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         active = await active_policy(session, media_type)
         body, name = active.body, active.name
         has_requests_app = await _requests_app_configured(session)
@@ -324,7 +324,7 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     policy_hash = body.policy_hash()
     reach_days = await _history_reach_days(request)
 
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         active = await active_policy_row(session, body.media_type)
         has_requests_app = await _requests_app_configured(session)
         settings = await active_profile_settings(session)
@@ -426,7 +426,7 @@ async def validate_policy(request: Request, payload: PolicyValidateIn) -> Policy
     outside the policy (a "requested only" scope with no Seerr to read), and a policy
     cannot see that from its own fields.
     """
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         has_requests_app = await _requests_app_configured(session)
         settings = await active_profile_settings(session)
     if payload.draft_max_unmeasured_per_run is not None:

@@ -26,13 +26,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from reaper.api import tags as api_tags
+from reaper.api.deps import newest_snapshot, session_factory
 from reaper.api.policy import _candidate_media_type, _to_body
 from reaper.api.review import (
     _decode_explanation,
     _entries,
-    _latest_snapshot,
     _replayed_evidence,
-    _sessions,
 )
 from reaper.api.schemas import (
     GateCountOut,
@@ -542,8 +541,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     body = _to_body(payload)
     target = _candidate_media_type(body.media_type)
 
-    async with _sessions(request)() as session:
-        snapshot = await _latest_snapshot(session)
+    async with session_factory(request)() as session:
+        snapshot = await newest_snapshot(session)
         if snapshot is None:
             raise HTTPException(404, "No scan has run yet, so there is nothing to simulate.")
 

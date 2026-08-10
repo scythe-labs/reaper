@@ -31,7 +31,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import launcher
 from reaper.api import tags as api_tags
@@ -42,6 +42,7 @@ from reaper.api.auth import (
     _verify_admin_password,
     record_password_failure,
 )
+from reaper.api.deps import runtime_settings, secret_box, session_factory
 from reaper.api.schemas import JobRunOut, OkOut, RemovedOut
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
@@ -54,7 +55,6 @@ from reaper.buildinfo import env_flag
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.config import RuntimeSafety, Settings
-from reaper.crypto import SecretBox
 from reaper.db.models import AppSetting, InstanceKind, PlexServer
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import (
@@ -79,21 +79,6 @@ from reaper.services.scheduler import (
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/settings")
-
-
-def _factory(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
-
-
-def _settings(request: Request) -> Settings:
-    settings: Settings = request.app.state.settings
-    return settings
-
-
-def _box(request: Request) -> SecretBox:
-    box: SecretBox = request.app.state.secret_box
-    return box
 
 
 def _kind(value: str) -> InstanceKind:
@@ -439,7 +424,7 @@ def _sample_embed() -> Embed:
 
 @router.get("/instances", tags=[api_tags.SERVICES])
 async def list_instances(request: Request) -> list[InstanceOut]:
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         return [InstanceOut.of(v) for v in await instances.list_instances(session)]
 
 
@@ -447,11 +432,11 @@ async def list_instances(request: Request) -> list[InstanceOut]:
 async def create_instance(request: Request, payload: InstanceCreateIn) -> InstanceOut:
     _require_web_url(payload.base_url, refusal=_BASE_URL_REFUSAL)
     _validate_external_url(payload.external_url)
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
             view = await instances.create_instance(
                 session,
-                _box(request),
+                secret_box(request),
                 kind=_kind(payload.kind),
                 name=payload.name,
                 base_url=payload.base_url,
@@ -474,11 +459,11 @@ async def update_instance(
 ) -> InstanceOut:
     _require_web_url(payload.base_url, refusal=_BASE_URL_REFUSAL)
     _validate_external_url(payload.external_url)
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
             view = await instances.update_instance(
                 session,
-                _box(request),
+                secret_box(request),
                 instance_id,
                 name=payload.name,
                 base_url=payload.base_url,
@@ -498,7 +483,7 @@ async def update_instance(
 
 @router.delete("/instances/{instance_id}", tags=[api_tags.SERVICES])
 async def delete_instance(request: Request, instance_id: int) -> RemovedOut:
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         removed = await instances.delete_instance(session, instance_id)
         await session.commit()
     return RemovedOut(removed=removed)
@@ -517,14 +502,14 @@ async def _plex_section_paths(request: Request) -> dict[str, list[str]]:
     second copy would be two suggestion sources for one control (rule 144).
     """
     section_paths: dict[str, list[str]] = {}
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         server = (await session.execute(select(PlexServer))).scalars().first()
-        safety = await app_settings.runtime_safety(session, _settings(request))
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
     if server is None or not server.connection_uri:
         return section_paths
     plex = PlexClient(
         server.connection_uri,
-        _box(request).decrypt(server.token_enc),
+        secret_box(request).decrypt(server.token_enc),
         safety=safety,
         verify=server.verify_tls,
     )
@@ -575,7 +560,7 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> Instan
                 RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in found
             ]
         elif kind is InstanceKind.SEERR:
-            async with _factory(request)() as session:
+            async with session_factory(request)() as session:
                 arr_rows = await instances.arr_rows(session)
             services = await instances.probe_seerr_services(
                 payload.base_url, payload.api_key, verify=payload.verify_tls, arr_rows=arr_rows
@@ -602,9 +587,9 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> Instan
 @router.post("/instances/{instance_id}/test", tags=[api_tags.SERVICES])
 async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
     """Test a stored instance and record the outcome on it."""
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
-            result = await instances.test_saved_instance(session, _box(request), instance_id)
+            result = await instances.test_saved_instance(session, secret_box(request), instance_id)
         except instances.InstanceError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
         await session.commit()
@@ -624,10 +609,10 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
     # folder cannot be suggested differently depending on which screen asked (rule 144).
     section_paths = await _plex_section_paths(request)
 
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
             folders = await instances.instance_root_folders(
-                session, _box(request), instance_id, section_paths=section_paths
+                session, secret_box(request), instance_id, section_paths=section_paths
             )
         except instances.InstanceError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
@@ -645,9 +630,9 @@ async def instance_seerr_services(request: Request, instance_id: int) -> list[Se
     reached (or its key is not admin, so settings are refused), so the modal can say so rather
     than show an empty list as if the portal had no services.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
-            services = await instances.seerr_services(session, _box(request), instance_id)
+            services = await instances.seerr_services(session, secret_box(request), instance_id)
         except instances.InstanceError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
         except IntegrationError as exc:
@@ -687,8 +672,8 @@ async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> Leavin
 
 @router.get("/leaving-soon", tags=[api_tags.JOBS])
 async def get_leaving_soon_settings(request: Request) -> LeavingSoonSettingsOut:
-    async with _factory(request)() as session:
-        return await _leaving_soon_out(session, _settings(request))
+    async with session_factory(request)() as session:
+        return await _leaving_soon_out(session, runtime_settings(request))
 
 
 @router.put("/leaving-soon", tags=[api_tags.JOBS])
@@ -701,7 +686,7 @@ async def set_leaving_soon_settings(
     Turning the shelf OFF runs one last pass that takes everything off it (when Reaper
     is allowed to write), so nothing stale lingers in the library.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         was_enabled = await app_settings.leaving_soon_enabled(session)
         if payload.enabled is not None:
             await app_settings.set_leaving_soon_enabled(session, enabled=payload.enabled)
@@ -712,10 +697,12 @@ async def set_leaving_soon_settings(
     if was_enabled and payload.enabled is False:
         # Best-effort: takes everything off the shelves so nothing stale lingers.
         # Failure is logged inside, never raised -- turning a warning off must succeed.
-        await leaving_soon.cleanup_shelves(_factory(request), _settings(request), _box(request))
+        await leaving_soon.cleanup_shelves(
+            session_factory(request), runtime_settings(request), secret_box(request)
+        )
 
-    async with _factory(request)() as session:
-        result = await _leaving_soon_out(session, _settings(request))
+    async with session_factory(request)() as session:
+        result = await _leaving_soon_out(session, runtime_settings(request))
     log.info(
         "leaving_soon.settings_saved",
         enabled=payload.enabled,
@@ -739,7 +726,7 @@ async def get_schedule(request: Request) -> ScheduleOut:
     """
     scheduler = request.app.state.scheduler
     running: set[str] = getattr(request.app.state, "running_jobs", set())
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         scan_cron = await app_settings.get_scan_schedule(session)
         maintenance = await app_settings.get_maintenance_schedules(session)
         last_runs = await app_settings.get_job_last_runs(session)
@@ -780,24 +767,24 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
     cron = (payload.cron or "").strip() or None
     scheduler = request.app.state.scheduler
     # Read the cron in the current server zone, so a job set for 2 AM fires at 2 AM there.
-    async with _factory(request)() as session:
-        job_tz = ZoneInfo(await app_settings.get_timezone(session, _settings(request)))
+    async with session_factory(request)() as session:
+        job_tz = ZoneInfo(await app_settings.get_timezone(session, runtime_settings(request)))
     if job_id == SCAN_JOB_ID:
         try:
             apply_scan_schedule(
                 scheduler,
                 cron,
-                settings=_settings(request),
-                session_factory=_factory(request),
+                settings=runtime_settings(request),
+                session_factory=session_factory(request),
                 cache_engine=request.app.state.cache_engine,
-                secret_box=_box(request),
+                secret_box=secret_box(request),
                 timezone=job_tz,
             )
         except ValueError as exc:
             raise HTTPException(
                 422, f"That is not a valid schedule: {exc}. Use cron form, e.g. '30 4 * * *'."
             ) from exc
-        async with _factory(request)() as session:
+        async with session_factory(request)() as session:
             await app_settings.set_scan_schedule(session, cron)
             await session.commit()
     elif job_id in MAINTENANCE_JOB_IDS:
@@ -807,10 +794,10 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 job_id,
                 cron,
                 cache_engine=request.app.state.cache_engine,
-                data_dir=_settings(request).data_dir,
-                session_factory=_factory(request),
-                secret_box=_box(request),
-                settings=_settings(request),
+                data_dir=runtime_settings(request).data_dir,
+                session_factory=session_factory(request),
+                secret_box=secret_box(request),
+                settings=runtime_settings(request),
                 update_checker=request.app.state.update_checker,
                 timezone=job_tz,
             )
@@ -818,7 +805,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
             raise HTTPException(
                 422, f"That is not a valid schedule: {exc}. Use cron form, e.g. '30 4 * * *'."
             ) from exc
-        async with _factory(request)() as session:
+        async with session_factory(request)() as session:
             await app_settings.set_maintenance_schedule(session, job_id, cron)
             await session.commit()
     else:
@@ -845,10 +832,10 @@ async def run_job(request: Request, job_id: str) -> JobRunOut:
         request.app.state.scheduler,
         job_id,
         cache_engine=request.app.state.cache_engine,
-        data_dir=_settings(request).data_dir,
-        session_factory=_factory(request),
-        secret_box=_box(request),
-        settings=_settings(request),
+        data_dir=runtime_settings(request).data_dir,
+        session_factory=session_factory(request),
+        secret_box=secret_box(request),
+        settings=runtime_settings(request),
         update_checker=request.app.state.update_checker,
     )
     log.info("jobs.run_now", job=job_id)
@@ -871,8 +858,8 @@ async def _safety_out(session: AsyncSession, safety: RuntimeSafety) -> SafetyOut
 
 @router.get("/safety", tags=[api_tags.SECURITY])
 async def get_safety(request: Request) -> SafetyOut:
-    async with _factory(request)() as session:
-        safety = await app_settings.runtime_safety(session, _settings(request))
+    async with session_factory(request)() as session:
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
         return await _safety_out(session, safety)
 
 
@@ -890,14 +877,14 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     surface too, and Argon2 is expensive by design.
     """
     keys = (f"ip:{_client_ip(request)}", "account:safety-arm")
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         if payload.enabled:
             # Refused before the password is even looked at, because no password makes this
             # allowed: `RuntimeSafety.destructive_allowed` holds deletion off for the whole
             # life of a recovery-mode process, so accepting the flip would write a stored
             # `true` the app then ignores and the banner contradicts. Answering here is what
             # keeps the switch and the state one thing.
-            if _settings(request).recovery:
+            if runtime_settings(request).recovery:
                 raise HTTPException(
                     409,
                     "Recovery mode is on, so deletion stays off. Turn it off and restart first.",
@@ -916,7 +903,7 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
                 password_throttle.record_success(key)
         await app_settings.set_destructive_enabled(session, enabled=payload.enabled)
         await session.commit()
-        safety = await app_settings.runtime_safety(session, _settings(request))
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
         result = await _safety_out(session, safety)
     log.info("safety.destructive_set", enabled=payload.enabled)
     return result
@@ -942,7 +929,7 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
     password like any other, and the mark cannot outlive the reset it was for.
     """
     keys = (f"ip:{_client_ip(request)}", "account:admin-password")
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         # Preserve the caller's own cookie so changing your password does not log you out
         # of the tab you are using; every *other* session for that admin is still revoked.
         # It has to be the token that actually RESOLVES: with two cookie names in play, a
@@ -988,8 +975,10 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
 async def get_notifications(request: Request) -> NotificationsOut:
     """Whether a Discord webhook is configured. The URL is write-only -- like an API key,
     only its presence is ever reported, never the value."""
-    async with _factory(request)() as session:
-        has = await app_settings.has_discord_webhook(session, _box(request), _settings(request))
+    async with session_factory(request)() as session:
+        has = await app_settings.has_discord_webhook(
+            session, secret_box(request), runtime_settings(request)
+        )
     return NotificationsOut(has_webhook=has)
 
 
@@ -998,8 +987,8 @@ async def set_notifications(request: Request, payload: NotificationsIn) -> Notif
     """Store (or replace) the Discord webhook. The URL is validated to a Discord https host
     and encrypted at rest; it is never read back to the browser."""
     url = _validated_discord_webhook(payload.webhook_url)
-    async with _factory(request)() as session:
-        await app_settings.set_discord_webhook(session, _box(request), url)
+    async with session_factory(request)() as session:
+        await app_settings.set_discord_webhook(session, secret_box(request), url)
         await session.commit()
     log.info("notifications.webhook_set")
     return NotificationsOut(has_webhook=True)
@@ -1008,7 +997,7 @@ async def set_notifications(request: Request, payload: NotificationsIn) -> Notif
 @router.delete("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def clear_notifications(request: Request) -> NotificationsOut:
     """Forget the webhook -- Leaving Soon warnings go silent until one is set again."""
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         await app_settings.clear_discord_webhook(session)
         await session.commit()
     log.info("notifications.webhook_cleared")
@@ -1028,8 +1017,8 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
             _validated_discord_webhook(payload.webhook_url)
         )
     else:
-        async with _factory(request)() as session:
-            notifier = await build_notifier(session, _box(request), _settings(request))
+        async with session_factory(request)() as session:
+            notifier = await build_notifier(session, secret_box(request), runtime_settings(request))
         if notifier is None:
             return TestOut(ok=False, detail="No Discord webhook is configured to test.")
 
@@ -1158,7 +1147,7 @@ async def _refresh_proxy_state(request: Request, session: AsyncSession) -> None:
     makes a General save take effect immediately. Disabled means an empty tuple:
     forwarded headers from anywhere are ignored, exactly like a fresh install.
     """
-    settings = _settings(request)
+    settings = runtime_settings(request)
     if await app_settings.proxy_trust_enabled(session, settings):
         entries = await app_settings.get_trusted_proxies(session, settings)
         request.app.state.trusted_proxies = parse_proxy_networks(entries)
@@ -1176,18 +1165,18 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
     scheduler = getattr(request.app.state, "scheduler", None)
     if scheduler is None:
         return
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         scan_cron = await app_settings.get_scan_schedule(session)
         maintenance = await app_settings.get_maintenance_schedules(session)
     apply_stored_schedules(
         scheduler,
         ZoneInfo(name),
-        settings=_settings(request),
-        session_factory=_factory(request),
+        settings=runtime_settings(request),
+        session_factory=session_factory(request),
         cache_engine=request.app.state.cache_engine,
-        secret_box=_box(request),
+        secret_box=secret_box(request),
         update_checker=request.app.state.update_checker,
-        data_dir=_settings(request).data_dir,
+        data_dir=runtime_settings(request).data_dir,
         scan_cron=scan_cron,
         maintenance=maintenance,
     )
@@ -1195,8 +1184,8 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
 
 @router.get("/general", tags=[api_tags.GENERAL])
 async def get_general(request: Request) -> GeneralSettingsOut:
-    async with _factory(request)() as session:
-        return await _general_out(session, _settings(request))
+    async with session_factory(request)() as session:
+        return await _general_out(session, runtime_settings(request))
 
 
 @router.put("/general", tags=[api_tags.GENERAL])
@@ -1207,7 +1196,7 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
     every trusted-proxy entry must parse as an address or a range -- refused with a
     plain message otherwise, and nothing is changed.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         if payload.application_url is not None:
             _require_web_url(
                 payload.application_url,
@@ -1278,7 +1267,7 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
             if payload.dock_icon is not None:
                 desktop_values[launcher.DESKTOP_DOCK_KEY] = "true" if payload.dock_icon else "false"
             try:
-                launcher.write_conf_values(_settings(request).data_dir, desktop_values)
+                launcher.write_conf_values(runtime_settings(request).data_dir, desktop_values)
             except OSError:
                 raise HTTPException(
                     500, "Reaper couldn't save this to launcher.conf in its data folder."
@@ -1292,7 +1281,7 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
         await _refresh_proxy_state(request, session)
         if cleaned_timezone is not None:
             await _apply_timezone_to_scheduler(request, cleaned_timezone)
-        result = await _general_out(session, _settings(request))
+        result = await _general_out(session, runtime_settings(request))
     log.info("settings.general_saved")
     return result
 
@@ -1301,8 +1290,8 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
 async def reveal_api_key(request: Request) -> ApiKeyOut:
     """The stored key, for the Show button. Session-only: the middleware fences this
     route away from API-key auth, so a key cannot read or manage itself."""
-    async with _factory(request)() as session:
-        key = await app_settings.get_api_key(session, _box(request))
+    async with session_factory(request)() as session:
+        key = await app_settings.get_api_key(session, secret_box(request))
     if key is None:
         raise HTTPException(404, "No API key exists yet. Generate one first.")
     return ApiKeyOut(key=key)
@@ -1315,8 +1304,8 @@ async def generate_api_key(request: Request) -> ApiKeyOut:
     header-credential lane, though: there is always a working key afterwards. Turning the
     lane off is what ``DELETE`` below is for."""
     key = secrets.token_urlsafe(32)
-    async with _factory(request)() as session:
-        await app_settings.set_api_key(session, _box(request), key)
+    async with session_factory(request)() as session:
+        await app_settings.set_api_key(session, secret_box(request), key)
         await session.commit()
     request.app.state.api_key_digest = hashlib.sha256(key.encode("utf-8")).digest()
     log.info("settings.api_key_rotated")
@@ -1335,7 +1324,7 @@ async def remove_api_key(request: Request) -> RemovedOut:
     Session-only, like every write here: the middleware is deny-by-default for anything
     that is not a safe method, so a key cannot delete itself or anyone else's.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         await app_settings.clear_api_key(session)
         await session.commit()
     request.app.state.api_key_digest = None

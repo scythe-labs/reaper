@@ -15,18 +15,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
+from reaper.api.deps import session_factory
 from reaper.db.models import AppUser, Instance, InstanceKind, PlexServer, Snapshot
 from reaper.services import admin_password
 
 router = APIRouter(prefix="/api/setup", tags=[api_tags.SETUP])
-
-
-def _factory(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
 
 
 class SetupStatus(BaseModel):
@@ -110,7 +106,7 @@ async def _counts(session: AsyncSession) -> dict[str, int]:
 
 @router.get("/status")
 async def setup_status(request: Request) -> SetupStatus:
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         admins = int(
             (await session.execute(select(func.count()).select_from(AppUser))).scalar_one()
         )
