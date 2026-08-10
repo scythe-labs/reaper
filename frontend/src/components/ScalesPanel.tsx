@@ -9,14 +9,12 @@
 // its real card in Review, exactly like the old reclaimable chips did.
 
 import { useId, useState } from "react";
-import { useSlowWait } from "../announce";
 import type { PersonDetail, PersonTitle, QuotaLine, Verdict } from "../api";
 import { bytes, carriesYear, count, date, itemBytes, titleWithYear } from "../format";
 import { PosterFallback } from "./PosterFallback";
 import { UnmatchedList } from "./UnmatchedList";
 import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
-import { WhyShell } from "./WhyShell";
-import { Notice } from "./Notice";
+import { PanelFallback, WhyShell } from "./WhyShell";
 
 function initial(name: string): string {
   const c = name.trim()[0];
@@ -404,36 +402,17 @@ export function ScalesPanel({
 }
 
 /** What the panel's column shows while the breakdown is loading, or when it could not be
- *  loaded. The column is reserved the moment a person is picked, so a blank would read as a
- *  hang; and it keeps its own close, or a failed fetch would strand the reader in split view.
- *  Mirrors the why-panel's fallback. */
+ *  loaded. `PanelFallback` in `WhyShell.tsx` is the whole of it; this names the three strings,
+ *  and `WhyPanelFallback` is its twin. The loading lead carries the panel's name, because that
+ *  branch has no heading: "Gathering their requests…" is what is true at that moment. */
 export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
-  const headingId = useId();
-  // Null on the failure arm, which reaches `Notice`'s `role="alert"` and speaks for itself.
-  // Mirrors `WhyPanelFallback` (rule 72).
-  useSlowWait(error ? null : "Still gathering this person's requests.");
   return (
-    <WhyShell headingId={headingId} onClose={onClose}>
-      {error ? (
-        <>
-          <div className="why-head">
-            <h2 id={headingId}>Something went wrong</h2>
-          </div>
-          <Notice tone="error">
-            Couldn't load this person's requests. Close this panel and click the card to try again.
-          </Notice>
-        </>
-      ) : (
-        // Live region dropped, sentence moved to `announce.tsx` (#332), as in `WhyPanelFallback`.
-        <div className="why-loading">
-          <span className="spinner spinner-lg" aria-hidden="true" />
-          {/* The loading branch has no heading to point at, so the lead carries the name. A
-              panel named "Gathering their requests…" is what is true at that moment. */}
-          <p className="why-loading-lead" id={headingId}>
-            Gathering their requests…
-          </p>
-        </div>
-      )}
-    </WhyShell>
+    <PanelFallback
+      error={error}
+      onClose={onClose}
+      waiting="Still gathering this person's requests."
+      loading="Gathering their requests…"
+      failure="Couldn't load this person's requests. Close this panel and click the card to try again."
+    />
   );
 }

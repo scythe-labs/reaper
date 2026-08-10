@@ -26,6 +26,7 @@ import {
   type RootFolder,
   type SeerrService,
 } from "../api";
+import { useBackCloseMirror } from "../backnav";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
@@ -655,18 +656,15 @@ export function ServiceModal({
    *
    *  Cancel is deliberately NOT gated on this: it is the deliberate way out, it saves nothing,
    *  and a guard whose only exit is the destructive button is a trap rather than a guard
-   *  (rule 146). What this refuses is the ACCIDENTAL dismissals -- scrim, Escape, ✕, Back. */
+   *  (rule 146). What this refuses is the ACCIDENTAL dismissals -- scrim, Escape, ✕, Back.
+   *
+   *  It is a mute gate, so the notice at the top of the form states the reason and Cancel stays
+   *  live as the way out. "ONCE" above was a claim and not a fact until now: the shell below was
+   *  handed a second spelling of this expression rather than this value (rule 7/24). */
   const canClose = !save.isPending && mapSatisfied;
 
-  // Mirror it up to ServicesPanel's Back guard, so browser Back honors the same predicate the
-  // scrim, Escape and the ✕ do rather than a stale copy of one of its reasons (rule 80), and
-  // clear it on unmount so a stale true never lingers after the modal closes (B-11, B-19).
-  useEffect(() => {
-    if (blockCloseRef) blockCloseRef.current = !canClose;
-    return () => {
-      if (blockCloseRef) blockCloseRef.current = false;
-    };
-  }, [canClose, blockCloseRef]);
+  // Up to ServicesPanel's Back guard, whole rather than by term (rule 80, B-11, B-19).
+  useBackCloseMirror(blockCloseRef, canClose);
 
   const ready =
     name.trim() !== "" &&
@@ -738,17 +736,9 @@ export function ServiceModal({
         </>
       }
       onClose={onClose}
-      // A close mid-save unmounts the only place the failure is ever shown: the scrim swallows
-      // a 409 "a service with that name already exists", `invalidate()` never runs, and the
-      // operator walks away believing the change saved (B-19).
-      //
-      // A dismissal is also refused while the form holds folders that were read but never
-      // mapped: an operator who lands here has a reachable service and the one screen that can
-      // tell its HD copy from its 4K one, and brushing the scrim would drop that silently. It
-      // refuses the scrim, Escape and the ✕ only -- `canClose` is a mute gate, so the notice at
-      // the top of the form states the reason and Cancel below stays live as the way out. A
-      // guard whose only exit is the destructive button is a trap, not a guard (rule 146).
-      canClose={!save.isPending && mapSatisfied}
+      // The two reasons a dismissal is refused, and why Cancel is not one of them, are at
+      // `canClose`'s declaration above.
+      canClose={canClose}
       className="service-modal"
     >
       <form

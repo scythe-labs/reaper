@@ -411,3 +411,98 @@ describe("one list, one keep rule", () => {
     expect(await screen.findByText(/You have no lists yet/)).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// The three field types that convert on the way in and back out.
+// ---------------------------------------------------------------------------
+
+/** The converting types as `engine/fields.py` serves them, one real field each.
+ *
+ *  `count` and `text` store what was typed and are driven above; these three do not. A size is
+ *  typed in GB and stored in bytes, a rating is typed as 7.5 and stored as 75, and days are
+ *  typed and stored alike but reach `coerceValue` through its fall-through arm rather than a
+ *  branch of their own. Nothing pinned any of the three, in either direction.
+ *
+ *  What that costs is a policy field off by a factor. A size rule that stored the typed 50
+ *  instead of 50 GB is a floor every title in the library clears, so a keep rule meant for the
+ *  big files keeps everything and a remove rule meant for them flags everything. The wrong
+ *  number is in the body the server stores, where nothing downstream can tell it from one the
+ *  operator meant. */
+const SIZE: VocabField = {
+  key: "size_bytes",
+  label: "Size on disk",
+  help_text: "",
+  type: "bytes",
+  unit_suffix: "GB",
+  ops: ["gte", "lte"],
+};
+
+const RATING: VocabField = {
+  key: "imdb_rating",
+  label: "IMDb rating",
+  help_text: "",
+  type: "rating_tenths",
+  unit_suffix: "/10",
+  ops: ["gte", "lte"],
+};
+
+const DORMANCY: VocabField = {
+  key: "days_unwatched",
+  label: "Days since anyone watched it",
+  help_text: "",
+  type: "days",
+  unit_suffix: "days",
+  ops: ["gte", "lte"],
+};
+
+/** Typed, stored, read back. `reads` is what the composed sentence must say: the number the
+ *  operator typed, with its unit. A stored value rendering as anything else means one of the
+ *  two directions is wrong, and only one of them writes the policy. */
+const CONVERSIONS = [
+  { field: SIZE, typed: "50", stored: 50_000_000_000, reads: "50 GB" },
+  { field: RATING, typed: "7.5", stored: 75, reads: "7.5 /10" },
+  { field: DORMANCY, typed: "180", stored: 180, reads: "180 days" },
+];
+
+describe("a rule on a field whose stored units are not its typed ones", () => {
+  beforeEach(() => {
+    apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [SIZE, RATING, DORMANCY] });
+  });
+
+  it.each(CONVERSIONS)(
+    "stores a $field.key rule in the units the wire expects",
+    async ({ field, typed, stored }) => {
+      const { onConditions, user } = renderKeepEditor();
+
+      // Rule 137: the picker's name holds still while the vocabulary loads, so it cannot gate
+      // itself and `selectOptions` against the empty list is a silent no-op.
+      const picker = screen.getByRole("combobox", { name: "Field" });
+      await waitFor(() =>
+        expect(screen.getByRole("option", { name: field.label })).toBeInTheDocument(),
+      );
+      await user.selectOptions(picker, field.key);
+
+      const box = await screen.findByRole("spinbutton", { name: `${field.label} value` });
+      await user.type(box, typed);
+
+      // Add gates itself on the value, so it is actable only once the typing has landed in
+      // state -- rule 137 again, at the control that emits the rule.
+      const add = screen.getByRole("button", { name: "Add rule" });
+      await waitFor(() => expect(add).toBeEnabled());
+      await user.click(add);
+
+      expect(onConditions).toHaveBeenCalledWith([{ field: field.key, op: "gte", value: stored }]);
+    },
+  );
+
+  it.each(CONVERSIONS)(
+    "reads a stored $field.key rule back as the number that was typed",
+    async ({ field, stored, reads }) => {
+      renderKeepEditor({ conditions: [{ field: field.key, op: "gte", value: stored }] });
+
+      expect(
+        await screen.findByText(`Keep it when ${field.label} is at least ${reads}`),
+      ).toBeInTheDocument();
+    },
+  );
+});

@@ -3,7 +3,9 @@
 // The one `.why` panel. Six surfaces render this shell -- the movie/season why panel, the show
 // panel, the Scales person panel, the not-in-scan panel, and the loading/error fallbacks of the
 // first and third -- and it owns what all six owe a keyboard operator, written once so a
-// seventh cannot ship without it.
+// seventh cannot ship without it. Those last two are `PanelFallback` at the foot of this file,
+// one component the two panels hand three strings; they were a copy of each other, down to a
+// comment saying so.
 //
 // It is a dialog wherever it covers the list and a side panel where it does not, and that is not
 // a detail: styles/10-layout.css makes `main.split .why` a right-hand sheet floated over the cards at 1100px
@@ -27,11 +29,13 @@
 // Scales panel sitting in its loading or error state could not be dismissed from the keyboard
 // at all. Owning it here is what makes that unfixable-again (rule 72).
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { useModalOpen } from "../backnav";
+import { useSlowWait } from "../announce";
 import { useDialogFocus } from "../focus";
 import { PANEL_OVERLAY_QUERY, useMediaQuery } from "../useMediaQuery";
 import { trapTab } from "./ModalShell";
+import { Notice } from "./Notice";
 
 /** Every `.why` panel's close: a media-sheet disc floated over the hero art (see .why-close),
  *  never a boxed glyph in the title row, where it read as a stray form control. A stroked X to
@@ -142,5 +146,53 @@ export function WhyShell({
       <WhyClose onClose={onClose} />
       {children}
     </div>
+  );
+}
+
+/** What a panel's column shows while its read is in flight, or once it has failed. The column is
+ *  reserved the moment the operator picks something, so leaving it blank reads as a hang, and it
+ *  keeps its own close, or a failed read strands them in split view.
+ *
+ *  `waiting` goes to `useSlowWait`; `loading` is the lead in the loading branch, which has no
+ *  heading of its own, so it carries the panel's name; `failure` is the error notice. */
+export function PanelFallback({
+  error,
+  onClose,
+  waiting,
+  loading,
+  failure,
+}: {
+  error: boolean;
+  onClose: () => void;
+  waiting: string;
+  loading: string;
+  failure: string;
+}) {
+  const headingId = useId();
+  // Above the branch, and null on the failure arm: that arm reaches `Notice`'s `role="alert"`,
+  // which speaks on its own, so a wait sentence arriving beside it would say two things about
+  // one state (rule 146 -- what this reports has to be re-read in every state it renders).
+  useSlowWait(error ? null : waiting);
+  return (
+    <WhyShell headingId={headingId} onClose={onClose}>
+      {error ? (
+        <>
+          <div className="why-head">
+            <h2 id={headingId}>Something went wrong</h2>
+          </div>
+          <Notice tone="error">{failure}</Notice>
+        </>
+      ) : (
+        // No live region here: it was mounted in the same commit as its text, which is the shape
+        // several readers never announce (#332). The sentence goes through the shared region in
+        // `announce.tsx`, once the wait has run long.
+        <div className="why-loading">
+          <span className="spinner spinner-lg" aria-hidden="true" />
+          <p className="why-loading-lead" id={headingId}>
+            {loading}
+          </p>
+        </div>
+      )}
+    </WhyShell>
   );
 }

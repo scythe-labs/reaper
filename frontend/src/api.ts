@@ -567,12 +567,24 @@ export interface SeasonShape {
   season_counts: Record<number, number>;
 }
 
+/** What a vocabulary field's value IS, which is what decides how it is typed, stored and read
+ *  back (`engine/fields.py`'s `FieldType`). Three of the six convert: a size is typed in GB and
+ *  stored in bytes, a rating is typed as 7.5 and stored as 75, and days pass through.
+ *
+ *  It was a bare `string` here, so a member added on the server was a value the browser had no
+ *  name for and no way to notice. `test_api_type_mirror.py` is what notices now, and its failure
+ *  names the four ladders in `PolicyRuleEditors.tsx` that dispatch on this: `rampDefaults`,
+ *  `rampValue`, `coerceValue` and `describeCondition`, plus the ramp's own component pick. None
+ *  of them is exhaustive, so a member none of them handles takes a fall-through arm rather than
+ *  failing (rule 144: the union being correct vouches for nothing about them). */
+export type FieldType = "days" | "bytes" | "count" | "rating_tenths" | "bool" | "text";
+
 /** One field the owner may write a protect condition about (from the vocabulary endpoint). */
 export interface VocabField {
   key: string;
   label: string;
   help_text: string;
-  type: string;
+  type: FieldType;
   unit_suffix: string;
   ops: string[];
 }
