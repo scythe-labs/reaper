@@ -125,16 +125,35 @@ class SeasonPolicy:
     """The nine ``PolicyBody`` fields a season plan reads, and nothing else.
 
     A carrier, so the scan and the simulator hand :func:`plan_from_frozen` the same shape.
-    The scan builds one from the values ``services.snapshot.scan`` already unpacks off the
-    stored body; the simulator builds one straight off the draft with :meth:`from_body`.
+    Both build one with :meth:`from_body`: the scan off the stored body in
+    ``services.snapshot.scan``, the simulator off the draft.
 
-    **Two roads from one ``PolicyBody`` to these nine values, which is rule 144's shape** --
-    a field added to the season card has to reach both, and the one written second is the
-    one that reads correct while being incomplete. The guard is not a field-name check but
-    ``tests/test_scan_pipeline.py``'s exactness test: it drives a real scan under a body with
-    every one of these set away from its default, then replays the frozen bundle under that
-    same body and demands the scan's own verdicts back. A value that reaches one road and
-    not the other cannot survive that, whichever road drops it.
+    **One road from a ``PolicyBody`` to these nine values, so a field added to the season
+    card is written onto it once.** There were two until the second was removed: the scan
+    unpacked the body into nine keywords on ``season_scan.gather``, which repacked them into
+    this class, and a field that reached one road and not the other read correct while being
+    incomplete (rule 144). Adding a field here now means adding it to :meth:`from_body`, and
+    the scan and the replay both get it or neither does.
+
+    The value-level guard is ``tests/test_scan_pipeline.py``'s exactness test, which proves
+    the road carries the operator's numbers and not merely the field names. **Its
+    discriminating assertion is the scan-against-scan one**, ``scanned_before !=
+    scanned_after``, and that changed when the second road went: with the scan and the replay
+    both reading this class, a value dropped here is dropped identically on both sides, so
+    the replay still reproduces the scan and ``replayed == scanned_after`` stays green. What
+    reds is the first scan and the edited scan agreeing when the edit should have moved them.
+    That assertion's message reads like a precondition and is now the guard, so do not delete
+    it as a sanity check.
+
+    No field declares a default, and that is the safety property rather than a style choice.
+    Seven of the nine defaulted on ``gather`` before it took this carrier. Five of those
+    seven were the *protective* pole, so what an omission cost was the operator's edit being
+    overridden in the keeping direction, which is rule 141's reading of a fixture that cannot
+    tell a passed value from a defaulted one; ``season_lookahead`` at 0 and
+    ``in_progress_hold_days`` at 180 are the two that could widen. Here an omission is a mypy
+    error and a ``TypeError``, and ``tests/test_season_evidence_codec.py``'s
+    ``TestNoSeasonSettingCanBeOmitted`` is what fails when a default is added back, since
+    both build sites pass all nine and neither would notice.
     """
 
     keep_last_seasons: int

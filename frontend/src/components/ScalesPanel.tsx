@@ -12,6 +12,7 @@ import { useId, useState } from "react";
 import { useSlowWait } from "../announce";
 import type { PersonDetail, PersonTitle, QuotaLine, Verdict } from "../api";
 import { bytes, carriesYear, count, date, itemBytes, titleWithYear } from "../format";
+import { PosterFallback } from "./PosterFallback";
 import { UnmatchedList } from "./UnmatchedList";
 import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
 import { WhyShell } from "./WhyShell";
@@ -20,20 +21,6 @@ import { Notice } from "./Notice";
 function initial(name: string): string {
   const c = name.trim()[0];
   return c ? c.toUpperCase() : "?";
-}
-
-/** The film-strip mark a title falls back to when it has no poster, or the image fails. */
-export function PosterFallback() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
-      <path d="M4 5h16v14H4z" stroke="currentColor" strokeWidth="1.6" />
-      <path
-        d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4"
-        stroke="currentColor"
-        strokeWidth="1.2"
-      />
-    </svg>
-  );
 }
 
 /** The title's poster, proxied from Plex through /api/poster, with the film-strip mark as a

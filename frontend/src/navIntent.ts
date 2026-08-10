@@ -55,11 +55,22 @@ export type NavIntent =
   | { view: "fairness" }
   | { view: "settings"; panel?: Panel };
 
-/** A one-shot instruction to a mounted view, and the shape all three of them take.
+/** A one-shot instruction to a mounted view: what the app is currently aimed at, and which view
+ *  the aim is for.
  *
  *  A destination is not a prop a view can just read: `App` holds it until the view is mounted
  *  and the view acts on it once, so revisiting that page later never replays the jump that got
- *  you there the first time. The nonce is what "once" is counted with -- the view remembers the
- *  last one it handled. `T` is whatever that view is aimed with (a policy section, a settings
- *  panel, a search term). */
-export type Focus<T> = T & { nonce: number };
+ *  you there the first time. The nonce is what "once" is counted with, and the view remembers
+ *  the last one it handled.
+ *
+ *  **One value, keyed on `view`, and that is what makes the clearing structural.** `App` used
+ *  to hold three of these in parallel, one per aimable view, and an aim then had to be dropped
+ *  by name on the way off screen. Both incidents in `App`'s own clearing effect are that list
+ *  going stale. A focus that names its view cannot be read by another view, and it outlives its
+ *  own by exactly the commit that changes `view`. The drop runs in an effect, so `App` reads
+ *  every aim through a check on the name rather than trusting the state to be clean. A fourth
+ *  destination is a member here and nothing else. */
+export type Focus =
+  | { view: "review"; search: string; nonce: number }
+  | { view: "policy"; section: PolicySectionId; nonce: number }
+  | { view: "settings"; panel: Panel; nonce: number };

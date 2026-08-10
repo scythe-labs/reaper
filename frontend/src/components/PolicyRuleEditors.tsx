@@ -20,7 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import { announce } from "../announce";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { api, type Condition, type CustomCondemn, type GradedKeep, type VocabField } from "../api";
-import { FIELD_TO_GATE, FIELD_TO_SIGNAL, humanDays, OP_LABELS } from "./PolicyEditor";
+import { humanDays } from "../format";
 import { usePopoverShift } from "./popoverFit";
 import {
   FixedQuantity,
@@ -44,6 +44,39 @@ const RAMP_PHRASES: Record<string, string> = {
 
 /** The sentinel option value for a ramp phrase in the condition dropdown. */
 const RAMP_OP = "__ramp__";
+
+/** How each comparison reads in a rule sentence. */
+const OP_LABELS: Record<string, string> = {
+  gte: "is at least",
+  lte: "is at most",
+  eq: "is",
+  in: "is one of",
+  contains: "contains",
+};
+
+// A vocabulary field already handled by a built-in protection -> not offered as a custom rule,
+// so the two never say the same thing twice. Only fields with no built-in gate (size, all-time
+// watchers, vote count, season rank) remain to be authored here.
+const FIELD_TO_GATE: Record<string, string> = {
+  days_unwatched: "min_dormancy",
+  recent_watchers: "server_popularity",
+  imdb_rating: "rating_floor",
+  streaming_now: "streaming_now",
+  // `whitelisted` and `on_curated_list` were here, mapped to the two list gates. Both gates
+  // are retired -- every list now protects through an `on_list` keep rule the operator
+  // authors -- so their fields stay authorable and nothing filters them.
+};
+
+// The built-in signals already cover these fields, so they are not offered as custom
+// "remove" rules -- the two never say the same thing twice. That leaves the new metadata
+// fields (genre, requested, quality, release age, show ended) to be authored here.
+const FIELD_TO_SIGNAL: Record<string, string> = {
+  days_unwatched: "unwatched",
+  recent_watchers: "few_watchers",
+  imdb_rating: "low_rating",
+  season_rank: "season_rank",
+  size_bytes: "size",
+};
 
 /** The backwards-ramp complaint, named once so the six boxes that can be wrong and the one
  *  sentence explaining it are the same string rather than seven that can drift (rule 67). */
