@@ -892,14 +892,14 @@ class TestSizeDriftReRead:
         assert sonarr.delete_calls == []
         assert report.skipped == 1
         outcome = report.outcomes[0]
+        # Verbatim, and it says nothing about a size, which is the whole of the fix.
         assert outcome.detail == (
-            "Sonarr no longer lists any file for season 3, so there is nothing to delete. Kept."
+            "Sonarr lists no files for season 3, so there is nothing to delete. Kept."
         )
-        # The same opening as the post-unmonitor skip's line, which
-        # ``TestASeasonWithNothingLeftToDelete`` pins verbatim: one fact, two moments in
-        # the sequence, so reword both or neither (rule 144).
+        # The post-unmonitor skip's line without its unmonitor clause, pinned verbatim
+        # there too (``TestASeasonWithNothingLeftToDelete``): reword both or neither
+        # (rule 144).
         assert outcome.checks[0].label == "No files left to remove. Kept."
-        assert "size" not in outcome.detail  # nothing about a size was wrong
 
     async def test_a_drift_skip_does_not_consume_the_canary(self, session: AsyncSession) -> None:
         """The skipped item touched no file, so the next item still gets the canary's
@@ -4360,11 +4360,11 @@ class TestASeasonWithNothingLeftToDelete:
         # the operator the season was untouched when it was not.
         assert "left unmonitored" in outcome.detail
         assert "nothing was sent" not in outcome.detail
-        # Verbatim, because the pre-unmonitor skip's line opens the same way and differs
-        # only in this clause. ``test_a_season_sonarr_reports_no_files_for_is_kept`` pins
-        # that one: reword both or neither (rule 144).
+        # Verbatim, because the pre-unmonitor skip's line is this one without the unmonitor
+        # clause. ``test_a_season_sonarr_reports_no_files_for_is_kept`` pins that one:
+        # reword both or neither (rule 144).
         assert (
-            outcome.checks[-1].label == "No files left to remove. The season was left unmonitored."
+            outcome.checks[0].label == "No files left to remove. The season was left unmonitored."
         )
 
     async def test_the_verified_unmonitor_keeps_its_state(self, session: AsyncSession) -> None:

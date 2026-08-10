@@ -2380,13 +2380,16 @@ class Executor:
         # It gets its own sentence because it is its own fact: Sonarr answered, and the
         # answer was that the season has no files. Sharing the size copy below sent an
         # operator to look for a file with a missing size when there were no files at all
-        # (issue #682). Same wording as the post-unmonitor case ~110 lines down, minus its
-        # unmonitor clause, since nothing has been sent yet (rule 144).
+        # (issue #682). The checklist line is the post-unmonitor skip's
+        # (`reap.season_files_vanished`) without its unmonitor clause, and the two are
+        # pinned to each other (rule 144). The reasons differ on purpose: that skip listed
+        # files a moment earlier so it says "no longer", where an item the allowance
+        # admitted may never have had one observed.
         if not live_sizes:
             return self._mark_skipped(
                 delete,
-                f"Sonarr no longer lists any file for season {ref.season}, so there is "
-                "nothing to delete. Kept.",
+                f"Sonarr lists no files for season {ref.season}, so there is nothing to "
+                "delete. Kept.",
                 check="No files left to remove. Kept.",
             )
         # Sonarr listed files and would not size one of them. Only reachable with a frozen
