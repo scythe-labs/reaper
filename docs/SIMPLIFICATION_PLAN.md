@@ -290,6 +290,7 @@ here first and never reconstructed later.
 | #670 | 8 | W3, `api/deps.py` row | `api/deps.py`, `session_factory`, `runtime_settings`, `secret_box`, `newest_snapshot` | no | The request accessor half only; the admin-password gate is its own `safety-path` PR, and the contradiction paragraph at *Where the phases collide* says why the split does not reopen what it settled. **The row's shape was wrong three ways** and the finding body is corrected in place: the `_sessions` three are `api/{review,runs,whitelist}.py` since `routes.py` is gone; the cluster is 7 `_factory` / 3 `_settings` / 2 `_box`, not four of each, because `setup.py` declares only `_factory`; and `_latest_snapshot` is 2 definitions and 7 calls rather than 7 copies. Four more modules imported an accessor instead of declaring one, so the collapse touches 11. **The scout's own design carried a collision it could not see**: `api/review.py` already has a route handler named `latest_snapshot`, so the helper is `newest_snapshot` and no operationId moves. `auth.py`'s `_safety` stays put, being a hardcoded read-only safety rather than an `app.state` read. `_EXPECTED_LAYERED_MODULES` 83 to 84; **the logger counter does not move**, since none of the four functions logs. 32 inline `app.state` reads are deferred in writing (rule 72): they copied no function. **The review corrected that deferral twice, and both corrections matter to whoever honors it.** Its module list omitted `api/runs.py`, which holds three of the 32 and is the one route that deletes, so a sweep walking the named modules never reaches them. And the three said to read off a bare `app` are not those three: `lists.py:218` and `:240` sit inside a handler that aliases `app = request.app`, so they can adopt today, while all three genuinely blocked reads are in `api/scan.py`'s `launch_scan(app: FastAPI)`, which holds no `Request` at all. The corrected record lives in `deps.py`'s docstring, where the next author reads it |
 | #671 | 8 | W9, `LAUNCHER_CONF_NAME` half | `config.LAUNCHER_CONF_NAME`, `_KNOWN_IMPORT_CYCLES` | no | The two services imported the process entry point to read one filename. **Measured either side with an AST walk over the 115 modules: 9 cycles to 2** under the plan's convention, the 7 that go being every cycle through `backup.py` or `restore.py`; `services.backup`'s import closure 305 to 279, the 26 being `reaper.launcher` plus 25 stdlib it pulled. The 7 that go and the 26 match the scout; **its NINE does not, and the review caught the reconciliation being false**. The scout counts 8 under this convention plus a 9th only if `TYPE_CHECKING` is counted, which this walk excludes; the real 9th is `api.plex -> api.settings -> launcher -> main`, which the scout missed, and its `list_config <-> lists` pair is invisible here. So the two sets of 9 are different sets, and the scout's "only `api.settings -> launcher -> main` survives" is refuted by this PR's own result of two survivors. Its 292 and 460 predate `text.py`. **The gate the scout proposed would not have caught the regression it was proposed for**, which is the finding here: a top-level acyclicity assertion passes with the import put back, because every one of these cycles closes on the function-local imports in `launcher.main()`. So the walk counts function-local edges and `_KNOWN_IMPORT_CYCLES` declares the two survivors as an equality. Driven red both ways, 5 cycles from `backup.py` and 2 from `restore.py`. Three gates were looking at this and none could see it: the layering walk reads four packages and `launcher.py` is outside them, the deferred-import gate reads imports that do not run, and the top-level graph is acyclic either way. **S7 held**: 83 modules and 49 loggers both unmoved, re-verified against the tree. One counter added, `_EXPECTED_SOURCE_MODULES`, at 116 after merging #670's `api/deps.py` in (it was 115 when this branch was cut, and the counter caught the difference). **The boot path is unchanged and one measurement says so out loud**: importing `reaper.launcher` now pulls 170 more modules, 100 to 270, all of them already in `reaper.preflight`'s closure which `main()` imports a few lines later. Seven citations re-anchored, two broken by this diff and five already stale by 2 to 35 lines |
 | #669 | 8 | W6-4 | `reaper.text.fold`, `test_the_comparison_form_of_a_name_is_one_derivation` | no | Rule 88's comparison form as one function, adopted at every site spelling the composite. **Every count written down was low**: measured at the tip it is 37 expressions over 33 lines in 14 modules, against the row's "~28 across 10" and the correction's "30 across 11", plus five more in frozen `alembic/` revisions that are out of the walk. **No exemption list**, which is the design: `fold(value)` is `value.strip().casefold()` exactly, so adoption is behavior-identical by construction, and the gate bans the COMPOSITE only, so the three already-stripped bare `.casefold()` sites need no entry. **The correction's reason for those three is wrong and is the more frightening one** -- it says they omit `strip()` on purpose, where each reads input a line above already stripped -- and it is amended in place. `normalize_label`, `_tag_key` and `_name_key` delegate rather than being deleted, each keeping the domain reason a generic docstring should not absorb. **What the walk cannot see is stated in its own docstring** (rule 147): a bare `.casefold()` on unstripped input, or `.strip().lower()`, of which 16 are deliberate and two more fold PATHS. Driven red by putting one site back. **The `func.lower` divergence is made louder, not repaired**: `_refuse_name_twice` compares SQLite's ASCII-only `lower()` against Python's `casefold`, and the `NOCASE` collation behind it is ASCII-only too, so both layers answer the same way today; named at both ends. **`libraries_for_ids` had no test at all** and is the entire input to the stale-mapping guard, whose two callers fold the other side, so a one-sided fold would warn the operator their correct mapping is wrong. Placement is top-level `src/reaper/text.py`, so `_EXPECTED_LAYERED_MODULES` stays 83, `_EXPECTED_LAYER_EDGES` does not move and the logger count stays 49. Rule 88 names the symbol now, and `docs/LEARNINGS.md`'s "only comparison form" sentence survives only because the helper delegates, which it now says |
+| #PR_A | 8 | W9, the workaround half | `scan_runner.build_gates`, `scan_runner.build_clients`, `simulate._replay_simulation`, `_DEFERRED_CROSS_PACKAGE_IMPORTS` | no | Four of the five deferred imports W9 measured as breaking no cycle are promoted to module level; the fifth is killed below. **The runtime graph does not move**: 679 edges and the same two cycles either side, because `test_repo_hygiene.py`'s walk counts a function-local import as an edge already, which is what "breaks no cycle" meant. What moves is the top-level graph, 674 edges to 677, still acyclic, and all 116 modules import in their own subprocess. `_DEFERRED_CROSS_PACKAGE_IMPORTS` 3 to 1. `_EXPECTED_LAYERED_MODULES` (84), `_EXPECTED_SOURCE_MODULES` (116), `_KNOWN_IMPORT_CYCLES` (2) and the logger count (49) are all unmoved, each re-derived from the tree rather than read off this document. **`launcher.py:559` gets the sentence it never had**: promoting it makes `main`, `api.settings` and `api.plex` raise ImportError and moves both declared cycles into the top-level graph, so it is the one deferral left in `src/` that genuinely closes a cycle. `:531`'s environment-ordering reason was already written and holds |
 
 ### Killed while executing
 
@@ -308,6 +309,7 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | W5-2 | The carrier is already passed whole and `_judge_item` already takes it as one parameter, so the row buys zero parameters and zero net lines. Three of the movie lane's overlapping fields are identity-path join keys, and `snapshot.py` is never split | Phase 8, measured before building |
 | W5-5 | The collapse turns `PUT /api/profile {}` from a 422 into a 200 that resets every deletion cap to the shipped default, on a route an API key can write. The wire model's required fields are the protection. Reclassified `safety-path`; a seven-pair bounds test lands instead | Phase 8, measured before building |
 | W5-6 | Any extraction is a 13-parameter helper replacing a 13-key constructor (S5), and the incident the row cites was in the loop rather than the constructor. The parity sweep already compares all 13 keys across both sites; a `NUMBERS` derivation lands instead | Phase 8, measured before building |
+| W9's `executor.py:137` `TYPE_CHECKING` import | `services/executor.py` imports `reaper.clients.plex` at `:118`, so the block names two more symbols from a module the runtime graph already has an edge to. Measured: deleting it moves no graph, changes nothing a module import loads, and cannot change behavior, both names being read only in a `Protocol`'s annotations under `from __future__ import annotations`. Against nothing, any diff in `services/executor.py` is `safety-path` and buys a driven pass plus a C9 owner read, which is the trade S5 says to refuse. `_DEFERRED_CROSS_PACKAGE_IMPORTS` keeps the site with that reason written on it | Phase 8, measured on a patched tree |
 | W3's cache-database row | Two bootstraps not three, two stamps in one spelling not three in two, and "~90 lines" matches nothing (418-line cluster, 25 to 35 removable). Merging two opposite stale-shape policies would need a per-caller flag, which is the one thing that must never be shared. The lock is extracted instead, and it carries the fix for a `dev` defect the row does not name | Phase 8, measured before building |
 
 ## Execution
@@ -377,13 +379,15 @@ which moves populations that phase 3's gates count. **`LAUNCHER_CONF_NAME` does 
 paragraph used to say it did**: the layering walk covers the four packages only, and `launcher.py`
 and `config.py` sit outside it, so moving a constant between them moves neither the module figure
 nor the logger count. Measured on a patched tree, not reasoned. The counter that half does move is
-`_DEFERRED_CROSS_PACKAGE_IMPORTS`, from 3 to 0. Grep for the counter
+`_DEFERRED_CROSS_PACKAGE_IMPORTS`, from 3 to **1** rather than to 0: two of W9's three sites went,
+and the third was killed. Grep for the counter
 before closing a PR that adds or removes a member. **The phase-3 counters, by name:**
 `_EXPECTED_LAYERED_MODULES` (**84** modules under the four packages), the logger counter in
-`tests/test_capturable_loggers.py` (**49**), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (the three
-sites W9 deletes, one of which moved file in #612). The module figure has moved six times. **Phase 8 added a fourth counter**,
+`tests/test_capturable_loggers.py` (**49**), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (**1** site,
+`executor.py`'s type-only import of a module it already imports at module level; of the two that
+went, one had moved file in #612). **Phase 8 added a fourth counter**,
 `_EXPECTED_SOURCE_MODULES` (**116**), which counts every module under `src/reaper` rather than
-the 83 under the four packages, so a new module moves both and each gate's failure message names
+the 84 under the four packages, so a new module moves both and each gate's failure message names
 the other. Its neighbor `_KNOWN_IMPORT_CYCLES` is a set, not a count. The module figure has moved
 five times:
 #599's deletion took it to 76 without this paragraph noticing, phase 6's `api/plex.py` took it to
@@ -674,8 +678,9 @@ new gate lands with **a count of what its scan collects, reconciled by hand** ag
 you believe exist. Demonstrating it red is worth doing and is not the proof.
 
 W6-5's scope note interacts with phase 8: the layering test must skip `TYPE_CHECKING` and
-function-local imports, and W9 deletes three such workarounds. Pin those three sites by name so the
-gate is not blind to the change it would most want to police.
+function-local imports, and W9 proposed deleting three such workarounds. Pin those three sites by
+name so the gate is not blind to the change it would most want to police. (Two were deleted, the
+third killed; the pinning is what made either visible.)
 
 ### Phase 4 — drift corrections
 
@@ -2377,9 +2382,32 @@ the question is which breaks earn their keep, and most do not.
   pure motion.
 - **Three cycle-breaking workarounds in `scan_runner.py` break no cycle** (a `TYPE_CHECKING`
   import, the same symbol imported again inside a function, and a third function-local import),
-  verified empirically. `executor.py:135` `TYPE_CHECKING`-imports a module already imported at
-  `:117`. `api/simulate.py`'s `_replay_simulation` function-local `build_gates` import breaks nothing and carries no comment, unlike
-  `launcher.py:531` and `:553`, which name their reasons and stay.
+  verified empirically. `executor.py:137` `TYPE_CHECKING`-imports a module already imported at
+  `:118`. `api/simulate.py`'s `_replay_simulation` function-local `build_gates` import breaks nothing and carries no comment, unlike
+  `launcher.py:531` and `:559`, which name their reasons and stay.
+
+  > **Landed at #PR_A, four of the five, and the executor's is killed.** The three in
+  > `scan_runner.py` and `simulate.py`'s are promoted to module level. The runtime import graph
+  > is unchanged either side, 679 edges and the same two cycles, because the walk in
+  > `test_repo_hygiene.py` counts a function-local import as an edge already; what moved is the
+  > top-level graph, 674 edges to 677, still acyclic, and all 116 modules import in isolation.
+  > `_DEFERRED_CROSS_PACKAGE_IMPORTS` goes 3 to 1.
+  >
+  > **`launcher.py:559` now names its reason, and it is the only one of the two that was
+  > missing.** `:531`'s environment-ordering comment was already there and is right. The other
+  > explained why the factory is passed as an object, never why the import sits in the function.
+  > Measured: promoted to module level, `main`, `api.settings` and `api.plex` all raise
+  > ImportError, and the two cycles `_KNOWN_IMPORT_CYCLES` declares move into the top-level
+  > graph. That edge closes both.
+  >
+  > **Killed: `executor.py:137`.** `services/executor.py` imports `reaper.clients.plex` at
+  > `:118`, so the `TYPE_CHECKING` block below it names two more symbols from a module the
+  > runtime graph already has an edge to. Deleting it moves no graph, changes nothing a module
+  > import loads, and cannot change behavior: both names are used only in a `Protocol`'s
+  > annotations, under `from __future__ import annotations`. Against that, any diff in
+  > `services/executor.py` is `safety-path` and buys a driven pass plus a C9 owner read, which
+  > is the trade S5 says to refuse. The gate keeps the site with that reason written on it
+  > instead of a deletion pending.
 - **Both frontend cycles are one borrowed symbol each.** `PolicyEditor ↔ PolicyRuleEditors` exists
   because the deliberate split left three lookup tables behind, and the same file re-exports
   `humanDays` from `format.ts` whose own comment says it moved there to break a cycle back through
