@@ -246,11 +246,12 @@ async def refresh_curated_lists(
     last-run bookkeeping tolerates their absence; with no way to read the definitions or reach
     the sources there is nothing to refresh.
 
-    **Every exit records a run**, which is what the catch-all here is for. The body raises by
-    several routes -- ``adopt_legacy``, ``sync_rule_names``, ``retire_absent`` and the
-    cache-database faults ``gather_reaped`` re-raises -- and APScheduler has no failure
-    listener writing these rows, so a raise left the Jobs row reading green from the last
-    successful night while nothing had refreshed since. Same shape as ``refresh_ratings``.
+    **Once it is wired, every failing exit records a run.** The shape is what holds that: the
+    whole body is one call to :func:`_refresh_curated_lists` under one catch-all, and the one
+    handler inside that function (Plex unreachable) changes what the result says instead of
+    ending the pass. APScheduler has no failure listener writing these rows, so a raise left
+    the Jobs row reading green from the last successful night while nothing had refreshed
+    since. Same shape as ``refresh_ratings``.
     """
     if session_factory is None or settings is None or secret_box is None:
         log.warning("scheduler.lists_refresh_skipped", reason="not wired")
@@ -275,25 +276,27 @@ async def _refresh_curated_lists(
     settings: Settings,
     secret_box: SecretBox,
 ) -> None:
-    """The refresh itself. Split out so its caller's catch-all covers every line of it."""
+    """The refresh itself. Split out so its caller's catch-all covers every line of it.
+
+    **No handler here records anything.** A refusal from ``build_sources`` and an unreadable
+    list registry were each caught where they happened and recorded with the caller's own
+    event name, ``ok=False`` and result string, so the two arms decided nothing and were a
+    second place for that copy to drift. The one row this function writes is the last line,
+    off the ``ok`` and ``result`` the pass worked out, and those three ``ok=False`` branches
+    are outcomes rather than raises, so the caller's catch-all never sees them. The Plex
+    handler below stays: it changes what that result says rather than ending the pass.
+    """
     async with AsyncExitStack() as stack:
-        try:
-            # Not a scan: this reads the *arr and Plex and nothing else, so it does not carry
-            # a scan's Tautulli precondition -- an install with Plex linked and no Tautulli
-            # still gets its collections refreshed.
-            radarrs, sonarrs, _tautulli, _seerrs, plex = await scan_runner.build_sources(
-                session_factory,
-                settings,
-                secret_box,
-                stack=stack,
-                require_scan_sources=False,
-            )
-        except scan_runner.ScanConfigError as exc:
-            log.warning("scheduler.lists_refresh_failed", error=str(exc))
-            await _record_run(
-                session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
-            )
-            return
+        # Not a scan: this reads the *arr and Plex and nothing else, so it does not carry
+        # a scan's Tautulli precondition -- an install with Plex linked and no Tautulli
+        # still gets its collections refreshed.
+        radarrs, sonarrs, _tautulli, _seerrs, plex = await scan_runner.build_sources(
+            session_factory,
+            settings,
+            secret_box,
+            stack=stack,
+            require_scan_sources=False,
+        )
 
         plex_server: object | None = None
         plex_reached = False
@@ -304,17 +307,10 @@ async def _refresh_curated_lists(
             except PlexError as exc:
                 log.warning("scheduler.lists_refresh_plex_unreachable", error=str(exc))
 
-        try:
-            async with session_factory() as session:
-                # ``strict``: this pass retires, so a row that will not decode has to stop it
-                # rather than read as one the operator deleted (rules 65/91, 115).
-                definitions = await list_config.definitions(session, strict=True)
-        except Exception as exc:
-            log.warning("scheduler.lists_refresh_failed", error=str(exc))
-            await _record_run(
-                session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
-            )
-            return
+        async with session_factory() as session:
+            # ``strict``: this pass retires, so a row that will not decode has to stop it
+            # rather than read as one the operator deleted (rules 65/91, 115).
+            definitions = await list_config.definitions(session, strict=True)
 
         synced = await snapshot_service.sync_protection_lists(
             cache_engine,
