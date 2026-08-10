@@ -580,14 +580,7 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> Instan
                 payload.base_url, payload.api_key, verify=payload.verify_tls, arr_rows=arr_rows
             )
             out.seerr_services = [
-                SeerrServiceOut(
-                    service_id=s.service_id,
-                    kind=s.kind,
-                    name=s.name,
-                    is_4k=s.is_4k,
-                    suggested_instance_id=s.suggested_instance_id,
-                )
-                for s in services
+                SeerrServiceOut.model_validate(s, from_attributes=True) for s in services
             ]
     except (IntegrationError, instances.InstanceError) as exc:
         # The raw exception stays in the log, where a diagnosis needs it, and what the operator
@@ -658,16 +651,7 @@ async def instance_seerr_services(request: Request, instance_id: int) -> list[Se
             raise HTTPException(exc.status, str(exc)) from exc
         except IntegrationError as exc:
             raise HTTPException(502, f"Could not read the service list: {exc}") from exc
-    return [
-        SeerrServiceOut(
-            service_id=s.service_id,
-            kind=s.kind,
-            name=s.name,
-            is_4k=s.is_4k,
-            suggested_instance_id=s.suggested_instance_id,
-        )
-        for s in services
-    ]
+    return [SeerrServiceOut.model_validate(s, from_attributes=True) for s in services]
 
 
 # ---------------------------------------------------------------------------

@@ -229,14 +229,10 @@ async def restore_prepare(request: Request) -> RestoreSummaryOut:
         raise HTTPException(exc.status, str(exc)) from exc
     finally:
         archive_path.unlink(missing_ok=True)
-    return RestoreSummaryOut(
-        app_version=summary.app_version,
-        created_at=summary.created_at,
-        verdict=summary.verdict,
-        key_in_backup=summary.key_in_backup,
-        reaper_db_bytes=summary.reaper_db_bytes,
-        token=summary.token,
-    )
+    # Field for field off the staging summary, less `revision`: an Alembic id is not
+    # operator copy (rule 21) and `RestoreSummaryOut` does not declare it, which is what
+    # drops it here.
+    return RestoreSummaryOut.model_validate(summary, from_attributes=True)
 
 
 @router.post("/restore/confirm")

@@ -26,10 +26,16 @@ author to silence the guard. Names are apples-to-apples across the whole corpus,
 what #260 lost. **Nested inline objects are compared at their top level only**: TS spells
 ``LeavingSoonSettings.last`` as an inline object where the server declares a whole
 ``LeavingSoonLastOut``, so ``last`` is compared and its members are not.
+
+**The last class in this file checks the hop before that one**, service record to wire model,
+for the routes that build the model off the record instead of naming every field. It is here
+because it is the same failure at the previous hop, and the two hops are what the paragraph
+above says nothing announces.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import pkgutil
 import re
@@ -40,6 +46,20 @@ import pytest
 from pydantic import BaseModel
 
 import reaper.api
+from reaper.api.backup import RestoreSummaryOut
+from reaper.api.schemas import (
+    CandidateLinkOut,
+    LinksOut,
+    ReapBreakdownOut,
+    RequesterRowOut,
+    SignalCountOut,
+)
+from reaper.api.settings import SeerrServiceOut
+from reaper.services.breakdown import ReapBreakdown, SignalCount
+from reaper.services.deep_links import CandidateLink, DeepLinks
+from reaper.services.fairness import RequesterRow
+from reaper.services.instances import ServiceInstanceSuggestion
+from reaper.services.restore import RestoreSummary
 
 REPO = Path(__file__).resolve().parents[1]
 API_TS = REPO / "frontend" / "src" / "api.ts"
@@ -695,4 +715,65 @@ class TestEveryGateIdHasOperatorCopy:
             "disagree. Marking an authorable gate retired makes its switch delete the row "
             "instead of turning the protection off; leaving an unauthorable one unmarked "
             "puts a body the save boundary refuses behind the Save button."
+        )
+
+
+#: The wire models built by ``model_validate(record, from_attributes=True)`` off a service
+#: record rather than field by field (W5-4), each paired with the record it reads. Seven
+#: pairs over six call sites: ``SignalCountOut`` and ``CandidateLinkOut`` are validated
+#: inside their parent, and ``SeerrServiceOut`` is built at two routes.
+COLLAPSED_PAIRS = (
+    (ReapBreakdownOut, ReapBreakdown),
+    (SignalCountOut, SignalCount),
+    (RequesterRowOut, RequesterRow),
+    (LinksOut, DeepLinks),
+    (CandidateLinkOut, CandidateLink),
+    (RestoreSummaryOut, RestoreSummary),
+    (SeerrServiceOut, ServiceInstanceSuggestion),
+)
+
+
+class TestAWireModelReadsOnlyFieldsItsRecordCarries:
+    """The other half of this file's mirror: the hop from a service record to the wire model,
+    where a field list used to be transcribed by hand at the route.
+
+    ``from_attributes`` selects by the WIRE model's field list, so a wire field the record
+    does not carry fails at request time when it is required, and is filled from its own
+    default when it is not -- which is the silent half. The hand-written constructor raised
+    ``AttributeError`` for both. This restores the loud answer, before a request.
+    """
+
+    @pytest.mark.parametrize(
+        "wire,record", COLLAPSED_PAIRS, ids=[w.__name__ for w, _ in COLLAPSED_PAIRS]
+    )
+    def test_the_record_carries_every_field_the_wire_model_declares(
+        self, wire: type[BaseModel], record: type
+    ) -> None:
+        carried = {f.name for f in dataclasses.fields(record)}
+        assert set(wire.model_fields) <= carried, (
+            f"{wire.__name__} declares {sorted(set(wire.model_fields) - carried)}, which "
+            f"{record.__module__}.{record.__name__} does not carry. The route builds it "
+            "with model_validate(..., from_attributes=True), so a defaulted field would be "
+            "served as its default rather than failing."
+        )
+
+    def test_every_collapsed_site_is_in_the_table_above(self) -> None:
+        """A flag-shaped table cannot see a site that never joined it (rule 145). The count
+        is of the CALL SITES, which is six rather than the seven pairs.
+
+        It reads one spelling and only one (rule 147): the ``from_attributes=True`` keyword
+        at the call. A model that sets ``model_config = ConfigDict(from_attributes=True)``
+        and then calls a bare ``model_validate`` is the same collapse and is invisible here,
+        so a site written that way is added to the table by hand. No model in the tree does
+        that today, and this is not worded as if the walk would catch it.
+        """
+        sites = [
+            f"{path.relative_to(REPO)}:{n}"
+            for path in sorted((REPO / "src" / "reaper" / "api").rglob("*.py"))
+            for n, line in enumerate(path.read_text().splitlines(), 1)
+            if "from_attributes=True" in line
+        ]
+        assert len(sites) == 6, (
+            f"{len(sites)} sites build a wire model off a service record: {sites}. Add the "
+            "new pair to COLLAPSED_PAIRS above and move this count."
         )
