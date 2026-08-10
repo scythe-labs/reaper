@@ -179,7 +179,13 @@ const SITES: Site[] = [
     what: "the same media title at the head of a panel",
     selectors: [".why-head h2"],
     classInTsx: "why-head",
-    seenIn: ["components/WhyPanel.tsx", "components/ShowPanel.tsx"],
+    // One file, and it used to be two: the item panel and the show panel drew this head
+    // separately until `PanelHead` collapsed them, and the show panel renders it from there
+    // now. A media TITLE reaches this selector through `PanelHead` alone. `ScalesPanel.tsx`
+    // also puts outside text under `.why-head h2` -- a requester's display name, through
+    // `ProfileName` -- and that is covered by its own row on `.scales-head-id h2` rather
+    // than here. The other two `.why` heads carry app-written copy.
+    seenIn: ["components/WhyPanel.tsx"],
   },
   {
     what: "the rule that argued a keep Reaper could not check",

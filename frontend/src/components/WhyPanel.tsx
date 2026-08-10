@@ -78,6 +78,94 @@ export function JumpPill({ href, label }: { href: string | null; label: string }
   );
 }
 
+/** The head every title panel wears: the title as its Plex jump, then one line of the panel's
+ *  own facts and chips, then the pills into the tools that manage the file.
+ *
+ *  It is one component because it was two, and the two had drifted in exactly the places a
+ *  copy drifts: the item panel's title carried the outbound arrow and the show panel's did
+ *  not, and the two spelled the pill row in different orders. Both are settled here, so
+ *  neither can drift again. What legitimately differs between the panels is `sub`, which is
+ *  each panel's own content: an item states its size and media type, a show states how many
+ *  seasons it has.
+ *
+ *  `ScalesPanel`'s `.scales-head-id` is NOT a sibling of this and keeps its own markup: a
+ *  person is not a title, its link wraps the heading rather than sitting inside it, and it
+ *  already carries the arrow. */
+export function PanelHead({
+  headingId,
+  title,
+  year,
+  links,
+  sub,
+}: {
+  headingId: string;
+  title: string;
+  year: number | null;
+  links: Links;
+  /** The facts and chips this panel puts under its title, ahead of the jump pills. */
+  sub: ReactNode;
+}) {
+  const name = (
+    <>
+      {title}
+      {year && <span className="card-year"> {year}</span>}
+    </>
+  );
+  return (
+    <div className="why-head">
+      <div>
+        <h2 id={headingId}>
+          {/* The title itself opens the item in Plex when it can; a title Reaper couldn't
+              match stays plain text rather than linking somewhere wrong. */}
+          {links.plex ? (
+            <a
+              className="title-link"
+              href={links.plex}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open in Plex"
+            >
+              {name}
+              {/* The mark that says the title goes somewhere. It sits inside the link's
+                  accessible name and the destination is already in the words, so it is
+                  decoration and carries aria-hidden (rule 21's middot clause, same
+                  reasoning). */}
+              <svg
+                className="title-ext"
+                viewBox="0 0 16 16"
+                width="13"
+                height="13"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M6 3h7v7M13 3L4 12"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </a>
+          ) : (
+            name
+          )}
+        </h2>
+        <p className="muted why-sub">
+          {sub}
+          {/* One order, read the way the panel is: what was played, who asked for it, then
+              the app to go change it. At most one of radarr/sonarr is ever set (LinksOut),
+              so the row always ends on the app that manages the file. */}
+          <JumpPill href={links.tautulli} label="Tautulli" />
+          <JumpPill href={links.seerr} label="Seerr" />
+          <JumpPill href={links.radarr} label="Radarr" />
+          <JumpPill href={links.sonarr} label="Sonarr" />
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /** Certification, runtime and genres, the way a library listing reads. The year stays in
  *  the title; anything unknown is simply skipped. */
 function MetaLine({ item }: { item: CandidateDetail }) {
@@ -1313,46 +1401,13 @@ export function WhyPanel({
         </button>
       )}
 
-      <div className="why-head">
-        <div>
-          <h2 id={headingId}>
-            {/* The title itself opens the item in Plex when it can; a title Reaper
-                couldn't match stays plain text rather than linking somewhere wrong. */}
-            {item.links.plex ? (
-              <a
-                className="title-link"
-                href={item.links.plex}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Open in Plex"
-              >
-                {item.title}
-                {item.year && <span className="card-year"> {item.year}</span>}
-                <svg
-                  className="title-ext"
-                  viewBox="0 0 16 16"
-                  width="13"
-                  height="13"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M6 3h7v7M13 3L4 12"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </a>
-            ) : (
-              <>
-                {item.title}
-                {item.year && <span className="card-year"> {item.year}</span>}
-              </>
-            )}
-          </h2>
-          <p className="muted why-sub">
+      <PanelHead
+        headingId={headingId}
+        title={item.title}
+        year={item.year}
+        links={item.links}
+        sub={
+          <>
             {itemBytes(item.size_bytes)}, {mediaLabel}
             {/* The Plex library the file lives in -- same quiet chip as the cards, so movies
                 and seasons read the same. */}
@@ -1363,13 +1418,9 @@ export function WhyPanel({
             {/* All three states here: the panel is where you came to find out. The card
                 stays quiet about a show that is still going. */}
             <ShowStatusChip status={item.show_status} />
-            <JumpPill href={item.links.tautulli} label="Tautulli" />
-            <JumpPill href={item.links.seerr} label="Seerr" />
-            <JumpPill href={item.links.radarr} label="Radarr" />
-            <JumpPill href={item.links.sonarr} label="Sonarr" />
-          </p>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <MetaLine item={item} />
       <RatingsRow ratings={item.ratings} links={item.links} />
