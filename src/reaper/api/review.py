@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 from reaper.api import tags as api_tags
 from reaper.api.schemas import (
     CandidateDetail,
-    CandidateLinkOut,
     CandidateOut,
     CandidatePageOut,
     ChipOut,
@@ -1297,21 +1296,8 @@ async def _deep_links(session: AsyncSession, row: Candidate) -> LinksOut:
         # replay can never disagree about which rows the operator was shown.
         candidate_rating_keys=_replayed_evidence(row).get("match_candidates", ()),
     )
-    return LinksOut(
-        plex=links.plex,
-        tautulli=links.tautulli,
-        seerr=links.seerr,
-        radarr=links.radarr,
-        sonarr=links.sonarr,
-        imdb=links.imdb,
-        tmdb=links.tmdb,
-        rotten_tomatoes=links.rotten_tomatoes,
-        trakt=links.trakt,
-        match_candidates=[
-            CandidateLinkOut(rating_key=c.rating_key, plex=c.plex, tautulli=c.tautulli)
-            for c in links.match_candidates
-        ],
-    )
+    # Field for field off `DeepLinks`, including the nested `match_candidates`.
+    return LinksOut.model_validate(links, from_attributes=True)
 
 
 def _ratings_out(ratings_json: str | None) -> RatingsOut | None:

@@ -154,22 +154,12 @@ async def get_fairness(request: Request) -> FairnessReportOut:
 
 
 def _row_out(row: fairness.RequesterRow) -> RequesterRowOut:
-    """One board row on the wire. Its own function so a test can assert what the board is
-    actually sent without transcribing this mapping (rule 119)."""
-    return RequesterRowOut(
-        identity=row.identity,
-        # Carried so the card can guard it. `played_by_them` below is only ever counted for
-        # a linked account (`fairness._roll_up`), so without this the board cannot tell a
-        # measured zero from a person whose history Reaper cannot see, and it drew both the
-        # same (rule 93).
-        plex_id=row.plex_id,
-        name=row.name,
-        requests_made=row.requests_made,
-        gb_granted_bytes=row.gb_granted_bytes,
-        played_by_them=row.played_by_them,
-        reclaimable_items=row.reclaimable_items,
-        reclaimable_bytes=row.reclaimable_bytes,
-    )
+    """One board row on the wire, field for field off the service record. Its own function
+    so a test can assert what the board is actually sent without transcribing this mapping
+    (rule 119). Why ``plex_id`` is carried at all is on the field itself, in
+    ``RequesterRowOut``: it is what lets the card tell a measured zero apart from a person
+    whose history Reaper cannot see (rule 93)."""
+    return RequesterRowOut.model_validate(row, from_attributes=True)
 
 
 @router.get("/fairness/people/{identity}")

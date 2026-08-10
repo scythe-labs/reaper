@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from reaper import logbuffer
-from reaper.api.schemas import ProfileSettingsIO
+from reaper.api.schemas import ProfileSettingsIO, ReapBreakdownOut, SignalCountOut
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
@@ -1032,6 +1032,22 @@ class TestLimitsNobodySavedDoNotBoundAReap:
         self._break_the_saved_limits(tmp_path)
 
         assert client.get("/api/runs").status_code == 200
+
+
+class TestTheReapBreakdownRoute:
+    """``test_reap_breakdown.py`` pins every number this route reports, against the service.
+    Nothing read the route, so what it actually sends was uncovered at both levels: the
+    envelope and the nested per-signal counts."""
+
+    def test_the_body_carries_the_whole_model_and_the_nested_counts(
+        self, client: TestClient
+    ) -> None:
+        body = client.get("/api/reap/breakdown").json()
+
+        assert set(body) == set(ReapBreakdownOut.model_fields)
+        assert body["condemned_by"], "the seeded condemned rows tally at least one signal"
+        for entry in body["condemned_by"]:
+            assert set(entry) == set(SignalCountOut.model_fields)
 
 
 class TestSnapshot:

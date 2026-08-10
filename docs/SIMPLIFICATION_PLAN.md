@@ -2105,7 +2105,7 @@ enforced by nothing but the next author's memory.
 > unification: fail-closed for the update check is "do not dial out", and for the tray it is the
 > opposite, since on a frozen build the icon is the only route to Quit. Widen `desktop_flag` so an
 > unrecognized value falls to `default` rather than to False. A live divergence sits beside it:
-> `api/settings.py:1130` reports the tray as `default=True` while `launcher.py:379` defaults to
+> `api/settings.py:1126` reports the tray as `default=True` while `launcher.py:379` defaults to
 > `frozen`, so a source run on macOS tells the operator the tray is on and never starts one.
 >
 > **W6-4's `fold()` must skip three sites** that omit `strip()` on purpose (`engine/fields.py:821`,

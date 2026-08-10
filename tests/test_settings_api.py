@@ -1704,6 +1704,55 @@ class TestConnectionTestCarriesTheMapping:
         # A Seerr has no root folders, so that list stays empty rather than being invented.
         assert body["root_folders"] == []
 
+    def test_both_routes_publishing_a_service_list_send_the_same_shape(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``SeerrServiceOut`` is built at two routes, the pre-save probe above and the
+        saved instance's own list. Both read the same service record, and only one of them
+        had its body asserted, so the pair could diverge without a test noticing."""
+        self._pass(monkeypatch)
+        suggestion = instances_service.ServiceInstanceSuggestion(
+            service_id=7, kind="sonarr", name="Shows", is_4k=True, suggested_instance_id=None
+        )
+
+        async def probe(
+            *_a: object, **_k: object
+        ) -> list[instances_service.ServiceInstanceSuggestion]:
+            return [suggestion]
+
+        monkeypatch.setattr(instances_service, "probe_seerr_services", probe)
+        monkeypatch.setattr(instances_service, "seerr_services", probe)
+
+        created = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "seerr",
+                "name": "Portal",
+                "base_url": "http://s.local:5055",
+                "api_key": "k",
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        from_probe = client.post(
+            "/api/settings/instances/test",
+            json={"kind": "seerr", "base_url": "http://s.local:5055", "api_key": "k"},
+        ).json()["seerr_services"]
+        from_saved = client.get(
+            f"/api/settings/instances/{created.json()['id']}/seerr-services"
+        ).json()
+
+        assert from_probe == from_saved
+        assert from_probe == [
+            {
+                "service_id": 7,
+                "kind": "sonarr",
+                "name": "Shows",
+                "is_4k": True,
+                "suggested_instance_id": None,
+            }
+        ]
+
 
 class TestCreateStoresTheMapping:
     def test_a_new_arr_is_created_with_the_map_made_on_the_add_form(
