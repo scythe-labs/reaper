@@ -1232,7 +1232,9 @@ def _repo_text_files() -> list[tuple[Path, str]]:
     green. A gate nobody can turn green from their own branch is a gate that gets deleted.
 
     This replaced a hand-kept skip set, a mirror of ``.gitignore`` that needed an edit every
-    time the ignore file grew (rule 103), and it had missed two entries.
+    time the ignore file grew (rule 103). It was three entries behind when it went:
+    ``.claude/review-findings/``, ``.pytest_cache/`` and ``mutation-report-*.json``, the
+    second of which this suite creates by running.
     ``--others --exclude-standard`` keeps a file created but not yet staged, which is the
     state a gate is most useful in.
 
