@@ -430,12 +430,14 @@ class TestOverlappingPassesAnnounceOnce:
 
 class TestTheLockBindsToTheRunningLoop:
     async def test_one_lock_per_loop(self) -> None:
-        """A module-level ``asyncio.Lock`` binds to whichever loop first awaits it and raises
-        on every other, and the suite runs a fresh loop per test (rule 37). Same shape as
-        ``history_sync._rebuild_lock``, for the same reason."""
+        """Two callers on one loop meet one lock, which is what serializes a pass against
+        every other one in the process.
+
+        That the lock is per-LOOP, and that a closed loop's lock is collected, are properties
+        of ``aio.per_loop_lock`` and are pinned in ``tests/test_aio.py``. This asserts only
+        that this module reads through it.
+        """
         assert leaving_soon._pass_lock() is leaving_soon._pass_lock()
-        loop = asyncio.get_running_loop()
-        assert leaving_soon._pass_locks[loop] is leaving_soon._pass_lock()
 
 
 class _CountingClient:

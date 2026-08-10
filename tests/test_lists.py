@@ -8,15 +8,17 @@ Maintainerr, Janitorr or Reclaimerr.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
 import respx
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from reaper.clients.base import IntegrationError
 from reaper.config import Settings
@@ -979,6 +981,57 @@ class TestAStoredCacheIsWidenedNeverRebuilt:
             rows = (await conn.execute(text("SELECT title FROM protection_list_item"))).all()
         assert "plex_rating_key" in columns
         assert [str(r.title) for r in rows] == ["First"]
+
+    async def test_two_callers_widening_at_once_leave_one_of_each_column(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rule 58. The PRAGMA guarding each ``ALTER`` is not inside a transaction --
+        pysqlite autocommits DDL, so ``engine.begin()`` opens nothing around it -- and SQLite
+        has no ``ADD COLUMN IF NOT EXISTS``. Without ``_widen_lock`` both callers read the
+        pre-widen shape and the second raises ``duplicate column name``, which aborts a scan.
+
+        Two callers overlap on an ordinary install: the Lists screen calls ``configured``
+        while a scan calls ``load_membership_index``, and the nightly ``refresh_curated_lists``
+        calls ``sync``. Three job ids, so APScheduler's ``max_instances`` does not separate
+        them.
+
+        **The interleave is probabilistic and this test says so rather than reading as a
+        proof (rule 118).** Every shape read yields once, which widens the window; measured
+        against the unlocked function that raises in about a third of rounds, so it runs
+        twelve rounds against twelve fresh databases and fails on any one of them. With the
+        lock it cannot fail at all -- the second caller reads the widened shape and skips.
+        """
+        real_execute = AsyncConnection.execute
+
+        async def yielding_execute(
+            self: AsyncConnection, statement: Any, *args: Any, **kwargs: Any
+        ) -> Any:
+            result = await real_execute(self, statement, *args, **kwargs)
+            if "PRAGMA table_info(" in str(statement):
+                await asyncio.sleep(0)
+            return result
+
+        monkeypatch.setattr(AsyncConnection, "execute", yielding_execute)
+
+        for round_number in range(12):
+            data_dir = tmp_path / f"round-{round_number}"
+            engine = create_engine(Settings(data_dir=data_dir, secret_key="k"))
+            try:
+                async with engine.begin() as conn:
+                    await conn.execute(text(_SCHEMA_BEFORE_THE_PLEX_KEY))
+
+                await asyncio.gather(ensure_schema(engine), ensure_schema(engine))
+
+                async with engine.connect() as conn:
+                    columns = [
+                        str(row.name)
+                        for row in (
+                            await conn.execute(text("PRAGMA table_info(protection_list_item)"))
+                        ).all()
+                    ]
+                assert columns.count("plex_rating_key") == 1, round_number
+            finally:
+                await engine.dispose()
 
     async def test_widening_twice_is_the_same_as_widening_once(self, engine: AsyncEngine) -> None:
         """It runs on every call, several times per scan."""

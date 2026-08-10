@@ -25,9 +25,10 @@ import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
+from reaper.api.deps import newest_snapshot, session_factory
 from reaper.api.scan import launch_scan
 from reaper.api.schemas import (
     ActionStepOut,
@@ -43,7 +44,7 @@ from reaper.api.schemas import (
 )
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, Snapshot
+from reaper.db.models import ActionStep, Candidate, ReapRun, RunState
 from reaper.engine.policy import ProfileSettings
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import effective_condemned
@@ -73,17 +74,6 @@ router = APIRouter(prefix="/api", tags=[api_tags.REAP])
 #: letting the route override it, so ``@router.get("/profile", tags=[POLICY])`` would file
 #: one operation under two sections -- which ``tests/test_openapi_tags.py`` refuses.
 profile_router = APIRouter(prefix="/api", tags=[api_tags.POLICY])
-
-
-def _sessions(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
-
-
-async def _latest_snapshot(session: AsyncSession) -> Snapshot | None:
-    return (
-        await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
-    ).scalar_one_or_none()
 
 
 #: How many journal rows a run's detail response carries, and the default page of the steps
@@ -291,8 +281,8 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
     only = (
         set(payload.media_keys) if payload is not None and payload.media_keys is not None else None
     )
-    async with _sessions(request)() as session:
-        snapshot = await _latest_snapshot(session)
+    async with session_factory(request)() as session:
+        snapshot = await newest_snapshot(session)
         if snapshot is None:
             raise HTTPException(404, "No scan has run yet, so there is nothing to plan.")
 
@@ -333,7 +323,7 @@ async def list_runs(
     on every visit to the Reap page (P-3). Opening a run goes to ``GET /runs/{id}``,
     which derives them for the one run being looked at.
     """
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         runs = list(
             (await session.execute(select(ReapRun).order_by(ReapRun.id.desc()).limit(limit)))
             .scalars()
@@ -358,7 +348,7 @@ async def get_run(request: Request, run_id: int) -> RunOut:
     ``steps`` is a window, not the whole plan. ``step_count`` says how many rows there are and
     ``GET /api/runs/{run_id}/steps`` serves the rest.
     """
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         run = await session.get(ReapRun, run_id)
         if run is None:
             raise HTTPException(404, "No such run.")
@@ -379,7 +369,7 @@ async def get_run_steps(
     from the WHOLE step list. A cap belongs here and in `_run_out`'s serialization, never in
     the shared helper underneath them.
     """
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         run = await session.get(ReapRun, run_id)
         if run is None:
             raise HTTPException(404, "No such run.")
@@ -418,7 +408,7 @@ async def dry_run(request: Request, run_id: int) -> RunReportOut:
     """
     settings: Settings = request.app.state.settings
 
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         # Read-only safety by construction here: the executor's dry_run does not send, and
         # even if it tried, this ceiling forbids it. Read both switches so a UI emergency
         # stop is reflected, not just the env flag.
@@ -537,7 +527,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     """
     settings: Settings = request.app.state.settings
     box: SecretBox = request.app.state.secret_box
-    factory = _sessions(request)
+    factory = session_factory(request)
     app = request.app
 
     # Claim the single reap slot SYNCHRONOUSLY, with no await between the check and the set,
@@ -818,7 +808,7 @@ async def get_profile(request: Request) -> ProfileSettingsIO:
 
     Reports ``settings_recovered`` when the stored blob was unreadable and these are the
     shipped defaults, so the Pace page can tell the operator to save again (rule 65)."""
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         profile = await active_profile(session)
     return _settings_out(profile.settings, recovered=profile.fell_back)
 
@@ -859,7 +849,7 @@ async def update_profile(request: Request, payload: ProfileSettingsIO) -> Profil
             ],
         ) from exc
 
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         saved = await save_profile_settings(session, settings)
         await session.commit()
     return _settings_out(saved)

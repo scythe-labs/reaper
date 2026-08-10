@@ -25,12 +25,13 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import and_, asc, desc, func, or_, select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
 
 from reaper.api import tags as api_tags
+from reaper.api.deps import newest_snapshot, session_factory
 from reaper.api.schemas import (
     CandidateDetail,
     CandidateOut,
@@ -78,17 +79,6 @@ from reaper.services.snapshot import HAND_SPARE_DETAIL
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api")
-
-
-def _sessions(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
-
-
-async def _latest_snapshot(session: AsyncSession) -> Snapshot | None:
-    return (
-        await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
-    ).scalar_one_or_none()
 
 
 def _replayed_evidence(row: Candidate) -> dict[str, Any]:
@@ -162,8 +152,8 @@ def _replayed_evidence(row: Candidate) -> dict[str, Any]:
 
 @router.get("/snapshots/latest", tags=[api_tags.SCANS])
 async def latest_snapshot(request: Request) -> SnapshotOut:
-    async with _sessions(request)() as session:
-        snapshot = await _latest_snapshot(session)
+    async with session_factory(request)() as session:
+        snapshot = await newest_snapshot(session)
         if snapshot is None:
             raise HTTPException(404, "No scan has run yet.")
         return await _snapshot_out(session, snapshot)
@@ -222,8 +212,8 @@ async def season_shape(request: Request) -> SeasonShapeOut:
     that a given keep-last-N value would leave removable -- live as the number changes,
     with no scan and no dependency on the current keep-last value.
     """
-    async with _sessions(request)() as session:
-        snapshot = await _latest_snapshot(session)
+    async with session_factory(request)() as session:
+        snapshot = await newest_snapshot(session)
         if snapshot is None:
             return SeasonShapeOut(total_shows=0, season_counts={})
         rows = (
@@ -329,8 +319,8 @@ async def list_candidates(
     rows in the named Plex library (section), and ``override`` keeps rows by their
     hand-override state (``spare`` / ``reap`` / ``none`` / ``any``).
     """
-    async with _sessions(request)() as session:
-        snapshot = await _latest_snapshot(session)
+    async with session_factory(request)() as session:
+        snapshot = await newest_snapshot(session)
         if snapshot is None:
             return CandidatePageOut(
                 items=[],
@@ -1337,7 +1327,7 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
     Renders for PROTECTED items too, showing the score it is overriding. A tool that
     only explains its deletions cannot be trusted about its keeps.
     """
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         row = await session.get(Candidate, candidate_id)
         if row is None:
             raise HTTPException(404, "No such candidate.")
@@ -1373,8 +1363,8 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
     which go" is answered in one place -- the show info panel and the expanded show
     card both read it. Frozen candidate rows only; nothing here re-decides a verdict.
     """
-    async with _sessions(request)() as session:
-        snapshot = await _latest_snapshot(session)
+    async with session_factory(request)() as session:
+        snapshot = await newest_snapshot(session)
         if snapshot is None:
             raise HTTPException(404, "No scan has run yet.")
         rows = (

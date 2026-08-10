@@ -16,7 +16,7 @@ from fastapi import APIRouter, Request
 from sqlalchemy import select
 
 from reaper.api import tags as api_tags
-from reaper.api.review import _latest_snapshot, _sessions
+from reaper.api.deps import newest_snapshot, session_factory
 from reaper.api.schemas import (
     FieldOut,
     FieldValuesOut,
@@ -78,8 +78,8 @@ async def vocabulary_values(request: Request, field: str) -> FieldValuesOut:
     if column is None:
         return FieldValuesOut(field=field, values=[])
 
-    async with _sessions(request)() as session:
-        snapshot = await _latest_snapshot(session)
+    async with session_factory(request)() as session:
+        snapshot = await newest_snapshot(session)
         if snapshot is None:
             return FieldValuesOut(field=field, values=[])
         raws = (

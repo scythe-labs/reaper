@@ -476,7 +476,7 @@ def test_http_clients_are_only_constructed_in_clients() -> None:
 
 def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
     """Rule 88, as a gate. ``reaper.text.fold`` is the trim-then-casefold every name
-    comparison takes, and it was spelled inline at 33 places across 14 modules.
+    comparison takes, and it was spelled 37 times over 33 lines in 13 modules.
 
     **It bans the composite only.** A bare ``.casefold()`` on a value a line above already
     stripped is not an offender: ``fields._split_csv``, ``fields._shared`` and
@@ -484,10 +484,12 @@ def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
     would be identical and an exemption entry for each would be a skip list nobody rereads.
 
     **What it cannot catch, stated rather than implied**: a new site written as a bare
-    ``.casefold()`` on unstripped input, or as ``.strip().lower()``. Sixteen ``.strip()
-    .lower()`` sites exist today and are deliberate -- env tokens, hostnames, media types,
-    hex colors -- and two more fold PATHS (``identity.to_basename``, ``to_segments``), whose
-    docstrings say why lower is the right answer there.
+    ``.casefold()`` on unstripped input, or as ``.strip().lower()``. Eleven of the latter
+    exist at this tip and every one is deliberate -- env tokens, hostnames, media types, hex
+    colors -- two of them folding PATHS (``identity.to_basename``, ``to_segments``), whose
+    docstrings say why lower is the right answer there. That figure is measured at the tip
+    rather than at ``dev``, where it is sixteen: #668 landed on this same branch and took
+    six of them.
 
     ``alembic/`` is out of scope: those revisions are frozen and five of them carry the
     idiom.
@@ -4096,7 +4098,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 83
+_EXPECTED_LAYERED_MODULES = 84
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -4416,13 +4418,16 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
 #: A different population from that constant, which counts the 83 under the four packages only.
-_EXPECTED_SOURCE_MODULES = 115
+_EXPECTED_SOURCE_MODULES = 116
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
-#: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level for the
-#: two `launcher.conf` keys Settings -> General writes, `launcher` reaches `main` to serve, and
-#: `main` mounts every router. Written out rather than counted, because a cycle is a coupling
-#: someone chose and the next reader needs to know which two are known.
+#: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`
+#: reaches `main` to serve, and `main` mounts every router. Written out rather than counted,
+#: because a cycle is a coupling someone chose and the next reader needs to know which two.
+#:
+#: **That edge is two function calls, not two constants**, so it is not another one-string move:
+#: `_desktop_out` calls `launcher.desktop_platform()` and the desktop save calls
+#: `launcher.write_conf_values()`. Breaking it means moving behavior, not a name.
 #:
 #: There were **nine** before `LAUNCHER_CONF_NAME` moved to `config.py`; the seven that went
 #: were `services/backup.py` and `services/restore.py` importing the process entry point for a
