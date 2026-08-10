@@ -22,6 +22,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Literal
 
 import structlog
 from sqlalchemy import delete, select
@@ -45,8 +46,16 @@ log = structlog.get_logger(__name__)
 
 CLIENT_ID_KEY = "plex_client_identifier"
 
-#: How long a browser has to finish an in-app (re-)link before its PIN expires.
-LINK_TTL = timedelta(minutes=10)
+#: How long a browser has to finish a PIN flow, sign-in or link, before the pending row
+#: expires. Twice ``PlexTvClient.PIN_TIMEOUT`` so the row outlives the poll window rather
+#: than expiring underneath an operator who is still typing their plex.tv password.
+PIN_TTL = timedelta(minutes=10)
+
+#: Which flow a pending row belongs to. ``poll_plex_login`` reads only ``"login"`` rows and
+#: ``poll_link`` only ``"link"`` ones, so a PIN approved for one flow can never be spent by
+#: the other. That fence is what keeps an admin's re-link from being redeemed for a session
+#: at ``/api/auth/plex/poll``, which is an open route where the link routes are not.
+PinPurpose = Literal["login", "link"]
 
 
 class PlexLinkError(RuntimeError):
@@ -117,6 +126,65 @@ async def client_identifier(session: AsyncSession) -> str:
     )
     await session.flush()
     return generated
+
+
+@dataclass(frozen=True)
+class PinStart:
+    """A minted PIN, and the plex.tv URL the browser has to open to approve it."""
+
+    pin_id: int
+    auth_url: str
+
+
+async def start_pin(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    purpose: PinPurpose,
+    safety: RuntimeSafety,
+    forward_url: str | None = None,
+) -> PinStart:
+    """Create a PIN, record it as pending, and return the URL to open.
+
+    Both browser-driven plex.tv flows start here: signing an operator in
+    (:func:`reaper.services.login.poll_plex_login`) and linking a server from Settings
+    (:func:`poll_link`). They were written out twice and differed only in ``purpose``,
+    which is now the one argument. Whichever value is passed is the only poller that can
+    ever spend the row.
+
+    The backend polls plex.tv; the browser never handles a token. ``forward_url`` is where
+    plex.tv sends the sign-in window when the operator is done, which is how that window
+    gets closed (``schemas.PLEX_FORWARD_PATH``).
+
+    No transaction is held across the network call. Two brief database touches sit either
+    side of it, for the same reason :func:`link` gives at length: SQLite hands one writer
+    the database, and a session held open across a plex.tv round trip blocks every other
+    writer for as long as it takes.
+    """
+    async with session_factory() as session:
+        cid = await client_identifier(session)
+        # Opportunistically drop stale pendings so the table cannot grow without bound
+        # from abandoned sign-ins. This is the only sweeper the table has, and it covers
+        # every purpose, so a third flow added here inherits it rather than forgetting it.
+        await session.execute(
+            delete(PendingPlexLogin).where(PendingPlexLogin.expires_at <= utcnow())
+        )
+        await session.commit()
+
+    async with PlexTvClient(cid, safety=safety) as plextv:
+        pin = await plextv.create_pin()
+
+    async with session_factory() as session:
+        session.add(
+            PendingPlexLogin(
+                pin_id=pin.pin_id,
+                purpose=purpose,
+                created_at=utcnow(),
+                expires_at=expiry(PIN_TTL),
+            )
+        )
+        await session.commit()
+
+    return PinStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid, forward_url))
 
 
 @dataclass(frozen=True)
@@ -381,53 +449,9 @@ async def switch_server(
 
 
 # ---------------------------------------------------------------------------
-# In-app (re-)link: a browser-driven PIN flow for an already-signed-in admin
+# In-app (re-)link: a browser-driven PIN flow for an already-signed-in admin.
+# It starts at start_pin(purpose="link"); what follows is the half that is its own.
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class LinkStart:
-    pin_id: int
-    auth_url: str
-
-
-async def start_link(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    safety: RuntimeSafety,
-    forward_url: str | None = None,
-) -> LinkStart:
-    """Begin an in-app link: create a PIN and return the URL for the browser to open.
-
-    This is the Settings-page twin of the setup flow. The backend polls; the browser
-    never handles a token. Purpose ``"link"`` keeps these pendings distinct from the
-    ``"login"`` ones, so a re-link cannot be mistaken for a sign-in.
-
-    ``forward_url`` is where plex.tv sends the window when the operator is done, which is
-    how that window gets closed (``schemas.PLEX_FORWARD_PATH``).
-    """
-    async with session_factory() as session:
-        cid = await client_identifier(session)
-        await session.execute(
-            delete(PendingPlexLogin).where(PendingPlexLogin.expires_at <= utcnow())
-        )
-        await session.commit()
-
-    async with PlexTvClient(cid, safety=safety) as plextv:
-        pin = await plextv.create_pin()
-
-    async with session_factory() as session:
-        session.add(
-            PendingPlexLogin(
-                pin_id=pin.pin_id,
-                purpose="link",
-                created_at=utcnow(),
-                expires_at=expiry(LINK_TTL),
-            )
-        )
-        await session.commit()
-
-    return LinkStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid, forward_url))
 
 
 async def poll_link(

@@ -64,9 +64,12 @@ from reaper.services.login import (
     UserView,
     login_local,
     poll_plex_login,
-    start_plex_login,
 )
-from reaper.services.plex_link import PlexLinkRetryableError, PlexServerChoiceNeededError
+from reaper.services.plex_link import (
+    PlexLinkRetryableError,
+    PlexServerChoiceNeededError,
+    start_pin,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -221,8 +224,11 @@ async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -
     operator out of Plex sign-in entirely (S-1).
     """
     _rate_limited(plex_start_limit, client_ip(request))
-    start = await start_plex_login(
-        session_factory(request), safety=_safety(request), forward_url=payload.forward_url()
+    start = await start_pin(
+        session_factory(request),
+        purpose="login",
+        safety=_safety(request),
+        forward_url=payload.forward_url(),
     )
     return PlexStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
 

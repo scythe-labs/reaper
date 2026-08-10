@@ -34,10 +34,15 @@ from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import AppUser, AuthProvider, AuthSession, PendingPlexLogin, PlexServer
 from reaper.db.session import create_engine, create_session_factory
-from reaper.services.login import PLEX_LOGIN_TTL, LoginError, login_local, poll_plex_login
+from reaper.services.login import LoginError, login_local, poll_plex_login
 from reaper.services.plex_link import (
+    PIN_TTL,
+    PinPurpose,
+    PlexLinkError,
     PlexLinkRetryableError,
     PlexServerChoiceNeededError,
+    poll_link,
+    start_pin,
 )
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
@@ -261,17 +266,130 @@ async def _link_server(factory: async_sessionmaker[AsyncSession], machine_id: st
         await session.commit()
 
 
-async def _pending(factory: async_sessionmaker[AsyncSession], pin_id: int) -> None:
+async def _pending(
+    factory: async_sessionmaker[AsyncSession],
+    pin_id: int,
+    purpose: PinPurpose = "login",
+) -> None:
     async with factory() as session:
         session.add(
             PendingPlexLogin(
                 pin_id=pin_id,
-                purpose="login",
+                purpose=purpose,
                 created_at=utcnow(),
-                expires_at=expiry(PLEX_LOGIN_TTL),
+                expires_at=expiry(PIN_TTL),
             )
         )
         await session.commit()
+
+
+class TestThePinPurposeFence:
+    """``purpose`` is the only thing separating the two plex.tv PIN flows, and until
+    these tests nothing observed it: dropping the discriminator from both pollers left
+    the whole suite green, because the two halves were wrong in agreement.
+
+    It is worth a fence because the flows sit on opposite sides of the auth guard.
+    ``/api/settings/plex/link/*`` needs an admin session; ``/api/auth/plex/*`` is open,
+    since it is how an operator signs in. So the row an admin's re-link leaves behind
+    must not be redeemable for a session by whoever can reach the open route.
+
+    ``start_pin`` takes the value as an argument where each flow used to write its own
+    literal, which is exactly when the value earns a test (rule 118).
+    """
+
+    @pytest.fixture
+    def pins(self, httpx2_mock: respx.Router) -> respx.Route:
+        return httpx2_mock.post("https://plex.tv/api/v2/pins").mock(
+            return_value=httpx.Response(201, json={"id": 8321, "code": "ABCD"})
+        )
+
+    @pytest.mark.parametrize("purpose", ["login", "link"])
+    async def test_start_pin_records_the_purpose_it_was_handed(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        pins: respx.Route,
+        purpose: PinPurpose,
+    ) -> None:
+        """Both values are swept, so a helper that hardcodes either one fails on the
+        other (rule 141). ``forward_url`` is swept off its ``None`` default in the same
+        call: it is what closes the plex.tv window, and both callers now route it here.
+        """
+        start = await start_pin(
+            factory,
+            purpose=purpose,
+            safety=SAFETY,
+            forward_url=f"https://reaper.example/done/{purpose}",
+        )
+
+        assert start.pin_id == 8321
+        assert f"forwardUrl=https%3A%2F%2Freaper.example%2Fdone%2F{purpose}" in start.auth_url
+        async with factory() as session:
+            row = (await session.execute(select(PendingPlexLogin))).scalar_one()
+            assert row.purpose == purpose
+            assert row.pin_id == 8321
+
+    async def test_start_pin_drops_pendings_that_have_expired(
+        self, factory: async_sessionmaker[AsyncSession], pins: respx.Route
+    ) -> None:
+        """The only sweeper this table has, and it covers every purpose: an abandoned
+        link must not keep a row alive forever because the next start was a sign-in."""
+        async with factory() as session:
+            session.add(
+                PendingPlexLogin(
+                    pin_id=101,
+                    purpose="link",
+                    created_at=utcnow() - timedelta(hours=2),
+                    expires_at=utcnow() - timedelta(hours=1),
+                )
+            )
+            await session.commit()
+
+        await start_pin(factory, purpose="login", safety=SAFETY)
+
+        async with factory() as session:
+            rows = (await session.execute(select(PendingPlexLogin))).scalars().all()
+            assert [(r.pin_id, r.purpose) for r in rows] == [(8321, "login")]
+
+    async def test_a_link_pin_cannot_be_spent_as_a_sign_in(
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
+    ) -> None:
+        """The direction that matters: the open sign-in route must not redeem the row
+        an authenticated re-link created. Refused before plex.tv is asked anything."""
+        await _link_server(factory, "ours")
+        await _pending(factory, 42, purpose="link")
+        approved = httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
+            return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
+        )
+
+        with pytest.raises(LoginError, match="no longer valid"):
+            await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
+
+        assert not approved.called
+        async with factory() as session:
+            assert (await session.execute(select(AuthSession))).first() is None
+            # Refusing another flow's PIN must not consume it either: the admin's link
+            # is still in flight and its own poller has to be able to finish it.
+            row = (await session.execute(select(PendingPlexLogin))).scalar_one()
+            assert row.purpose == "link"
+
+    async def test_a_sign_in_pin_cannot_be_spent_as_a_link(
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
+    ) -> None:
+        """The mirror. Without it the fence is pinned in one direction only, which is
+        how both halves drifted into agreeing (rule 72)."""
+        await _pending(factory, 42, purpose="login")
+        approved = httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
+            return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
+        )
+
+        with pytest.raises(PlexLinkError, match="no longer valid"):
+            await poll_link(factory, _box(), pin_id=42, safety=SAFETY)
+
+        assert not approved.called
+        async with factory() as session:
+            assert (await session.execute(select(PlexServer))).first() is None
+            row = (await session.execute(select(PendingPlexLogin))).scalar_one()
+            assert row.purpose == "login"
 
 
 class TestPlexLoginPoll:
