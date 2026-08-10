@@ -29,7 +29,7 @@ concurrency:
 jobs:
   title:
     name: Conventional Commit title
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, reaper-ci]
     permissions:
       pull-requests: read
     steps:

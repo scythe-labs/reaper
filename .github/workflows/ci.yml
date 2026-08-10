@@ -56,6 +56,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Every job here runs on the `reaper-ci` self-hosted pool: four Linux x64 runners, so the
+# code lane's two parallel jobs and the gate around them fit in one wave. `pr-validation.yml`
+# and `codeql.yml` name the same pool.
+#
+# **This is a public repository, so a pull request from a fork proposes running a stranger's
+# code on that hardware.** The setting that holds it shut is Settings -> Actions -> General
+# -> "Require approval for all external contributors", and it is not in this file because
+# GitHub does not expose it to a workflow. A workflow cannot refuse a runner it is already
+# running on.
+#
+# The pool is not elastic. If every runner is offline a job queues rather than failing, and
+# a queued required check reads the same as a slow one.
 jobs:
   # The single source of truth for which lane a change belongs to: every job in this file
   # reads these three outputs rather than carrying globs of its own.
@@ -77,7 +89,7 @@ jobs:
   # file holds which can move without this comment being re-read.
   changes:
     name: Decide what to run
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, reaper-ci]
     outputs:
       code: ${{ steps.decide.outputs.code }}
       prose: ${{ steps.decide.outputs.prose }}
@@ -163,7 +175,7 @@ jobs:
           echo "verdict: code=${code} prose=${prose} site=${site}"
 
   check:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, reaper-ci]
     needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
@@ -247,7 +259,7 @@ jobs:
           uv run alembic check
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, reaper-ci]
     needs: changes
     if: needs.changes.outputs.code == 'true'
     defaults:
@@ -311,7 +323,7 @@ jobs:
   # pytest in `check`, which is redundant and deliberate: the alternative is a conditional
   # that can silently fail to run.
   hygiene:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, reaper-ci]
     needs: changes
     if: needs.changes.outputs.prose == 'true'
     steps:
@@ -339,7 +351,7 @@ jobs:
   # otherwise a broken COPY order, a stale lock, or a bad base image reaches main green.
   # needs: ensures the image is never built from code that failed lint, type, or test.
   docker:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, reaper-ci]
     needs: [changes, check, frontend]
     if: needs.changes.outputs.code == 'true'
     permissions:
@@ -432,7 +444,7 @@ jobs:
   # would build perfectly well while saying the wrong thing.
   site:
     name: Manual site
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, reaper-ci]
     needs: changes
     if: needs.changes.outputs.site == 'true'
     defaults:
@@ -462,7 +474,7 @@ jobs:
   # look at. A cancelled job is a failure, since a cancellation is not a verdict.
   ci-gate:
     name: CI gate
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, reaper-ci]
     if: always()
     needs: [changes, check, frontend, hygiene, docker, site]
     steps:
