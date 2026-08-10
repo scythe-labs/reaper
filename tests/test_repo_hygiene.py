@@ -5983,6 +5983,13 @@ def test_every_client_carries_the_operators_own_tls_setting() -> None:
     So the row is killed and its obligation lands here instead, widened to every client that
     has a TLS switch to carry (rule 72). The *arr gate stays separate because it requires a
     third argument these do not have.
+
+    **Two spellings are out of reach rather than covered** (rule 147): the walk matches an
+    ``ast.Name``, so ``some_module.PlexClient(...)`` and ``from … import PlexClient as PC``
+    are invisible to it. Neither is in the tree, checked by AST across ``src/`` at this tip,
+    and the count above cannot see one arriving because a site the walk never collected is
+    missing from both halves. Reading the whole call is what the shared walk already does;
+    resolving a local alias per file is what ``_pending_pin_construction_sites`` does already.
     """
     sites = _client_construction_sites(SRC, _TLS_CLIENTS)
     assert len(sites) == _EXPECTED_TLS_CONSTRUCTIONS, (
