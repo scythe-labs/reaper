@@ -1699,6 +1699,56 @@ here is preventing a future divergence.
   required, so no copy can silently drop the guard: this is maintenance cost, not a hole.
 - `services/app_settings.py:185` — the "stored wins, else env seed" rule written **7 times in 3
   spellings**, with log level resolving in `main.py` instead of a getter.
+
+  > **Killed: both halves. A gate lands instead, and three of the seven sites were unpinned.**
+  >
+  > **7 is right, 3 spellings is not; the tree holds 5.** The population is derivable: a function
+  > in `app_settings.py` that calls `_get` and takes a `Settings`-annotated parameter, which is
+  > exactly the seven and nothing else. 16 more readers take no seed, and `runtime_safety` takes
+  > one and delegates. Only **three** share a spelling, byte-identical apart from the key and the
+  > attribute: `destructive_enabled`, `proxy_trust_enabled`, `leaving_soon_unarmed`. The other
+  > four are one apiece. `get_trusted_proxies` decodes the seed and cleans the stored side.
+  > `get_timezone` validates both, tests truthiness rather than `is None`, and falls through to a
+  > third source. `get_discord_webhook` is encrypted and writes the seed back on first read.
+  > `has_discord_webhook` is the presence probe over the same row, and its `Settings` is optional.
+  >
+  > **A helper serves three of seven and nets +1 line** (12 lines of branch out, a documented
+  > three-line helper and three call sites in), which is S5. Reaching the fourth needs a decoder
+  > and a cleaner; the fifth a validator and a third layer; the last two a `SecretBox` and rule
+  > 16's contract. And it binds only the getters that call it, where the row's real exposure is
+  > the eighth getter nobody has written yet. **Phase 9's W4.1 also rewrites this**: its `SETTINGS`
+  > table carries an "optional env field" column, so a helper landing now is the collision that
+  > folded W3b-4.
+  >
+  > **The measurement that decided it.** Each of the seven had its precedence mutated and the
+  > whole suite run against it. Four went red, each on exactly one test, each in a different file:
+  > `destructive_enabled` on `test_startup_log.py`, `proxy_trust_enabled` on
+  > `test_general_and_logs.py`, `leaving_soon_unarmed` on `test_leaving_soon_settings.py`,
+  > `get_timezone` on `test_timezone_setting.py`. **Three went green across 4,252 tests**:
+  > `get_trusted_proxies` reverting a stored empty list to `REAPER_TRUSTED_PROXIES` — the getter's
+  > own docstring claims that distinction and rule 1 requires it, and clearing the list in the UI
+  > is how an operator says "trust nobody" while a forwarded header still decides auth (rule 101);
+  > `get_discord_webhook` letting a stale env var clobber a URL edited in the UI; and
+  > `has_discord_webhook` reporting "connected" for a credential written under a rotated key,
+  > which is the one case its own docstring says must read as absent.
+  >
+  > `tests/test_app_settings_precedence.py` drives all seven, one case each, and reconciles the
+  > population against the module by AST so an eighth fails until its case is written (rule 145,
+  > with the count pinned so a broken matcher cannot pass by subtracting against an empty set).
+  > Every one of the seven mutations goes red on its own named case, and both arms of the walk go
+  > red against an eighth getter.
+  >
+  > **The log-level half is a misreading and moving it nets negative.** `get_log_level_setting`
+  > already exists and `main.py:265` already goes through it. What sits in `main.py` is the
+  > *apply*, and it cannot move: the level is process-global state, not a value.
+  > `configure_logging` sets it from the env at `create_app` (`:516`), before `lifespan` builds
+  > the session factory, because the boot lines before the database is reachable need a level. So
+  > the two sources are a sequence, not a choice, and a getter could only express the second half.
+  > A `get_log_level(session, settings)` returning the resolved string would also erase the
+  > three-state `main.py:302` needs for `log_level_from` (rule 76), leaving two reads of one row
+  > where there is now one. Measured while confirming it: `REAPER_LOG_LEVEL=ERROR` validates and
+  > then silently resolves to INFO, because `logbuffer.LEVELS` omits ERROR while `config.py`'s
+  > `Literal` and the Unraid template both offer it. On `dev`, filed as #700.
 - `backup.py`/`restore.py`/`retention.py` — **5 raw `sqlite3.connect` blocks**, none using
   `db/session.py`'s `_configure_sqlite` declared pragma set, so `busy_timeout` is 5000 in two,
   30000 in one and absent in two. Two share a byte-identical operator string. Risk
