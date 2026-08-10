@@ -14,13 +14,8 @@ inside a 2,000-line file whose other routes are services, jobs, security and
 notifications; ``api/plex_trash.py`` and ``api/leaving_soon.py`` already sit beside it as
 sibling routers.
 
-The request accessors come from ``api.settings`` rather than being copied. Seven modules
-already declare their own under two spellings -- ``_factory``/``_settings``/``_box`` in
-``api/auth.py``, ``api/backup.py``, ``api/settings.py`` and ``api/setup.py``, and ``_sessions``
-in ``api/review.py``, ``api/runs.py`` and ``api/whitelist.py`` -- and phase 8's ``api/deps.py``
-collapses them at once
-(``docs/SIMPLIFICATION_PLAN.md``, wave 3). Named rather than counted, because a count in prose
-is a number nothing asserts. A copy here would grow exactly what that change exists to shrink.
+The request accessors come from ``api.deps``, which is where every router that declared
+its own reads them.
 
 Two things are true of this router, as they are of ``api/settings.py`` it came from: **it
 requires a session** (these routes sit behind the auth gate, see ``api.middleware``), and
@@ -46,6 +41,7 @@ from reaper.api.auth import (
     _verify_admin_password,
     record_password_failure,
 )
+from reaper.api.deps import runtime_settings, secret_box, session_factory
 from reaper.api.schemas import (
     NO_PLEX_FORWARD,
     PlexServerChoiceOut,
@@ -53,8 +49,9 @@ from reaper.api.schemas import (
     RemovedOut,
 )
 
-# Private on purpose, and imported rather than copied: see the module docstring.
-from reaper.api.settings import _box, _factory, _require_web_url, _required_web_url, _settings
+# Private on purpose, and imported rather than copied: this router keeps ``api/settings.py``'s
+# prefix, so it validates an operator-typed URL through that file's own checks.
+from reaper.api.settings import _require_web_url, _required_web_url
 from reaper.auth.ratelimit import password_throttle
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
@@ -261,7 +258,7 @@ async def _plex_status(session: AsyncSession) -> PlexStatusOut:
 
 @router.get("/plex", tags=[api_tags.PLEX])
 async def plex_status(request: Request) -> PlexStatusOut:
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         return await _plex_status(session)
 
 
@@ -275,7 +272,7 @@ async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexS
         cleaned,
         refusal="The Plex web address must be a full web address, like https://192.0.2.10:32400.",
     )
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         # Only when the caller sent the field. `cleaned` is `None` for "not sent" and `""` for
         # "reset to the hosted default", and those are different requests (rule 1).
         if cleaned is not None:
@@ -297,20 +294,22 @@ async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexS
 async def plex_link_start(
     request: Request, payload: PlexStartIn = NO_PLEX_FORWARD
 ) -> PlexLinkStartOut:
-    async with _factory(request)() as session:
-        safety = await app_settings.runtime_safety(session, _settings(request))
-    start = await start_link(_factory(request), safety=safety, forward_url=payload.forward_url())
+    async with session_factory(request)() as session:
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
+    start = await start_link(
+        session_factory(request), safety=safety, forward_url=payload.forward_url()
+    )
     return PlexLinkStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
 
 
 @router.post("/plex/link/poll", tags=[api_tags.PLEX])
 async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkPollOut:
-    async with _factory(request)() as session:
-        safety = await app_settings.runtime_safety(session, _settings(request))
+    async with session_factory(request)() as session:
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
     try:
         linked = await poll_link(
-            _factory(request),
-            _box(request),
+            session_factory(request),
+            secret_box(request),
             pin_id=payload.pin_id,
             safety=safety,
             choice=payload.machine_identifier,
@@ -342,7 +341,7 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
         return PlexLinkPollOut(status="pending")
     # The server is linked as of this line, so its libraries are readable for the first time.
     await _sync_libraries_after_link(request)
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         return PlexLinkPollOut(status="ok", server=await _plex_status(session))
 
 
@@ -351,7 +350,7 @@ async def plex_unlink(request: Request) -> RemovedOut:
     """Forget the linked Plex server. Deletes nothing in Plex -- it just drops the stored
     connection and token, so Leaving Soon and the collection whitelist go quiet until a
     server is linked again."""
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         server = (await session.execute(select(PlexServer))).scalars().first()
         if server is None:
             return RemovedOut(removed=False)
@@ -378,12 +377,12 @@ async def plex_resources(request: Request) -> PlexResourcesOut:
     ``source: "stored"`` so the UI can say the list may be stale rather than imply it
     is fresh.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         server = await _linked_server(session)
         current_id = server.machine_identifier
-        token = _box(request).decrypt(server.token_enc)
+        token = secret_box(request).decrypt(server.token_enc)
         cid = await client_identifier(session)
-        safety = await app_settings.runtime_safety(session, _settings(request))
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
         stored_connections = json.loads(server.connections_json or "[]")
         stored_name = server.name
         await session.commit()
@@ -447,12 +446,12 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
     rides along when given, so switching to a self-signed server can turn it off in the
     same step rather than being stuck on the old server's setting.
     """
-    async with _factory(request)() as session:
-        safety = await app_settings.runtime_safety(session, _settings(request))
+    async with session_factory(request)() as session:
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
     try:
         await switch_server(
-            _factory(request),
-            _box(request),
+            session_factory(request),
+            secret_box(request),
             machine_identifier=payload.machine_identifier,
             safety=safety,
             verify_tls=payload.verify_tls,
@@ -466,7 +465,7 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
     # from the new one here, for the same reason the link path does (rule 72): the stored list
     # is otherwise empty until something presses Sync, and the library pickers read that list.
     await _sync_libraries_after_link(request)
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         status = await _plex_status(session)
     log.info("plex.server_switched")
     return status
@@ -493,9 +492,9 @@ async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> Pl
         uri, refusal="The server address must be a full web address, like https://192.0.2.10:32400."
     )
 
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         server = await _linked_server(session)
-        token = _box(request).decrypt(server.token_enc)
+        token = secret_box(request).decrypt(server.token_enc)
         verify = payload.verify_tls if payload.verify_tls is not None else server.verify_tls
         expected = server.machine_identifier
         expected_name = server.name
@@ -524,7 +523,7 @@ async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> Pl
             f"one instead.",
         )
 
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         server = await _linked_server(session)
         server.connection_uri = uri
         if payload.verify_tls is not None:
@@ -557,7 +556,7 @@ def _libraries_out(stored: list[dict[str, Any]]) -> list[PlexLibraryOut]:
 async def plex_libraries(request: Request) -> list[PlexLibraryOut]:
     """The video libraries as last synced, each with its enabled flag. Empty until the
     first sync."""
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         return _libraries_out(await app_settings.get_plex_libraries(session))
 
 
@@ -606,16 +605,16 @@ async def _sync_libraries(request: Request) -> list[PlexLibraryOut]:
     movie and TV library without further setup. Libraries that no longer exist on the
     server are dropped.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         server = await _linked_server(session)
-        safety = await app_settings.runtime_safety(session, _settings(request))
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
         stored = {
             int(lib["key"]): bool(lib.get("enabled", True))
             for lib in await app_settings.get_plex_libraries(session)
         }
         plex = PlexClient(
             server.connection_uri,
-            _box(request).decrypt(server.token_enc),
+            secret_box(request).decrypt(server.token_enc),
             safety=safety,
             verify=server.verify_tls,
         )
@@ -634,7 +633,7 @@ async def _sync_libraries(request: Request) -> list[PlexLibraryOut]:
         }
         for s in sections
     ]
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         await app_settings.set_plex_libraries(session, merged)
         result = _libraries_out(await app_settings.get_plex_libraries(session))
         await session.commit()
@@ -650,7 +649,7 @@ async def get_watch_evidence(request: Request) -> WatchEvidenceOut:
     items whose recorded plays Reaper can no longer see. It is what was measured, not what was
     decided -- see ``WatchEvidenceOut``, which says why the difference matters here.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         titles = int(
             (await session.execute(select(func.count()).select_from(WatchHighWater))).scalar() or 0
         )
@@ -701,7 +700,7 @@ async def reset_watch_evidence(
     a staged artifact to bind one to.
     """
     keys = (f"ip:{_client_ip(request)}", "account:watch-evidence-reset")
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         if not await admin_password.has_password(session):
             raise HTTPException(
                 400,
@@ -737,7 +736,7 @@ async def forget_watch_evidence_for(request: Request, media_key: str) -> Removed
     approve a removal: the title goes back to being judged by the policy on its current plays,
     like any other.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         removed = await watch_evidence.forget_one(session, media_key)
         await session.commit()
     return RemovedOut(removed=removed)
@@ -753,7 +752,7 @@ async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list
     never visits a disabled library again, and a stale warning shelf is a lie.
     """
     enabled = {int(k) for k in payload.enabled_keys}
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         stored = await app_settings.get_plex_libraries(session)
         turned_off = [
             lib for lib in stored if lib.get("enabled") and int(lib.get("key", 0)) not in enabled
@@ -768,7 +767,10 @@ async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list
         # Best-effort, after the choice is committed: failure is logged inside, never
         # raised, and never blocks the settings change itself.
         await leaving_soon.cleanup_sections(
-            _factory(request), _settings(request), _box(request), sections=turned_off
+            session_factory(request),
+            runtime_settings(request),
+            secret_box(request),
+            sections=turned_off,
         )
 
     log.info("plex.libraries_set", enabled=len(enabled), cleaned=len(turned_off))

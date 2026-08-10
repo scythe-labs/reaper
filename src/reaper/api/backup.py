@@ -31,7 +31,6 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
 from reaper.api import tags as api_tags
@@ -41,6 +40,7 @@ from reaper.api.auth import (
     _verify_admin_password,
     record_password_failure,
 )
+from reaper.api.deps import runtime_settings, session_factory
 from reaper.api.runs import reap_in_flight
 from reaper.api.schemas import OkOut, RestoreCancelOut
 from reaper.auth.ratelimit import password_throttle
@@ -101,22 +101,12 @@ class RestoreCancelIn(BaseModel):
     armed card's Cancel needs -- it holds no summary to take a token from."""
 
 
-def _settings(request: Request) -> Settings:
-    settings: Settings = request.app.state.settings
-    return settings
-
-
-def _factory(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
-
-
 @router.get("")
 async def backup_info(request: Request) -> BackupInfoOut:
     """What a backup would contain and weigh, when one was last taken, and whether a
     restore is staged and waiting for a restart."""
-    settings = _settings(request)
-    async with _factory(request)() as session:
+    settings = runtime_settings(request)
+    async with session_factory(request)() as session:
         last = await app_settings.get_last_backup_at(session)
     return BackupInfoOut(
         reaper_db_bytes=backup.db_size_on_disk(settings.database_path),
@@ -134,7 +124,7 @@ async def _record_backup_taken(request: Request, created_at: str) -> None:
     """Record when a backup was secured. Runs as the response's background task, after the
     last byte is sent, so a download that dies mid-stream never claims a copy exists that
     the operator does not have (rule 85, I-2)."""
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         await app_settings.set_last_backup_at(session, created_at)
         await session.commit()
 
@@ -150,7 +140,7 @@ async def _record_backup_taken(request: Request, created_at: str) -> None:
 )
 async def download_backup(request: Request) -> StreamingResponse:
     """Build the backup and stream it to the browser as one downloadable file."""
-    settings = _settings(request)
+    settings = runtime_settings(request)
     archive = await backup.create_backup(settings)
 
     # From here to the returned response, any failure would strand the finished archive
@@ -221,7 +211,7 @@ async def restore_prepare(request: Request) -> RestoreSummaryOut:
     this build cannot serve. On success the archive is staged but not armed: nothing is
     swapped until ``confirm`` verifies the admin password.
     """
-    settings = _settings(request)
+    settings = runtime_settings(request)
     archive_path = await _spool_body(request, settings)
     try:
         summary = await asyncio.to_thread(restore.stage_upload, settings, archive_path)
@@ -248,9 +238,9 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> OkOut:
     and the swap is armed; the swap itself happens on the next start, which the operator asks
     for with ``restore/restart`` or by restarting the container themselves.
     """
-    settings = _settings(request)
+    settings = runtime_settings(request)
     keys = (f"ip:{_client_ip(request)}", "account:restore")
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         if not await admin_password.has_password(session):
             raise HTTPException(
                 400,
@@ -289,7 +279,7 @@ async def restore_cancel(
     the archive is still on the operator's disk.
     """
     cleared = await asyncio.to_thread(
-        restore.clear_pending, _settings(request), payload.token if payload else None
+        restore.clear_pending, runtime_settings(request), payload.token if payload else None
     )
     if cleared:
         log.info("restore.canceled")
@@ -354,7 +344,7 @@ async def restore_restart(request: Request) -> JSONResponse:
     :mod:`reaper.api.middleware`'s allowlist names, and this is not on it, so it is refused by
     being born outside it -- deliberately, because stopping the app is not automation's to do.
     """
-    settings = _settings(request)
+    settings = runtime_settings(request)
     if not await asyncio.to_thread(restore.is_armed, settings):
         raise HTTPException(409, "There's no restore waiting, so nothing was stopped.")
     if reap_in_flight(request.app):

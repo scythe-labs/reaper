@@ -736,13 +736,18 @@ COLLAPSED_PAIRS = (
 
 #: The call sites, reconciled by hand against the pair table above. Seven pairs over six
 #: sites: two models validate inside their parent, and ``SeerrServiceOut`` builds at two routes.
+#:
+#: Keyed on the ENCLOSING FUNCTION rather than the line, which is the same key
+#: ``_MEMBERSHIP_INVENTORY`` uses in ``test_repo_hygiene.py`` and for the same reason: a line
+#: number moves whenever anything above it does, so a list of them fails on somebody else's
+#: unrelated diff. A function name moves only when this site does.
 _COLLAPSE_SITES = [
-    "src/reaper/api/backup.py:235",
-    "src/reaper/api/breakdown.py:28",
-    "src/reaper/api/fairness.py:162",
-    "src/reaper/api/review.py:1300",
-    "src/reaper/api/settings.py:584",
-    "src/reaper/api/settings.py:655",
+    "src/reaper/api/backup.py::restore_prepare",
+    "src/reaper/api/breakdown.py::get_reap_breakdown",
+    "src/reaper/api/fairness.py::_row_out",
+    "src/reaper/api/review.py::_deep_links",
+    "src/reaper/api/settings.py::instance_seerr_services",
+    "src/reaper/api/settings.py::test_new_instance",
 ]
 
 
@@ -783,18 +788,23 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
         written that way is added to the pair table by hand.
 
         The assertion is the site LIST, not its length, so swapping one collapse for another
-        cannot hold the number still while ``COLLAPSED_PAIRS`` goes stale.
+        cannot hold the number still while ``COLLAPSED_PAIRS`` goes stale. A site at module
+        level rather than inside a function is invisible to the walk and would have nothing
+        to key on; none exists, and one would have no route to serve.
         """
         sites = []
         for path in sorted((REPO / "src" / "reaper" / "api").rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
+            for parent in ast.walk(tree):
+                if not isinstance(parent, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
-                for keyword in node.keywords:
-                    value = keyword.value
-                    if keyword.arg == "from_attributes" and getattr(value, "value", None) is True:
-                        sites.append(f"{path.relative_to(REPO)}:{node.lineno}")
+                for node in ast.walk(parent):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    for keyword in node.keywords:
+                        collapsed = keyword.arg == "from_attributes"
+                        if collapsed and getattr(keyword.value, "value", None) is True:
+                            sites.append(f"{path.relative_to(REPO)}::{parent.name}")
 
         assert sorted(sites) == _COLLAPSE_SITES, (
             f"the sites building a wire model off a service record are now {sorted(sites)}. "
