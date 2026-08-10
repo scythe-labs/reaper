@@ -311,10 +311,10 @@ class TestTheSchedulerIsUpkeepOnly:
         db_dir = tmp_path / "db"
         db_dir.mkdir()
         settings = Settings(data_dir=db_dir, secret_key="k")
-        engine = create_engine(settings)
-        factory = create_session_factory(engine)
+        db_engine = create_engine(settings)
+        factory = create_session_factory(db_engine)
         sched = scheduler.build_scheduler(
-            engine,
+            db_engine,
             session_factory=factory,
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -325,12 +325,15 @@ class TestTheSchedulerIsUpkeepOnly:
 
         job = next(j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID)
 
-        assert engine.url.database is not None
-        assert list(job.args)[:2] == [factory, Path(engine.url.database).parent]
+        assert db_engine.url.database is not None
+        assert list(job.args)[:2] == [factory, Path(db_engine.url.database).parent]
         # `Settings` resolves `data_dir` to an absolute path, so the shipped default is the
         # resolved one and not the bare `Path("data")` a hardcoded wiring would carry.
-        assert Path(engine.url.database).parent not in (tmp_path, Settings(secret_key="k").data_dir)
-        await engine.dispose()
+        assert Path(db_engine.url.database).parent not in (
+            tmp_path,
+            Settings(secret_key="k").data_dir,
+        )
+        await db_engine.dispose()
 
     async def test_the_ratings_refresh_is_handed_that_same_folder(self, tmp_path: Path) -> None:
         """`refresh_ratings` downloads the IMDb dataset into ``data_dir`` and is wired from the
@@ -344,10 +347,10 @@ class TestTheSchedulerIsUpkeepOnly:
         db_dir = tmp_path / "db"
         db_dir.mkdir()
         settings = Settings(data_dir=db_dir, secret_key="k")
-        engine = create_engine(settings)
-        factory = create_session_factory(engine)
+        db_engine = create_engine(settings)
+        factory = create_session_factory(db_engine)
         sched = scheduler.build_scheduler(
-            engine,
+            db_engine,
             session_factory=factory,
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -358,10 +361,10 @@ class TestTheSchedulerIsUpkeepOnly:
 
         job = next(j for j in sched.get_jobs() if j.id == "refresh_ratings")
 
-        assert engine.url.database is not None
+        assert db_engine.url.database is not None
         # `refresh_ratings(cache_engine, data_dir, session_factory)`: the folder is second.
-        assert list(job.args)[1] == Path(engine.url.database).parent
-        await engine.dispose()
+        assert list(job.args)[1] == Path(db_engine.url.database).parent
+        await db_engine.dispose()
 
     async def test_the_snapshot_sweep_is_handed_a_way_to_ask_whether_a_reap_is_live(
         self, tmp_path: Path

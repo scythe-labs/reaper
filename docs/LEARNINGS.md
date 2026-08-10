@@ -3129,7 +3129,7 @@ divergent value the test relied on stops existing.
 
 **The test's question was retired, not answered.** With one source the two cannot diverge. What
 is left to pin is what the old assertion took on trust: that the folder the sweep vacuums is the
-folder the engine opened, read back off `engine.url.database` rather than recomputed from
+folder the engine opened. It is read back off the engine's own URL rather than recomputed from
 `settings`, which would only restate the derivation under test.
 
 **A test that pins a value's provenance is worth reading as an argument about the design.** The
