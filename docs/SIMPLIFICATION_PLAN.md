@@ -1617,9 +1617,12 @@ here is preventing a future divergence.
   attempt). The pieces are already extracted in `api/auth.py`; only the ordering is duplicated.
   Risk `safety-path`, and note **only one of the four gates has a throttle test**.
 
-> **Corrected: two of the four have one.** Arming (`tests/test_settings_api.py:900`) and forgetting
-> a watch record (`tests/test_watch_evidence.py:438`). `change_password` and `restore` have none,
-> and the extraction PR writes them. Both addresses above were stale by 61 and 13 lines.
+> **Corrected: two of the four have one.** Arming
+> (`test_settings_api.py::test_repeated_wrong_arming_passwords_are_locked_out`) and forgetting a
+> watch record (`test_watch_evidence.py::test_repeated_wrong_passwords_are_locked_out`).
+> `change_password` and `restore` have none, and the extraction PR writes them. This block used
+> to cite both by line, and both were stale by 61 and 13 lines; naming the test instead is what
+> stops that recurring, since the extraction PR shifts one of them again.
 
 > **Landed at #679.** The four rituals were byte-identical apart from the `gate=` name and the
 > 403 sentence, so they are one call to `deps.require_admin_password`, which returns `None` and
