@@ -3169,9 +3169,12 @@ are in, measured first, and each judged on whether it is worth building.**
 > not 22 sites; **W11-5** names `scan.py` for a counter that lives in `services/snapshot.py`;
 > **W11-11** is 12 in `_run_scan_locked`, not 11 in `run_scan`; **W11-41** is 15 models, not 13;
 > **W11-33**'s dead branch is at line 187, not 201; **W11-42**'s `~85 lines` is ~16 actually
-> removable; **W11-31** is four sentences, not five; **W11-3** is 30 dispatch sites, not six;
+> removable; **W11-3** is 30 dispatch sites, not six;
 > **W11-16** is 19 keys redeclared and 12 of them divergent, not four; **W11-23** is 26
-> containers across 9 files, not 21 across 7.
+> containers across 9 files, not 21 across 7. **W11-31 went the other way and is the reason a
+> verdict table exists at all**: the plan's four sentences is right, and the backend scout counted
+> five. A measurement pass over-counting a figure the document already had correct is the failure
+> nobody looks for, and it is only visible because the verifier re-derived it blind.
 >
 > **Build, in value order.** **W11-15** first, and it is not a duplication: `_enrich_titles` opens
 > 80 concurrent connections to one Seerr per Scales load (`_TITLE_LOOKUP_CAP = 80`, and httpx's
