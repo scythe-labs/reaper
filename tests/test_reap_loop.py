@@ -54,6 +54,9 @@ from reaper.services import list_config, whitelist
 from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
+    _CHECK_GREW_SINCE_APPROVED,
+    _CHECK_SIZE_UNCONFIRMED,
+    _NO_APPROVED_SIZE_CHECK,
     ExecutionError,
     Executor,
     ReapGateway,
@@ -706,6 +709,25 @@ class TestGrewMaterially:
         assert not _grew_materially(10 * GB, 0)
 
 
+class TestTheSizeInterlocksChecklistLines:
+    """The three sentences the size re-read puts on the checklist, held to their wording.
+
+    The identity assertions on each skip below say a site reads the right CONSTANT. Nothing
+    said what the constant SAYS, so re-typing either string left the suite green with the
+    operator reading whatever was typed. These are the copies (rule 144): the constant is one
+    declaration, and this is the one place its text is written down twice on purpose.
+    """
+
+    def test_the_grew_line_says_what_happened_and_what_became_of_the_file(self) -> None:
+        assert _CHECK_GREW_SINCE_APPROVED == "It grew since you approved it. Kept."
+
+    def test_the_unconfirmed_line_says_what_happened_and_what_became_of_the_file(self) -> None:
+        assert _CHECK_SIZE_UNCONFIRMED == "Couldn't confirm its current size. Kept."
+
+    def test_the_never_measured_line_says_what_happened_and_what_became_of_the_file(self) -> None:
+        assert _NO_APPROVED_SIZE_CHECK == "No size was recorded for it at scan time. Kept."
+
+
 class TestSizeDriftReRead:
     """The live size is re-read immediately before anything is sent. A file that grew
     materially since approval was upgraded -- the approval, the caps and the typed phrase
@@ -725,6 +747,7 @@ class TestSizeDriftReRead:
         assert report.skipped == 1
         assert report.state is RunState.COMPLETED  # a skip is a protection, not a failure
         assert "bigger now" in report.outcomes[0].detail
+        assert report.outcomes[0].checks[0].label == _CHECK_GREW_SINCE_APPROVED
 
     async def test_a_movie_whose_size_cannot_be_read_is_kept(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
@@ -735,6 +758,7 @@ class TestSizeDriftReRead:
 
         assert radarr.delete_calls == []
         assert report.skipped == 1
+        assert report.outcomes[0].checks[0].label == _CHECK_SIZE_UNCONFIRMED
 
     async def test_a_movie_radarr_reports_as_zero_bytes_is_kept(
         self, session: AsyncSession
@@ -787,6 +811,10 @@ class TestSizeDriftReRead:
         assert sonarr.unmonitor_calls == []
         assert sonarr.delete_calls == []
         assert report.skipped == 1
+        assert "bigger now" in report.outcomes[0].detail
+        # The same sentence the movie case above asserts, and the movie's was the only one
+        # anything read: a grep for this season's wording found it in `executor.py` alone.
+        assert report.outcomes[0].checks[0].label == _CHECK_GREW_SINCE_APPROVED
 
     async def test_a_season_with_an_unreadable_file_size_is_kept(
         self, session: AsyncSession
@@ -806,6 +834,7 @@ class TestSizeDriftReRead:
 
         assert sonarr.unmonitor_calls == []
         assert report.skipped == 1
+        assert report.outcomes[0].checks[0].label == _CHECK_SIZE_UNCONFIRMED
 
     async def test_a_season_whose_files_all_report_zero_bytes_is_kept(
         self, session: AsyncSession
@@ -931,6 +960,7 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         assert report.skipped == 1
         assert report.state is RunState.COMPLETED  # a skip is a protection, not a failure
         assert "never got a size" in report.outcomes[0].detail
+        assert report.outcomes[0].checks[0].label == _NO_APPROVED_SIZE_CHECK
 
     async def test_a_season_with_no_approved_size_is_kept_before_the_unmonitor(
         self, session: AsyncSession
@@ -950,6 +980,7 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         assert sonarr.delete_calls == []
         assert report.skipped == 1
         assert "never got a size" in report.outcomes[0].detail
+        assert report.outcomes[0].checks[0].label == _NO_APPROVED_SIZE_CHECK
 
     async def test_a_size_measured_against_a_different_thing_is_kept(
         self, session: AsyncSession
