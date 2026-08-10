@@ -4115,15 +4115,18 @@ _EXPECTED_LAYER_EDGES = frozenset(
 )
 
 #: Every cross-package import that does NOT run at module import time, by importing file, target
-#: and how it is deferred. Three, and all three are ones `docs/SIMPLIFICATION_PLAN.md`'s wave 9
-#: proposes to delete -- which is why they are written out rather than counted. A deferred import
-#: is how a layering violation hides from a runtime graph, so a new one is a decision made here
-#: by hand, never a number bumped to make a red test go green.
+#: and how it is deferred. Written out rather than counted: a deferred import is how a layering
+#: violation hides from a runtime graph, so a new one is a decision made here by hand, never a
+#: number bumped to make a red test go green.
+#:
+#: **One left of the three wave 9 found, and it hides nothing.** `services/executor.py` imports
+#: `reaper.clients.plex` at module level already, so the `TYPE_CHECKING` block below that import
+#: names two more symbols from a module the runtime graph holds an edge to either way. Wave 9
+#: proposed deleting it beside the other two; it was killed instead, having been measured to
+#: move neither graph, nor what a module import loads, nor behavior.
 _DEFERRED_CROSS_PACKAGE_IMPORTS = frozenset(
     {
-        ("reaper/api/simulate.py", "reaper.services.scan_runner", "function-local"),
         ("reaper/services/executor.py", "reaper.clients.plex", "TYPE_CHECKING"),
-        ("reaper/services/scan_runner.py", "reaper.engine.fields", "function-local"),
     }
 )
 
@@ -4266,9 +4269,9 @@ def test_the_four_packages_import_only_downward() -> None:
     nothing. Same for `_EXPECTED_LAYER_EDGES`, which is an equality for the same reason.
 
     The plan this landed under expected the test to skip deferred imports to be green on day
-    one. Measured, it does not need to: all three cross-package imports that do not run at
-    module import time run downward, so they are held to the same rule as the rest and pinned
-    by name in the test below.
+    one. Measured, it does not need to: every cross-package import that does not run at module
+    import time runs downward, so they are held to the same rule as the rest and pinned by name
+    in the test below.
     """
     modules = _layered_modules()
     assert len(modules) == _EXPECTED_LAYERED_MODULES, (
@@ -4315,10 +4318,10 @@ def test_every_deferred_cross_package_import_is_named() -> None:
     and they are also exactly where a layering violation would go to hide, since the module
     graph a tool draws does not have the edge at all.
 
-    All three of these are ones `docs/SIMPLIFICATION_PLAN.md`'s wave 9 proposes to delete,
-    having measured that none of them breaks the cycle it looks like it was written for. This
-    list is what makes that deletion visible: without it the walk skips the sites, the count
-    never moves, and the gate is blind to the one change it exists to watch.
+    `docs/SIMPLIFICATION_PLAN.md`'s wave 9 measured all three of these and found that none
+    breaks the cycle it looks like it was written for. Two are gone. This list is what made
+    that deletion visible: without it the walk skips the sites, the count never moves, and the
+    gate is blind to the one change it exists to watch.
     """
     deferred = frozenset(
         (e.path, e.target, e.deferred) for e in _cross_package_edges() if e.deferred
@@ -4329,7 +4332,9 @@ def test_every_deferred_cross_package_import_is_named() -> None:
         f"  gone: {sorted(_DEFERRED_CROSS_PACKAGE_IMPORTS - deferred) or 'none'}\n\n"
         "One that went away is wave 9 landing, and the entry comes out. A NEW one needs a\n"
         "reason written down: it is a cross-package dependency that no import graph will show,\n"
-        "so if it is here to break a cycle, name the cycle."
+        "so if it is here to break a cycle, name the cycle.\n"
+        "docs/SIMPLIFICATION_PLAN.md's S7 paragraph restates this set's size in prose, and\n"
+        "nothing asserts that copy (rule 144)."
     )
 
 
@@ -4540,6 +4545,13 @@ def test_every_import_cycle_under_src_is_one_someone_declared() -> None:
     Python imports a cycle happily until it does not. The failure this prevents is the one a
     review pass measured in phase 6: a five-module cut whose graph would not have booted, and
     which read as clean right up to the boot.
+
+    **It excludes ``TYPE_CHECKING`` edges, so a cycle broken by a type-only import is invisible
+    to it** (rule 147). That is deliberate -- those imports do not run, so they cannot fail a
+    boot -- but it means the walk is not an inventory of couplings. ``services/lists.py`` and
+    ``services/list_config.py`` are the live example: they import each other, one of them under
+    ``TYPE_CHECKING``, and promoting that one raises ``ImportError`` on three modules. Nothing
+    here would say so, and the deferred-import gate skips it too for being same-package.
     """
     graph = _module_import_graph()
     assert len(graph) == _EXPECTED_SOURCE_MODULES, (

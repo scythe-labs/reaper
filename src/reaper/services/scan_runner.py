@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 from sqlalchemy import select
@@ -32,6 +32,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind, PlexServer, Snapshot
+from reaper.engine.fields import CustomProtectGate
 from reaper.engine.gates import (
     DataHorizonGate,
     Gate,
@@ -54,11 +55,9 @@ from reaper.services import (
     requested_by,
 )
 from reaper.services import snapshot as snapshot_service
+from reaper.services.executor import ReapGateway
 from reaper.services.snapshot import Progress, ProgressFn
 from reaper.text import fold
-
-if TYPE_CHECKING:
-    from reaper.services.executor import ReapGateway
 
 log = structlog.get_logger(__name__)
 
@@ -204,8 +203,7 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
     # The owner's own protections, on top of the built-in gates. Each condition is its own
     # gate (protect-only, evaluated through the field registry), so a matched one keeps the
     # title and shows up in the why-panel exactly like a stock protection.
-    from reaper.engine.fields import CustomProtectGate
-
+    #
     # The window rides along because a protect rule may be authored on a watcher count,
     # which the watch mirror only supports as far back as it reaches (rule 140,
     # ``fields.reach_shortfall``). It is the same window the fact was counted over
@@ -412,8 +410,6 @@ async def build_reap_gateway(
     two different switch states for one run. The guard still enforces armed-plus-declared
     independently of the executor's own check.
     """
-    from reaper.services.executor import ReapGateway
-
     async with session_factory() as session:
         rows = (
             (await session.execute(select(Instance).where(Instance.enabled.is_(True))))
