@@ -4317,9 +4317,14 @@ def test_every_deferred_cross_package_import_is_named() -> None:
     graph a tool draws does not have the edge at all.
 
     `docs/SIMPLIFICATION_PLAN.md`'s wave 9 measured all three of these and found that none
-    breaks the cycle it looks like it was written for. Two are gone. This list is what made
-    that deletion visible: without it the walk skips the sites, the count never moves, and the
-    gate is blind to the one change it exists to watch.
+    breaks the cycle it looks like it was written for. All three are gone. This list is what
+    made that deletion visible: without it the walk skips the sites, the count never moves, and
+    the gate is blind to the one change it exists to watch.
+
+    **Empty, and still a live assertion.** It fires on any deferred cross-package import that
+    arrives. What it cannot notice on its own is a walk that collects nothing, since an empty
+    walk equals an empty expectation; `test_the_four_packages_import_only_downward` is what
+    covers that, pinning the module count and a non-empty edge set off the same walk.
     """
     deferred = frozenset(
         (e.path, e.target, e.deferred) for e in _cross_package_edges() if e.deferred
@@ -4328,7 +4333,7 @@ def test_every_deferred_cross_package_import_is_named() -> None:
         "the deferred cross-package imports moved.\n"
         f"  new:  {sorted(deferred - _DEFERRED_CROSS_PACKAGE_IMPORTS) or 'none'}\n"
         f"  gone: {sorted(_DEFERRED_CROSS_PACKAGE_IMPORTS - deferred) or 'none'}\n\n"
-        "One that went away is wave 9 landing, and the entry comes out. A NEW one needs a\n"
+        "The set is empty, so anything here at all is NEW, and a new one needs a\n"
         "reason written down: it is a cross-package dependency that no import graph will show,\n"
         "so if it is here to break a cycle, name the cycle.\n"
         "docs/SIMPLIFICATION_PLAN.md's S7 paragraph restates this set's size in prose, and\n"
@@ -4420,7 +4425,7 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: Every `.py` file under `src/reaper`, which is the population the cycle walk parses. Pinned
 #: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
-#: A different population from that constant, which counts the 83 under the four packages only.
+#: A different population from that constant, which counts the 84 under the four packages only.
 _EXPECTED_SOURCE_MODULES = 116
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,

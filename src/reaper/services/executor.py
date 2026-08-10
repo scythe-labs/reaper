@@ -207,9 +207,10 @@ _NO_APPROVED_SIZE_CHECK = "No size was recorded for it at scan time. Kept."
 
 #: The size re-read's two checklist lines. Both send paths reach both, and the sentence an
 #: operator reads must not depend on which one they are looking at, so each is written once
-#: here rather than twice at the branches (rule 144). The *reason* beside each stays
-#: per-path and is written inline: it names the server that answered and what it could not
-#: confirm, which is what makes the two readable as different events (rule 21).
+#: here rather than at each branch (rule 144). Four branches share them, not two: the season's
+#: unconfirmed guard fires on a file list that is empty AND on one carrying a size it could not
+#: read. The *reason* beside each stays per-path and inline, naming the item and its numbers,
+#: which is what a checklist line this short cannot carry (rule 21).
 _CHECK_SIZE_UNCONFIRMED = "Couldn't confirm its current size. Kept."
 _CHECK_GREW_SINCE_APPROVED = "It grew since you approved it. Kept."
 
