@@ -2648,11 +2648,12 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     ) -> None:
         """The load-bearing sweep, one setting at a time.
 
-        Two roads carry a ``PolicyBody`` to the planner: ``snapshot.scan`` unpacks it into
-        ``season_scan.gather``, and the simulator builds a ``SeasonPolicy`` off the draft. A
-        value that reaches one road and not the other is invisible until the two answers are
-        compared under a body where it differs from the default (rule 141, rule 144), and
-        invisible per-setting until each is swept alone.
+        One road carries a ``PolicyBody`` to the planner, ``SeasonPolicy.from_body``, and
+        the scan and the simulator both take it. A value that reaches the carrier and not
+        the planner is invisible until the two answers are compared under a body where it
+        differs from the default (rule 141, rule 144), and invisible per-setting until each
+        is swept alone. Only the narration changed when the scan's second road was removed;
+        every assertion below is the one that pinned the behavior before it.
         """
         await self._seed(cache_engine)
         edited = self._tv(**edit)

@@ -239,10 +239,12 @@ one; a combined edit was the first draft and it proved three of the nine, becaus
 mask each other (keep-last already holds the season `protect_incomplete_seasons` would).
 
 **23 mutations were re-run mechanically, and 22 of them failed.** Eighteen are one per setting
-on each of the two roads a `PolicyBody` takes to the planner — `SeasonPolicy.from_body` and
-`season_scan.gather`'s carrier — each pinned to its shipped default, which is exactly "this road
-drops the operator's edit". Every one reds its OWN parametrization, so the sweep discriminates
-all nine settings rather than catching them in a bundle. **Comparing guard reasons rather than
+on each of the two roads a `PolicyBody` then took to the planner, `SeasonPolicy.from_body` and
+`season_scan.gather`'s own repack of nine loose parameters, each pinned to its shipped default,
+which is exactly "this road drops the operator's edit". Every one reds its OWN parametrization,
+so the sweep discriminates all nine settings rather than catching them in a bundle. The repack
+is gone since and `gather` takes the carrier, so nine of the eighteen have no site left to
+mutate and the second road cannot drop an edit the first one carries. **Comparing guard reasons rather than
 verdict tallies is what made that possible**: a setting routinely changes why a season is kept
 without changing whether it is. Four more fail too — restoring the skip, collapsing the
 three-state to `{}`, returning the frozen guard instead of re-deriving it, and dropping the

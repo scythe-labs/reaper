@@ -125,16 +125,25 @@ class SeasonPolicy:
     """The nine ``PolicyBody`` fields a season plan reads, and nothing else.
 
     A carrier, so the scan and the simulator hand :func:`plan_from_frozen` the same shape.
-    The scan builds one from the values ``services.snapshot.scan`` already unpacks off the
-    stored body; the simulator builds one straight off the draft with :meth:`from_body`.
+    Both build one with :meth:`from_body`: the scan off the stored body in
+    ``services.snapshot.scan``, the simulator off the draft.
 
-    **Two roads from one ``PolicyBody`` to these nine values, which is rule 144's shape** --
-    a field added to the season card has to reach both, and the one written second is the
-    one that reads correct while being incomplete. The guard is not a field-name check but
-    ``tests/test_scan_pipeline.py``'s exactness test: it drives a real scan under a body with
-    every one of these set away from its default, then replays the frozen bundle under that
-    same body and demands the scan's own verdicts back. A value that reaches one road and
-    not the other cannot survive that, whichever road drops it.
+    **One road from a ``PolicyBody`` to these nine values, so a field added to the season
+    card is written onto it once.** There were two until the second was removed: the scan
+    unpacked the body into nine keywords on ``season_scan.gather``, which repacked them into
+    this class, and a field that reached one road and not the other read correct while being
+    incomplete (rule 144). Adding a field here now means adding it to :meth:`from_body`, and
+    the scan and the replay both get it or neither does.
+
+    The value-level guard is ``tests/test_scan_pipeline.py``'s exactness test, which is what
+    proves the road carries the operator's numbers rather than merely the field names: it
+    drives a real scan under a body with every one of these set away from its default, then
+    replays the frozen bundle under that same body and demands the scan's own verdicts back.
+
+    No field declares a default, and that is the safety property, not a style choice. Seven
+    of the nine defaulted on ``gather`` before it took this carrier, all but two of them
+    protective, so a caller omitting one silently widened what was prunable. Here an omission
+    is a mypy error and a ``TypeError`` (rule 141).
     """
 
     keep_last_seasons: int
