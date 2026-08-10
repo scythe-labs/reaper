@@ -3031,8 +3031,77 @@ in every sentence is the second pass's and none has been re-derived since, so me
 build (rule 145's own lesson, and the phase has already found a `~28 across 10` that was 33 across
 13 and a `three literals` that was nine sites). **Two of the 44 are not duplications**: W11-15 is
 an unbounded fan-out and W11-40 is two tables that grow for the life of the install. Both are
-defects, and neither's value is the lines it saves. **What subset lets this wave read `done` is a
-scoping call for the owner**, not a measurement.
+defects, and neither's value is the lines it saves. **The owner scoped it on 2026-08-10: all 44
+are in, measured first, and each judged on whether it is worth building.**
+
+> **Measured, 2026-08-10. Both lanes scouted, then each scout put through a verifier that
+> re-derived every number blind before it was allowed to read the report.** The pattern is C3's:
+> derive first, diff second, so a wrong figure cannot be inherited by agreement. It caught the
+> scouts five times on the frontend and four on the backend, and it caught the verifiers three
+> times the other way, which is the half worth recording. The per-item numbers below replace the
+> sentences above wherever they disagree.
+>
+> **Most stated counts are wrong, and the wave sat unbuildable because of it.** Backend: 16 of
+> 25. Frontend: 8 of 19. The frontend scout said 14 of 19 and its verifier reduced that to 8,
+> the scout having counted its own build-or-kill calls as wrong numbers. A count and the symbol
+> beside it are two claims, and the errors split across both: **W11-1** is 17 tests and 20 reads,
+> not 22 sites; **W11-5** names `scan.py` for a counter that lives in `services/snapshot.py`;
+> **W11-11** is 12 in `_run_scan_locked`, not 11 in `run_scan`; **W11-41** is 15 models, not 13;
+> **W11-33**'s dead branch is at line 187, not 201; **W11-42**'s `~85 lines` is ~16 actually
+> removable; **W11-31** is four sentences, not five; **W11-3** is 30 dispatch sites, not six;
+> **W11-16** is 19 keys redeclared and 12 of them divergent, not four; **W11-23** is 26
+> containers across 9 files, not 21 across 7.
+>
+> **Build, in value order.** **W11-15** first, and it is not a duplication: `_enrich_titles` opens
+> 80 concurrent connections to one Seerr per Scales load (`_TITLE_LOOKUP_CAP = 80`, and httpx's
+> default pool of 100 imposes no bound below it). Three lines, copying `leaving_soon.py`'s
+> `Semaphore`. The row's justification is wrong twice over: `ConcurrencyGate` has four production
+> callers and is a load-shedder rather than a bound. Then **W11-3**, where the deliverable is the
+> test and not the table: `FieldType` does not exist in the frontend at all, `VocabField.type` is
+> a bare `string`, and no test touches `bytes`, `rating_tenths` or `days`, the three conversions
+> that write policy values. Then **W11-12** at -14 lines, **W11-22** and **W11-24**, **W11-16**
+> narrowed to the two keys that actually diverge, and **W11-39** at -8 lines and one fewer table
+> read.
+>
+> **Kill.** **W11-4**: the `others_watching` arm cannot fire, established rather than assumed.
+> `_kept_phrase` runs only over `protections_fired`, which is written from `r.fired` alone, and
+> the historical gate's PROTECT branch was unreachable and never shipped in a release. Two
+> caveats the scout missed: the item is worth about -1 line, not the ~20 the row implies, and
+> four cross-references cite the arm (`review.py`, `gates.py`, `WhyPanel.tsx`, `policyMeta.ts`),
+> which rule 72 pulls into the same change. **W11-13**: the divergence is unreachable, since
+> `retry_after`'s sole reader treats `0.0` and `None` alike. **W11-23**: 8 distinct shapes behind
+> 26 containers and the extraction nets about -7 lines, which is S5. **W11-30's plural helper**:
+> the 66 sites do not agree, four are irregular and ten more need verb or pronoun agreement, so a
+> one-form `plural(n, "person")` prints "persons" and "librarys", a rule 21 regression. A safe
+> two-form helper saves nothing. What survives W11-30 is two real sentence duplications and the
+> fact that `format.ts` pluralizes four times itself, so the file to centralize into is part of
+> the problem.
+>
+> **W11-32 is closed**, at #698, out of the same function W3b-2 was measured in. 43 remain.
+>
+> **W11-40 is real and its framing is not.** The exclusion is exactly as stated: `_doomed`
+> excludes every snapshot a run points at, nothing anywhere deletes a `ReapRun`, and
+> `ActionStep.run_id` is unindexed, with `EXPLAIN QUERY PLAN` returning `SCAN action_step`. The
+> index is worth adding. **What is not a leak is the pinned candidate rows.** A verifier measured
+> 29,442 of them held by 7 runs and called it 120x the table the row names;
+> `services/retention.py`'s own docstring answers that, because the rolling delete cap is priced
+> off those same rows and the module calls the exclusion a safety interlock. It names the exact
+> narrowing that would be proposed, to live runs or to recent runs, and says it silently unprices
+> the cap. Priced growth, not a leak. Any row count here came from one hand-run dev box in any
+> case; the three claims that decide the item are provable from the tree alone.
+>
+> **`.field-sm` does not collide with phase 9's W4.1.** `grep -c "field-sm" GeneralPanel.tsx` is
+> zero, so **W11-23** and W4.1 are independently landable in either order. That is the whole
+> contrast with `.set-row`, which is why the two were never the same question. On `.set-row`
+> itself the plan's "22 of 40" holds under no single matcher: `set-row` gives 22 of 51 and
+> `className="set-row` gives 18 of 40. The W3b-4 fold stands on the majority-overlap argument
+> either way.
+>
+> **Two defects found while measuring, both on `dev`, both filed rather than fixed here.** A raw
+> `imdbId` sentinel shadowing the cleaned Plex id, so a keep-listed title is not found on its list
+> (#709, and the deletion direction was the verifier's, the scout having found only the harmless
+> one). And `ScanBar`'s comment claiming the scan-status poll sits quiet when idle while the
+> shell's observer keeps it polling (#712, which W11-16 closes on its own if built).
 
 **Control-flow shape.** **W11-1** A `PlexItem | None` re-tested per field at **22 sites in 3
 modules**, where every inline fallback is byte-identical to the dataclass default (~20 lines).
