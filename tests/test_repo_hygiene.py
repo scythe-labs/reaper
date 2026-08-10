@@ -476,7 +476,7 @@ def test_http_clients_are_only_constructed_in_clients() -> None:
 
 def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
     """Rule 88, as a gate. ``reaper.text.fold`` is the trim-then-casefold every name
-    comparison takes, and it was spelled inline at 33 places across 14 modules.
+    comparison takes, and it was spelled 37 times over 33 lines in 13 modules.
 
     **It bans the composite only.** A bare ``.casefold()`` on a value a line above already
     stripped is not an offender: ``fields._split_csv``, ``fields._shared`` and
@@ -484,10 +484,12 @@ def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
     would be identical and an exemption entry for each would be a skip list nobody rereads.
 
     **What it cannot catch, stated rather than implied**: a new site written as a bare
-    ``.casefold()`` on unstripped input, or as ``.strip().lower()``. Sixteen ``.strip()
-    .lower()`` sites exist today and are deliberate -- env tokens, hostnames, media types,
-    hex colors -- and two more fold PATHS (``identity.to_basename``, ``to_segments``), whose
-    docstrings say why lower is the right answer there.
+    ``.casefold()`` on unstripped input, or as ``.strip().lower()``. Eleven of the latter
+    exist at this tip and every one is deliberate -- env tokens, hostnames, media types, hex
+    colors -- two of them folding PATHS (``identity.to_basename``, ``to_segments``), whose
+    docstrings say why lower is the right answer there. That figure is measured at the tip
+    rather than at ``dev``, where it is sixteen: #668 landed on this same branch and took
+    six of them.
 
     ``alembic/`` is out of scope: those revisions are frozen and five of them carry the
     idiom.

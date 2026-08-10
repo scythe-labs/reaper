@@ -32,7 +32,6 @@ to death without a Plex server in sight.
 from __future__ import annotations
 
 import asyncio
-import weakref
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,7 +39,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.aio import gather_reaped
+from reaper.aio import gather_reaped, per_loop_lock
 from reaper.clients.plex import PlexClient, PlexError, benign_shelf_write
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -434,38 +433,21 @@ async def announce_new(
 # Orchestration: the one pass the button, the scan hook, and the cleanup share
 # ---------------------------------------------------------------------------
 
-#: One announce lock per event loop, created lazily so it always binds to the running one.
-#: A single module-level ``asyncio.Lock`` would bind to whichever loop first awaited it and
-#: raise on every other, and the suite runs a fresh loop per test (rule 37) -- the shape
-#: ``history_sync._rebuild_lock`` uses, for the same reason. Weak-keyed so a closed loop's
-#: lock is collected. In production there is exactly one loop, hence one lock.
-_pass_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
-    weakref.WeakKeyDictionary()
-)
-
-
-def _pass_lock() -> asyncio.Lock:
-    """Serializes a whole Leaving Soon pass against every other one in this process.
-
-    The announced set is read at the start of a pass and written at the end, with a
-    whole-library Plex reconcile and a Discord post in between -- minutes of network I/O
-    across which nothing else was held back. Two passes overlap easily: the operator presses
-    "Update now" while a scheduled scan is landing, and its after-scan hook fires. Both read
-    the same "already announced", both decide the same title is new, and your users get
-    the same heads-up twice. Worse, the later writer persists a set derived from ITS pre-I/O
-    read, dropping whatever the first pass recorded -- so that title is announced a third
-    time on the next pass. Rule 8 wants the announcement idempotent on the durable set; the
-    set was durable, the read-modify-write around it was not.
-
-    Held across the reconcile too, not just the announce: a second concurrent whole-section
-    reconcile against the same libraries is wasted work at best.
-    """
-    loop = asyncio.get_running_loop()
-    lock = _pass_locks.get(loop)
-    if lock is None:
-        lock = asyncio.Lock()
-        _pass_locks[loop] = lock
-    return lock
+#: Serializes a whole Leaving Soon pass against every other one in this process.
+#:
+#: The announced set is read at the start of a pass and written at the end, with a
+#: whole-library Plex reconcile and a Discord post in between -- minutes of network I/O
+#: across which nothing else was held back. Two passes overlap easily: the operator presses
+#: "Update now" while a scheduled scan is landing, and its after-scan hook fires. Both read
+#: the same "already announced", both decide the same title is new, and your users get
+#: the same heads-up twice. Worse, the later writer persists a set derived from ITS pre-I/O
+#: read, dropping whatever the first pass recorded -- so that title is announced a third
+#: time on the next pass. Rule 8 wants the announcement idempotent on the durable set; the
+#: set was durable, the read-modify-write around it was not.
+#:
+#: Held across the reconcile too, not just the announce: a second concurrent whole-section
+#: reconcile against the same libraries is wasted work at best.
+_pass_lock = per_loop_lock()
 
 
 async def _plex_client(
@@ -494,7 +476,7 @@ async def run_sync(
     the two can never drift. Raises :class:`LeavingSoonDisabledError` when the shelf is
     off, and :class:`PlexError` when no server is linked or none of it is reachable.
 
-    Serialized against every other pass in this process (see :func:`_pass_lock`), because
+    Serialized against every other pass in this process (see :data:`_pass_lock`), because
     the announced set is read at the top and written at the bottom with minutes of network
     I/O in between.
     """

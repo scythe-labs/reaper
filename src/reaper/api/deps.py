@@ -10,7 +10,11 @@ from four modules. They are one declaration each now.
 
 Routers that read ``request.app.state`` inline are left alone. They copied no function,
 so they are outside what this module collapses, and the pull request that landed it
-records the deferral (``docs/SIMPLIFICATION_PLAN.md``, wave 3).
+records the deferral (``docs/SIMPLIFICATION_PLAN.md``, wave 3). **Thirty-two such reads
+survive across eleven modules, and three of them are in ``api/runs.py``** -- the one route
+that deletes -- so a later sweep that walks only the read-only routers has not honored the
+deferral. Exactly three cannot adopt these accessors without a signature change, all in
+``api/scan.py``'s ``launch_scan(app: FastAPI)``, which holds no ``Request`` at all.
 """
 
 from __future__ import annotations

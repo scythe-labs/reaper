@@ -14,7 +14,8 @@ inside a 2,000-line file whose other routes are services, jobs, security and
 notifications; ``api/plex_trash.py`` and ``api/leaving_soon.py`` already sit beside it as
 sibling routers.
 
-The request accessors come from ``api.deps``, which is where every router reads them.
+The request accessors come from ``api.deps``, which is where every router that declared
+its own reads them.
 
 Two things are true of this router, as they are of ``api/settings.py`` it came from: **it
 requires a session** (these routes sit behind the auth gate, see ``api.middleware``), and

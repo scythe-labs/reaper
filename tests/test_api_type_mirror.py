@@ -35,6 +35,7 @@ above says nothing announces.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import importlib
 import pkgutil
@@ -733,6 +734,23 @@ COLLAPSED_PAIRS = (
 )
 
 
+#: The call sites, reconciled by hand against the pair table above. Seven pairs over six
+#: sites: two models validate inside their parent, and ``SeerrServiceOut`` builds at two routes.
+#:
+#: Keyed on the ENCLOSING FUNCTION rather than the line, which is the same key
+#: ``_MEMBERSHIP_INVENTORY`` uses in ``test_repo_hygiene.py`` and for the same reason: a line
+#: number moves whenever anything above it does, so a list of them fails on somebody else's
+#: unrelated diff. A function name moves only when this site does.
+_COLLAPSE_SITES = [
+    "src/reaper/api/backup.py::restore_prepare",
+    "src/reaper/api/breakdown.py::get_reap_breakdown",
+    "src/reaper/api/fairness.py::_row_out",
+    "src/reaper/api/review.py::_deep_links",
+    "src/reaper/api/settings.py::instance_seerr_services",
+    "src/reaper/api/settings.py::test_new_instance",
+]
+
+
 class TestAWireModelReadsOnlyFieldsItsRecordCarries:
     """The other half of this file's mirror: the hop from a service record to the wire model,
     where a field list used to be transcribed by hand at the route.
@@ -758,22 +776,37 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
         )
 
     def test_every_collapsed_site_is_in_the_table_above(self) -> None:
-        """A flag-shaped table cannot see a site that never joined it (rule 145). The count
-        is of the CALL SITES, which is six rather than the seven pairs.
+        """A table nothing reconciles cannot see a site that never joined it (rule 145).
 
-        It reads one spelling and only one (rule 147): the ``from_attributes=True`` keyword
-        at the call. A model that sets ``model_config = ConfigDict(from_attributes=True)``
-        and then calls a bare ``model_validate`` is the same collapse and is invisible here,
-        so a site written that way is added to the table by hand. No model in the tree does
-        that today, and this is not worded as if the walk would catch it.
+        It walks the AST rather than the text, which is what makes it immune to the two
+        things a matcher of this shape usually misses (rule 147): the call spelled over
+        several lines, and a docstring that names the keyword without calling anything.
+
+        **One spelling it still cannot see**, stated rather than implied: a model setting
+        ``model_config = ConfigDict(from_attributes=True)`` and then calling a bare
+        ``model_validate`` is the same collapse. No model in the tree does that, and a site
+        written that way is added to the pair table by hand.
+
+        The assertion is the site LIST, not its length, so swapping one collapse for another
+        cannot hold the number still while ``COLLAPSED_PAIRS`` goes stale. A site at module
+        level rather than inside a function is invisible to the walk and would have nothing
+        to key on; none exists, and one would have no route to serve.
         """
-        sites = [
-            f"{path.relative_to(REPO)}:{n}"
-            for path in sorted((REPO / "src" / "reaper" / "api").rglob("*.py"))
-            for n, line in enumerate(path.read_text().splitlines(), 1)
-            if "from_attributes=True" in line
-        ]
-        assert len(sites) == 6, (
-            f"{len(sites)} sites build a wire model off a service record: {sites}. Add the "
-            "new pair to COLLAPSED_PAIRS above and move this count."
+        sites = []
+        for path in sorted((REPO / "src" / "reaper" / "api").rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for parent in ast.walk(tree):
+                if not isinstance(parent, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                for node in ast.walk(parent):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    for keyword in node.keywords:
+                        collapsed = keyword.arg == "from_attributes"
+                        if collapsed and getattr(keyword.value, "value", None) is True:
+                            sites.append(f"{path.relative_to(REPO)}::{parent.name}")
+
+        assert sorted(sites) == _COLLAPSE_SITES, (
+            f"the sites building a wire model off a service record are now {sorted(sites)}. "
+            "Add or remove its pair in COLLAPSED_PAIRS above, then move this list."
         )
