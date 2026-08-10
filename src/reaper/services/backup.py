@@ -153,7 +153,7 @@ def _build_sync(settings: Settings, created_at: str) -> BackupArchive:
     data_dir = settings.data_dir
     tmp_dir = Path(tempfile.mkdtemp(prefix=BACKUP_TMP_PREFIX, dir=data_dir))
     # Anything past mkdtemp that raises (VACUUM INTO failing on a full disk, a locked
-    # database past the busy timeout, a gzip write error) must not strand the temp dir
+    # database past the 5s busy timeout, a gzip write error) must not strand the temp dir
     # and its partial multi-GB snapshot -- that would make a disk-full worse (PR-3).
     try:
         return _build_into(settings, created_at, tmp_dir)
@@ -167,8 +167,9 @@ def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArc
     snapshot = tmp_dir / DB_ARCNAME
 
     # A consistent, compacted copy of the live database. VACUUM INTO reads inside a
-    # transaction, so a concurrent scan write cannot tear the snapshot; the short
-    # busy timeout lets it wait out an in-flight write rather than failing at once.
+    # transaction, so a concurrent scan write cannot tear the snapshot; the 5s busy
+    # timeout this connection sets lets it wait out an in-flight write rather than
+    # failing at once. The figure is this connection's own, not the app engine's.
     con = sqlite3.connect(settings.database_path)
     try:
         con.execute("PRAGMA busy_timeout=5000")
