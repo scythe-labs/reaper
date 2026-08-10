@@ -550,6 +550,12 @@ def main() -> None:
     # The factory is passed as an object, not the usual "reaper.main:create_app"
     # string: uvicorn's string import fails under a frozen bundle and masks the
     # underlying error as "could not import module".
+    #
+    # The import stays in the function because ``reaper.main`` mounts every router and
+    # ``api/settings.py`` imports this module. Promoted to module level it is fatal, not
+    # slow: ``main``, ``api.settings`` and ``api.plex`` all raise ImportError on a circular
+    # import. Those are the two cycles ``_KNOWN_IMPORT_CYCLES`` declares in
+    # ``tests/test_repo_hygiene.py``, and this edge is what closes both.
     from reaper.main import create_app
 
     if _tray_wanted(sys.platform, os.environ, frozen=frozen):
