@@ -5638,3 +5638,168 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
     assert found["src/reaper/m.py:2 RadarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
     assert found["src/reaper/m.py:4 SonarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
     assert found["src/reaper/m.py:12 RadarrClient"] == set()
+
+
+#: The six configuration values ``snapshot.scan`` holds once per media type and hands to
+#: ``_judge_item``. Movies are judged under the movie policy and seasons under the TV one:
+#: separate keep rules, separate gates, separate condemn threshold, separate scoring window.
+#: The scan holds all twelve as locals differing only by a ``movie_`` / ``tv_`` prefix. Four
+#: are its own parameters (``movie_policy``, ``movie_gates``, and the TV pair); the other
+#: eight it derives from those.
+_LANE_ARGUMENTS = frozenset(
+    {"gates", "signals", "custom_condemn", "keeps", "policy", "window_days"}
+)
+
+#: The prefix on each lane's locals, and the discriminator the walk below reads.
+_LANES = frozenset({"movie", "tv"})
+
+#: Reconciled by hand against the tree, so a call that leaves the walk is noticed rather than
+#: dropping out of the assertions below (rule 145). Two: the movie loop and the season loop,
+#: both in ``services/snapshot.py``.
+_EXPECTED_JUDGE_ITEM_CALLS = 2
+
+
+def _judge_item_lane_arguments(root: Path) -> dict[str, dict[str, str]]:
+    """Every ``_judge_item(...)`` call under ``src/``, and the lane locals it passes.
+
+    Reads the call node's keywords rather than the text after the paren: the two sites wrap
+    across 67 and 52 lines, so a line-oriented matcher reads one keyword per attempt
+    (rule 147). A bare ``_judge_item(...)`` and a qualified ``snapshot._judge_item(...)`` are
+    both collected, since the count below is what notices a site leaving the walk and a
+    qualified call would otherwise take a third site out of both halves.
+
+    Only a bare ``Name`` whose first segment is a lane counts as a lane local, so an
+    attribute, a call result or an unprefixed name is absent from the mapping and the
+    keyword-set assertion below is what names it. A ``**kwargs`` splat passes nothing.
+    """
+    found: dict[str, dict[str, str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            called = node.func
+            name = called.id if isinstance(called, ast.Name) else getattr(called, "attr", "")
+            if name != "_judge_item":
+                continue
+            rel = path.relative_to(REPO).as_posix()
+            found[f"{rel}:{node.lineno}:{node.col_offset}"] = {
+                kw.arg: kw.value.id
+                for kw in node.keywords
+                if kw.arg is not None
+                and isinstance(kw.value, ast.Name)
+                and kw.value.id.split("_")[0] in _LANES
+            }
+    return found
+
+
+def test_a_judged_item_is_never_handed_the_other_lanes_policy() -> None:
+    """The movie loop cannot reach a TV local, and the season loop cannot reach a movie one.
+
+    Measured, on this tree: cross ``custom_condemn``, ``keeps`` and ``policy`` at the movie call
+    site and this is the only test in the whole suite that fails. So the keep rules a movie is
+    judged against, and the threshold it is condemned at, can both come from the TV policy with
+    nothing else saying a word (rule 118). ``gates``, ``signals`` and ``window_days`` are the
+    three ``test_scan_pipeline.py`` already catches.
+
+    This is the gate rather than a lane carrier, per CLAUDE.md's "write the gate instead": a
+    carrier binds the sites that adopt it, and ``services/snapshot.py`` is the deletion path.
+    ``docs/SIMPLIFICATION_PLAN.md``'s wave 3 parameter-object paragraph carries the measurement.
+    """
+    sites = _judge_item_lane_arguments(SRC)
+    assert len(sites) == _EXPECTED_JUDGE_ITEM_CALLS, (
+        f"expected {_EXPECTED_JUDGE_ITEM_CALLS} `_judge_item` calls under src/, walked "
+        f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass every argument in "
+        f"{sorted(_LANE_ARGUMENTS)} off one lane's locals; bump the number here AND in "
+        "docs/SIMPLIFICATION_PLAN.md's wave 3 parameter-object paragraph, which states the "
+        "population in prose."
+    )
+    lanes: dict[str, str] = {}
+    for site, args in sorted(sites.items()):
+        assert set(args).issuperset(_LANE_ARGUMENTS), (
+            f"{site} does not pass {sorted(_LANE_ARGUMENTS - set(args))} as a bare `movie_*` / "
+            "`tv_*` local. Each lane argument reaches `_judge_item` that way so that crossing "
+            "one is visible here; computing it inline at the call site hides which lane it came "
+            "from. A seventh per-lane value is fine and is checked by the same walk."
+        )
+        prefixes = {local.split("_")[0] for local in args.values()}
+        assert len(prefixes) == 1, (
+            f"{site} judges an item against both lanes at once: {sorted(args.items())}. Movies "
+            "are judged under the movie policy and seasons under the TV one, so a crossed "
+            "argument applies the wrong keep rules, gates or condemn threshold to every item in "
+            "that loop."
+        )
+        lanes[site] = prefixes.pop()
+    assert set(lanes.values()) == _LANES, (
+        f"the `_judge_item` calls do not cover both lanes: {lanes}. One loop judges movies and "
+        "the other seasons, so pointing them at one lane silences the check above instead of "
+        "fixing the cross it caught."
+    )
+
+
+def test_the_lane_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> None:
+    """A guard that scans source is bounded by the syntax it parses (rule 147).
+
+    Drives the wrapped form the tree actually spells, the flat one it does not, and the two
+    qualified spellings a third site could arrive in. Plus the four shapes that must not be
+    collected as a lane local: an attribute, a call result, an unprefixed name, and a
+    ``**kwargs`` splat. Each of those leaves the keyword out of the mapping, which is what makes
+    the keyword-set assertion the thing that names it rather than the walk quietly losing it.
+    """
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "def movie_lane():\n"
+        "    return _judge_item(\n"
+        "        session,\n"
+        "        gates=movie_gates,\n"
+        "        signals=movie_signals,\n"
+        "        custom_condemn=movie_custom,\n"
+        "        keeps=movie_keeps,\n"
+        "        policy=movie_policy,\n"
+        "        window_days=movie_window,\n"
+        "    )\n"
+        "def season_lane():\n"
+        "    return _judge_item(session, gates=tv_gates, signals=tv_signals, "
+        "custom_condemn=tv_custom, keeps=tv_keeps, policy=tv_policy, window_days=tv_window)\n"
+        "def crossed():\n"
+        "    return _judge_item(session, gates=movie_gates, keeps=tv_keeps)\n"
+        "def indirect():\n"
+        "    return _judge_item(\n"
+        "        session,\n"
+        "        gates=self.movie_gates,\n"
+        "        signals=_signals(movie_policy),\n"
+        "        keeps=keeps,\n"
+        "        **rest,\n"
+        "    )\n"
+        "def qualified(self):\n"
+        "    snapshot._judge_item(session, keeps=movie_keeps)\n"
+        "    return self._judge_item(session, keeps=tv_keeps)\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        found = _judge_item_lane_arguments(scratch)
+    finally:
+        REPO = real
+
+    assert set(found) == {
+        "src/reaper/m.py:2:11",
+        "src/reaper/m.py:12:11",
+        "src/reaper/m.py:14:11",
+        "src/reaper/m.py:16:11",
+        "src/reaper/m.py:24:4",
+        "src/reaper/m.py:25:11",
+    }, found
+    assert set(found["src/reaper/m.py:2:11"]) == _LANE_ARGUMENTS
+    assert set(found["src/reaper/m.py:12:11"]) == _LANE_ARGUMENTS
+    assert {v.split("_")[0] for v in found["src/reaper/m.py:2:11"].values()} == {"movie"}
+    assert {v.split("_")[0] for v in found["src/reaper/m.py:12:11"].values()} == {"tv"}
+    # The cross the gate exists for: one call, both prefixes.
+    assert {v.split("_")[0] for v in found["src/reaper/m.py:14:11"].values()} == {"movie", "tv"}
+    # None of the four indirect spellings is read as a lane local.
+    assert found["src/reaper/m.py:16:11"] == {}
+    # A qualified call is a call site, whichever way it is qualified.
+    assert found["src/reaper/m.py:24:4"] == {"keeps": "movie_keeps"}
+    assert found["src/reaper/m.py:25:11"] == {"keeps": "tv_keeps"}
