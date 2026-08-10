@@ -678,7 +678,8 @@ class TestUpkeepJobsRecordTheirLastRun:
         """A misconfigured install cannot build clients at all, and that is a refusal the job
         records rather than an exception escaping into the scheduler unrecorded."""
 
-        # Its own stub, not `_wire_lists`: this one is about `build_sources` REFUSING.
+        # `_wire_lists` for the config it hands back; its `build_sources` stub is replaced
+        # below, because this one is about `build_sources` REFUSING.
         settings, box = self._wire_lists(monkeypatch, tmp_path)
 
         async def refuse(*args: object, **kwargs: object) -> tuple[object, ...]:
@@ -687,6 +688,52 @@ class TestUpkeepJobsRecordTheirLastRun:
         monkeypatch.setattr(scan_runner, "build_sources", refuse)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't refresh lists"
+
+    async def test_an_unreadable_list_registry_records_not_ok(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A stored row whose body will not parse stops the pass, and the stop is recorded.
+
+        ``strict=True`` is what stops it: this pass retires, so a row read as absent would
+        disable the membership it is still protecting with (rules 65/91, 115). The stop used
+        to be recorded by a handler wrapped around that one read, spelling the same log
+        event, the same ``ok=False`` and the same result the job's own catch-all writes. What
+        this pins is the row landing, not which arm wrote it.
+        """
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
+        async with main_factory() as session:
+            session.add(
+                # The source is not load-bearing: the raise is at `json.loads`, one line above
+                # where `definitions` would construct a `ListSource` at all.
+                ListConfig(
+                    name="Keep these",
+                    source="imdb",
+                    config_json="{not json",
+                    enabled=True,
+                    created_at=utcnow(),
+                )
+            )
+            await session.commit()
+
+        synced = False
+
+        async def fine(*args: object, **kwargs: object) -> dict[str, int]:
+            nonlocal synced
+            synced = True
+            return {}
+
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fine)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
+
+        assert synced is False, "an unreadable registry must stop the pass before it syncs"
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
         assert last["ok"] is False
