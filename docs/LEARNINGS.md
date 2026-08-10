@@ -3090,16 +3090,17 @@ thing standing between them.
 
 ## What the callee already enforces is not what the duplication costs (2026-08-10)
 
-Six hand-written `PlexClient(...)` constructions, four of them argument-for-argument identical,
-and the finding proposing a helper had already answered itself: `safety` is keyword-only and
-required, so no copy can drop the transport guard. Measured, the helper nets four to six lines
-and reaches four of the six sites, which is not worth its risk.
+Six hand-written `PlexClient(...)` constructions, four of them passing the same four arguments
+in the same order. The finding proposing a helper had already answered itself. `safety` is
+keyword-only and required, so no copy can drop the transport guard. Measured, the helper takes
+20 lines out and costs about 14, and it reaches four of the six sites. Six net lines against a
+new indirection on the client that reads a stored credential is the wrong trade.
 
 **The argument the signature cannot enforce is the one worth a gate.** `verify` carries the
-operator's per-instance TLS switch and defaults to `True`. An omission there does not widen
-anything, so it reads as harmless, and the cost is agreement: an operator whose server carries a
-self-signed certificate gets one surface that cannot reach it while every other surface can, with
-nothing announcing the difference. The same shape had already happened once in this tree with
+operator's per-instance TLS switch and defaults to `True`. An omission there widens nothing, so
+it reads as harmless. The cost is agreement: an operator whose server carries a self-signed
+certificate gets one surface that cannot reach it while every other surface can, with nothing
+announcing the difference. The same shape had already happened once in this tree with
 `api_path_prefix` on the *arr clients. **So when judging a "written N times" finding, sort the
 repeated arguments by what the callee can refuse on its own.** The required ones are already
 bound; the defaulted ones are the population a gate has to cover, and it should cover every class
@@ -3108,16 +3109,22 @@ with that parameter, not the one class the finding named.
 ## A module at 93% can have every failure arm of a safety step unreached (2026-08-10)
 
 `services/restore.py`'s arm step runs three prepare functions before it writes the marker that
-lets the next boot swap. Each maps its failure to one operator sentence. Behind 4,279 passing
+lets the next boot swap. Each maps its failure to one operator sentence. Behind 4,283 passing
 tests and 93% line coverage for the module, **no test drove any of the three**, and no test
-anywhere asserted the sentence. Line coverage said so plainly and nobody had read it: the
-uncovered lines were exactly the three `except` bodies.
+anywhere asserted the sentence. Line coverage said so plainly and nobody had read it: the three
+`except` bodies were sitting in the missing-line list.
 
 The reason generalizes past this file. A staging flow's happy path is heavily tested because
-every other test needs it as setup, and that traffic is what carries the percentage. The arms
-that only a failure reaches are cheap to leave, and they are also where the operator-facing
+every other test needs it as setup, and the happy path is what the percentage is measuring. The
+arms that only a failure reaches are cheap to leave, and they are also where the operator-facing
 sentence lives, so a reword lands with nothing to catch it. **Read the missing-line list, not the
 percentage, on any module whose job is to refuse.**
+
+The reword is also what found a second thing the arms were hiding. Saying "nothing was restored"
+forces the question of whether that is true at every raise, and at one of them it was not: a
+confirm retried after a client-side timeout re-ran the prepare steps over a staging that was
+already armed. **A claim about state is a cheap way to audit the states a function can be called
+in**, and it fails toward reassurance if nobody checks.
 
 ## Prior art
 

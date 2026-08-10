@@ -411,10 +411,12 @@ def stage_upload(settings: Settings, archive_path: Path) -> RestoreSummary:
 
 
 #: What every failure in the three prepare steps below answers with, declared once so the
-#: four raise sites cannot drift into four different sentences (rule 144). The operator's
-#: question is the same at all four and so is the answer: :data:`READY_MARKER` is written
-#: last (see :func:`arm`), so a raise here leaves it unwritten and :func:`apply_pending_restore`
-#: returns having touched nothing (rule 126).
+#: four raise sites cannot drift into four different sentences (rule 144).
+#:
+#: :func:`arm` clears :data:`READY_MARKER` before the first step and writes it after the last.
+#: A raise here therefore leaves the marker absent, and :func:`apply_pending_restore` returns
+#: on its absence having touched nothing. That order is what makes the second half of the
+#: sentence a fact about the code (rule 126).
 _PREPARE_FAILED = "Reaper couldn't prepare this backup. Nothing was restored."
 
 
@@ -549,6 +551,13 @@ def arm(settings: Settings, token: str | None) -> None:
     so the password can only ever arm the content that was actually reviewed (rule 73). The
     ``READY`` marker is written last, so a crash between preparing the database and arming
     leaves the staging inert rather than half-armed.
+
+    It is also cleared FIRST, which is what makes :data:`_PREPARE_FAILED`'s "nothing was
+    restored" true rather than nearly true. Neither check above rejects an arm over a staging
+    that is already armed: the token file survives an arm, so a confirm retried after a
+    client-side timeout runs the three steps again with ``READY`` on disk, and a raise there
+    used to leave the swap armed while the operator read that nothing had happened. Clearing
+    it first means a failed arm disarms, which is the keep direction.
     """
     pending = settings.data_dir / PENDING_DIR
     staged_db = pending / DB_ARCNAME
@@ -559,6 +568,7 @@ def arm(settings: Settings, token: str | None) -> None:
             "The staged backup changed since you reviewed it. Check it again before restoring.",
             status=409,
         )
+    (pending / READY_MARKER).unlink(missing_ok=True)
     _force_destructive_off(staged_db)
     _force_recovery_off(pending / LAUNCHER_CONF_NAME)
     _purge_auth_state(staged_db)
