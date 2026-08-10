@@ -56,30 +56,31 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Every job here runs on the `reaper-ci` self-hosted pool, four Linux x64 runners, except
-# `docker`. `check` measured 211s there against 307s on ubuntu-latest for the same tree.
-# `pr-validation.yml` names the same pool.
+# Every job here runs on the `reaper-ci` self-hosted pool, four Linux x64 runners, as does
+# `pr-validation.yml`'s title check. `check` measured 211s there against 307s on ubuntu-latest
+# for the same tree.
 #
-# **`docker` is hosted because the runners are containers with no docker socket mounted**, so
-# `docker build` reaches no daemon. Mounting the host socket would fix it and is deliberately
-# not done: that socket is an unauthenticated API to a root daemon, this repository is public,
-# and the job it would buy runs in 58s on a hosted runner that is thrown away afterwards.
+# `codeql.yml` is the one workflow still hosted, for a reason measured on the pool rather than
+# assumed: the runner image is built on Ubuntu 20.04, whose system Node is 10.19, and CodeQL's
+# TypeScript parser needs 14 or newer. Nothing else reads the system Node. The runner ships its
+# own in `externals/`, which is what every `uses:` step runs on.
 #
-# `codeql.yml` is hosted for a second reason, measured on the pool rather than assumed: the
-# runner image is built on Ubuntu 20.04, whose system Node is 10.19, and CodeQL's TypeScript
-# parser needs 14 or newer. Nothing else here reads the system Node. The runner ships its own
-# in `externals/`, which is what every `uses:` step runs on.
+# **The runners mount the host's docker socket, which is what lets `docker build` reach a
+# daemon, and it makes a job on this pool root-equivalent on that host.** That socket is an
+# unauthenticated API to a root daemon: anything reaching it can start a privileged container
+# mounting `/`. This repository is public, so the setting holding that shut is Settings ->
+# Actions -> General -> "Require approval for all external contributors". It is not in this
+# file because GitHub does not expose it to a workflow, and a workflow cannot refuse a runner
+# it is already running on. Turning that setting off re-opens host compromise from a fork
+# pull request.
+#
+# Images built here land on the host's daemon rather than in the ephemeral container, so that
+# host needs a periodic prune. Nothing in CI does it.
 #
 # `frontend` shares the pool with `check`, and both saturate the host: `pytest -n auto` and
 # vitest each size their worker pool from the full core count a container sees. Under that,
 # `PolicyEditor.test.tsx` failed once and passed on a re-run of the same commit. Capping one
 # side's workers is the lever if it returns.
-#
-# **This is a public repository, so a pull request from a fork proposes running a stranger's
-# code on that hardware.** The setting that holds it shut is Settings -> Actions -> General
-# -> "Require approval for all external contributors", and it is not in this file because
-# GitHub does not expose it to a workflow. A workflow cannot refuse a runner it is already
-# running on.
 #
 # The pool is not elastic. If every runner is offline a job queues rather than failing, and
 # a queued required check reads the same as a slow one.
@@ -366,7 +367,7 @@ jobs:
   # otherwise a broken COPY order, a stale lock, or a bad base image reaches main green.
   # needs: ensures the image is never built from code that failed lint, type, or test.
   docker:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, reaper-ci]
     needs: [changes, check, frontend]
     if: needs.changes.outputs.code == 'true'
     permissions:
