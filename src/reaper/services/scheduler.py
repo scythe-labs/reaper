@@ -278,11 +278,13 @@ async def _refresh_curated_lists(
 ) -> None:
     """The refresh itself. Split out so its caller's catch-all covers every line of it.
 
-    **Nothing here records a failure.** A refusal from ``build_sources`` and an unreadable
+    **No handler here records anything.** A refusal from ``build_sources`` and an unreadable
     list registry were each caught where they happened and recorded with the caller's own
     event name, ``ok=False`` and result string, so the two arms decided nothing and were a
-    second place for that copy to drift. The Plex handler below stays: it changes what the
-    result says rather than ending the pass.
+    second place for that copy to drift. The one row this function writes is the last line,
+    off the ``ok`` and ``result`` the pass worked out, and those three ``ok=False`` branches
+    are outcomes rather than raises, so the caller's catch-all never sees them. The Plex
+    handler below stays: it changes what that result says rather than ending the pass.
     """
     async with AsyncExitStack() as stack:
         # Not a scan: this reads the *arr and Plex and nothing else, so it does not carry

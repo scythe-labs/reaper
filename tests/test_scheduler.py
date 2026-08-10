@@ -678,7 +678,8 @@ class TestUpkeepJobsRecordTheirLastRun:
         """A misconfigured install cannot build clients at all, and that is a refusal the job
         records rather than an exception escaping into the scheduler unrecorded."""
 
-        # Its own stub, not `_wire_lists`: this one is about `build_sources` REFUSING.
+        # `_wire_lists` for the config it hands back; its `build_sources` stub is replaced
+        # below, because this one is about `build_sources` REFUSING.
         settings, box = self._wire_lists(monkeypatch, tmp_path)
 
         async def refuse(*args: object, **kwargs: object) -> tuple[object, ...]:
@@ -710,9 +711,11 @@ class TestUpkeepJobsRecordTheirLastRun:
         settings, box = self._wire_lists(monkeypatch, tmp_path)
         async with main_factory() as session:
             session.add(
+                # The source is not load-bearing: the raise is at `json.loads`, one line above
+                # where `definitions` would construct a `ListSource` at all.
                 ListConfig(
                     name="Keep these",
-                    source="plex_collection",
+                    source="imdb",
                     config_json="{not json",
                     enabled=True,
                     created_at=utcnow(),
