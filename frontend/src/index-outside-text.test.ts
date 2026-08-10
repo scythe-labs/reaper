@@ -179,7 +179,11 @@ const SITES: Site[] = [
     what: "the same media title at the head of a panel",
     selectors: [".why-head h2"],
     classInTsx: "why-head",
-    seenIn: ["components/WhyPanel.tsx", "components/ShowPanel.tsx"],
+    // One file, and it used to be two: the item panel and the show panel drew this head
+    // separately until `PanelHead` collapsed them, and the show panel renders it from there
+    // now. The other `.why` panels put their own app-written copy in this heading, so a title
+    // from outside the app reaches it through `PanelHead` alone.
+    seenIn: ["components/WhyPanel.tsx"],
   },
   {
     what: "the rule that argued a keep Reaper could not check",
