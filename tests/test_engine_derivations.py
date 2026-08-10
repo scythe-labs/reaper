@@ -302,6 +302,22 @@ class TestThereIsOnlyOneDecisionFunction:
 _UNKNOWN_ONLY_GATE_FLAGS = frozenset({"defers_to_owner", "unestablishable"})
 
 
+def _models_in(annotation: object) -> Iterator[type[BaseModel]]:
+    """Every model reachable inside one annotation, at any nesting depth.
+
+    Recursive rather than one level deep, which is rule 147's bound read off an annotation
+    instead of source text: the tree spells these two ways today (``MatchOut | None`` and
+    ``list[SignalContribution]``) and their combination ``list[X] | None`` is the natural
+    spelling for a block added to a document that must still read old rows. A single
+    ``get_args`` pass sees ``(list[X], NoneType)``, neither of which is a model, so that block
+    would leave the walk silently and its entries would never be compared.
+    """
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        yield annotation
+    for arg in get_args(annotation):
+        yield from _models_in(arg)
+
+
 def _nested_models(model: type[BaseModel]) -> dict[str, type[BaseModel]]:
     """Each field of ``model`` holding another model, or a list of one, as ``{key: model}``.
 
@@ -312,9 +328,8 @@ def _nested_models(model: type[BaseModel]) -> dict[str, type[BaseModel]]:
     """
     found: dict[str, type[BaseModel]] = {}
     for name, field in model.model_fields.items():
-        for annotation in (field.annotation, *get_args(field.annotation)):
-            if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-                found[name] = annotation
+        for nested in _models_in(field.annotation):
+            found.setdefault(name, nested)
     return found
 
 
@@ -409,10 +424,16 @@ def _blocks(document: dict[str, Any]) -> Iterator[tuple[str, set[str], type[Base
             yield key, set(value), model
 
 
+#: The two lists the flags above are NOT written on. Matched against the whole block name
+#: rather than as a prefix, so a field spelled `protections_fired_since` cannot inherit the
+#: exemption by looking like one of these.
+_LISTS_WITHOUT_THE_GATE_FLAGS = frozenset({"protections_fired", "protections_checked"})
+
+
 def _declared(label: str, model: type[BaseModel]) -> set[str]:
     """The keys the writer owes this block: its model's fields, less the stated exception."""
     fields = set(model.model_fields)
-    if label.startswith(("protections_fired", "protections_checked")):
+    if label.split("[")[0] in _LISTS_WITHOUT_THE_GATE_FLAGS:
         return fields - _UNKNOWN_ONLY_GATE_FLAGS
     return fields
 
@@ -423,8 +444,8 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
     does not name -- pydantic's ``extra="ignore"`` -- and that is exactly how ``keeps`` and
     ``match`` were written on every scan for months while the panel rendered neither.
 
-    Nothing pinned the key set before this class. The baseline fixture reads eight of the
-    thirteen top-level keys and three fields of a signal row (``tests/_policy_lab.py``), so a
+    Nothing pinned the key set before this class. The baseline fixture reads nine of the
+    thirteen top-level keys and four fields of a signal row (``tests/_policy_lab.py``), so a
     key added on one side alone was invisible to the whole suite -- and it is invisible in
     both directions, since a field declared and never written reads ``None`` forever.
     """
@@ -468,10 +489,15 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         )
 
     def test_the_walk_covers_every_block_the_declaration_holds(self) -> None:
-        """Rule 145: the assertion above can only fail on a block the walk collected, so the
-        population it collected is pinned rather than assumed. Seven objects over five
-        models, counted by hand against the fixture: the document, its ``match``, one signal,
-        one keep, and one entry in each of the three protection lists."""
+        """Rule 145: the assertions above can only fail on a block the walk collected, so the
+        population it collected is pinned rather than assumed. Seven objects over five models,
+        counted by hand against the fixture: the document, its ``match``, one signal, one keep,
+        and one entry in each of the three protection lists.
+
+        **Labels, never a total.** A total of seven is also what a fixture landing two entries
+        in one protection list and none in another produces, and an empty list makes the
+        `all(...)` above true over nothing, so the flags claim would go unproven with three
+        tests green."""
         document = _written_explanation()
 
         assert set(_nested_models(Explanation)) == {
@@ -482,15 +508,32 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
             "protections_checked",
             "protections_unknown",
         }
-        assert len(list(_blocks(document))) == 7
+        assert {label for label, _, _ in _blocks(document)} == {
+            "<top level>",
+            "match",
+            "signals[0]",
+            "keeps[0]",
+            "protections_fired[0]",
+            "protections_checked[0]",
+            "protections_unknown[0]",
+        }
 
     def test_the_reader_reads_back_what_the_writer_wrote(self) -> None:
         """The round trip the key sets exist to protect. ``read_explanation`` is the one
         definition of "unreadable" for this document (rule 104) and both the panel and the
         hand-reap path run it, so a writer the reader refuses holds every file. The two
-        blocks the reader used to drop are asserted by value, not by presence."""
-        body = read_explanation(_written_explanation())
+        blocks the reader used to drop are asserted by value, not by presence.
 
+        **The merged keys are asserted RAW as well, and that is the load-bearing half.**
+        ``MatchOut.merged_rating_keys`` is a lax ``list[int] | None``, so a stored
+        ``["4242", "4243"]`` reads back through it as ``[4242, 4243]`` and the model assertion
+        holds, while ``executor._equivalent_keys`` filters the raw list on
+        ``isinstance(value, int)`` and comes back with neither. That is the streaming veto and
+        the played-since-approval check losing the second listing of a merged bind."""
+        document = _written_explanation()
+        body = read_explanation(document)
+
+        assert document["match"]["merged_rating_keys"] == [4242, 4243]
         assert body is not None
         assert body.match is not None and body.match.merged_rating_keys == [4242, 4243]
         assert [keep.name for keep in body.keeps] == ["Rated well"]
