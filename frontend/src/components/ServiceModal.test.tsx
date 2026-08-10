@@ -725,6 +725,57 @@ describe("what the connection badge vouches for", () => {
     // One request the whole way through: the badge is re-shown, never re-earned.
     expect(apiMock.testInstance).toHaveBeenCalledTimes(1);
   });
+
+  it("does not vouch for an address typed while the test was still in flight", async () => {
+    // The three above compare the held result against the boxes and are satisfied by reading
+    // `testedWith()` at either end. This one is not, and it is the arm nothing drove: the boxes
+    // stay live while the request is out, so a fingerprint read back at SUCCESS time is the
+    // address on screen when the answer lands rather than the one it was asked about. The two
+    // then match by construction and the badge vouches for a host nobody tried. Captured at
+    // issuance instead (`onMutate`), the held result no longer describes the boxes and the badge
+    // goes, which is the honest answer.
+    //
+    // Three siblings copy this pairing (`DiscordModal`, `NotificationsPanel`, `ServicesPanel`)
+    // and all three computed it at success time until this branch pinned the shape; a hygiene
+    // gate holds all four now (`test_a_held_test_result_is_stamped_when_its_request_is_issued`).
+    let land!: (r: unknown) => void;
+    apiMock.testInstance.mockReturnValue(
+      new Promise((resolve) => {
+        land = resolve;
+      }),
+    );
+    apiMock.instanceRootFolders.mockResolvedValue([]);
+    apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+    renderWithProviders(
+      <>
+        <Announcer />
+        <ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />
+      </>,
+    );
+    const user = userEvent.setup();
+    await fill(user, hostBox(), "10.0.0.5");
+    await user.type(keyBox(), "k");
+    const press = await screen.findByRole("button", { name: /Test connection/i });
+    await waitFor(() => expect(press).toBeEnabled());
+    await user.click(press);
+
+    // The operator keeps typing while the request is out. `type`, not `fill`: the keystroke is
+    // the point here rather than the value it leaves behind.
+    await user.type(hostBox(), "1");
+    await act(async () => {
+      land({ ok: true, detail: "Connected to Sonarr.", version: "4.0.1" });
+    });
+
+    expect(badge()).toBeNull();
+
+    // The second half, and the reason an absence alone is not the assertion: a result that was
+    // never stored is also absent here. Typing back to the address the request WAS about brings
+    // the badge, so what is being read is a held result filed under the right fingerprint rather
+    // than nothing at all.
+    await user.type(hostBox(), "{backspace}");
+
+    expect(badge()!.textContent).toContain("Passed");
+  });
 });
 
 describe("why 'Add service' will not act", () => {
