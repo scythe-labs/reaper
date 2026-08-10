@@ -64,6 +64,20 @@ class InstanceSeed(BaseModel):
 #: rather than a tidiness argument.
 DATABASE_FILENAME = "reaper.db"
 
+#: The file an install that cannot receive environment variables is configured through,
+#: named once (rule 104). :mod:`reaper.launcher` owns it: it writes the template, reads the
+#: file into the environment, and rewrites keys a settings save changes. The backup carries
+#: it and the restore puts it back and disarms recovery inside it, so those three cannot
+#: drift onto different spellings of one filename.
+#:
+#: **It is declared here rather than in the launcher, and moving it back re-creates 7 import
+#: cycles.** `services/backup.py` and `services/restore.py` imported the process entry point
+#: for this string alone, and `launcher.main()` imports `reaper.preflight` and `reaper.main`
+#: to serve, which closes the ring. Both already import this module, whose own in-tree import
+#: closure is empty. `test_every_import_cycle_under_src_is_one_someone_declared` is what fails
+#: if the import comes back; nothing did before it.
+LAUNCHER_CONF_NAME = "launcher.conf"
+
 
 class DataDirError(RuntimeError):
     """The data directory is missing or not writable, so Reaper cannot start.

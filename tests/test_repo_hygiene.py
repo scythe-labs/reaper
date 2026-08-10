@@ -4084,6 +4084,13 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
 #: **Scoped to these four deliberately.** `notify` and `services` are a real runtime two-cycle
 #: (`notify/discord.py` <-> `services/leaving_soon.py`), so a gate that swept every package under
 #: `src/reaper` would be red the day it landed and would get deleted rather than fixed.
+#:
+#: That pair is a cycle between PACKAGES and not between modules: `discord.py` imports
+#: `services/app_settings.py`, `leaving_soon.py` imports `discord.py`, and neither module
+#: reaches itself. So `test_every_import_cycle_under_src_is_one_someone_declared` below does
+#: sweep all of `src/reaper`, at module granularity, and the pair is not one of the two it
+#: declares. The two gates answer different questions and both are wanted: this one holds a
+#: direction across four packages, that one holds the module graph to a declared set of cycles.
 _LAYERS = ("api", "services", "clients", "engine")
 
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
@@ -4270,6 +4277,8 @@ def test_the_four_packages_import_only_downward() -> None:
         "too. Both were already stale by two when this message was written. Leave the *Landed*\n"
         "rows alone -- their figures are historical deltas, and editing one makes a correct\n"
         "record false.\n"
+        "`_EXPECTED_SOURCE_MODULES` moves with the same module, counting all of src/reaper\n"
+        "rather than these four, and it fails separately rather than telling you about this.\n"
         "If you did not add or delete one, the walk lost part of the tree -- and every\n"
         "assertion below passes on what it cannot see."
     )
@@ -4399,6 +4408,213 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
         "from reaper import launcher, crypto",
     ):
         assert not _edges_in(source, "reaper/services/thing.py"), f"should be no edge: {source}"
+
+
+# --- the import cycles under src/reaper are declared, not discovered -----------------------
+
+#: Every `.py` file under `src/reaper`, which is the population the cycle walk parses. Pinned
+#: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
+#: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
+#: A different population from that constant, which counts the 83 under the four packages only.
+_EXPECTED_SOURCE_MODULES = 115
+
+#: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
+#: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level for the
+#: two `launcher.conf` keys Settings -> General writes, `launcher` reaches `main` to serve, and
+#: `main` mounts every router. Written out rather than counted, because a cycle is a coupling
+#: someone chose and the next reader needs to know which two are known.
+#:
+#: There were **nine** before `LAUNCHER_CONF_NAME` moved to `config.py`; the seven that went
+#: were `services/backup.py` and `services/restore.py` importing the process entry point for a
+#: filename. Nothing failed when they were there, which is why this list exists.
+_KNOWN_IMPORT_CYCLES = frozenset(
+    {
+        ("reaper.api.plex", "reaper.api.settings", "reaper.launcher", "reaper.main"),
+        ("reaper.api.settings", "reaper.launcher", "reaper.main"),
+    }
+)
+
+
+def _module_candidates(node: ast.Import | ast.ImportFrom, package: str) -> list[str]:
+    """Every dotted name ``node`` could be naming, made absolute against ``package``.
+
+    `_imported_modules` above answers which PACKAGE an import reaches, which is all the
+    layering walk needs. This needs the MODULE, so each imported name is offered as a
+    submodule too: `from reaper.services import app_settings` reaches
+    `services/app_settings.py`, and reading the `from` clause alone stops at the package's
+    empty `__init__.py` and loses the edge. Names that are symbols rather than modules
+    resolve to nothing and drop out in `_module_import_graph`.
+    """
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    base = node.module or ""
+    if node.level:
+        parent = package.rsplit(".", node.level - 1)[0]
+        base = f"{parent}.{node.module}" if node.module else parent
+    if not base:
+        return []
+    return [base, *(f"{base}.{alias.name}" for alias in node.names)]
+
+
+@lru_cache(maxsize=1)
+def _module_import_graph() -> dict[str, frozenset[str]]:
+    """Every module under `src/reaper`, mapped to the in-tree modules it imports at RUNTIME.
+
+    Top-level and function-local imports both count; `if TYPE_CHECKING:` does not, because it
+    never runs and cannot make a cycle real. **Counting the function-local ones is the whole
+    reason this gate works**: the top-level graph alone is acyclic today and stays acyclic
+    when the cycles below are put back, since `launcher.main()` imports `reaper.preflight`
+    and `reaper.main` from inside the function. A cycle broken by deferring one edge is still
+    a cycle, and the deferral is what a module graph drawn from top-level imports cannot see.
+
+    A package's `__init__.py` is a module here like any other, because importing
+    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. All eight
+    of them import nothing today, so they carry no outgoing edges.
+    """
+    names = {}
+    for path in sorted(SRC.rglob("*.py")):
+        parts = list(path.relative_to(SRC.parent).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        names[".".join(parts)] = path
+    graph: dict[str, frozenset[str]] = {}
+    for name, path in names.items():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        deferred = _deferred_import_lines(tree)
+        package = name if path.name == "__init__.py" else name.rsplit(".", 1)[0]
+        reached: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            if deferred.get(node.lineno) == "TYPE_CHECKING":
+                continue
+            for candidate in _module_candidates(node, package):
+                if candidate in names and candidate != name:
+                    reached.add(candidate)
+        graph[name] = frozenset(reached)
+    return graph
+
+
+def _import_cycles(graph: dict[str, frozenset[str]]) -> set[tuple[str, ...]]:
+    """Every simple cycle in ``graph``, each rotated to start at its smallest member.
+
+    Enumerated from the smallest member outward, so each cycle is found exactly once and the
+    result needs no de-duplication. Measured at 47ms over this tree's 115 modules and 667
+    edges; the graph is a DAG plus two back edges, which is what keeps a walk over simple
+    paths cheap.
+    """
+    order = {node: i for i, node in enumerate(sorted(graph))}
+    found: set[tuple[str, ...]] = set()
+
+    def walk(start: str, node: str, path: list[str]) -> None:
+        for nxt in sorted(graph[node]):
+            if nxt == start:
+                found.add(tuple(path))
+            elif nxt not in path and order[nxt] > order[start]:
+                walk(start, nxt, [*path, nxt])
+
+    for start in sorted(graph):
+        walk(start, start, [start])
+    return found
+
+
+def test_every_import_cycle_under_src_is_one_someone_declared() -> None:
+    """Nothing held the module graph, and a returning cycle costs one import line to add.
+
+    Measured against this tree: `services/backup.py` and `services/restore.py` imported
+    `reaper.launcher` for one filename, and that single edge was **7 of the 9** cycles under
+    `src/reaper`. Putting `LAUNCHER_CONF_NAME` in `config.py` removed all 7, and re-adding
+    either import restores them.
+
+    **Nothing failed while they were there, and three gates were looking.** The layering walk
+    above reads the four packages only and `reaper.launcher` is outside them; the
+    deferred-import gate reads cross-package imports that do not run, and these run; and a
+    graph built from top-level imports alone is acyclic either way, because the edges that
+    close every one of these cycles are the function-local imports in `launcher.main()`.
+
+    Python imports a cycle happily until it does not. The failure this prevents is the one a
+    review pass measured in phase 6: a five-module cut whose graph would not have booted, and
+    which read as clean right up to the boot.
+    """
+    graph = _module_import_graph()
+    assert len(graph) == _EXPECTED_SOURCE_MODULES, (
+        f"expected {_EXPECTED_SOURCE_MODULES} modules under src/reaper/, walked {len(graph)}.\n\n"
+        "If you ADDED or DELETED one, bump the number. `_EXPECTED_LAYERED_MODULES` counts a\n"
+        "narrower population (the four packages only) and moves separately.\n"
+        "If you did not, the walk lost part of the tree, and the assertion below passes on\n"
+        "what it cannot see."
+    )
+    found = _import_cycles(graph)
+    assert found == _KNOWN_IMPORT_CYCLES, (
+        "the import cycles under src/reaper moved.\n"
+        + "  new:  "
+        + (
+            "\n        ".join(" -> ".join(c) for c in sorted(found - _KNOWN_IMPORT_CYCLES))
+            or "none"
+        )
+        + "\n  gone: "
+        + (
+            "\n        ".join(" -> ".join(c) for c in sorted(_KNOWN_IMPORT_CYCLES - found))
+            or "none"
+        )
+        + "\n\nOne that went away is wave 9 landing, and the entry comes out. A NEW one is a\n"
+        "coupling to break where the dependency is wrong, never by deferring the import:\n"
+        "a function-local or `TYPE_CHECKING` import leaves the coupling and hides the edge.\n"
+        "Where a constant or a type is the whole reason for the edge, move it to a leaf both\n"
+        "sides already import. `config.LAUNCHER_CONF_NAME` is what that looks like."
+    )
+
+
+def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
+    """The gate above is mostly an absence, so the detector is driven (rule 145).
+
+    A walk that returned nothing would be green on any tree with no cycles left to lose, and
+    two of these shapes are ones a wrong detector reports: a diamond has two paths to one
+    module and no cycle, and a self-edge-free chain has neither.
+
+    The classifier gets the same treatment (rule 147). `from reaper.services import
+    app_settings` is the form that decides whether this graph has module edges at all, and
+    reading the `from` clause alone resolves it to the package's empty `__init__.py`.
+    """
+    two = {"a": frozenset({"b"}), "b": frozenset({"a"})}
+    assert _import_cycles(two) == {("a", "b")}
+    long_way = {
+        "a": frozenset({"b"}),
+        "b": frozenset({"c"}),
+        "c": frozenset({"a"}),
+        "d": frozenset(),
+    }
+    assert _import_cycles(long_way) == {("a", "b", "c")}
+    # Two cycles sharing a module, so a detector that stops at the first one is short here.
+    figure_eight = {
+        "a": frozenset({"b"}),
+        "b": frozenset({"a", "c"}),
+        "c": frozenset({"b"}),
+    }
+    assert _import_cycles(figure_eight) == {("a", "b"), ("b", "c")}
+    diamond = {
+        "a": frozenset({"b", "c"}),
+        "b": frozenset({"d"}),
+        "c": frozenset({"d"}),
+        "d": frozenset(),
+    }
+    assert _import_cycles(diamond) == set()
+    assert _import_cycles({"a": frozenset({"b"}), "b": frozenset()}) == set()
+
+    forms = {
+        "from reaper.services import app_settings": "reaper.services.app_settings",
+        "from reaper.config import Settings": "reaper.config",
+        "import reaper.clients.plex": "reaper.clients.plex",
+        "from reaper import launcher": "reaper.launcher",
+        "from ..engine import gates": "reaper.engine.gates",
+        "from ..engine.gates import Facts": "reaper.engine.gates",
+    }
+    modules = set(_module_import_graph())
+    for source, expected in forms.items():
+        node = ast.parse(source).body[0]
+        assert isinstance(node, (ast.Import, ast.ImportFrom))
+        resolved = [c for c in _module_candidates(node, "reaper.services") if c in modules]
+        assert expected in resolved, f"{source!r} resolved to {resolved}, expected {expected}"
 
 
 # --- the HTTP status an InstanceError means is declared once (rule 144) ---------------

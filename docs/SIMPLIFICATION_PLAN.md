@@ -190,7 +190,7 @@ row moving is indistinguishable from one that never started.
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
 | 6 | Structural motion | **done** | 6 of 8, 2 dropped | The by-design ceiling. Exit task finished: every `path:NNN` in this document resolves against the tree |
 | 7 | Wire contract | **done** | 8 of 8 | C7, C11 and C8 all settled. Eight items, not ~5: W8-3 measures 20 unread fields and W8-4's anonymous payloads are 11 routes over 4 shapes. W8-1 took two PRs, the route's shape then the rollup |
-| 8 | Dedup and carriers | **in progress** | 8 landed, 3 killed | W6-2 landed early as #618: #556 made rule 94's bound a live defect, not a tidiness item. The three already-drifted rows still open are the executor's size interlock (`safety-path`, gated on C9), the two panel heads (a divergence to decide, not inherit), and W3's parameter objects. **C14 is settled** and `_call` is unblocked, the pinning test having landed at #659. W9's `LAUNCHER_CONF_NAME` half is scouted and NOT built: measured, it breaks 7 of 9 cycles and moves neither counter S7 says it moves |
+| 8 | Dedup and carriers | **in progress** | 8 landed, 3 killed | W6-2 landed early as #618: #556 made rule 94's bound a live defect, not a tidiness item. The three already-drifted rows still open are the executor's size interlock (`safety-path`, gated on C9), the two panel heads (a divergence to decide, not inherit), and W3's parameter objects. **C14 is settled** and `_call` is unblocked, the pinning test having landed at #659. W9's `LAUNCHER_CONF_NAME` half is built: 9 cycles to 2, and it moved neither counter S7 said it moved. Its other two halves, the five dead workarounds and the finding-body corrections, are scouted and not built |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
 
 Status vocabulary, and nothing else: `not started`, `in progress`, `blocked`, `done`. `blocked`
@@ -376,7 +376,11 @@ nor the logger count. Measured on a patched tree, not reasoned. The counter that
 before closing a PR that adds or removes a member. **The phase-3 counters, by name:**
 `_EXPECTED_LAYERED_MODULES` (**83** modules under the four packages), the logger counter in
 `tests/test_capturable_loggers.py` (**49**), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (the three
-sites W9 deletes, one of which moved file in #612). The module figure has moved five times:
+sites W9 deletes, one of which moved file in #612). **Phase 8 added a fourth**,
+`_EXPECTED_SOURCE_MODULES` (**115**), which counts every module under `src/reaper` rather than
+the 83 under the four packages, so a new module moves both and each gate's failure message names
+the other. Its neighbor `_KNOWN_IMPORT_CYCLES` is a set, not a count. The module figure has moved
+five times:
 #599's deletion took it to 76 without this paragraph noticing, phase 6's `api/plex.py` took it to
 77, its `policy_migrations` / `policy_warnings` pair to 79, and `routes.py` becoming five modules
 to 83. Each gate's failure message now names its prose siblings, since nothing asserts them.
@@ -1540,7 +1544,7 @@ nothing structurally preventing the movie loop being handed `tv_keeps`.
 >
 > **The sqlite pragma unification must not reach `_read_revision`.** `PRAGMA journal_mode=WAL`
 > **writes the file** — header bytes 18/19 flip and persist. `_read_revision` runs at
-> `restore.py:348` on the database unpacked from an operator-supplied `.reaper`, inside the rule 74
+> `restore.py:312` on the database unpacked from an operator-supplied `.reaper`, inside the rule 74
 > artifact gate, before `_check_schema` and before the operator confirms. Adding the pragma set
 > turns a pure read into a write against an unverified artifact. `isolation_level=None` at
 > `retention.py:194` is load-bearing for its `VACUUM`. Actual `busy_timeout` spread: 5000 in one,
@@ -2323,7 +2327,7 @@ the question is which breaks earn their keep, and most do not.
   import, the same symbol imported again inside a function, and a third function-local import),
   verified empirically. `executor.py:135` `TYPE_CHECKING`-imports a module already imported at
   `:117`. `api/simulate.py`'s `_replay_simulation` function-local `build_gates` import breaks nothing and carries no comment, unlike
-  `launcher.py:536` and `:558`, which name their reasons and stay.
+  `launcher.py:531` and `:553`, which name their reasons and stay.
 - **Both frontend cycles are one borrowed symbol each.** `PolicyEditor ↔ PolicyRuleEditors` exists
   because the deliberate split left three lookup tables behind, and the same file re-exports
   `humanDays` from `format.ts` whose own comment says it moved there to break a cycle back through
@@ -2403,7 +2407,7 @@ disagreement.
    log event for log event, and the function's own docstring says it uses "the same `ValueError`
    guard startup uses (rule 87)." Only the shared function is tested; the startup copy is not.
 4. **Four keys in `.env.example` do nothing in a `.env.local`.** `REAPER_UPDATE_CHECK`,
-   `LAUNCH_BROWSER`, `TRAY` and `DOCK_ICON` are read from raw `os.environ`, and `config.py:248`'s
+   `LAUNCH_BROWSER`, `TRAY` and `DOCK_ICON` are read from raw `os.environ`, and `config.py:277`'s
    own docstring states dotenv values never reach `os.environ`. The file's header says "copy to
    .env.local." Setting them there does nothing and warns nothing.
 5. **`Settings.host`/`.port` and the launcher's own `REAPER_PORT` parse disagree.** The launcher
@@ -2510,7 +2514,7 @@ sites calling `.toLocaleString()` where `count()` exists (~20).
 plus a third copy in `public.py`, with the explanatory comment duplicated verbatim (~20; the
 `unreachable (…)` wording is hand-constructed in five test sites and is load-bearing). Two inner
 handlers in `refresh_curated_lists` that duplicate the outer catch-all exactly (~12). A dead
-refusal branch in `restore.py:213` whose only content is a sentence its sole caller already
+refusal branch in `restore.py:201` whose only content is a sentence its sole caller already
 refused 12 lines earlier, plus one prepare-failure sentence written verbatim four times. The
 cron-refusal sentence written twice **in one function**, pinned by nothing. Three `except` arms
 raising the identical 400. Four verbatim copies of one panel-load-failure sentence (the fifth,
