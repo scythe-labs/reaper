@@ -506,7 +506,12 @@ and W9 asks for the five helpers moved out of `api/auth.py`; both are phase 8, b
 `safety-path`, and whichever lands second silently re-homes the gate that guards arming deletion.
 They are **one PR**: six functions to `api/deps.py` (`_refuse_if_waiting` is a shared callee and
 travels with them), the ritual extracted onto them, the throttle key tuple passed rather than
-derived, and the missing throttle tests for the three gates that lack them.
+derived, and the missing throttle tests for the two gates that lack them.
+
+**Landed at #681, exactly as written.** The two gates were `change_password` and `restore`; this
+paragraph said three, one more than the finding's own correction block says, and both are now
+counted from the tree. The key tuple is passed, and a hygiene gate now confines `password_throttle`
+to `auth/ratelimit.py` and `api/deps.py` so a fifth gate cannot re-derive it.
 
 **The request accessors landed first and separately, at #670, and that does not reopen this.**
 They are W3's own bullet, a third population this paragraph never named, and they share a
@@ -2509,6 +2514,17 @@ question is which breaks earn their keep, and most do not.
   test imports any of the five**. Move them to the `api/deps.py` wave 3 proposes, drop the
   underscores, and add the missing test in the same commit. ~90 lines moved, risk `safety-path` as
   pure motion.
+
+  > **Landed at #681, together with W3's ritual, which is what the contradiction paragraph
+  > required.** Six functions moved and `api/auth.py` imports three back, an `api → api` edge
+  > inside one layer. Two of the six stay private in `api/deps.py`: after the ritual collapses,
+  > `_record_password_failure` and `_verify_admin_password` have exactly one caller each, so the
+  > private namespace two routers used to reach into is now reachable by nobody. **"Pure motion"
+  > understates the risk and the row should have said so**: the four call sites look
+  > interchangeable and two of them are conditional, `set_safety` gating only `if payload.enabled`
+  > because turning deletion OFF is deliberately ungated, and `set_admin_password` gating only
+  > when a password exists and the session did not come through recovery (#433). Hoisting either
+  > call out of its branch is a behavior change that no test at the base could see.
 - **Three cycle-breaking workarounds in `scan_runner.py` break no cycle** (a `TYPE_CHECKING`
   import, the same symbol imported again inside a function, and a third function-local import),
   verified empirically. `executor.py:137` `TYPE_CHECKING`-imports a module already imported at
