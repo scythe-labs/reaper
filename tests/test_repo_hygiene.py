@@ -571,12 +571,14 @@ def _busy_timeout_prose(path: Path) -> str:
 #: ``db.session`` (``imdb_dataset.load``, which is about ``cache.db``, whose engine listens to
 #: the same ``_configure_sqlite``).
 #:
-#: Spellings accepted, one per form the tree uses (rule 147): ``5s ``busy_timeout```,
-#: ```busy_timeout`` (5s``, ``5s for it (``db.session``)``, ``5s busy timeout`` spaced,
-#: ``5s BUSY_TIMEOUT`` cased, ``db/session.py`` as the citation, and a passage split across two
-#: ``#`` lines. Spellings rejected, run and confirmed: ``five seconds`` in words, ``5 s`` with a
-#: space (``docs/LEARNINGS.md``'s), ``5000ms``, ``session.py`` without ``db``, a figure past 120
-#: characters, and a figure on the far side of a sentence boundary.
+#: Spellings accepted, run and confirmed (rule 147). Six are forms the tree uses:
+#: ``5s ``busy_timeout```, ```busy_timeout`` (5s``, ``5s for it (``db.session``)``,
+#: ``5s busy timeout`` spaced, ``db/session.py`` as the citation, and a passage split across two
+#: ``#`` lines. A seventh, ``5s BUSY_TIMEOUT``, is what ``re.IGNORECASE`` accepts rather than
+#: anything in ``src/``, which spells it lowercase everywhere. Rejected, run and confirmed:
+#: ``five seconds`` in words, ``5 s`` with a space (``docs/LEARNINGS.md``'s), ``5000ms``,
+#: ``session.py`` without ``db``, a figure past 120 characters, and a figure on the far side of a
+#: sentence boundary.
 #:
 #: **The sentence bound is doing work the window alone did not.** ``\d+s`` reads every
 #: status-code plural in ``src/`` (``404s``, ``409s``, ``429s``, ``500s``, ``502s``) and every

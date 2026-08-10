@@ -177,7 +177,7 @@ def _compact_sync(db_path: Path) -> bool:
     transaction, and the driver's default opens one on the first statement it takes for
     DML. The 30s busy timeout this connection sets lets it wait out an in-flight write
     rather than failing at once. The figure is this connection's own, not the app
-    engine's; ``services.backup`` sets its own for ``VACUUM INTO`` the same way.
+    engine's, and ``services.backup`` sets its own for ``VACUUM INTO``.
 
     **The checkpoint is what actually hands the disk back, and the ``VACUUM`` alone does
     not.** The database is in WAL mode (``db.session``), so the rewrite lands in
