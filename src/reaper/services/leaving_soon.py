@@ -583,10 +583,11 @@ async def after_scan(
     failure here is logged and swallowed: the warning layer must never fail a scan that
     already committed.
 
-    Every skip below is written down (:func:`_record_skip`), because none of them reach the
-    row ``_run_pass`` writes: the Jobs page then re-read the last COMPLETED pass and showed
-    its green dot, its timestamp and its counts as the answer for a scan that never touched
-    the shelf, under a heading reading "Runs after every scan".
+    Every skip below is written down (:func:`_record_skip`) bar one, the shelf being off,
+    and the comment on ``shelf_on`` says why. None of them reach the row ``_run_pass``
+    writes: the Jobs page then re-read the last COMPLETED pass and showed its green dot, its
+    timestamp and its counts as the answer for a scan that never touched the shelf, under a
+    heading reading "Runs after every scan".
     """
     # The shelf is on until the pass says otherwise. Off is the one skip not worth writing
     # down: the Jobs row renders its "Off" branch from that same setting and shows no
