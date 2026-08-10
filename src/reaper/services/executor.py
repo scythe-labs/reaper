@@ -207,10 +207,11 @@ _NO_APPROVED_SIZE_CHECK = "No size was recorded for it at scan time. Kept."
 
 #: The size re-read's two checklist lines. Both send paths reach both, and the sentence an
 #: operator reads must not depend on which one they are looking at, so each is written once
-#: here rather than at each branch (rule 144). Four branches share them, not two: the season's
-#: unconfirmed guard fires on a file list that is empty AND on one carrying a size it could not
-#: read. The *reason* beside each stays per-path and inline, naming the item and its numbers,
-#: which is what a checklist line this short cannot carry (rule 21).
+#: here rather than at each branch (rule 144). Two branches share each: the movie's and the
+#: season's. The season's empty-file-list skip is not one of them and carries its own copy,
+#: nothing about a size being wrong there. The *reason* beside each stays per-path and
+#: inline, naming the item and its numbers, which is what a checklist line this short cannot
+#: carry (rule 21).
 _CHECK_SIZE_UNCONFIRMED = "Couldn't confirm its current size. Kept."
 _CHECK_GREW_SINCE_APPROVED = "It grew since you approved it. Kept."
 
@@ -2373,10 +2374,27 @@ class Executor:
         # growth check below and marks the step verified having proven nothing -- and
         # since the plan is ordered smallest-first, a zero-size season is exactly what
         # the canary lands on. Rule 1: an omitted answer is not an explicit empty one.
-        # An item the allowance admitted has no frozen size to compare against, so the
-        # growth interlock cannot run for it at all. The empty-list guard still applies:
-        # a season with no files is not a season worth sending a delete for.
-        if not live_sizes or (approved_size is not None and any(s is None for s in live_sizes)):
+        # This arm is unconditional, so it also covers an item the allowance admitted,
+        # which has no frozen size and so can never reach the growth check.
+        #
+        # It gets its own sentence because it is its own fact: Sonarr answered, and the
+        # answer was that the season has no files. Sharing the size copy below sent an
+        # operator to look for a file with a missing size when there were no files at all
+        # (issue #682). The checklist line is the post-unmonitor skip's
+        # (`reap.season_files_vanished`) without its unmonitor clause, and the two are
+        # pinned to each other (rule 144). The reasons differ on purpose: that skip listed
+        # files a moment earlier so it says "no longer", where an item the allowance
+        # admitted may never have had one observed.
+        if not live_sizes:
+            return self._mark_skipped(
+                delete,
+                f"Sonarr lists no files for season {ref.season}, so there is nothing to "
+                "delete. Kept.",
+                check="No files left to remove. Kept.",
+            )
+        # Sonarr listed files and would not size one of them. Only reachable with a frozen
+        # size to compare against, the allowance's items having no comparison to make.
+        if approved_size is not None and any(s is None for s in live_sizes):
             return self._mark_skipped(
                 delete,
                 "Sonarr did not report a size for every file in this season, so Reaper "
