@@ -297,13 +297,16 @@ class TestTheSchedulerIsUpkeepOnly:
         vacuums that, while the real one is never compacted. The arity is the same either
         way, so APScheduler's own argument check cannot see it.
 
-        Asserted against ``settings.database_path.parent`` -- the folder that declaration puts
-        the database in -- rather than against the value handed to ``build_scheduler``, which
-        no longer takes one. The sweep folder used to arrive beside ``settings`` as its own
-        argument, and this test passed a different folder to prove the job read the argument
-        (rule 141). One source means the two cannot diverge, so what is left to pin is that
-        the sweep and the engine resolve to the same place. The settings folder is nested
-        under ``tmp_path`` and is not the default, so a wiring that grabbed either would fail.
+        The sweep folder used to arrive beside ``settings`` as its own argument, and this test
+        passed a different folder to prove the job read the argument (rule 141). It is derived
+        from ``settings`` now, so there is no second source to diverge from and no divergent
+        value to pass. What is left to pin is the thing the old assertion took on trust: that
+        the folder the sweep vacuums is the folder the ENGINE opened. So it is read back off
+        the engine's own URL rather than recomputed from ``settings``, which would only restate
+        the derivation under test.
+
+        The folder is nested a level under ``tmp_path`` and is not the shipped default, so a
+        wiring that reached for either would fail (rule 141).
         """
         db_dir = tmp_path / "db"
         db_dir.mkdir()
@@ -322,8 +325,42 @@ class TestTheSchedulerIsUpkeepOnly:
 
         job = next(j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID)
 
-        assert list(job.args)[:2] == [factory, settings.database_path.parent]
-        assert settings.database_path.parent not in (tmp_path, Path("data"))
+        assert engine.url.database is not None
+        assert list(job.args)[:2] == [factory, Path(engine.url.database).parent]
+        # `Settings` resolves `data_dir` to an absolute path, so the shipped default is the
+        # resolved one and not the bare `Path("data")` a hardcoded wiring would carry.
+        assert Path(engine.url.database).parent not in (tmp_path, Settings(secret_key="k").data_dir)
+        await engine.dispose()
+
+    async def test_the_ratings_refresh_is_handed_that_same_folder(self, tmp_path: Path) -> None:
+        """`refresh_ratings` downloads the IMDb dataset into ``data_dir`` and is wired from the
+        same `settings` the sweep now reads, so it is the sibling of the assertion above (rule
+        72) and had nothing pinning its wired arguments at all.
+
+        A wrong folder here is quiet in the same way: the download lands somewhere the loader
+        never looks and the dataset reads as permanently stale, degrading every scan. Both jobs
+        are checked against the engine's own folder, so a change that moves one and not the
+        other fails on whichever it left behind."""
+        db_dir = tmp_path / "db"
+        db_dir.mkdir()
+        settings = Settings(data_dir=db_dir, secret_key="k")
+        engine = create_engine(settings)
+        factory = create_session_factory(engine)
+        sched = scheduler.build_scheduler(
+            engine,
+            session_factory=factory,
+            secret_box=SecretBox(resolve_secret_key(settings)),
+            settings=settings,
+            update_checker=UpdateChecker(),
+            timezone=ZoneInfo("UTC"),
+            reap_running=lambda: False,
+        )
+
+        job = next(j for j in sched.get_jobs() if j.id == "refresh_ratings")
+
+        assert engine.url.database is not None
+        # `refresh_ratings(cache_engine, data_dir, session_factory)`: the folder is second.
+        assert list(job.args)[1] == Path(engine.url.database).parent
         await engine.dispose()
 
     async def test_the_snapshot_sweep_is_handed_a_way_to_ask_whether_a_reap_is_live(

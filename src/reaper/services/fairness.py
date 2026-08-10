@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from itertools import batched
@@ -739,6 +740,11 @@ async def _enrich_accounts(
         return {}
 
     # Fetch every needed quota concurrently; a failed one contributes nothing.
+    #
+    # Unbounded on purpose, unlike `_enrich_titles`' fan-out below (rule 72, checked rather
+    # than skipped). `targets` is one person at the only production caller
+    # (`build_person_detail`), so `calls` holds one entry per portal that person has an account
+    # on. A caller passing the whole board would need the same semaphore treatment.
     calls = [(pid, client, uid) for pid, es in resolved.items() for (client, uid) in es]
     results = await asyncio.gather(
         *(client.quota(uid) for _, client, uid in calls), return_exceptions=True
@@ -770,11 +776,22 @@ async def _enrich_accounts(
 _TITLE_LOOKUP_CAP = 80
 
 #: How many of those lookups may be in flight at once. The cap bounds the total work, not the
-#: burst: every target used to start at the same instant, and httpx's default pool of 100 sits
-#: above the cap, so one Scales load could open 80 sockets to a single portal. Same figure and
-#: same reasoning as ``season_scan.RESOLVE_CONCURRENCY``: enough to collapse the round trips,
-#: few enough that a modest self-hosted portal sees a handful of parallel reads.
+#: burst: every target used to start at the same instant, and httpx2's default pool of 100 sits
+#: above the cap, so one Scales load could open 80 sockets to a single portal. The figure is
+#: ``season_scan.RESOLVE_CONCURRENCY``'s, enough to collapse the round trips and few enough that
+#: a modest self-hosted portal sees a handful of parallel reads. One bound across all portals,
+#: not one each as `season_scan` uses: this is decoration on a page load rather than scan
+#: evidence, so the cheaper ceiling is the right side to err on.
 _TITLE_LOOKUP_CONCURRENCY = 8
+
+#: How long the whole enrichment may take. **The bound is what makes this necessary.** A portal
+#: that accepts connections and never answers costs one read timeout per wave, and going from
+#: one wave of 80 to ten waves of 8 multiplies that stall by ten on a page that has no deadline
+#: of its own. Sized at one client read timeout (``clients.base.DEFAULT_TIMEOUT``, 30s) so the
+#: page can never wait longer for decoration than it would for a single stalled read. Rows the
+#: deadline cuts off keep ``title=None`` and show the generic label, exactly as a failed lookup
+#: does, which is why cutting them off is safe at all.
+_TITLE_LOOKUP_DEADLINE_S = 30.0
 
 
 async def _enrich_titles(
@@ -787,8 +804,9 @@ async def _enrich_titles(
     the per-report cap) simply keeps ``title=None`` and the row shows a generic label. Titles
     are resolved on the portal the request came from, since that portal certainly has TMDB
     access configured; any other reachable portal is an acceptable fallback (all proxy the
-    same TMDB). Bounded by the not-in-scan count and the cap, and by
-    ``_TITLE_LOOKUP_CONCURRENCY`` in flight at once."""
+    same TMDB). Bounded three ways: the cap on how many are looked up,
+    ``_TITLE_LOOKUP_CONCURRENCY`` on how many run at once, and ``_TITLE_LOOKUP_DEADLINE_S`` on
+    how long the whole thing may hold the page."""
     targets = [u for u in unmatched if u.tmdb_id is not None][:_TITLE_LOOKUP_CAP]
     if not targets or not seerrs:
         return
@@ -808,10 +826,13 @@ async def _enrich_titles(
         u.year = info.year
 
     # ``_one`` swallows every ordinary failure itself, so nothing normally escapes to detach
-    # the siblings here. Reaped anyway, for the case that is not ordinary: up to 80 lookups
-    # ride the same clients, and a cancellation or a genuine bug in one must not leave the
-    # other 79 reading against a client the route is unwinding past (rule 34).
-    await gather_reaped(*(_one(u) for u in targets))
+    # the siblings here. Reaped anyway, for the case that is not ordinary: every target rides
+    # the same clients, and a cancellation or a genuine bug in one must not leave the rest
+    # reading against a client the route is unwinding past (rule 34). The deadline cancels
+    # through the same path, so a portal that stops answering leaves nothing in flight either.
+    with suppress(TimeoutError):
+        async with asyncio.timeout(_TITLE_LOOKUP_DEADLINE_S):
+            await gather_reaped(*(_one(u) for u in targets))
 
 
 async def _load_candidates(
