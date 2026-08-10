@@ -195,8 +195,13 @@ def _env_seeded_getters() -> set[str]:
 
 
 def _getters_driven_here() -> set[str]:
-    """Every ``app_settings.<name>`` this file calls, read off its own source rather than listed
-    by hand (rule 132): a name in a list with no test behind it reads as coverage."""
+    """Every ``app_settings.<name>`` this file names, read off its own source rather than listed
+    by hand (rule 132): a hand-kept list is a claim of coverage that nothing checks.
+
+    It reads a reference, not an assertion, so a getter called here and never asserted on would
+    satisfy it. What that leaves uncovered is one author writing a call and no `assert` beside
+    it, against a list that goes stale on its own.
+    """
     source = Path(__file__).read_text(encoding="utf-8")
     return {
         node.attr
