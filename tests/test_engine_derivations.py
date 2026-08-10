@@ -305,12 +305,12 @@ _UNKNOWN_ONLY_GATE_FLAGS = frozenset({"defers_to_owner", "unestablishable"})
 def _models_in(annotation: object) -> Iterator[type[BaseModel]]:
     """Every model reachable inside one annotation, at any nesting depth.
 
-    Recursive rather than one level deep, which is rule 147's bound read off an annotation
-    instead of source text: the tree spells these two ways today (``MatchOut | None`` and
-    ``list[SignalContribution]``) and their combination ``list[X] | None`` is the natural
-    spelling for a block added to a document that must still read old rows. A single
-    ``get_args`` pass sees ``(list[X], NoneType)``, neither of which is a model, so that block
-    would leave the walk silently and its entries would never be compared.
+    Recursive rather than one level deep. This is rule 147's bound, read off an annotation
+    instead of source text: the tree spells these two ways today, ``MatchOut | None`` and
+    ``list[SignalContribution]``. Their combination ``list[X] | None`` is the natural spelling
+    for a block added to a document that must still read old rows. One ``get_args`` pass sees
+    ``(list[X], NoneType)``, and neither is a model, so that block would leave the walk in
+    silence and its entries would never be compared.
     """
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         yield annotation
@@ -445,9 +445,9 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
     ``match`` were written on every scan for months while the panel rendered neither.
 
     Nothing pinned the key set before this class. The baseline fixture reads nine of the
-    thirteen top-level keys and four fields of a signal row (``tests/_policy_lab.py``), so a
-    key added on one side alone was invisible to the whole suite -- and it is invisible in
-    both directions, since a field declared and never written reads ``None`` forever.
+    thirteen top-level keys and four fields of a signal row (``tests/_policy_lab.py``). So a
+    key added on one side alone was invisible to the whole suite, in both directions: a field
+    declared and never written reads ``None`` forever.
     """
 
     def test_the_writer_and_the_declaration_name_the_same_keys(self) -> None:
@@ -484,7 +484,7 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         )
         assert all(
             _UNKNOWN_ONLY_GATE_FLAGS.isdisjoint(entry)
-            for key in ("protections_fired", "protections_checked")
+            for key in _LISTS_WITHOUT_THE_GATE_FLAGS
             for entry in document[key]
         )
 
@@ -494,10 +494,9 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         counted by hand against the fixture: the document, its ``match``, one signal, one keep,
         and one entry in each of the three protection lists.
 
-        **Labels, never a total.** A total of seven is also what a fixture landing two entries
-        in one protection list and none in another produces, and an empty list makes the
-        `all(...)` above true over nothing, so the flags claim would go unproven with three
-        tests green."""
+        **Labels, never a total.** A fixture landing two entries in one protection list and
+        none in another also totals seven. An empty list makes the ``all(...)`` above true over
+        nothing, so the flags claim would go unproven with three tests green."""
         document = _written_explanation()
 
         assert set(_nested_models(Explanation)) == {
@@ -527,9 +526,9 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         **The merged keys are asserted RAW as well, and that is the load-bearing half.**
         ``MatchOut.merged_rating_keys`` is a lax ``list[int] | None``, so a stored
         ``["4242", "4243"]`` reads back through it as ``[4242, 4243]`` and the model assertion
-        holds, while ``executor._equivalent_keys`` filters the raw list on
-        ``isinstance(value, int)`` and comes back with neither. That is the streaming veto and
-        the played-since-approval check losing the second listing of a merged bind."""
+        holds. ``executor._equivalent_keys`` filters the raw list on ``isinstance(value, int)``
+        and comes back with neither. That is the streaming veto and the played-since-approval
+        check losing the second listing of a merged bind."""
         document = _written_explanation()
         body = read_explanation(document)
 

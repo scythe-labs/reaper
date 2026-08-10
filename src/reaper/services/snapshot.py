@@ -1629,11 +1629,13 @@ def _explain(
     **Hand-typed on purpose, and held to the read side by a test rather than built from it.**
     ``engine.explanation`` declares what this document is, and
     ``test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared`` fails when a key
-    here is not declared there, or the other way round. That declaration is also the WIRE model
-    (``api.schemas.CandidateDetail``) and its validators are deliberately lenient about an
-    illegible stored byte, so building this from it would weld the on-disk format to the API and
-    let a writer's value be normalized to ``None`` at write time, where no reader can recover it.
-    Measured under the simplification plan's W5-1, which is killed on that measurement.
+    here is not declared there, or the other way round.
+
+    Building this from that declaration was measured and refused (the simplification plan's
+    W5-1). It is the WIRE model too (``api.schemas.CandidateDetail.explanation``), so an alias
+    or ``exclude_none`` change made for the API would reach disk. And its validators are
+    deliberately lenient about an illegible stored byte, which on this side normalizes a
+    writer's own value to ``None`` where no reader can recover it.
     """
     return json.dumps(
         {
