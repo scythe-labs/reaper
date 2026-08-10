@@ -4545,6 +4545,13 @@ def test_every_import_cycle_under_src_is_one_someone_declared() -> None:
     Python imports a cycle happily until it does not. The failure this prevents is the one a
     review pass measured in phase 6: a five-module cut whose graph would not have booted, and
     which read as clean right up to the boot.
+
+    **It excludes ``TYPE_CHECKING`` edges, so a cycle broken by a type-only import is invisible
+    to it** (rule 147). That is deliberate -- those imports do not run, so they cannot fail a
+    boot -- but it means the walk is not an inventory of couplings. ``services/lists.py`` and
+    ``services/list_config.py`` are the live example: they import each other, one of them under
+    ``TYPE_CHECKING``, and promoting that one raises ``ImportError`` on three modules. Nothing
+    here would say so, and the deferred-import gate skips it too for being same-package.
     """
     graph = _module_import_graph()
     assert len(graph) == _EXPECTED_SOURCE_MODULES, (
