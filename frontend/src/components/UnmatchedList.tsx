@@ -12,7 +12,7 @@
 
 import type { UnmatchedRequest } from "../api";
 import { count, date } from "../format";
-import { PosterFallback } from "./ScalesPanel";
+import { PosterFallback } from "./PosterFallback";
 
 /** The reason groups, in reading order: the benign-and-expected first (a rescan fixes it),
  *  then the ones worth a look. Each names itself and carries one bound line explaining what
