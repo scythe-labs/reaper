@@ -508,6 +508,127 @@ def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
     )
 
 
+# The set form, ``PRAGMA journal_mode=WAL``, never the read at db/session.py:49. The read is
+# how the boot log says which mode the database settled on; the set is what writes.
+_JOURNAL_MODE_SET = re.compile(r"PRAGMA\s+journal_mode\s*=", re.IGNORECASE)
+#: One site, ``db.session._configure_sqlite``. Pinned as a count as well as a file set, because
+#: a file set alone cannot tell a second site inside the same module from none (rule 145).
+_JOURNAL_MODE_SET_SITES = 1
+
+
+def test_the_journal_mode_pragma_is_set_in_exactly_one_module() -> None:
+    """``PRAGMA journal_mode=WAL`` WRITES the file it is pointed at.
+
+    Header bytes 18 and 19 flip and persist, so the app's pragma set may only ever reach a
+    database Reaper owns. Three sqlite connections in ``src/`` deliberately issue no journal
+    pragma, and each reads or writes a file nobody has vouched for yet:
+    ``db.schema_gate.stored_revision`` reads the database unpacked from an operator-supplied
+    ``.reaper`` inside the rule 74 artifact gate, before the schema is checked and before the
+    operator confirms, and ``restore``'s ``_force_destructive_off`` and ``_purge_auth_state``
+    run on that same staged file a moment later. Adding the set to any of them turns a read of
+    an unverified artifact into a write against it.
+
+    **What the matcher accepts and refuses** (rule 147). It takes any casing and any spacing
+    around the ``=``, and it reads the line with backticked spans stripped, so a comment
+    quoting the pragma is not an offender: ``db/session.py`` itself has two occurrences and
+    only one is code. It cannot see a pragma assembled at runtime (``"PRAGMA " + name``), and
+    nothing in the tree spells one that way. ``tests/`` is out of scope on purpose:
+    ``test_startup_log.py`` sets ``journal_mode=DELETE`` to drive the boot log's WAL check.
+    """
+    sites = [
+        f"{p.relative_to(REPO)}:{n}"
+        for root in (SRC, REPO / "alembic")
+        for p in sorted(root.rglob("*.py"))
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if _JOURNAL_MODE_SET.search(_strip_prose(line))
+    ]
+    files = {site.rsplit(":", 1)[0] for site in sites}
+    assert files == {"src/reaper/db/session.py"} and len(sites) == _JOURNAL_MODE_SET_SITES, (
+        "PRAGMA journal_mode=WAL writes the database it is pointed at, so only "
+        "db.session._configure_sqlite may issue it. Sites found:\n  "
+        + "\n  ".join(sites)
+        + "\n\nA connection that reads or writes an operator-supplied backup "
+        "(db/schema_gate.py, services/restore.py) must not adopt the app's pragma set: that "
+        "would write to an artifact the rule 74 gate has not verified yet."
+    )
+
+
+#: A sentence quoting the app's busy timeout names the pragma or cites ``db.session``. Both
+#: spellings are required, because one prose copy has neither the pragma's name nor a number
+#: beside it (``scan_runner.scan_running``, "a write lock it waits only 5s for").
+_BUSY_TIMEOUT_ANCHOR = re.compile(r"db[./]session|busy[_ ]timeout", re.IGNORECASE)
+#: How prose spells the value: ``5s``, never the ``5000`` the pragma takes.
+_TIMEOUT_SECONDS = re.compile(r"\b(\d+)s\b")
+#: Every module restating the app's busy timeout as prose. The value is declared once, as a
+#: SQL literal in ``db/session.py``, and these five quote it in seconds while citing
+#: ``db.session`` by name -- rule 144's shape, since none is generated and each reads as
+#: vouched-for. ``services/retention.py`` sets its own 30000 on the connection it opens for
+#: ``VACUUM`` and states no figure for it; if it ever does, it earns an entry here saying so.
+_BUSY_TIMEOUT_PROSE = frozenset(
+    {
+        "services/executor.py",
+        "services/imdb_dataset.py",
+        "services/retention.py",
+        "services/scan_runner.py",
+        "services/scheduler.py",
+    }
+)
+
+
+def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> None:
+    """Rule 144: one fact, six places, and only one of them is code.
+
+    ``PRAGMA busy_timeout=5000`` in ``db.session._configure_sqlite`` is how long every app
+    connection waits for a write lock. Five docstrings quote that number as the reason
+    something else is the way it is, and the one on the deletion path is the load-bearing one:
+    ``executor._write_with_retry`` gives the journal two attempts with no sleep between them
+    *because* the timeout already waited inside each. Move the pragma and that reasoning is
+    silently wrong, on the write that records what was deleted.
+
+    Checked against the declaration rather than against a copy here, so this test cannot drift
+    from it either, and the failure names every file so the sweep is the fix rather than a note
+    asking the next author to remember.
+
+    **What the matcher accepts and refuses** (rule 147). It normalizes whitespace, splits on
+    sentences, and keeps a sentence holding both an anchor and a seconds figure. That rejects
+    the neighboring "vacuums for 8s" in ``scheduler.py``, which carries no anchor, and the
+    ``5s``/``10s`` HTTP timeouts in ``clients/base.py``, whose module names neither the pragma
+    nor ``db.session``. It reads "five seconds" as no copy at all, so a reworded sentence
+    leaves the set rather than passing quietly, which the set equality below catches.
+    """
+    declaration = re.search(
+        r"PRAGMA\s+busy_timeout\s*=\s*(\d+)", (SRC / "db" / "session.py").read_text("utf-8")
+    )
+    assert declaration, "db/session.py no longer declares a busy timeout, so nothing anchors this"
+    declared = str(int(declaration.group(1)) // 1000)
+
+    quoted: dict[str, set[str]] = {}
+    for path in sorted(SRC.rglob("*.py")):
+        prose = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+        for sentence in prose.split(". "):
+            figures = set(_TIMEOUT_SECONDS.findall(sentence))
+            if figures and _BUSY_TIMEOUT_ANCHOR.search(sentence):
+                quoted.setdefault(str(path.relative_to(SRC)), set()).update(figures)
+
+    offenders = [
+        f"{rel} states {'s, '.join(sorted(figures))}s, not {declared}s"
+        for rel, figures in sorted(quoted.items())
+        if figures != {declared}
+    ]
+    offenders += [
+        f"{rel} no longer quotes it" for rel in sorted(_BUSY_TIMEOUT_PROSE - quoted.keys())
+    ]
+    offenders += [f"{rel} is a new copy" for rel in sorted(quoted.keys() - _BUSY_TIMEOUT_PROSE)]
+    assert not offenders, (
+        f"db.session._configure_sqlite declares the busy timeout at {declared}s and these "
+        "modules restate it in prose:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nCorrect every one in the same change, or add the new module to "
+        "_BUSY_TIMEOUT_PROSE. src/reaper/services/executor.py's copy is the reason the "
+        "journal write takes two attempts with no sleep between them."
+    )
+
+
 # Reaper-owned identifiers and prose are American English. The allowlist covers names owned
 # by someone else and spelled British at the source, which keep their real spelling.
 _BRITISH = re.compile(
