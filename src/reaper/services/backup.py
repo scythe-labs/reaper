@@ -52,9 +52,8 @@ import structlog
 
 from reaper.buildinfo import build_version
 from reaper.clock import utcnow
-from reaper.config import Settings
+from reaper.config import LAUNCHER_CONF_NAME, Settings
 from reaper.db import schema_gate
-from reaper.launcher import LAUNCHER_CONF_NAME
 from reaper.secrets import (
     KEY_FILENAME,
     SALT_FILENAME,

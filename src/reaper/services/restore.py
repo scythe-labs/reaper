@@ -59,10 +59,9 @@ from typing import Any
 import structlog
 
 from reaper.clock import utcnow
-from reaper.config import Settings
+from reaper.config import LAUNCHER_CONF_NAME, Settings
 from reaper.db import schema_gate
 from reaper.db.models import AUTH_BEARING_TABLES
-from reaper.launcher import LAUNCHER_CONF_NAME
 from reaper.secrets import KEY_FILENAME, SALT_FILENAME
 from reaper.services.app_settings import DESTRUCTIVE_KEY
 from reaper.services.backup import (

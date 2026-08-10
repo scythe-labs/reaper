@@ -47,6 +47,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
 
 from reaper.buildinfo import env_flag, frozen_bundle, install_root
+from reaper.config import LAUNCHER_CONF_NAME
 
 if TYPE_CHECKING:
     import uvicorn
@@ -125,12 +126,6 @@ def _resolve_data_dir(env: MutableMapping[str, str], *, frozen: bool) -> None:
     if frozen and not env.get("REAPER_DATA_DIR", "").strip():
         env["REAPER_DATA_DIR"] = str(default_data_dir(sys.platform, env))
 
-
-#: The file an install that cannot receive environment variables is configured through.
-#: Declared here because the launcher owns it, and read from here by the backup (which
-#: carries it) and the restore (which puts it back and disarms recovery inside it), so the
-#: three cannot drift onto different spellings of one filename (rule 104).
-LAUNCHER_CONF_NAME = "launcher.conf"
 
 #: What the template written on first run offers. Only REAPER_ keys are honored on
 #: read, so the file cannot reach PATH or anything else the process inherits.
