@@ -10,9 +10,9 @@
 // data. The queue held a hand-copied second drawing of the same paths. A leaf both sides
 // already sit above answers both.
 //
-// It rides `currentColor` and carries no class, so each caller's own wrapper supplies the
-// color and the box; `size` is the drawn square in px, which is the one thing the three
-// callers genuinely disagree about.
+// It rides `currentColor` and carries no class, so each caller's own wrapper supplies the color
+// and the box. `size` is the drawn square in px: the two Scales surfaces take the default and
+// the queue's tile passes 20, which is what its hand-copy drew.
 
 export function PosterFallback({ size = 18 }: { size?: number }) {
   return (

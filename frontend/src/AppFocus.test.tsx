@@ -115,6 +115,18 @@ beforeEach(() => {
   );
 });
 
+// jsdom carries one session history across a whole file, and a test that ends with back-nav
+// layers still open has its entries handed back one deferred task at a time. Those are real
+// popstates: arriving after the next test's provider is up, they read as Back presses and eat
+// the ones it means to send. Drain them while nothing is listening, then clear the marker the
+// provider's mount-time reconcile keys on, the same reset `App.test.tsx` and `backnav.test.tsx`
+// do between their tests. There is one test below and it ends with two layers unpopped, so this
+// is here for the second one (rule 72, and the file's own shape invites it).
+beforeEach(async () => {
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  history.replaceState(null, "");
+});
+
 /** A Back press, the way `backnav.test.tsx` drives one: the provider parks a sentinel entry per
  *  layer and listens for the popstate that handing one back produces. */
 async function back() {
@@ -159,6 +171,16 @@ describe("a jump's aim", () => {
     await person.click(screen.getByRole("button", { name: /owner, update available/i }));
     await person.click(await screen.findByRole("button", { name: /^update available$/i }));
     expect(await screen.findByText("settings aimed at: about")).toBeInTheDocument();
+
+    // Clicking the tab you are ALREADY on is not a visit and must leave the aim alone (B-23).
+    // Settings is mounted under the aim's nonce, so dropping it here remounts the subtree and
+    // throws away whatever is typed into it. This used to be an `if (next !== view)` guard in the
+    // nav handler and is now the effect's `[view]` dep, which is a condition nothing states in
+    // words, so it is asserted rather than read: an unconditional drop on every tab click prints
+    // "nothing" here and is green everywhere else in the suite.
+    await settle();
+    await person.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByText("settings aimed at: about")).toBeInTheDocument();
 
     await settle();
     await person.click(screen.getByRole("button", { name: "Review" }));

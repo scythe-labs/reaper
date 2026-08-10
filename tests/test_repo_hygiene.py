@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import xml.etree.ElementTree as ET
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -5010,62 +5011,100 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: graph exactly.
 _EXPECTED_FRONTEND_MODULES = 204
 
+#: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
+_TS_SUFFIXES = (".ts", ".tsx")
+
 #: A static `import`/`export` of a relative specifier, in every spelling the tree uses: a bare
 #: side-effect import, a default, a braced list running over several lines, and a re-export.
-#: The body may not cross a quote, a paren or a semicolon, so it cannot run out of its own
-#: statement and pick up the next one's string.
+#: The body may not cross a quote, a backtick, a paren or a semicolon, so it cannot run out of
+#: its own statement into the next one's string. Anchored at a line start or a `;`, since
+#: prettier puts every statement on its own line and the `;` arm is the belt for a file that
+#: somehow arrives unformatted.
 #:
 #: `import type` and `export type` are left out, and under `verbatimModuleSyntax` (set in
 #: `frontend/tsconfig.json`) that is the exact line the compiler draws: the `type` STATEMENT is
 #: erased, and `import { type A } from "./x"` emits `import {} from "./x"`, a real runtime edge
 #: this therefore counts. Measured on this tree, putting the type-only edges back changes
 #: nothing: both spellings of the walk found the same two cycles before wave 9 and find none now.
+#:
+#: It runs over `_without_comments`, so a commented-out import is not an edge. Reading a
+#: quotation of an import as a real one is fail-CLOSED, a cycle nobody wrote, which is the
+#: harmless direction and still a false red somebody has to chase.
 _TS_STATIC_IMPORT = re.compile(
-    r"""(?m)^[ \t]*(?:import|export)\s+(?!type[\s{])(?:[^'"();]*?\bfrom\s*)?['"](\.[^'"]+)['"]"""
+    r"""(?m)(?:^|;)[ \t]*(?:import|export)\s+(?!type[\s{])"""
+    r"""(?:[^'"`();]*?\bfrom\s*)?['"](\.[^'"]+)['"]"""
 )
 
 #: `await import("./x")`, which is a runtime edge like any other: `App.tsx` reaches five of the
-#: six routes this way and nothing else reaches them at all. `typeof import("./x")` is a type
-#: position and is skipped, the same carve-out the statement form gets.
-_TS_DYNAMIC_IMPORT = re.compile(r"""(?<!typeof )\bimport\(\s*['"](\.[^'"]+)['"]""")
+#: six routes this way, and the policy editor is reached by nothing else in that file.
+#:
+#: Three spellings the first version of this missed, all of them fail-OPEN, which is the
+#: direction that loses a cycle rather than inventing one: Vite's documented
+#: `import(/* @vite-ignore */ "./x")`, a backtick specifier, and `typeof` separated from
+#: `import(` by anything but one space. `typeof` is matched and discarded rather than excluded
+#: by a lookbehind, because Python's lookbehind is fixed-width and `typeof\n  import("./x")` is
+#: legal.
+_TS_DYNAMIC_IMPORT = re.compile(
+    r"""(?P<typeof>\btypeof\s+)?\bimport\(\s*(?:/\*.*?\*/\s*)?['"`](\.[^'"`]+)['"`]""",
+    re.S,
+)
+
+
+def _ts_module_key(path: Path) -> str:
+    """``frontend/src``-relative, extension dropped: `components/PolicyEditor`."""
+    return path.relative_to(FRONTEND_SRC).with_suffix("").as_posix()
 
 
 @lru_cache(maxsize=1)
 def _frontend_import_graph() -> dict[str, frozenset[str]]:
     """Every module under `frontend/src`, mapped to the in-tree modules it imports at RUNTIME.
 
-    Named by their repo-relative path with the extension dropped, so a failure reads as
-    ``components/PolicyEditor -> components/PolicyRuleEditors``.
-
     Test files are in the population rather than filtered out. A component never imports a
     test, so they close no cycle, and leaving them in means no skip list to keep current.
 
-    A specifier is tried as written and then with each extension the tree can spell, `index`
-    barrels included: `./x.css` resolves to nothing and drops out, `../format` finds
-    `format.ts`, `./PolicyEditor` finds `PolicyEditor.tsx`. There are no barrels today, so
-    that pair of candidates is what stops a future one from silently dropping its edges.
+    **A specifier resolves the way the bundler resolves it, and the near-miss is the bug.** The
+    candidates are the specifier itself *only when it already spells a module extension*, then
+    the specifier plus each extension, then an `index` barrel under it. Taking the bare
+    specifier unconditionally and stripping a suffix off it is what the first version did, and
+    `./dissolve.generated` then resolved to `brand/dissolve`: three modules carried an edge
+    their source does not have, harmless only while that file stays a leaf. `./index.css`
+    resolving to nothing was the same accident wearing the right answer.
+
+    There are no barrels in the tree today, so that pair of candidates is what stops a future
+    one from silently dropping its edges. Every candidate is checked for containment before it
+    is made relative: `resolveJsonModule` is on and two files already import JSON, so a
+    specifier reaching out of `frontend/src` is ordinary and must drop out rather than raise.
     """
-    files = {
-        path.relative_to(FRONTEND_SRC).with_suffix("").as_posix(): path
+    paths = [
+        path
         for path, _ in _repo_text_files()
-        if path.suffix in {".ts", ".tsx"} and path.is_relative_to(FRONTEND_SRC)
-    }
+        if path.suffix in _TS_SUFFIXES and path.is_relative_to(FRONTEND_SRC)
+    ]
+    files = {_ts_module_key(path): path for path in paths}
+    # `announce.ts` beside `announce.tsx` is one key for two files: one module's imports are
+    # never parsed and the other's are silently replaced. The pinned count below counts KEYS and
+    # cannot see it, so the collision is caught here instead of arriving as a missing edge.
+    collided = sorted(k for k, n in Counter(_ts_module_key(p) for p in paths).items() if n > 1)
+    assert not collided, (
+        f"two files under frontend/src share a module key: {collided}. One of them is missing "
+        "from the graph entirely and the other's edges were overwritten. Rename one, or teach "
+        "`_ts_module_key` to keep the extension."
+    )
     graph: dict[str, frozenset[str]] = {}
     for name, path in files.items():
-        text = path.read_text(encoding="utf-8")
+        text = _without_comments(path.read_text(encoding="utf-8"))
         specs = [m.group(1) for m in _TS_STATIC_IMPORT.finditer(text)]
-        specs += [m.group(1) for m in _TS_DYNAMIC_IMPORT.finditer(text)]
+        specs += [m.group(2) for m in _TS_DYNAMIC_IMPORT.finditer(text) if not m.group("typeof")]
         reached = set()
         for spec in specs:
             base = (path.parent / spec).resolve()
-            for candidate in (base, *(base.with_name(base.name + s) for s in (".ts", ".tsx"))):
+            candidates = [base] if base.suffix in _TS_SUFFIXES else []
+            candidates += [base.with_name(base.name + s) for s in _TS_SUFFIXES]
+            candidates += [base / f"index{s}" for s in _TS_SUFFIXES]
+            for candidate in candidates:
                 if not candidate.is_relative_to(FRONTEND_SRC):
                     continue
-                target = candidate.relative_to(FRONTEND_SRC).with_suffix("").as_posix()
-                if target in files and target != name:
-                    reached.add(target)
-            for barrel in ("index.ts", "index.tsx"):
-                target = (base / barrel).relative_to(FRONTEND_SRC).with_suffix("").as_posix()
+                target = _ts_module_key(candidate)
                 if target in files and target != name:
                     reached.add(target)
         graph[name] = frozenset(reached)
@@ -5111,12 +5150,19 @@ def test_the_frontend_has_no_import_cycles() -> None:
 def test_the_frontend_import_walk_reads_the_spellings_the_tree_uses() -> None:
     """The gate above is an absence, so the two matchers behind it are driven (rule 147).
 
-    A regex is bounded by the syntax it parses, and this tree spells an import six ways. The
-    synthetic half fixes what each form must resolve to, including the two that must resolve
-    to NOTHING. The live half then asserts edges the real tree has, because a matcher can be
-    right about a string and still never fire against a file: `App.tsx` reaches `ReviewQueue`
-    statically and `PolicyEditor` only through `lazy(() => import(...))`, so those two edges
-    are one proof each for the two matchers.
+    A regex is bounded by the syntax it parses. The synthetic half fixes what each spelling
+    must resolve to, **including every one that must resolve to NOTHING** — those are the cases
+    a matcher passes by doing nothing at all, so they are written out rather than assumed. The
+    live half then asserts edges the real tree has, because a matcher can be right about a
+    string and still never fire against a file: `App.tsx` reaches `ReviewQueue` statically and
+    the policy editor only through `lazy(async () => (await import(...)))`, which is that file's
+    one non-type reference to it, so those two edges are one proof each for the two matchers.
+
+    **The fail-open cases are the ones worth the lines.** A spelling the dynamic matcher misses
+    is a real runtime edge dropped, which is a cycle this gate then reports as absent, and three
+    of them shipped in the first version: `import(/* @vite-ignore */ "./x")`, a backtick
+    specifier, and `typeof` separated from `import(` by a newline. A spelling the static matcher
+    over-reads is the other direction, a cycle nobody wrote, and those are listed too.
     """
     graph = _frontend_import_graph()
     assert "components/ReviewQueue" in graph["App"], (
@@ -5141,20 +5187,41 @@ def test_the_frontend_import_walk_reads_the_spellings_the_tree_uses() -> None:
         'import { type Focus, goTo } from "./navIntent";': ["./navIntent"],
         # Not an import at all, and the shape a `from`-anchored matcher reads as one.
         'const cfg = { from: "./x" };': [],
+        # Nor is a quotation of one inside a template literal, which the body's own character
+        # class is what rejects: the backtick is excluded along with the quotes.
+        'export const N = `copied from "./x"`;': [],
+        # Two statements on one line, which prettier never writes and which the `;` arm of the
+        # anchor is here for: reading only the first is an edge silently dropped.
+        'export { a } from "./x"; export { b } from "./y";': ["./x", "./y"],
     }
     for source, expected in static.items():
         assert [m.group(1) for m in _TS_STATIC_IMPORT.finditer(source)] == expected, (
             f"the static-import matcher misread {source!r}"
         )
+    # The block-comment case is the walk's, not the pattern's: the pattern has no way to see a
+    # `/* */` around a line, and `_without_comments` is what takes it away first.
+    commented = '/*\nimport { a } from "./x";\n*/'
+    assert [m.group(1) for m in _TS_STATIC_IMPORT.finditer(commented)] == ["./x"]
+    assert _TS_STATIC_IMPORT.search(_without_comments(commented)) is None, (
+        "a commented-out import still reads as an edge, so the walk must not have stripped "
+        "comments before matching."
+    )
 
     dynamic = {
         'const m = await import("./components/Settings");': ["./components/Settings"],
         'type Api = typeof import("./api");': [],
+        # Vite's documented escape hatch, which prettier keeps exactly where it is.
+        'await import(/* @vite-ignore */ "./x");': ["./x"],
+        "await import(`./x`);": ["./x"],
+        # `typeof` is matched and discarded rather than excluded by a lookbehind, so the space
+        # between the two words may be anything.
+        'type A = typeof\n  import("./api");': [],
+        'type B = typeof  import("./api");': [],
     }
     for source, expected in dynamic.items():
-        assert [m.group(1) for m in _TS_DYNAMIC_IMPORT.finditer(source)] == expected, (
-            f"the dynamic-import matcher misread {source!r}"
-        )
+        assert [
+            m.group(2) for m in _TS_DYNAMIC_IMPORT.finditer(source) if not m.group("typeof")
+        ] == expected, f"the dynamic-import matcher misread {source!r}"
 
 
 # --- the HTTP status an InstanceError means is declared once (rule 144) ---------------

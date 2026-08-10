@@ -679,11 +679,12 @@ describe("the authenticated app's heading outline", () => {
 
   // The other half of that jump: it also seeds the queue's search box, and a seeded box is state
   // the operator did not type. Backing out of the jump has to take it with them. Back restores
-  // the view through the raw setter and runs no handler, so the nav click's `clearFocus` never
-  // fires on this route -- and the queue UNMOUNTS on the way out, taking its once-per-nonce ref
-  // with it, so the next mount reads the same focus again and seeds from a jump that was undone.
-  // Driven through the real shell for the same reason as the test above: the focus, the view and
-  // the queue's own state are set in three places and only the assembled app proves they agree.
+  // the view through the raw setter and runs no handler at all, and the queue UNMOUNTS on the way
+  // out, taking its once-per-nonce ref with it, so the next mount reads the same focus again and
+  // seeds from a jump that was undone. Driven through the real shell for the same reason as the
+  // test above: the focus, the view and the queue's own state are set in three places and only
+  // the assembled app proves they agree. `AppFocus.test.tsx` is the same behavior on the Policy
+  // and Settings routes, whose views are stubbed there.
   it("takes the jump's search back out of the queue when the operator backs out of it", async () => {
     // jsdom carries one session history across a whole file, and the test above ends with layers
     // still open, so its teardown hands those entries back one deferred step at a time. Those are

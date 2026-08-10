@@ -66,8 +66,10 @@ export type NavIntent =
  *  **One value, keyed on `view`, and that is what makes the clearing structural.** `App` used
  *  to hold three of these in parallel, one per aimable view, and an aim then had to be dropped
  *  by name on the way off screen. Both incidents in `App`'s own clearing effect are that list
- *  going stale. A focus that names its view cannot be read by another view and cannot outlive
- *  its own, so a fourth destination is a member here and nothing else. */
+ *  going stale. A focus that names its view cannot be read by another view, and it outlives its
+ *  own by exactly the commit that changes `view`. The drop runs in an effect, so `App` reads
+ *  every aim through a check on the name rather than trusting the state to be clean. A fourth
+ *  destination is a member here and nothing else. */
 export type Focus =
   | { view: "review"; search: string; nonce: number }
   | { view: "policy"; section: PolicySectionId; nonce: number }
