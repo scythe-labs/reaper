@@ -3233,7 +3233,8 @@ modules**, where every inline fallback is byte-identical to the dataclass defaul
 **W11-3** `field.type` dispatched
 by four separate if-ladders plus two inline ternaries in `PolicyRuleEditors.tsx`, so a new
 `FieldType` is silently wrong in six places with no compile error, and **no test pins the
-conversions** (~20, `behavior`). **Landed at the test and the type, table killed** (see below). **W11-4** `_kept_phrase`'s 12 `if` arms, six of which return a
+conversions** (~20, `behavior`). **Landed at the test and the type; the table is killed.**
+**W11-4** `_kept_phrase`'s 12 `if` arms, six of which return a
 bare constant, where the pinning test is *already* a parametrized table over exactly those pairs
 (~20).
 **W11-5** `scan.py`'s `condemned` counter kept in lockstep by hand with `len(condemned_keys)`.
@@ -3279,8 +3280,9 @@ which is
 the modal-side sibling of wave 3's `.set-row` finding and the same rule 72 sweep (~40).
 **W11-24** `WhyPanelFallback` and `ScalesPanelFallback` as the same 30-line component twice, with
 a comment
-saying so (~28). **Landed**, for the copy divergence the two copies were hiding, not the lines:
-the `~28` is code net +2. **W11-25** Four decision tones written three times each across two CSS files, 12
+saying so (~28). **Landed** for the copy divergence the two copies were hiding, not the lines:
+the `~28` is code net +2.
+**W11-25** Four decision tones written three times each across two CSS files, 12
 blocks for
 4 declaration sets (~28, `visual`). **W11-26** The `role="progressbar"` wrapper three times, each
 carrying a

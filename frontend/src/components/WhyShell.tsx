@@ -3,9 +3,8 @@
 // The one `.why` panel. Six surfaces render this shell -- the movie/season why panel, the show
 // panel, the Scales person panel, the not-in-scan panel, and the loading/error fallbacks of the
 // first and third -- and it owns what all six owe a keyboard operator, written once so a
-// seventh cannot ship without it. Those last two are `PanelFallback` at the foot of this file,
-// one component the two panels hand three strings; they were a copy of each other, down to a
-// comment saying so.
+// seventh cannot ship without it. The last two are `PanelFallback` at the foot of this file. They
+// were two copies of one component, and are now three strings handed to it.
 //
 // It is a dialog wherever it covers the list and a side panel where it does not, and that is not
 // a detail: styles/10-layout.css makes `main.split .why` a right-hand sheet floated over the cards at 1100px
@@ -150,11 +149,11 @@ export function WhyShell({
 }
 
 /** What a panel's column shows while its read is in flight, or once it has failed. The column is
- *  reserved the moment the operator picks something, so leaving it blank reads as a hang, and it
- *  keeps its own close, or a failed read strands them in split view.
+ *  reserved the moment the operator picks something, so leaving it blank reads as a hang. It
+ *  keeps its own close, or a failed read strands the reader in split view.
  *
- *  `waiting` goes to `useSlowWait`; `loading` is the lead in the loading branch, which has no
- *  heading of its own, so it carries the panel's name; `failure` is the error notice. */
+ *  `waiting` goes to `useSlowWait`. `loading` is the lead in the loading branch, which has no
+ *  heading of its own, so it carries the panel's name. `failure` is the error notice. */
 export function PanelFallback({
   error,
   onClose,

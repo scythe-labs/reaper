@@ -402,9 +402,8 @@ export function ScalesPanel({
 }
 
 /** What the panel's column shows while the breakdown is loading, or when it could not be
- *  loaded. `PanelFallback` in `WhyShell.tsx` is the whole of it; this names the three strings,
- *  and `WhyPanelFallback` is its twin. The loading lead carries the panel's name, because that
- *  branch has no heading: "Gathering their requests…" is what is true at that moment. */
+ *  loaded. `PanelFallback` in `WhyShell.tsx` is the whole of it, `WhyPanelFallback` its twin,
+ *  and these three strings all that differ. */
 export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
   return (
     <PanelFallback

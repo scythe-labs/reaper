@@ -567,16 +567,15 @@ export interface SeasonShape {
   season_counts: Record<number, number>;
 }
 
-/** What a vocabulary field's value IS, which is what decides how it is typed, stored and read
- *  back (`engine/fields.py`'s `FieldType`). Three of the six convert: a size is typed in GB and
- *  stored in bytes, a rating is typed as 7.5 and stored as 75, and days pass through.
+/** What a vocabulary field's value IS, which decides how it is typed, stored and read back
+ *  (`engine/fields.py`'s `FieldType`). Two of the six convert. A size is typed in GB and stored
+ *  in bytes, a rating is typed as 7.5 and stored as 75. Days are typed and stored alike.
  *
  *  It was a bare `string` here, so a member added on the server was a value the browser had no
- *  name for and no way to notice. `test_api_type_mirror.py` is what notices now, and its failure
- *  names the four ladders in `PolicyRuleEditors.tsx` that dispatch on this: `rampDefaults`,
- *  `rampValue`, `coerceValue` and `describeCondition`, plus the ramp's own component pick. None
- *  of them is exhaustive, so a member none of them handles takes a fall-through arm rather than
- *  failing (rule 144: the union being correct vouches for nothing about them). */
+ *  name for and no way to notice. `test_api_type_mirror.py` notices now. Its failure names every
+ *  site in `PolicyRuleEditors.tsx` that dispatches on this value, and not one of them is
+ *  exhaustive: a member none handles takes a fall-through arm rather than failing. The list
+ *  lives there and not here, so the two cannot drift (rule 144). */
 export type FieldType = "days" | "bytes" | "count" | "rating_tenths" | "bool" | "text";
 
 /** One field the owner may write a protect condition about (from the vocabulary endpoint). */

@@ -585,24 +585,30 @@ class TestTheCentralVocabularyIsOneDeclaration:
         assert len(server) == 2
 
     def test_the_browser_knows_every_field_type_the_vocabulary_serves(self) -> None:
-        """``VocabField.type`` was a bare ``str`` here, which is the same hole one level down:
-        both sides agreed the field had a ``type`` and neither could disagree about its values.
+        """``VocabField.type`` was a bare ``str`` here, the same hole one level down. Both sides
+        agreed the field had a ``type`` and neither could disagree about its values.
 
-        Three of the six convert, and the conversions are what write a policy value -- a size is
-        typed in GB and stored in bytes, a rating typed as 7.5 and stored as 75. So a member the
-        browser has no name for reaches those ladders and takes a fall-through arm, which at
+        Two of the six convert, and a conversion is what writes a policy value. A size is typed
+        in GB and stored in bytes, a rating typed as 7.5 and stored as 75. A member the browser
+        has no name for reaches the ladders below and takes a fall-through arm, which at
         ``coerceValue`` means the typed number stored raw.
+
+        This message is the one place those sites are listed, and ``api.ts`` points here rather
+        than restating them (rule 144).
         """
         from reaper.engine.fields import FieldType
 
         server = {member.value for member in FieldType}
         assert self._declared("FieldType") == server, (
-            "engine.fields.FieldType and frontend/src/api.ts's FieldType union disagree. Five "
+            "engine.fields.FieldType and frontend/src/api.ts's FieldType union disagree. Eight "
             "sites in frontend/src/components/PolicyRuleEditors.tsx dispatch on this value and "
-            "not one of them is exhaustive: `rampDefaults`, `rampValue`, `coerceValue` and "
-            "`describeCondition` each fall through, and the ramp bound picks a plain number box "
-            "for anything that is neither `days` nor `bytes`. Adding the member to the union is "
-            "the first half of the change; reading those five is the second."
+            "not one of them is exhaustive. Four branch on it and fall through: `rampDefaults`, "
+            "`rampValue`, `coerceValue`, `describeCondition`. One picks the ramp bound's "
+            "component, a plain number box for anything that is neither `days` nor `bytes`. "
+            "Three pick a `step`, which decides what can be typed at all: on a whole step "
+            "`QuantityInput` withholds a fractional keystroke, so a new fractional member is "
+            "untypeable before `coerceValue` ever sees it. Adding the member to the union is the "
+            "first half of the change. Reading those eight is the second."
         )
         assert len(server) == 6
 

@@ -335,15 +335,15 @@ export function useBackGuard(
 }
 
 /**
- * The child half of `useBackGuard`, for a modal that owns its own reasons to stay open while the
- * parent owns the Back registration. It puts `canClose` in the ref the parent's predicate reads,
- * so Back refuses exactly what the scrim, Escape and the ✕ refuse (rule 80), and clears it on
- * unmount so a stale refusal never outlives the modal.
+ * The child half of `useBackGuard`. The modal owns its reasons to stay open, the parent owns the
+ * Back registration, and this ref is the only thing between them. Back then refuses exactly what
+ * the scrim, Escape and the ✕ refuse (rule 80). Cleared on unmount, so a stale refusal never
+ * outlives the modal.
  *
  * It takes the WHOLE predicate, never one term of it. `ScheduleModal` mirrored `save.isPending`
- * while its own shell was handed `!save.isPending`: the two agreed only because `canClose` had
- * one term, and a second reason to stay open would have left Back the one dismissal that walked
- * through it. `ServiceModal` is what a second reason arriving looks like.
+ * against a shell handed `!save.isPending`. Those agree, and agree only while `canClose` has one
+ * term. A second reason to stay open leaves Back the one dismissal that ignores it, and
+ * `ServiceModal` already has two.
  */
 export function useBackCloseMirror(
   blockCloseRef: RefObject<boolean> | undefined,

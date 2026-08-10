@@ -413,21 +413,21 @@ describe("one list, one keep rule", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The three field types that convert on the way in and back out.
+// The field types whose typed units are not their stored ones.
 // ---------------------------------------------------------------------------
 
-/** The converting types as `engine/fields.py` serves them, one real field each.
+/** Three types as `engine/fields.py` serves them, one real field each.
  *
- *  `count` and `text` store what was typed and are driven above; these three do not. A size is
- *  typed in GB and stored in bytes, a rating is typed as 7.5 and stored as 75, and days are
- *  typed and stored alike but reach `coerceValue` through its fall-through arm rather than a
- *  branch of their own. Nothing pinned any of the three, in either direction.
+ *  Two convert. A size is typed in GB and stored in bytes, a rating is typed as 7.5 and stored
+ *  as 75. Days are typed and stored alike, and are here because they reach `coerceValue` through
+ *  its fall-through arm rather than a branch of their own. Nothing pinned any of the three, in
+ *  either direction.
  *
- *  What that costs is a policy field off by a factor. A size rule that stored the typed 50
- *  instead of 50 GB is a floor every title in the library clears, so a keep rule meant for the
- *  big files keeps everything and a remove rule meant for them flags everything. The wrong
- *  number is in the body the server stores, where nothing downstream can tell it from one the
- *  operator meant. */
+ *  What a wrong one costs is a policy field off by a factor. A size rule storing the typed 50
+ *  rather than 50 GB is a floor every title clears. A keep rule meant for the big files then
+ *  keeps everything, and a remove rule meant for them flags everything. The number is wrong in
+ *  the body the server stores, where nothing downstream can tell it from one the operator
+ *  meant. */
 const SIZE: VocabField = {
   key: "size_bytes",
   label: "Size on disk",
@@ -486,7 +486,7 @@ describe("a rule on a field whose stored units are not its typed ones", () => {
       await user.type(box, typed);
 
       // Add gates itself on the value, so it is actable only once the typing has landed in
-      // state -- rule 137 again, at the control that emits the rule.
+      // state. Rule 137 again, at the control that emits the rule.
       const add = screen.getByRole("button", { name: "Add rule" });
       await waitFor(() => expect(add).toBeEnabled());
       await user.click(add);

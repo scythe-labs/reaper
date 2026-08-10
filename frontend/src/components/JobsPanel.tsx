@@ -182,10 +182,7 @@ function ScheduleModal({
   job: ScheduledJob;
   onClose: () => void;
   /** Set by JobsPanel so its Back guard reads the same `canClose` the scrim, Escape and the ✕
-   *  read (B-11, rule 80). It was `savePendingRef` and held `save.isPending`, one TERM of a
-   *  predicate that happened to have only one: correct by coincidence, and a second reason to
-   *  stay open would have left Back the one dismissal that walked through it. `ServiceModal`
-   *  is that second reason arriving, and this is the shape it settled on. */
+   *  read (B-11, rule 80). Written by `useBackCloseMirror`, which takes the whole predicate. */
   blockCloseRef?: RefObject<boolean>;
 }) {
   const queryClient = useQueryClient();

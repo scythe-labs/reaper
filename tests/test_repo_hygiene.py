@@ -3136,9 +3136,9 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # over `REPAIR_NOTICES`, one per placement, so a repair kind added later gets its sentence from
 # the map instead of a fourth copy of the same JSX (#516). The population shrank; the number of
 # notices an operator can see did not.
-# Then 143 -> 142: the why panel's and the Scales panel's loading/error fallbacks were the same
-# component twice, and became one `PanelFallback` the two hand three strings (W11-24). Same shrink
-# as above: one fewer call site, the same two notices on screen.
+# Then 143 -> 142: the why panel's and the Scales panel's loading/error fallbacks became one
+# `PanelFallback` the two hand three strings (W11-24). One fewer call site, the same two notices
+# on screen.
 # Re-derive it by running the test, never by arithmetic on this comment.
 _EXPECTED_NOTICES = 142
 

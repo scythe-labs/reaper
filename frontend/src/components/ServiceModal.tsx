@@ -658,9 +658,7 @@ export function ServiceModal({
    *  and a guard whose only exit is the destructive button is a trap rather than a guard
    *  (rule 146). What this refuses is the ACCIDENTAL dismissals -- scrim, Escape, ✕, Back.
    *
-   *  It is a mute gate, so the notice at the top of the form states the reason and Cancel stays
-   *  live as the way out. "ONCE" above was a claim and not a fact until now: the shell below was
-   *  handed a second spelling of this expression rather than this value (rule 7/24). */
+   *  It is a mute gate, so the notice at the top of the form is what states the reason. */
   const canClose = !save.isPending && mapSatisfied;
 
   // Up to ServicesPanel's Back guard, whole rather than by term (rule 80, B-11, B-19).

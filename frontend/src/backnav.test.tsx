@@ -242,35 +242,43 @@ describe("backnav", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("refuses Back on the modal's own say-so, through the ref the parent reads", async () => {
-    // The child half of the guard (`useBackCloseMirror`). The parent registers Back and can see
+  it("closes on Back until the modal says otherwise, and refuses once it does", async () => {
+    // The child half of the guard (`useBackCloseMirror`). The parent registers Back and reads
     // nothing but the ref, so a modal whose reason to stay open is its own mutation state has to
-    // put it there -- and put the WHOLE predicate there, which is the divergence this hook
-    // exists to make unspellable.
+    // put the WHOLE predicate there.
+    //
+    // Both directions, in one drive. A hook that wrote a constant would pass either half alone,
+    // and one of the two constants is "always refusing", which is the trap rule 146 is about.
     render(
       <BackNavProvider>
         <MirroredOverlay />
       </BackNavProvider>,
     );
     await userEvent.click(screen.getByText("open"));
+
+    pressBack();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("open"));
     await userEvent.click(screen.getByText("start saving"));
 
     pressBack();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-    // The modal is the only thing that can lift the refusal, and Back is armed to spend once it
-    // does rather than having been spent on a close that never happened.
+    // Refused, not spent: the sentinel is re-parked, so the modal's own control still closes it.
     await userEvent.click(screen.getByText("close it"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("clears the ref when a modal unmounts still refusing", async () => {
-    // Read at the ref rather than through Back, because no caller can observe it there: all
+    // Read at the ref rather than through Back, because no caller can observe it there. All
     // three parents arm the guard on the same state that mounts the modal, so the guard is gone
-    // in the same commit and the next open writes its own value before any press lands. What
-    // this pins is the hook's contract, not a reachable failure (rule 118).
+    // in the same commit, and the next open writes its own value before any press lands. This
+    // pins the hook's contract, not a reachable failure (rule 118).
     const ref = { current: false };
     const { unmount } = render(<MirroredModal blockCloseRef={ref} onClose={() => {}} />);
+    expect(ref.current).toBe(false);
+
     await userEvent.click(screen.getByText("start saving"));
     expect(ref.current).toBe(true);
 
