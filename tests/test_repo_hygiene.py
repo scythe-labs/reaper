@@ -553,35 +553,44 @@ def test_the_journal_mode_pragma_is_set_in_exactly_one_module() -> None:
     )
 
 
-#: A sentence quoting the app's busy timeout names the pragma or cites ``db.session``. Both
-#: spellings are required, because one prose copy has neither the pragma's name nor a number
-#: beside it (``scan_runner.scan_running``, "a write lock it waits only 5s for").
-_BUSY_TIMEOUT_ANCHOR = re.compile(r"db[./]session|busy[_ ]timeout", re.IGNORECASE)
-#: How prose spells the value: ``5s``, never the ``5000`` the pragma takes.
-_TIMEOUT_SECONDS = re.compile(r"\b(\d+)s\b")
-#: Every module restating the app's busy timeout as prose. The value is declared once, as a
-#: SQL literal in ``db/session.py``, and these five quote it in seconds while citing
-#: ``db.session`` by name -- rule 144's shape, since none is generated and each reads as
-#: vouched-for. ``services/retention.py`` sets its own 30000 on the connection it opens for
-#: ``VACUUM`` and states no figure for it; if it ever does, it earns an entry here saying so.
-_BUSY_TIMEOUT_PROSE = frozenset(
-    {
-        "services/executor.py",
-        "services/imdb_dataset.py",
-        "services/retention.py",
-        "services/scan_runner.py",
-        "services/scheduler.py",
-    }
+#: A quotation of the app's busy timeout is a seconds figure within 120 characters of the
+#: pragma's name or of a ``db.session`` citation, either order. Both anchors are needed and
+#: neither is enough alone: two of the five copies never name the pragma
+#: (``scan_runner.scan_running``, ``scheduler.sweep_old_snapshots``), and one never cites
+#: ``db.session`` (``imdb_dataset.load``, which is about ``cache.db``, whose engine listens to
+#: the same ``_configure_sqlite``). The window is what keeps the walk honest: whitespace is
+#: normalized over the whole file first, so a sentence-shaped chunk runs to thousands of
+#: characters in ``main.py``, and ``\d+s`` also reads every status-code plural in ``src/``
+#: (``404s``, ``409s``, ``429s``, ``500s``, ``502s``). Measured at this tip, no plural sits
+#: within 130 characters of either anchor, and the window is what keeps it that way.
+_BUSY_TIMEOUT_QUOTED = re.compile(
+    r"(?:db[./]session|busy[_ ]timeout).{0,120}?\b(\d+)s\b"
+    r"|\b(\d+)s\b.{0,120}?(?:db[./]session|busy[_ ]timeout)",
+    re.IGNORECASE,
 )
+#: Module -> how many of its passages quote the value. The figure itself is derived from the
+#: declaration rather than written here, so this cannot drift from it; the count is the part a
+#: set of module names cannot hold, since the walk collects passages and a second copy inside an
+#: already-listed module would hide behind the first (rule 147). ``services/retention.py`` sets
+#: its own 30000 on the connection it opens for ``VACUUM`` and states no figure for it. A figure
+#: that is deliberately not ``db.session``'s would need a second column here, not a new row.
+_BUSY_TIMEOUT_PROSE = {
+    "services/executor.py": 1,
+    "services/imdb_dataset.py": 1,
+    "services/retention.py": 1,
+    "services/scan_runner.py": 1,
+    "services/scheduler.py": 1,
+}
 
 
 def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> None:
-    """Rule 144: one fact, six places, and only one of them is code.
+    """Rule 144: one fact, seven places, and only one of them is code.
 
     ``PRAGMA busy_timeout=5000`` in ``db.session._configure_sqlite`` is how long every app
     connection waits for a write lock. Five docstrings quote that number as the reason
-    something else is the way it is, and the one on the deletion path is the load-bearing one:
-    ``executor._write_with_retry`` gives the journal two attempts with no sleep between them
+    something else is the way it is, a sixth rests on it without a figure, and the one on the
+    deletion path is the load-bearing one:
+    ``executor._commit_journal`` gives the journal two attempts with no sleep between them
     *because* the timeout already waited inside each. Move the pragma and that reasoning is
     silently wrong, on the write that records what was deleted.
 
@@ -589,12 +598,15 @@ def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> Non
     from it either, and the failure names every file so the sweep is the fix rather than a note
     asking the next author to remember.
 
-    **What the matcher accepts and refuses** (rule 147). It normalizes whitespace, splits on
-    sentences, and keeps a sentence holding both an anchor and a seconds figure. That rejects
-    the neighboring "vacuums for 8s" in ``scheduler.py``, which carries no anchor, and the
-    ``5s``/``10s`` HTTP timeouts in ``clients/base.py``, whose module names neither the pragma
-    nor ``db.session``. It reads "five seconds" as no copy at all, so a reworded sentence
-    leaves the set rather than passing quietly, which the set equality below catches.
+    **What the walk cannot see, named rather than implied** (rule 147). A copy carrying no
+    figure is invisible to it, and ``snapshot.py``'s "far inside that budget" is one: it names
+    both anchors and no number, so it goes stale silently. ``backup.py`` and ``retention.py``
+    each carry a second figure-less mention, both describing their own connection's timeout
+    rather than the app's. A copy spelling the value in words ("five seconds") is invisible the
+    same way, which is what the per-module count below turns into a failure rather than a quiet
+    pass. ``docs/LEARNINGS.md`` quotes both timeouts as ``5 s`` and ``30 s`` and is deliberately
+    out of scope: it records what was measured on the tree of the day, and rewriting a
+    measurement to match a later default would falsify it.
     """
     declaration = re.search(
         r"PRAGMA\s+busy_timeout\s*=\s*(\d+)", (SRC / "db" / "session.py").read_text("utf-8")
@@ -602,28 +614,30 @@ def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> Non
     assert declaration, "db/session.py no longer declares a busy timeout, so nothing anchors this"
     declared = str(int(declaration.group(1)) // 1000)
 
-    quoted: dict[str, set[str]] = {}
+    quoted: dict[str, list[str]] = {}
     for path in sorted(SRC.rglob("*.py")):
         prose = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
-        for sentence in prose.split(". "):
-            figures = set(_TIMEOUT_SECONDS.findall(sentence))
-            if figures and _BUSY_TIMEOUT_ANCHOR.search(sentence):
-                quoted.setdefault(str(path.relative_to(SRC)), set()).update(figures)
+        figures = [before or after for before, after in _BUSY_TIMEOUT_QUOTED.findall(prose)]
+        if figures:
+            quoted[str(path.relative_to(SRC))] = figures
 
     offenders = [
-        f"{rel} states {'s, '.join(sorted(figures))}s, not {declared}s"
+        f"{rel} quotes {', '.join(f + 's' for f in sorted(figures))}, "
+        f"expected {_BUSY_TIMEOUT_PROSE[rel]} x {declared}s"
         for rel, figures in sorted(quoted.items())
-        if figures != {declared}
+        if rel in _BUSY_TIMEOUT_PROSE and sorted(figures) != [declared] * _BUSY_TIMEOUT_PROSE[rel]
     ]
     offenders += [
-        f"{rel} no longer quotes it" for rel in sorted(_BUSY_TIMEOUT_PROSE - quoted.keys())
+        f"{rel} no longer quotes it" for rel in sorted(_BUSY_TIMEOUT_PROSE.keys() - quoted.keys())
     ]
-    offenders += [f"{rel} is a new copy" for rel in sorted(quoted.keys() - _BUSY_TIMEOUT_PROSE)]
+    offenders += [
+        f"{rel} is a new copy" for rel in sorted(quoted.keys() - _BUSY_TIMEOUT_PROSE.keys())
+    ]
     assert not offenders, (
         f"db.session._configure_sqlite declares the busy timeout at {declared}s and these "
         "modules restate it in prose:\n  "
         + "\n  ".join(offenders)
-        + "\n\nCorrect every one in the same change, or add the new module to "
+        + "\n\nCorrect every one in the same change, or give the new module its own count in "
         "_BUSY_TIMEOUT_PROSE. src/reaper/services/executor.py's copy is the reason the "
         "journal write takes two attempts with no sleep between them."
     )
