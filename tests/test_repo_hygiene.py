@@ -5547,10 +5547,10 @@ def test_a_judged_item_is_never_handed_the_other_lanes_policy() -> None:
     """The movie loop cannot reach a TV local, and the season loop cannot reach a movie one.
 
     Measured, on this tree: cross ``custom_condemn``, ``keeps`` and ``policy`` at the movie call
-    site and this is the only test in the suite that fails, 4,238 passed and 1 failed. So the
-    keep rules a movie is judged against, and the threshold it is condemned at, can both come
-    from the TV policy with nothing else saying a word (rule 118). ``gates``, ``signals`` and
-    ``window_days`` are the three ``test_scan_pipeline.py`` already catches.
+    site and this is the only test in the whole suite that fails. So the keep rules a movie is
+    judged against, and the threshold it is condemned at, can both come from the TV policy with
+    nothing else saying a word (rule 118). ``gates``, ``signals`` and ``window_days`` are the
+    three ``test_scan_pipeline.py`` already catches.
 
     This is the gate rather than a lane carrier, per CLAUDE.md's "write the gate instead": a
     carrier binds the sites that adopt it, and ``services/snapshot.py`` is the deletion path.
