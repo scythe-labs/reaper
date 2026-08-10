@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import re
 import subprocess
 import xml.etree.ElementTree as ET
@@ -1231,18 +1232,19 @@ def _repo_text_files() -> list[tuple[Path, str]]:
     The population comes from git, not from ``rglob``, which honors no ignore file. Gitignored
     directories sit inside the repo root and every gate below reads whatever this walk hands
     it. Three of them are the ones that bit. ``.claude/worktrees/`` holds agent worktrees,
-    entire repo copies, so a raw
-    walk judges other branches' files as if they were ours, and a worktree's ``.git`` is a
-    *file*, so skipping that name does not stop the descent. ``.claude/review-findings/`` is
-    session handoff scratch. ``.dev-logs/`` is whatever the dev servers last printed, and a
-    stack trace echoing a uvicorn command line is collected there as a LAUNCH SITE. Each one
-    fails ``uv run pytest`` in a checkout that has it on disk while CI, which has none, stays
-    green. A gate nobody can turn green from their own branch is a gate that gets deleted.
+    entire repo copies, so a raw walk judges other branches' files as if they were ours, and a
+    worktree's ``.git`` is a *file*, so skipping that name does not stop the descent.
+    ``.claude/review-findings/`` is session handoff scratch. ``.dev-logs/`` is whatever the dev
+    servers last printed, and a stack trace echoing a uvicorn command line is collected there
+    as a LAUNCH SITE. Each one fails ``uv run pytest`` in a checkout that has it on disk while
+    CI, which has none, stays green. A gate nobody can turn green from their own branch is a
+    gate that gets deleted.
 
     This replaced a hand-kept skip set, a mirror of ``.gitignore`` that needed an edit every
-    time the ignore file grew (rule 103). It was three entries behind when it went:
-    ``.claude/review-findings/``, ``.pytest_cache/`` and ``mutation-report-*.json``, the
-    second of which this suite creates by running.
+    time the ignore file grew (rule 103). It was four entries behind when it was deleted:
+    ``.claude/review-findings/``, ``.hypothesis/``, ``.pytest_cache/`` and
+    ``mutation-report-*.json``. Two of those four are created by running this very suite,
+    which is why the set could not stay current by anyone's diligence.
     ``--others --exclude-standard`` keeps a file created but not yet staged, which is the
     state a gate is most useful in.
 
@@ -1285,23 +1287,37 @@ def test_the_repo_walk_never_reads_a_gitignored_file(
     """Rule 145: the count is pinned over a tree whose membership is controlled.
 
     Counting the real checkout would pin a number that moves with every file added, so the
-    population is four files here, two of them ignored, reconciled by hand. The ignored pair
+    population is five files here, two of them ignored, reconciled by hand. The ignored pair
     is shaped like what broke this: a directory of session scratch, and a log holding a line
     a gate would read as a launch site. Neither is reachable from a branch, so a walk that
     collects them is red in every checkout that has them and green in CI forever.
 
-    **Each half of the invocation owns one member of the expected set**, or a flag can be
-    dropped and this still reads green. ``kept.md`` is staged, so only ``--cached`` reaches
-    it; ``.gitignore`` is untracked and not ignored, so only ``--others`` does. Dropping
-    ``--exclude-standard`` adds the other two back.
+    **Each argument owns one member of the expected set**, or one can be dropped and this
+    still reads green. ``kept.md`` is staged, so only ``--cached`` reaches it; ``.gitignore``
+    is untracked and not ignored, so only ``--others`` does; dropping ``--exclude-standard``
+    adds the ignored pair back; and the non-UTF8 name is what ``-z`` and the walk's
+    ``surrogateescape`` decode are for, a strict decode raising out of the walk instead.
 
-    The git config is scrubbed because ``--exclude-standard`` reads ``core.excludesFile``,
-    which would otherwise let a developer's global ignore file decide this expected set
-    (rule 119).
+    **The git environment is scrubbed three ways, and each closes a hole that was measured
+    rather than imagined** (rule 119). ``GIT_DIR`` and ``GIT_WORK_TREE`` beat ``cwd=``, so an
+    inherited one makes ``git init`` a no-op against someone else's repository, ``git add``
+    write into that repository's index, and this test pass having proved nothing. Clearing
+    every ``GIT_*`` name is what stops that. ``GIT_CONFIG_GLOBAL`` and ``GIT_CONFIG_SYSTEM``
+    then keep a developer's ``init.templateDir`` from seeding ``.git/info/exclude``. And
+    ``core.excludesFile`` is pinned inside the repo, because its DEFAULT is
+    ``$XDG_CONFIG_HOME/git/ignore``, which ``--exclude-standard`` reads with no config file
+    involved and which a repo-level setting is the only thing that overrides.
     """
+    for name in [key for key in os.environ if key.startswith("GIT_")]:
+        monkeypatch.delenv(name)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "absent-global"))
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "absent-system"))
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # noqa: S607
+    subprocess.run(  # noqa: S603 - the one non-literal argument is os.devnull
+        ["git", "config", "core.excludesFile", os.devnull],  # noqa: S607
+        cwd=tmp_path,
+        check=True,
+    )
     (tmp_path / ".gitignore").write_text("scratch/\n*.log\n", encoding="utf-8")
     (tmp_path / "kept.md").write_text("source\n", encoding="utf-8")
     (tmp_path / "scratch").mkdir()
@@ -1309,6 +1325,8 @@ def test_the_repo_walk_never_reads_a_gitignored_file(
     (tmp_path / "noisy.log").write_text(
         'uvicorn reaper.main:create_app --factory --port "8420"\n', encoding="utf-8"
     )
+    odd = os.fsdecode(b"caf\xe9.md")
+    (tmp_path / odd).write_text("a name git prints as raw bytes\n", encoding="utf-8")
     subprocess.run(["git", "add", "kept.md"], cwd=tmp_path, check=True)  # noqa: S607
 
     global REPO
@@ -1320,7 +1338,7 @@ def test_the_repo_walk_never_reads_a_gitignored_file(
         REPO = real
         _repo_text_files.cache_clear()
 
-    assert found == {".gitignore", "kept.md"}, found
+    assert found == {".gitignore", "kept.md", odd}, found
 
 
 # Every real invocation of the app carries ``--factory``, because ``create_app`` IS a factory
