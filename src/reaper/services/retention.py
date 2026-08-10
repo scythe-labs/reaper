@@ -91,7 +91,8 @@ KEEP_SNAPSHOTS = 30
 
 #: Snapshots deleted per transaction. Small on purpose: each one cascades to a whole
 #: library's worth of candidate rows, and a backlog drained in a single statement would
-#: hold the write lock long enough for the UI and a scheduled scan to time out behind it.
+#: hold the write lock past the 5s the UI and a scheduled scan wait behind it
+#: (``db.session``).
 SWEEP_BATCH = 10
 
 #: Runaway guard on the drain loop, not a retention policy -- 50,000 snapshots is far past
