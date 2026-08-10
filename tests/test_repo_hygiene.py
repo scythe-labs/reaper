@@ -474,6 +474,40 @@ def test_http_clients_are_only_constructed_in_clients() -> None:
     assert not offenders, "construct HTTP clients only in clients/:\n" + "\n".join(offenders)
 
 
+def test_the_admin_password_lockout_is_reached_through_one_function() -> None:
+    """Rules 11/98 as a gate: only ``api/deps.py`` may touch ``password_throttle``.
+
+    Four routes ask for the admin password before doing something consequential, and each
+    used to run the same four steps by hand: check the lockout, verify, record the failure,
+    clear both keys on success. Copying them is how a fifth gate arrives with three of the
+    four, and the step most easily dropped is the one no route-level test used to reach --
+    ``record_success``, whose absence makes a near-miss cost the operator a real lockout.
+
+    Prose cannot bind an author who never read it, so the ban is on the name instead: a route
+    that cannot reach the throttle cannot get its ritual wrong. The two files below are the
+    declaration and the one implementation. Anything else is a fifth copy starting.
+
+    **What this cannot catch**: a caller reaching the singleton through
+    ``reaper.auth.ratelimit.password_throttle`` written out in full, or rebinding it under
+    another name. Both are visible in review in a way a silently-missing step is not, which is
+    the trade this makes.
+    """
+    allowed = {SRC / "auth" / "ratelimit.py", SRC / "api" / "deps.py"}
+    offenders = [
+        f"{p.relative_to(REPO)}:{n}"
+        for p in SRC.rglob("*.py")
+        if p not in allowed
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if "password_throttle" in _strip_prose(line)
+    ]
+    assert not offenders, (
+        "reach the admin-password lockout through reaper.api.deps.require_admin_password, "
+        "which is the whole ritual -- lockout check, verify, record the failure, clear both "
+        "keys on success -- rather than spelling any part of it again (rule 11/98):\n"
+        + "\n".join(offenders)
+    )
+
+
 def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
     """Rule 88, as a gate. ``reaper.text.fold`` is the trim-then-casefold every name
     comparison takes, and it was spelled 37 times over 33 lines in 13 modules.
