@@ -597,79 +597,183 @@ def test_the_journal_mode_pragma_is_set_in_exactly_one_module() -> None:
     )
 
 
-#: A quotation of the app's busy timeout is a seconds figure within 120 characters of the
-#: pragma's name or of a ``db.session`` citation, either order. Both anchors are needed and
-#: neither is enough alone: two of the five copies never name the pragma
+def _busy_timeout_files() -> list[Path]:
+    """The two roots both busy-timeout walks read, the same pair the journal-mode gate reads.
+
+    ``alembic/`` is in scope because the migration engine opens its own connections, and
+    ``env.py``'s connect hook is the obvious place to answer a migration that hit a locked
+    database. Scoped to ``src/`` alone, a declaration landing there passed both gates
+    (rule 72: the journal-mode gate 60 lines up already decided this).
+    """
+    return [p for root in (SRC, REPO / "alembic") for p in sorted(root.rglob("*.py"))]
+
+
+def _busy_timeout_prose(path: Path) -> str:
+    """One line of prose per file: comment markers dropped, then whitespace collapsed.
+
+    The markers come out first so a passage wrapped across two ``#`` lines still reads as one
+    sentence. Leaving them in turned ``backup._build_into``'s "the 5s busy timeout" into
+    "busy # timeout" and left that module one passage short of its count, which any reformat
+    can do to any of them (rule 147).
+    """
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^\s*#+:? ?", " ", path.read_text(encoding="utf-8")))
+
+
+#: A quotation of a busy timeout is a seconds figure and an anchor -- the pragma's name, or a
+#: ``db.session`` citation -- in either order, in the same sentence, within 120 characters. Both
+#: anchors are needed and neither is enough alone: two copies never name the pragma
 #: (``scan_runner.scan_running``, ``scheduler.sweep_old_snapshots``), and one never cites
 #: ``db.session`` (``imdb_dataset.load``, which is about ``cache.db``, whose engine listens to
-#: the same ``_configure_sqlite``). The window is what keeps the walk honest: whitespace is
-#: normalized over the whole file first, so a sentence-shaped chunk runs to thousands of
-#: characters in ``main.py``, and ``\d+s`` also reads every status-code plural in ``src/``
-#: (``404s``, ``409s``, ``429s``, ``500s``, ``502s``). Measured at this tip, no plural sits
-#: within 130 characters of either anchor, and the window is what keeps it that way.
+#: the same ``_configure_sqlite``).
+#:
+#: Spellings accepted, run and confirmed (rule 147). Six are forms the tree uses:
+#: ``5s ``busy_timeout```, ```busy_timeout`` (5s``, ``5s for it (``db.session``)``,
+#: ``5s busy timeout`` spaced, ``db/session.py`` as the citation, and a passage split across two
+#: ``#`` lines. Two more are accepted against no passage: ``5s BUSY_TIMEOUT`` is what
+#: ``re.IGNORECASE`` takes, the tree spelling it lowercase everywhere, and ``5-second`` is the
+#: adjectival form, which no busy-timeout passage uses but 39 other durations in ``src/`` do
+#: (``ratelimit``'s ``2-second``, and ``30-day`` 18 times over eight files) -- so it is the form
+#: a new passage is most likely to arrive in, and it was a quiet pass until it was accepted.
+#:
+#: Rejected, run and confirmed: ``five seconds`` in words, ``5 s`` with a space
+#: (``docs/LEARNINGS.md``'s), ``5000ms``, ``session.py`` without ``db``, a figure past 120
+#: characters, and a figure on the far side of a sentence boundary. That last one is the gap's
+#: own bound rather than a judgment, so it also rejects a period that ends no sentence: a passage
+#: writing ``the ``busy_timeout``, i.e. 5s`` goes unread, and ``src/reaper/services/`` carries 11
+#: ``e.g.``/``i.e.``/``vs.`` today.
+#:
+#: **The sentence bound is doing work the window alone did not.** The figure pattern reads every
+#: status-code plural in ``src/`` (``404s``, ``409s``, ``429s``, ``500s``, ``502s``) and every
+#: other seconds figure besides. Measured over every anchor in both roots: eleven figures fall
+#: inside a 120-character window, and exactly one of them carries a sentence break in its gap --
+#: ``scheduler``'s *measured* ``8s`` vacuum, 86 characters past a ``db.session`` it is not about.
+#: Deleting ``scheduler``'s real copy showed what that costs: the window alone then reports
+#: "quotes 8s", substituting an unrelated measurement for the passage that left, while the
+#: sentence bound reports "no longer quotes it", which is the truth. Nearest status-code plural
+#: to any anchor at this tip: 17,851 characters.
+#:
+#: It bounds proximity, not meaning, so a figure sharing a sentence with an anchor it is not
+#: about is still collected. That lands as a red gate naming the module **when the module's real
+#: passage is collected first**; where the spurious figure comes first and the module has one
+#: anchor, the real match is the one that loses, and a module already at its count reads green.
+#: ``scan_runner.scan_running`` is that shape today, one anchor with its figure before it.
+_BUSY_TIMEOUT_ANCHOR = r"(?:db[./]session|busy[_ ]timeout)"
+_BUSY_TIMEOUT_GAP = r"(?:(?!\.\s).){0,120}?"
+_BUSY_TIMEOUT_FIGURE = r"\b(\d+)(?:s|-seconds?)\b"
 _BUSY_TIMEOUT_QUOTED = re.compile(
-    r"(?:db[./]session|busy[_ ]timeout).{0,120}?\b(\d+)s\b"
-    r"|\b(\d+)s\b.{0,120}?(?:db[./]session|busy[_ ]timeout)",
+    rf"{_BUSY_TIMEOUT_ANCHOR}{_BUSY_TIMEOUT_GAP}{_BUSY_TIMEOUT_FIGURE}"
+    rf"|{_BUSY_TIMEOUT_FIGURE}{_BUSY_TIMEOUT_GAP}{_BUSY_TIMEOUT_ANCHOR}",
     re.IGNORECASE,
 )
-#: Module -> how many of its passages quote the value. The figure itself is derived from the
-#: declaration rather than written here, so this cannot drift from it; the count is the part a
-#: set of module names cannot hold, since the walk collects passages and a second copy inside an
-#: already-listed module would hide behind the first (rule 147). ``services/retention.py`` sets
-#: its own 30000 on the connection it opens for ``VACUUM`` and states no figure for it. A figure
-#: that is deliberately not ``db.session``'s would need a second column here, not a new row.
-_BUSY_TIMEOUT_PROSE = {
-    "services/executor.py": 1,
-    "services/imdb_dataset.py": 1,
-    "services/retention.py": 1,
-    "services/scan_runner.py": 1,
-    "services/scheduler.py": 1,
+_BUSY_TIMEOUT_PRAGMA = re.compile(r"PRAGMA\s+busy_timeout\s*=\s*(\d+)")
+
+#: Declaring file -> how many ``PRAGMA busy_timeout`` calls it makes. Pinned so a fourth
+#: declaration cannot arrive without someone deciding which passages describe it (rule 145).
+_BUSY_TIMEOUT_DECLARATIONS = {
+    "src/reaper/db/session.py": 1,
+    "src/reaper/services/backup.py": 1,
+    "src/reaper/services/retention.py": 1,
+}
+
+#: File -> which declaration each of its passages quotes -> how many quote it. **The second
+#: column is the point**: three declarations exist and they are not one fact.
+#: ``db.session._configure_sqlite`` sets 5000 for every app connection, ``retention._compact_sync``
+#: sets 30000 on the connection it opens for ``VACUUM``, and ``backup._build_into`` sets 5000 on
+#: its own for ``VACUUM INTO``. Backup's figure equals the app's by coincidence, so a single
+#: column would tie two values that have no reason to move together and read as a proof that
+#: they do. Every figure is read out of the declaration named here, never written here.
+#:
+#: Ten passages over seven files, reconciled by hand against both roots (rule 145): seven quote
+#: ``db/session.py``, two quote backup's own, one quotes retention's own. The count is the part a
+#: set of file names cannot hold, since the walk collects passages and a second copy inside an
+#: already-listed file would hide behind the first (rule 147).
+_BUSY_TIMEOUT_PROSE: dict[str, dict[str, int]] = {
+    "src/reaper/services/backup.py": {"src/reaper/services/backup.py": 2},
+    "src/reaper/services/executor.py": {"src/reaper/db/session.py": 1},
+    "src/reaper/services/imdb_dataset.py": {"src/reaper/db/session.py": 1},
+    "src/reaper/services/retention.py": {
+        "src/reaper/db/session.py": 2,
+        "src/reaper/services/retention.py": 1,
+    },
+    "src/reaper/services/scan_runner.py": {"src/reaper/db/session.py": 1},
+    "src/reaper/services/scheduler.py": {"src/reaper/db/session.py": 1},
+    "src/reaper/services/snapshot.py": {"src/reaper/db/session.py": 1},
 }
 
 
 def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> None:
-    """Rule 144: one fact, seven places, and only one of them is code.
+    """Rule 144: one fact in ten passages, and three declarations under them.
 
     ``PRAGMA busy_timeout=5000`` in ``db.session._configure_sqlite`` is how long every app
-    connection waits for a write lock. Five docstrings quote that number as the reason
-    something else is the way it is, a sixth rests on it without a figure, and the one on the
-    deletion path is the load-bearing one:
-    ``executor._commit_journal`` gives the journal two attempts with no sleep between them
-    *because* the timeout already waited inside each. Move the pragma and that reasoning is
-    silently wrong, on the write that records what was deleted.
+    connection waits for a write lock, and seven passages quote it as the reason something else
+    is the way it is. The one on the deletion path is load-bearing: ``executor._commit_journal``
+    gives the journal two attempts with no sleep between them *because* the timeout already
+    waited inside each. Move the pragma and that reasoning is silently wrong, on the write that
+    records what was deleted.
 
-    Checked against the declaration rather than against a copy here, so this test cannot drift
-    from it either, and the failure names every file so the sweep is the fix rather than a note
-    asking the next author to remember.
+    **Two more declarations sit beside it, and they are not the same fact.**
+    ``retention._compact_sync`` sets 30000 on the connection it opens for ``VACUUM``, and
+    ``backup._build_into`` sets 5000 on its own for ``VACUUM INTO``. Backup's figure equals the
+    app's by coincidence, so its two passages are checked against backup's own declaration.
+    Checking them against ``db.session``'s would make two unrelated values move together forever
+    and read as a proof that they must.
 
-    **What the walk cannot see, named rather than implied** (rule 147). A copy carrying no
-    figure is invisible to it, and ``snapshot.py``'s "far inside that budget" is one: it names
-    both anchors and no number, so it goes stale silently. ``backup.py`` and ``retention.py``
-    each carry a second figure-less mention, both describing their own connection's timeout
-    rather than the app's. A copy spelling the value in words ("five seconds") is invisible the
-    same way, which is what the per-module count below turns into a failure rather than a quiet
-    pass. ``docs/LEARNINGS.md`` quotes both timeouts as ``5 s`` and ``30 s`` and is deliberately
-    out of scope: it records what was measured on the tree of the day, and rewriting a
-    measurement to match a later default would falsify it.
+    Every figure is read out of the declaration its passage is about, so no number is written
+    here, and the failure names each file so the sweep is the fix rather than a note asking the
+    next author to remember.
+
+    **What the walk cannot see, named rather than implied** (rule 147). A copy carrying no figure
+    at all is invisible, and one survives deliberately: ``imdb_dataset.load`` says "wait out the
+    timeout" three lines under its own "5s ``busy_timeout``", in the same sentence's subject, so
+    it restates the figure it was just given rather than holding a second one. A copy spelling
+    the value in words ("five seconds") is invisible the same way; the two roots hold none today,
+    and the per-file count is what turns a rewording into a failure rather than a quiet pass.
+    Within one file the comparison is a multiset, so two passages that swapped each other's
+    figures would still balance: ``retention.py`` is the only file quoting two declarations, and
+    its three sit apart, two docstrings and the ``SWEEP_BATCH`` comment.
+    ``docs/LEARNINGS.md`` quotes both timeouts as ``5 s`` and
+    ``30 s`` and is deliberately out of scope: it records what was measured on the tree of the
+    day, and rewriting a measurement to match a later default would falsify it.
     """
-    declaration = re.search(
-        r"PRAGMA\s+busy_timeout\s*=\s*(\d+)", (SRC / "db" / "session.py").read_text("utf-8")
+    declared: dict[str, list[str]] = {}
+    for path in _busy_timeout_files():
+        seconds = [
+            str(int(m.group(1)) // 1000)
+            for m in _BUSY_TIMEOUT_PRAGMA.finditer(path.read_text(encoding="utf-8"))
+        ]
+        if seconds:
+            declared[str(path.relative_to(REPO))] = seconds
+    assert {rel: len(s) for rel, s in declared.items()} == _BUSY_TIMEOUT_DECLARATIONS, (
+        "the busy timeout is declared in:\n  "
+        + "\n  ".join(f"{rel}, {len(s)}x" for rel, s in sorted(declared.items()))
+        + "\n\nEach declaration is its own value with its own prose, so add it to "
+        "_BUSY_TIMEOUT_DECLARATIONS and say in _BUSY_TIMEOUT_PROSE which passages quote it."
     )
-    assert declaration, "db/session.py no longer declares a busy timeout, so nothing anchors this"
-    declared = str(int(declaration.group(1)) // 1000)
+
+    unknown = {src for cols in _BUSY_TIMEOUT_PROSE.values() for src in cols} - declared.keys()
+    assert not unknown, f"_BUSY_TIMEOUT_PROSE quotes declarations that do not exist: {unknown}"
+    expected = {
+        rel: sorted(declared[src][0] for src, count in cols.items() for _ in range(count))
+        for rel, cols in _BUSY_TIMEOUT_PROSE.items()
+    }
 
     quoted: dict[str, list[str]] = {}
-    for path in sorted(SRC.rglob("*.py")):
-        prose = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
-        figures = [before or after for before, after in _BUSY_TIMEOUT_QUOTED.findall(prose)]
+    for path in _busy_timeout_files():
+        figures = [
+            before or after
+            for before, after in _BUSY_TIMEOUT_QUOTED.findall(_busy_timeout_prose(path))
+        ]
         if figures:
-            quoted[str(path.relative_to(SRC))] = figures
+            quoted[str(path.relative_to(REPO))] = figures
 
     offenders = [
-        f"{rel} quotes {', '.join(f + 's' for f in sorted(figures))}, "
-        f"expected {_BUSY_TIMEOUT_PROSE[rel]} x {declared}s"
+        f"{rel} quotes {', '.join(f + 's' for f in sorted(figures))}, expected "
+        + ", ".join(
+            f"{declared[src][0]}s x{count} from {src}"
+            for src, count in sorted(_BUSY_TIMEOUT_PROSE[rel].items())
+        )
         for rel, figures in sorted(quoted.items())
-        if rel in _BUSY_TIMEOUT_PROSE and sorted(figures) != [declared] * _BUSY_TIMEOUT_PROSE[rel]
+        if rel in _BUSY_TIMEOUT_PROSE and sorted(figures) != expected[rel]
     ]
     offenders += [
         f"{rel} no longer quotes it" for rel in sorted(_BUSY_TIMEOUT_PROSE.keys() - quoted.keys())
@@ -678,12 +782,14 @@ def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> Non
         f"{rel} is a new copy" for rel in sorted(quoted.keys() - _BUSY_TIMEOUT_PROSE.keys())
     ]
     assert not offenders, (
-        f"db.session._configure_sqlite declares the busy timeout at {declared}s and these "
-        "modules restate it in prose:\n  "
+        f"{len(declared)} modules declare a busy timeout ("
+        + ", ".join(f"{rel} at {s[0]}s" for rel, s in sorted(declared.items()))
+        + ") and these files restate one of them in prose:\n  "
         + "\n  ".join(offenders)
-        + "\n\nCorrect every one in the same change, or give the new module its own count in "
-        "_BUSY_TIMEOUT_PROSE. src/reaper/services/executor.py's copy is the reason the "
-        "journal write takes two attempts with no sleep between them."
+        + "\n\nCorrect every one in the same change, or give the new file its own row in "
+        "_BUSY_TIMEOUT_PROSE naming which declaration it quotes. "
+        "src/reaper/services/executor.py's copy is the reason the journal write takes two "
+        "attempts with no sleep between them."
     )
 
 

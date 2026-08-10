@@ -91,7 +91,8 @@ KEEP_SNAPSHOTS = 30
 
 #: Snapshots deleted per transaction. Small on purpose: each one cascades to a whole
 #: library's worth of candidate rows, and a backlog drained in a single statement would
-#: hold the write lock long enough for the UI and a scheduled scan to time out behind it.
+#: hold the write lock past the 5s the UI and a scheduled scan wait behind it
+#: (``db.session``).
 SWEEP_BATCH = 10
 
 #: Runaway guard on the drain loop, not a retention policy -- 50,000 snapshots is far past
@@ -175,8 +176,9 @@ def _compact_sync(db_path: Path) -> bool:
 
     ``isolation_level=None`` is required, not tidiness: ``VACUUM`` cannot run inside a
     transaction, and the driver's default opens one on the first statement it takes for
-    DML. The busy timeout lets it wait out an in-flight write rather than failing at once,
-    the same courtesy ``services.backup`` extends to ``VACUUM INTO``.
+    DML. The 30s busy timeout this connection sets lets it wait out an in-flight write
+    rather than failing at once. The figure is this connection's own, not the app
+    engine's, and ``services.backup`` sets its own for ``VACUUM INTO``.
 
     **The checkpoint is what actually hands the disk back, and the ``VACUUM`` alone does
     not.** The database is in WAL mode (``db.session``), so the rewrite lands in
