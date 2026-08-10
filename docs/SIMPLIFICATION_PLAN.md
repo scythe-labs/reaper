@@ -3330,6 +3330,58 @@ to sit at the same depth, so moving either file breaks one of them silently. **W
 → serve` written three times where only `serve` is genuinely per-environment (~23, `behavior`, and
 it is a deletion tool's boot path, so rank it last).
 
+**Per-item verdicts, all 43 that remain. This table supersedes the counts in the sentences above
+wherever they disagree.** `right` means the sentence's count and the symbol beside it both hold.
+The eleven rows the measured block already argues say `block above` rather than repeating it.
+`unsettled` means the scout and its verifier reached different verdicts and neither had a command
+behind it; it is a verdict, not a gap left to fill in later.
+
+| ID | Plan says | Measured | Verdict |
+| --- | --- | --- | --- |
+| W11-1 | 22 sites, 3 modules, every fallback the dataclass default | 17 tests, 20 reads, 3 modules; one fallback is `row.get(_SPINE_LIBRARY)` | kill, the rewrite fabricates a `rating_key` |
+| W11-2 | 3 to 5 re-parses, ~12 | count right, size is +2 | defer, carrier for #709 only |
+| W11-3 | 6 dispatch places, no test pins the conversions | block above | build, test first |
+| W11-4 | 12 arms, 6 bare, the test is already that table | block above | kill |
+| W11-5 | `scan.py`'s condemned counter | right, in `services/snapshot.py` | build, -3 |
+| W11-6 | triple ×4 plus 3 parallel dicts | 1 triple, 4 pairs, 1 dict | kill, the file has no such shape |
+| W11-7 | 2 class names, ~14 | 2 class pairs plus 3 local names, nets -2 | kill, #655 shipped the AST gate instead |
+| W11-8 | 4 slug sets, 4 sweeps, ~10 | right, and `_retire` is already the helper | kill, nets 0 |
+| W11-9 | 2 identical loops, ~10 | 2 loops, opposite polarity, different returns | kill, indirection on the canary check |
+| W11-10 | getter ×4 plus 2 job blocks, ~45 | 4 getters exact, the job blocks share ~8 lines | unsettled, scout builds the getters at -7, verifier kills the item |
+| W11-11 | 11 times, 7 in `run_scan` | 12 times, the 7 are in `_run_scan_locked` | kill, a helper costs +7 |
+| W11-12 | 4 call sites, ~40 | block above | build |
+| W11-13 | 2 parsers differ on a negative header | right | kill, block above |
+| W11-14 | 2 spellings, 4 sites | right | kill, two different numbers on purpose |
+| W11-15 | 80 unbounded, `ratelimit.py:200` an unused gate | block above | build |
+| W11-16 | 4 keys, 4 existing shared hooks, ~40 | block above | build, 2 keys |
+| W11-17 | hand-written 6 times, ~20 | 6 sites, 4 to 5 hand-written, the rest already hooks | kill, no two of the residue do the same work |
+| W11-18 | 2 machines, deps-disable twice, ~25 | right, nets -8 to -12 | build, low priority |
+| W11-19 | caller written twice, ~15 | right, nets -8 | build |
+| W11-20 | 6 callbacks, depth 3 to 4, ~40 | 7 or 8 props, max depth 2 | unsettled, scout kills it, verifier makes it an owner call |
+| W11-21 | 3 hand-rolled 250 ms debounces | right, one is already a hook | unsettled, scout kills on ~0 lines, verifier builds the shared timer |
+| W11-22 | mirror written 3 times | right, plus 3 child effects and a 4th copy of the guard in `ServiceModal` | build |
+| W11-23 | 21 sites across 7 files, ~40 | block above | kill |
+| W11-24 | same component twice, ~28 | right, nets -23 | build |
+| W11-25 | 12 blocks, 4 sets, ~28 | right, the one count that survived re-derivation | build, cascade test scoped to `.strip-sq` |
+| W11-26 | 3 wrappers, each commented at the other two | 3 of 6 sites are that shape, 2 of the 3 carry a comment, and both point at `ScanLine` | build, 3 of 6, `ReapBar` excluded |
+| W11-27 | computed and marked up twice, ~14 | right, nets -6 | build, the shared `aria-label` is the reason |
+| W11-28 | 2 SVGs, one already exported | right, 2 of 6 duplicated paths, -10 | build, ride along |
+| W11-29 | 3 near-copies, one comment admits it | 5 controls, and the "borrows" comments are in the CSS | unsettled, both reports make it an owner split |
+| W11-30 | inline 64 times, `format.ts` twice, 14 `toLocaleString` | block above | kill the helper |
+| W11-31 | 4 sentences ×2, a third copy in `public.py`, comment verbatim | 4 right, the scout's 5 was the over-count; two carry the `public.py` copy, and the comment is a paraphrase | unsettled, scout -6, verifier ~0 |
+| W11-33 | dead branch at `restore.py:201`, refused 12 lines earlier, sentence ×4 | branch at 187, the gap is 11 lines, ×4 right | build, -7 |
+| W11-34 | twice in one function, pinned by nothing | right | build, -5 |
+| W11-35 | 3 arms, one 400 | right | build, -3 |
+| W11-36 | 4 copies plus a deliberate 5th | right, plus an unnamed pair in `BackupPanel` and `AboutPanel` | kill as a dedup, write the hygiene gate instead |
+| W11-37 | 3 identity entries | right | build, -3, never its own PR |
+| W11-38 | the ritual 5 times | 9 sites in 2 rituals, 5 status and 4 message | kill, a helper is a rename |
+| W11-39 | 4 call sites, ~15 | right | build, `overrides()` keeps its 2-column select |
+| W11-40 | unindexed, never swept, grows for the life of the install | 3 tree claims right, framing wrong, block above | build the index only |
+| W11-41 | 13 models | 15 models | kill, byte-identical DDL is why nothing is gained |
+| W11-42 | ~85 lines, all `ci` | populations right, ~16 removable, provenance pair unresolved | build the macOS probe, defer the composite actions |
+| W11-43 | spelled 3 times | right, and `schema_gate.py` is a 4th deliberately different shape | build at +2, or write the gate |
+| W11-44 | written 3 times, ~23 | count right, 3 runtimes rather than 3 copies | kill, sharing costs +10 on the boot path |
+
 ## Wave 12: the test suite's wall clock
 
 Wave 1.3 found one 44-second win. This lane measured the rest: **214.69s for `uv run pytest` with
