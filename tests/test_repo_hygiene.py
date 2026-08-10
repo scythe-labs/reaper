@@ -14,6 +14,7 @@ import ast
 import hashlib
 import json
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 from pathlib import Path
@@ -1218,50 +1219,85 @@ def test_the_log_path_matcher_reads_every_spelling_it_claims() -> None:
 # Cached for the reason stated above ``_source_files_to_scan``, and this is the walk that costs.
 @lru_cache
 def _repo_text_files() -> list[tuple[Path, str]]:
-    """Every readable text file in THIS checkout, with its contents.
+    """Every readable text file git considers part of THIS checkout, with its contents.
 
-    Scoped to this checkout on purpose. ``.claude/worktrees/`` is gitignored (``.gitignore``)
-    and holds agent worktrees, which are entire repo copies sitting inside the repo root -- and
-    ``rglob`` honors no ignore file, so walking into them judges other branches' files as if
-    they were ours. A worktree's ``.git`` is a *file*, so the skip entry below does not stop the
-    descent either. Left in, ``uv run pytest`` in the main checkout fails the moment any
-    worktree cut before this fix is still on disk, naming files the branch under test cannot
-    reach. A gate nobody can turn green from their own branch is a gate that gets deleted.
+    The population comes from git, not from ``rglob``, which honors no ignore file. Three
+    gitignored directories sit inside the repo root and every gate below reads whatever this
+    walk hands it. ``.claude/worktrees/`` holds agent worktrees, entire repo copies, so a raw
+    walk judges other branches' files as if they were ours, and a worktree's ``.git`` is a
+    *file*, so skipping that name does not stop the descent. ``.claude/review-findings/`` is
+    session handoff scratch. ``.dev-logs/`` is whatever the dev servers last printed, and a
+    stack trace echoing a uvicorn command line is collected there as a LAUNCH SITE. Each one
+    fails ``uv run pytest`` in a checkout that has it on disk while CI, which has none, stays
+    green. A gate nobody can turn green from their own branch is a gate that gets deleted.
 
-    The skip is matched on the REPO-RELATIVE path, which is the part that is easy to get
-    backwards: ``skip`` is tested against ``path.parts``, so putting ``"worktrees"`` in it
-    would match the ABSOLUTE path and skip every file in the tree whenever the suite runs
-    from inside a worktree -- which is where these sessions run it. The relative form also
-    stops an ancestor directory outside the repo that happens to be named ``dist`` from
-    silently emptying the walk.
+    This replaced a hand-kept skip set, a mirror of ``.gitignore`` that needed an edit every
+    time the ignore file grew (rule 103), and it had missed two entries.
+    ``--others --exclude-standard`` keeps a file created but not yet staged, which is the
+    state a gate is most useful in.
+
+    ``cwd=REPO`` carries the weight, and it inherits a trap worth recording. The skip set was
+    matched on the repo-RELATIVE path, because matching ``path.parts`` of the absolute one
+    matches the worktree the suite is *running in* and skips every file in the tree.
+    ``git ls-files`` prints paths relative to the process's own directory, so running it
+    anywhere but ``REPO`` makes every ``REPO / name`` join name a file that does not exist,
+    ``is_file()`` drops all of them, and the walk comes back empty and green. Same failure,
+    one layer down.
     """
+    # stderr is left inherited, so git's own "not a git repository" reaches whoever ran this.
+    listing = subprocess.run(
+        # S607: git is resolved off PATH, the same trust as the runner that started this.
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],  # noqa: S607
+        cwd=REPO,
+        stdout=subprocess.PIPE,
+        check=True,
+    ).stdout.decode()
     found: list[tuple[Path, str]] = []
-    # ``.dev-logs`` is gitignored runtime output, like the rest of these: whatever the dev
-    # servers happened to print last is not this branch's source. It earns a place here because
-    # the walk reads it -- a stack trace echoing a uvicorn command line would be collected as a
-    # LAUNCH SITE and fail ``_EXPECTED_LAUNCHES`` in whichever checkout last ran the script,
-    # naming a file no branch can fix. One log file per port makes that likelier, not rarer.
-    skip = {
-        ".git",
-        "node_modules",
-        ".venv",
-        "dist",
-        "__pycache__",
-        ".ruff_cache",
-        ".mypy_cache",
-        ".dev-logs",
-    }
-    for path in REPO.rglob("*"):
-        if not path.is_file() or path.resolve() == SELF:
+    for name in listing.split("\0"):
+        if not name:
             continue
-        relative = path.relative_to(REPO)
-        if any(p in skip for p in relative.parts) or relative.parts[:2] == (".claude", "worktrees"):
+        path = REPO / name
+        # ``--cached`` also names a file deleted from the working tree but still in the index.
+        if not path.is_file() or path.resolve() == SELF:
             continue
         try:
             found.append((path, path.read_text(encoding="utf-8")))
         except (UnicodeDecodeError, OSError):
             continue
     return found
+
+
+def test_the_repo_walk_never_reads_a_gitignored_file(tmp_path: Path) -> None:
+    """Rule 145: the count is pinned over a tree whose membership is controlled.
+
+    Counting the real checkout would pin a number that moves with every file added, so the
+    population is four files here, two of them ignored, reconciled by hand. The ignored pair
+    is shaped like what broke this: a directory of session scratch, and a log holding a line
+    a gate would read as a launch site. Neither is reachable from a branch, so a walk that
+    collects them is red in every checkout that has them and green in CI forever.
+
+    ``.gitignore`` itself is in the expected set because it is untracked and not ignored,
+    which is the half of the invocation ``--cached`` alone would drop.
+    """
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # noqa: S607
+    (tmp_path / ".gitignore").write_text("scratch/\n*.log\n", encoding="utf-8")
+    (tmp_path / "kept.md").write_text("source\n", encoding="utf-8")
+    (tmp_path / "scratch").mkdir()
+    (tmp_path / "scratch" / "handoff.md").write_text("session scratch\n", encoding="utf-8")
+    (tmp_path / "noisy.log").write_text(
+        'uvicorn reaper.main:create_app --factory --port "8420"\n', encoding="utf-8"
+    )
+
+    global REPO
+    real, REPO = REPO, tmp_path
+    _repo_text_files.cache_clear()
+    try:
+        found = {path.relative_to(tmp_path).as_posix() for path, _ in _repo_text_files()}
+    finally:
+        REPO = real
+        _repo_text_files.cache_clear()
+
+    assert found == {".gitignore", "kept.md"}, found
 
 
 # Every real invocation of the app carries ``--factory``, because ``create_app`` IS a factory

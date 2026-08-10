@@ -1323,7 +1323,7 @@ the layer beneath it was just never built.
 
 ### 1.5 Four tests that a linter runs or that cannot fail
 
-`test_no_bare_exception_assertions_in_tests` (`test_repo_hygiene.py:442`) greps for
+`test_no_bare_exception_assertions_in_tests` (in `test_repo_hygiene.py`) greps for
 `pytest.raises(Exception)`; **ruff B017 is enabled, runs in CI, and is strictly broader**.
 `test_instruction_files_exist:278` filters a list built from a glob for absent files, which a glob
 cannot return. `test_the_select_name_matcher_rejects_what_it_claims_to_reject`'s case at `:3116`
@@ -2892,9 +2892,9 @@ resets four process-global throttles per test.
 > reads the developer's real `.env` and starts the IMDb download. `test_openapi_tags.py`'s fixture
 > is the exception and is safe — 10 consumers, not 11, all strictly read-only.
 >
-> **`_hermetic`'s own docstring is a rule 7/24 violation.** `tests/conftest.py:225` claims "no
-> network"; the fixture blocks no sockets, and the 15-second test is the proof. Correct it in
-> whatever change lands the socket guard.
+> **`_hermetic`'s own docstring is a rule 7/24 violation.** It claims "no network" in
+> `tests/conftest.py`; the fixture blocks no sockets, and the 15-second test is the proof.
+> Correct it in whatever change lands the socket guard.
 
 **And do not go looking for parametrize candidates.** The lane AST-normalized all 3,164 test bodies
 twice, once on constants and once on constants plus variable renaming. Bodies of 5 lines or more
