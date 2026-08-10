@@ -33,7 +33,7 @@ import asyncio
 import contextlib
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -601,12 +601,53 @@ class PlexClient:
             connected = self._server
             if connected is not None:
                 return connected
+            # Not through `_call`: this is what builds the server `_call` takes for granted,
+            # and its message names an address rather than an attempt.
             try:
                 built = await asyncio.to_thread(build)
             except Exception as exc:
                 raise PlexError(f"Could not reach Plex at {self._base_url}: {exc}") from exc
             self._server = built
             return built
+
+    async def _call[T](self, work: Callable[[], T], *, what: str) -> T:
+        """Run one synchronous plexapi call off the event loop, mapping its failures.
+
+        plexapi is synchronous, so every call in this client is a closure handed to a worker
+        thread. The failure mapping around it was written out at each one: a catch-all
+        converting whatever plexapi raised into a :class:`PlexError` naming what was being
+        attempted (rule 9/110), and, on every mutating method, an arm ahead of it letting the
+        transport guard's refusal through unchanged.
+
+        **The refusal arm is the reason this is a helper rather than a tidy-up.** A guard
+        refusal is not a Plex failure: it means a mutating call was attempted without the host
+        armed or without the intent journalled first, and re-labeling it ``PlexError`` tells the
+        caller Plex is unwell and invites it to degrade. Eight write methods each carried that
+        arm by hand, so a ninth written later inherits nothing. Here it is one declaration and a
+        new write cannot arrive without it.
+
+        ``asyncio.to_thread`` rather than a shared executor, and that is load-bearing: it copies
+        the context, and the journalled-intent flag the guard reads is a
+        :class:`~contextvars.ContextVar`. Under ``loop.run_in_executor`` with a bare executor
+        the worker reads it as unset and every journalled write is refused. Fail-closed in both
+        directions, and both executor call sites swallow the refusal into a warning, so it would
+        break quietly.
+
+        **Five methods do not read through this and each says why in place**: ``_connect``
+        (it builds the server this takes for granted), ``active_streams`` (its message is the
+        fail-closed reasoning, not a verb phrase), ``refresh_running`` (it degrades to a warning
+        rather than raising), ``aclose`` (no mapping at all, it is teardown), and ``trash_count``
+        (its own read raises ``PlexError``, which this would wrap a second time).
+        """
+        try:
+            return await asyncio.to_thread(work)
+        # Ahead of the catch-all, deliberately. `SafetyViolationError` is off `PlexError` and
+        # must reach the caller as itself; `clients/base.refuse_mutation` has already logged it
+        # at the point of refusal.
+        except SafetyViolationError:
+            raise
+        except Exception as exc:
+            raise PlexError(f"Could not {what}: {exc}") from exc
 
     # -- reading -----------------------------------------------------------
 
@@ -642,6 +683,8 @@ class PlexClient:
                 )
             return streams
 
+        # Not through `_call`: the message below is the fail-closed reasoning itself, not a
+        # verb phrase, and this is the last read before an irreversible act.
         try:
             return await asyncio.to_thread(read)
         except Exception as exc:
@@ -683,10 +726,7 @@ class PlexClient:
                 for s in server.library.sections()
             ]
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not read Plex section paths: {exc}") from exc
+        return await self._call(read, what="read Plex section paths")
 
     async def library_guid_index(
         self, *, section_type: str, allowed_sections: set[int] | None = None
@@ -832,12 +872,7 @@ class PlexClient:
             return out
 
         async with self._sweep_lock:
-            try:
-                out = await asyncio.to_thread(read)
-            except Exception as exc:
-                raise PlexError(
-                    f"Could not sweep Plex GUIDs for {section_type} sections: {exc}"
-                ) from exc
+            out = await self._call(read, what=f"sweep Plex GUIDs for {section_type} sections")
 
         # Back on the event loop, with the worker thread joined, so the collector is
         # appended to from one place. One reason for the whole sweep, however many chunks
@@ -867,10 +902,7 @@ class PlexClient:
         def read() -> int:
             return int(server.library.sectionByID(section_key).totalSize)
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not count items in section {section_key}: {exc}") from exc
+        return await self._call(read, what=f"count items in section {section_key}")
 
     async def trash_count(self, section_key: int) -> int:
         """How many items are sitting in one section's trash, waiting to be purged.
@@ -913,6 +945,8 @@ class PlexClient:
                 raise PlexError(f"trash listing for section {section_key} reported no totalSize")
             return int(raw)
 
+        # Not through `_call`: `read` raises `PlexError` itself on a missing totalSize, and
+        # `_call` would wrap that into a second one naming the wrong thing.
         try:
             return await asyncio.to_thread(read)
         except PlexError:
@@ -937,10 +971,7 @@ class PlexClient:
         def read() -> bool:
             return bool(server.settings.get("autoEmptyTrash").value)
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not read the empty-trash-after-scan setting: {exc}") from exc
+        return await self._call(read, what="read the empty-trash-after-scan setting")
 
     async def aclose(self) -> None:
         """Close the underlying plexapi session, if one was ever built.
@@ -958,6 +989,7 @@ class PlexClient:
             if session is not None:
                 session.close()
 
+        # Not through `_call`: teardown maps nothing, because there is no caller left to tell.
         await asyncio.to_thread(close)
 
     async def __aenter__(self) -> PlexClient:
@@ -981,6 +1013,8 @@ class PlexClient:
             section.reload()
             return bool(getattr(section, "refreshing", False))
 
+        # Not through `_call`: this one degrades to a warning and a conservative True rather
+        # than raising, so there is no `PlexError` for a shared mapping to build.
         try:
             return await asyncio.to_thread(read)
         except Exception as exc:
@@ -1009,12 +1043,7 @@ class PlexClient:
                 keys.update(int(el.get("ratingKey") or 0) for el in raw)
             return keys
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(
-                f"Could not read items labeled {label!r} in section {section_key}: {exc}"
-            ) from exc
+        return await self._call(read, what=f"read items labeled {label!r} in section {section_key}")
 
     async def video_sections(self) -> list[PlexSection]:
         """Every movie and show library on the server, for the library picker.
@@ -1031,10 +1060,7 @@ class PlexClient:
                 if s.type in ("movie", "show")
             ]
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not list Plex libraries: {exc}") from exc
+        return await self._call(read, what="list Plex libraries")
 
     async def section_rating_keys(self, section_key: int, *, kind: str) -> set[int]:
         """Every rating key in one section, at the level the shelf works on: movies in a
@@ -1057,10 +1083,7 @@ class PlexClient:
                 keys.update(int(el.get("ratingKey") or 0) for el in raw)
             return keys
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not list section {section_key}: {exc}") from exc
+        return await self._call(read, what=f"list section {section_key}")
 
     async def library_season_index(
         self, *, allowed_sections: set[int] | None = None
@@ -1131,10 +1154,7 @@ class PlexClient:
             return out
 
         async with self._sweep_lock:
-            try:
-                return await asyncio.to_thread(read)
-            except Exception as exc:
-                raise PlexError(f"Could not sweep Plex seasons: {exc}") from exc
+            return await self._call(read, what="sweep Plex seasons")
 
     async def find_collection(self, section_key: int, name: str) -> int | None:
         """The rating key of the collection called ``name`` in one section, or ``None``.
@@ -1162,12 +1182,9 @@ class PlexClient:
                         return int(key)
             return None
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(
-                f"Could not look for the {name!r} collection in section {section_key}: {exc}"
-            ) from exc
+        return await self._call(
+            read, what=f"look for the {name!r} collection in section {section_key}"
+        )
 
     async def collection_children(self, collection_key: int) -> set[int]:
         """The rating keys currently on one collection. A read.
@@ -1190,10 +1207,7 @@ class PlexClient:
                 keys.update(int(el.get("ratingKey")) for el in raw)
             return keys
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not read collection {collection_key}: {exc}") from exc
+        return await self._call(read, what=f"read collection {collection_key}")
 
     # -- writing -----------------------------------------------------------
     #
@@ -1240,12 +1254,7 @@ class PlexClient:
                 if items:
                     section.batchMultiEdits(items).addLabel(label).saveMultiEdits()
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not add label {label!r}: {exc}") from exc
+        await self._call(write, what=f"add label {label!r}")
 
     async def remove_label(self, section_key: int, rating_keys: list[int], label: str) -> None:
         """Remove a label from many items.
@@ -1284,12 +1293,7 @@ class PlexClient:
                 for actual_tag, group in by_spelling.items():
                     section.batchMultiEdits(group).removeLabel(actual_tag).saveMultiEdits()
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not remove label {label!r}: {exc}") from exc
+        await self._call(write, what=f"remove label {label!r}")
 
     @staticmethod
     def _metadata_uri(machine_identifier: str, rating_keys: list[int]) -> str:
@@ -1334,12 +1338,7 @@ class PlexClient:
                     return int(key)
             return None
 
-        try:
-            created = await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not create the {name!r} collection: {exc}") from exc
+        created = await self._call(write, what=f"create the {name!r} collection")
 
         if created is not None and len(rating_keys) > BATCH_SIZE:
             await self.add_to_collection(created, rating_keys[BATCH_SIZE:])
@@ -1365,12 +1364,7 @@ class PlexClient:
                     method=server._session.put,
                 )
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not add items to collection {collection_key}: {exc}") from exc
+        await self._call(write, what=f"add items to collection {collection_key}")
 
     async def remove_collection_members(
         self, section_key: int, *, name: str, rating_keys: list[int]
@@ -1431,12 +1425,7 @@ class PlexClient:
                         actual_tag, locked=True
                     ).saveMultiEdits()
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not remove items from the {name!r} collection: {exc}") from exc
+        await self._call(write, what=f"remove items from the {name!r} collection")
 
     async def delete_collection(self, collection_key: int) -> None:
         """Delete a whole collection in one request.
@@ -1456,12 +1445,7 @@ class PlexClient:
                 method=server._session.delete,
             )
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not delete collection {collection_key}: {exc}") from exc
+        await self._call(write, what=f"delete collection {collection_key}")
 
     async def refresh_path(self, section_key: int, path: str) -> None:
         """Rescan **one directory**, not the whole section.
@@ -1487,12 +1471,7 @@ class PlexClient:
         def write() -> None:
             server.library.sectionByID(section_key).update(path=path)
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not refresh {path!r}: {exc}") from exc
+        await self._call(write, what=f"refresh {path!r}")
 
     async def empty_trash(self, section_key: int) -> None:
         """Purge one section's trash: the items Plex marked missing after a refresh.
@@ -1515,9 +1494,4 @@ class PlexClient:
         def write() -> None:
             server.library.sectionByID(section_key).emptyTrash()
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not empty trash for section {section_key}: {exc}") from exc
+        await self._call(write, what=f"empty trash for section {section_key}")
