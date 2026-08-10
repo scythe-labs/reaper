@@ -3396,10 +3396,10 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-9 | 2 identical loops, ~10 | 2 loops, opposite polarity, different returns | kill, indirection on the canary check |
 | W11-10 | getter ×4 plus 2 job blocks, ~45 | 4 getters exact, the job blocks share ~8 lines | unsettled, scout builds the getters at -7, verifier kills the item |
 | W11-11 | 11 times, 7 in `run_scan` | 12 times, the 7 are in `_run_scan_locked` | kill, a helper costs +7 |
-| W11-12 | 4 call sites, ~40 | block above | build |
+| W11-12 | 4 call sites, ~40 | 5 sites, -14; `~40` sized the rebuild, not the parameter | **built**, -10 net |
 | W11-13 | 2 parsers differ on a negative header | right | kill, block above |
 | W11-14 | 2 spellings, 4 sites | right | kill, two different numbers on purpose |
-| W11-15 | 80 unbounded, `ratelimit.py:200` an unused gate | block above | build |
+| W11-15 | 80 unbounded, `ratelimit.py:200` an unused gate | block above; the gate has 4 callers and sheds load | **built**, +11 |
 | W11-16 | 4 keys, 4 existing shared hooks, ~40 | block above | build, 2 keys |
 | W11-17 | hand-written 6 times, ~20 | 6 sites, 4 to 5 hand-written, the rest already hooks | kill, no two of the residue do the same work |
 | W11-18 | 2 machines, deps-disable twice, ~25 | right, nets -8 to -12 | build, low priority |
@@ -3422,7 +3422,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-36 | 4 copies plus a deliberate 5th | right, plus an unnamed pair in `BackupPanel` and `AboutPanel` | kill as a dedup, write the hygiene gate instead |
 | W11-37 | 3 identity entries | right | build, -3, never its own PR |
 | W11-38 | the ritual 5 times | 9 sites in 2 rituals, 5 status and 4 message | kill, a helper is a rename |
-| W11-39 | 4 call sites, ~15 | right | build, `overrides()` keeps its 2-column select |
+| W11-39 | 4 call sites, ~15 | 4 sites, only 2 adjacent; built at **+5** | **killed**, S5 |
 | W11-40 | unindexed, never swept, grows for the life of the install | 3 tree claims right, framing wrong, block above | build the index only |
 | W11-41 | 13 models | 15 models | kill, byte-identical DDL is why nothing is gained |
 | W11-42 | ~85 lines, all `ci` | populations right, ~16 removable, provenance pair unresolved | build the macOS probe, defer the composite actions |
