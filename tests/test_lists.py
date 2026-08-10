@@ -79,11 +79,11 @@ class _FakePlexServer:
     the resolver has to survive.
     """
 
-    def __init__(self, libraries: dict[str, list[str | None | _Held] | None]) -> None:
+    def __init__(self, libraries: dict[str, list[str | _Held | None] | None]) -> None:
         self.library = self._Library(libraries)
 
     class _Library:
-        def __init__(self, libraries: dict[str, list[str | None | _Held] | None]) -> None:
+        def __init__(self, libraries: dict[str, list[str | _Held | None] | None]) -> None:
             self._libraries = libraries
 
         def sections(self) -> list[_FakePlexServer._Section]:
@@ -93,7 +93,7 @@ class _FakePlexServer:
             ]
 
     class _Section:
-        def __init__(self, title: str, entries: list[str | None | _Held] | None) -> None:
+        def __init__(self, title: str, entries: list[str | _Held | None] | None) -> None:
             self.title = title
             self._entries = entries
 
@@ -105,7 +105,7 @@ class _FakePlexServer:
             return _FakePlexServer._Collection(self._entries)
 
     class _Collection:
-        def __init__(self, entries: list[str | None | _Held]) -> None:
+        def __init__(self, entries: list[str | _Held | None]) -> None:
             self._entries = [e if isinstance(e, _Held) else _Held(e) for e in entries]
 
         def items(self) -> list[object]:
@@ -624,7 +624,7 @@ class TestATitleTheContainerStillListsIsNeverDropped:
     """
 
     @staticmethod
-    def _collection(*entries: str | None | _Held) -> PlexCollection:
+    def _collection(*entries: str | _Held | None) -> PlexCollection:
         return PlexCollection(
             server=_FakePlexServer({"Movies": list(entries)}), section_name="Movies"
         )
@@ -758,7 +758,7 @@ class TestATitlePlexNeverMatchedIsStillProtected:
     and without that it is on the operator's keep list and Reaper reaps it anyway."""
 
     @staticmethod
-    def _collection(*entries: str | None | _Held) -> PlexCollection:
+    def _collection(*entries: str | _Held | None) -> PlexCollection:
         return PlexCollection(
             server=_FakePlexServer({"Movies": list(entries)}), section_name="Movies"
         )

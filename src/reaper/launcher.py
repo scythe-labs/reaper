@@ -327,7 +327,7 @@ def _open_browser_when_up(port: int) -> None:
         url = f"http://127.0.0.1:{port}/api/health"
         while time.monotonic() < deadline:
             try:
-                with urllib.request.urlopen(url, timeout=3) as response:  # noqa: S310
+                with urllib.request.urlopen(url, timeout=3) as response:
                     if response.status == 200:
                         webbrowser.open(f"http://127.0.0.1:{port}")
                         return
