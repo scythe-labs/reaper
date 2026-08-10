@@ -3088,6 +3088,66 @@ the `RatingRule` dataclass's own default. That argues for pinning the boundary r
 it: the dataclass default is 0, every percentage bar carries 0, and one validator is the only
 thing standing between them.
 
+## A cap on the work is not a bound on the burst (2026-08-10)
+
+`fairness._enrich_titles` looks bounded and is not. `_TITLE_LOOKUP_CAP = 80` caps how many
+not-in-scan titles get a live name lookup per Scales load, and the docstring said the calls were
+therefore bounded. They are bounded in total and unbounded in parallel: every target started at
+the same instant. httpx's default connection pool holds 100, which sits above the cap, so nothing
+below the semaphore imposed a ceiling and one page load could open 80 sockets to one portal.
+
+**The shape is worth recognizing because the cap reads as the safeguard.** A cap answers "how
+much", a semaphore answers "how much at once", and a comment that says "bounded" without saying
+which one is the reason nobody looked. Measured with a portal that counts what is in flight: 24
+targets peaked at 24 concurrent, and at 8 under `asyncio.Semaphore(8)`.
+
+**The load-shedder was the wrong tool, twice over.** The finding proposed reusing
+`auth/ratelimit.ConcurrencyGate` and called it unused. It has four production callers, and its
+`acquire` returns 0 when full so the caller sheds load rather than waiting, which for a page
+enriching titles would drop names instead of pacing the reads.
+
+## Removing a redundant parameter removes what its test could distinguish (2026-08-10)
+
+Five scheduler functions took `data_dir` beside the `settings` it came from, and every production
+call site passed `settings.data_dir`. Deleting the parameter is -14 lines and leaves one source
+for the folder. It also silently weakens a test, and that is the part worth writing down.
+
+`test_the_snapshot_sweep_is_handed_the_folder_the_database_is_in` handed `build_scheduler` a
+folder that was *not* the engine's, on purpose, because the compaction opens
+`data_dir / "reaper.db"` with a raw sqlite3 connection: a wrong folder creates an empty second
+database and vacuums that while the real one is never compacted. Its docstring named rule 141
+outright, saying that pinning the engine's own path "would hold just as well if the job derived
+its own". Removing the parameter is exactly the change that makes the job derive its own, so the
+divergent value the test relied on stops existing.
+
+**The right reading is that the test's question was retired, not answered.** With one source the
+two cannot diverge, so what is left to pin is that the sweep and the engine resolve to the same
+place, asserted against `settings.database_path.parent` and driven red against a `Path("data")`
+wiring. **A test that pins a value's provenance is a signal that the provenance is worth
+keeping, and sometimes it is the argument for the opposite change.** The intermediate option
+here, keeping the parameter on `build_scheduler` alone at -13 lines, preserved the test verbatim
+and was the worst of the three: it leaves the ratings download reading `settings.data_dir` while
+the sweep reads the argument, two sources for one folder with a test proving only that one of
+them arrives.
+
+## An extraction can be larger than the duplication it removes (2026-08-10)
+
+`whitelist.overrides()` and `spare_expiries()` are two scans of one table, and a third function
+in the same file already reads all three columns in one statement, so folding the pair into one
+read looks like free subtraction. Built and measured: `whitelist.py` +14/-7, `review.py` +2/-4, a
+**net +5**.
+
+**The arithmetic is structural rather than incidental.** The two reads being replaced are two
+lines each, a `select` and a `dict()`. What replaces them is a loop that splits one result set
+into two maps, which is ten. Any extraction whose replacement must reshape data pays that, and
+the pattern generalizes: collapsing N cheap reads into one richer read adds the projection code
+the cheap reads did not need.
+
+Two further figures in the finding were wrong. Only two of its four call sites are adjacent; the
+other two sit 40 and about 150 lines apart, so collapsing them relocates a read instead of
+removing one. And one caller comes out worse, `spare_expiries` alone going from a filtered
+two-column select to an unfiltered three-column one.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
