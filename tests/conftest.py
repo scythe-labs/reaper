@@ -206,8 +206,10 @@ class NetworkReached(BaseException):
     about. ``_socket.socket.connect`` is the C base class and cannot be patched, so code
     reaching past ``socket.socket`` for it connects; nothing in the tree or the environment
     does. A raw ``SOCK_RAW``/``AF_PACKET`` socket needs root and is out of scope. And a
-    subprocess has its own address space -- the one test that shells out patches
-    ``subprocess.run`` and never launches anything.
+    subprocess has its own address space, so the two places that shell out are unguarded:
+    ``test_launcher.py`` patches ``subprocess.run`` and launches nothing, and
+    ``test_repo_hygiene.py`` runs ``git`` against the checkout on disk. Neither reaches the
+    network, and a third that did would go unseen here.
     """
 
 

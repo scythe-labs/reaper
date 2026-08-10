@@ -5,7 +5,9 @@ loads them, or a human who never reads them, breaks the rule silently. Every rul
 is one that can be checked mechanically, so it costs nothing to enforce and catches humans
 and agents alike. A rule that needs judgment stays prose; only the greppable ones live here.
 
-These are filesystem checks -- no app boot, no fixtures, no network.
+These are filesystem checks over this checkout, and they reach no network. Two things they do
+reach: ``reaper.engine.gates`` is imported for the one guard that derives its expectation by
+running the gate, and ``git`` is run to list the files ``_repo_text_files`` walks.
 """
 
 from __future__ import annotations
@@ -13,7 +15,9 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 from pathlib import Path
@@ -80,6 +84,11 @@ _ALLOWED_CONTROL_BYTES = frozenset(b"\t\n\r")
 # change under the cache mid-session. Every caller builds a new list from the result and none
 # sorts or appends in place, so the cached value needs no defensive copy. Cost: the text walk
 # pins about 23 MiB per xdist worker for the session.
+#
+# One exception, and it is the reason it is written down. Both walks read the module global
+# ``REPO``, and ``test_the_repo_walk_never_reads_a_gitignored_file`` repoints it at a synthetic
+# tree, so there the cache CAN go stale. It calls ``cache_clear`` on both sides of the swap.
+# A later swap that skips the clear serves that two-file walk to every gate downstream.
 @lru_cache
 def _source_files_to_scan() -> list[Path]:
     """Every hand-written source and instruction file, for the byte-level scan below."""
@@ -1218,50 +1227,118 @@ def test_the_log_path_matcher_reads_every_spelling_it_claims() -> None:
 # Cached for the reason stated above ``_source_files_to_scan``, and this is the walk that costs.
 @lru_cache
 def _repo_text_files() -> list[tuple[Path, str]]:
-    """Every readable text file in THIS checkout, with its contents.
+    """Every readable text file git considers part of THIS checkout, with its contents.
 
-    Scoped to this checkout on purpose. ``.claude/worktrees/`` is gitignored (``.gitignore``)
-    and holds agent worktrees, which are entire repo copies sitting inside the repo root -- and
-    ``rglob`` honors no ignore file, so walking into them judges other branches' files as if
-    they were ours. A worktree's ``.git`` is a *file*, so the skip entry below does not stop the
-    descent either. Left in, ``uv run pytest`` in the main checkout fails the moment any
-    worktree cut before this fix is still on disk, naming files the branch under test cannot
-    reach. A gate nobody can turn green from their own branch is a gate that gets deleted.
+    The population comes from git, not from ``rglob``, which honors no ignore file. Gitignored
+    directories sit inside the repo root and every gate below reads whatever this walk hands
+    it. Three of them are the ones that bit. ``.claude/worktrees/`` holds agent worktrees,
+    entire repo copies, so a raw walk judges other branches' files as if they were ours, and a
+    worktree's ``.git`` is a *file*, so skipping that name does not stop the descent.
+    ``.claude/review-findings/`` is session handoff scratch. ``.dev-logs/`` is whatever the dev
+    servers last printed, and a stack trace echoing a uvicorn command line is collected there
+    as a LAUNCH SITE. Each one fails ``uv run pytest`` in a checkout that has it on disk while
+    CI, which has none, stays green. A gate nobody can turn green from their own branch is a
+    gate that gets deleted.
 
-    The skip is matched on the REPO-RELATIVE path, which is the part that is easy to get
-    backwards: ``skip`` is tested against ``path.parts``, so putting ``"worktrees"`` in it
-    would match the ABSOLUTE path and skip every file in the tree whenever the suite runs
-    from inside a worktree -- which is where these sessions run it. The relative form also
-    stops an ancestor directory outside the repo that happens to be named ``dist`` from
-    silently emptying the walk.
+    This replaced a hand-kept skip set, a mirror of ``.gitignore`` that needed an edit every
+    time the ignore file grew (rule 103). It was four entries behind when it was deleted:
+    ``.claude/review-findings/``, ``.hypothesis/``, ``.pytest_cache/`` and
+    ``mutation-report-*.json``. Two of those four are created by running this very suite,
+    which is why the set could not stay current by anyone's diligence.
+    ``--others --exclude-standard`` keeps a file created but not yet staged, which is the
+    state a gate is most useful in.
+
+    ``cwd=REPO`` carries the weight, and it inherits a trap worth recording. The skip set was
+    matched on the repo-RELATIVE path, because matching ``path.parts`` of the absolute one
+    matches the worktree the suite is *running in* and skips every file in the tree.
+    ``git ls-files`` prints paths relative to the process's own directory, so running it
+    anywhere but ``REPO`` makes every ``REPO / name`` join name a file that does not exist,
+    ``is_file()`` drops all of them, and the walk comes back empty and green. Same failure,
+    one layer down.
     """
+    # stderr is left inherited, so git's own "not a git repository" reaches whoever ran this.
+    listing = subprocess.run(
+        # S607: git is resolved off PATH, the same trust as the runner that started this.
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],  # noqa: S607
+        cwd=REPO,
+        stdout=subprocess.PIPE,
+        check=True,
+        # ``-z`` was chosen so an odd filename survives the split; a strict decode would give
+        # that back, raising out of the walk and taking every gate built on it with it.
+    ).stdout.decode(errors="surrogateescape")
     found: list[tuple[Path, str]] = []
-    # ``.dev-logs`` is gitignored runtime output, like the rest of these: whatever the dev
-    # servers happened to print last is not this branch's source. It earns a place here because
-    # the walk reads it -- a stack trace echoing a uvicorn command line would be collected as a
-    # LAUNCH SITE and fail ``_EXPECTED_LAUNCHES`` in whichever checkout last ran the script,
-    # naming a file no branch can fix. One log file per port makes that likelier, not rarer.
-    skip = {
-        ".git",
-        "node_modules",
-        ".venv",
-        "dist",
-        "__pycache__",
-        ".ruff_cache",
-        ".mypy_cache",
-        ".dev-logs",
-    }
-    for path in REPO.rglob("*"):
-        if not path.is_file() or path.resolve() == SELF:
+    for name in listing.split("\0"):
+        if not name:
             continue
-        relative = path.relative_to(REPO)
-        if any(p in skip for p in relative.parts) or relative.parts[:2] == (".claude", "worktrees"):
+        path = REPO / name
+        # ``--cached`` also names a file deleted from the working tree but still in the index.
+        if not path.is_file() or path.resolve() == SELF:
             continue
         try:
             found.append((path, path.read_text(encoding="utf-8")))
         except (UnicodeDecodeError, OSError):
             continue
     return found
+
+
+def test_the_repo_walk_never_reads_a_gitignored_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 145: the count is pinned over a tree whose membership is controlled.
+
+    Counting the real checkout would pin a number that moves with every file added, so the
+    population is five files here, two of them ignored, reconciled by hand. The ignored pair
+    is shaped like what broke this: a directory of session scratch, and a log holding a line
+    a gate would read as a launch site. Neither is reachable from a branch, so a walk that
+    collects them is red in every checkout that has them and green in CI forever.
+
+    **Each argument owns one member of the expected set**, or one can be dropped and this
+    still reads green. ``kept.md`` is staged, so only ``--cached`` reaches it; ``.gitignore``
+    is untracked and not ignored, so only ``--others`` does; dropping ``--exclude-standard``
+    adds the ignored pair back; and the non-UTF8 name is what ``-z`` and the walk's
+    ``surrogateescape`` decode are for, a strict decode raising out of the walk instead.
+
+    **The git environment is scrubbed three ways, and each closes a hole that was measured
+    rather than imagined** (rule 119). ``GIT_DIR`` and ``GIT_WORK_TREE`` beat ``cwd=``, so an
+    inherited one makes ``git init`` a no-op against someone else's repository, ``git add``
+    write into that repository's index, and this test pass having proved nothing. Clearing
+    every ``GIT_*`` name is what stops that. ``GIT_CONFIG_GLOBAL`` and ``GIT_CONFIG_SYSTEM``
+    then keep a developer's ``init.templateDir`` from seeding ``.git/info/exclude``. And
+    ``core.excludesFile`` is pinned inside the repo, because its DEFAULT is
+    ``$XDG_CONFIG_HOME/git/ignore``, which ``--exclude-standard`` reads with no config file
+    involved and which a repo-level setting is the only thing that overrides.
+    """
+    for name in [key for key in os.environ if key.startswith("GIT_")]:
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "absent-global"))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "absent-system"))
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # noqa: S607
+    subprocess.run(  # noqa: S603 - the one non-literal argument is os.devnull
+        ["git", "config", "core.excludesFile", os.devnull],  # noqa: S607
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / ".gitignore").write_text("scratch/\n*.log\n", encoding="utf-8")
+    (tmp_path / "kept.md").write_text("source\n", encoding="utf-8")
+    (tmp_path / "scratch").mkdir()
+    (tmp_path / "scratch" / "handoff.md").write_text("session scratch\n", encoding="utf-8")
+    (tmp_path / "noisy.log").write_text(
+        'uvicorn reaper.main:create_app --factory --port "8420"\n', encoding="utf-8"
+    )
+    odd = os.fsdecode(b"caf\xe9.md")
+    (tmp_path / odd).write_text("a name git prints as raw bytes\n", encoding="utf-8")
+    subprocess.run(["git", "add", "kept.md"], cwd=tmp_path, check=True)  # noqa: S607
+
+    global REPO
+    real, REPO = REPO, tmp_path
+    _repo_text_files.cache_clear()
+    try:
+        found = {path.relative_to(tmp_path).as_posix() for path, _ in _repo_text_files()}
+    finally:
+        REPO = real
+        _repo_text_files.cache_clear()
+
+    assert found == {".gitignore", "kept.md", odd}, found
 
 
 # Every real invocation of the app carries ``--factory``, because ``create_app`` IS a factory
