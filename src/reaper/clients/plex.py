@@ -67,6 +67,26 @@ BATCH_SIZE = 100
 #: per item, not per page), bounded so a huge library never materialises in one response.
 SWEEP_PAGE_SIZE = 1000
 
+#: Hard stop on :func:`_iter_pages` (rule 56/89). Its one continuing path is a ``totalSize`` that
+#: stays ahead of ``start`` on a non-empty page. ``totalSize`` is re-read from every response, so
+#: the walk's length is the answering server's to choose. Nothing outside the loop bounds it. The
+#: sweeps run under ``asyncio.to_thread``, which cannot be canceled, and
+#: ``scan_runner._scan_running`` is cleared in a ``finally`` a loop that never returns never
+#: reaches. Every later scan is then refused until the container restarts. What answers is not
+#: always Plex either: a reverse proxy, an auth portal or a tunnel sits in that path.
+#:
+#: The bound is 1,000 PAGES, so the item count it covers falls with the page size the server
+#: actually serves. A million at ``SWEEP_PAGE_SIZE`` rows, less against a server that clamps the
+#: page below the request, which the loop follows to the end rather than truncating.
+#:
+#: Tripping it RAISES, which is where the three siblings differ. ``seerr.MAX_PAGES`` raises,
+#: ``history_sync.MAX_HISTORY_PAGES`` stops short and warns, and ``library_index._SPINE_MAX_PAGES``
+#: stops short, warns and degrades. Seerr is the one to match here. ``_iter_pages`` is
+#: complete-or-raise, and every caller reads a protection source. Stopping short would return part
+#: of a section as the whole of it, and the protection built on that read would cover only what
+#: was read.
+SWEEP_MAX_PAGES = 1_000
+
 #: Rating keys per batched ``/library/metadata/{ids}`` read (Rating children + folder
 #: paths). The ids ride in the URL path, so this is bounded by URL length, not by response
 #: size: 400 keys is ~4 KB of comma-joined ids, comfortably under the usual ~8 KB limit,
@@ -463,8 +483,11 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
     authority -- a server that clamps a page below the requested size is still followed to the
     end, and a full page with no ``totalSize`` to bound it is failed closed rather than guessed
     to be the last. Never falls back ``totalSize`` -> ``size`` (rule 56).
+
+    Bounded by :data:`SWEEP_MAX_PAGES`, which raises rather than returning short.
     """
     start = 0
+    pages = 0
     joiner = "&" if query else "?"
     while True:
         container = server.query(
@@ -472,6 +495,7 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
             f"{joiner}X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
         )
         raw = list(container)
+        pages += 1
         if any(el.get("ratingKey") is None for el in raw):
             # A child the paging math cannot advance over: not the container shape the loop
             # assumes. Raise so the caller falls back / degrades, never end on a filtered page.
@@ -489,6 +513,10 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
             if not raw:
                 # start < total but the page was empty: no progress. Fail closed.
                 raise PlexError(f"{what} stalled at {start} of {int(total_attr)}")
+            if pages >= SWEEP_MAX_PAGES:
+                # Only reachable while the reported total keeps outrunning ``start`` on full
+                # pages, which is a server that is not advancing through the listing.
+                raise PlexError(f"{what} never finished, after {start} items")
         elif len(raw) < SWEEP_PAGE_SIZE:
             # No totalSize to lean on: a short raw page is the last page.
             return

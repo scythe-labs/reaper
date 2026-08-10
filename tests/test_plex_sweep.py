@@ -411,6 +411,80 @@ class TestTheShelfReadsPageToo:
             await _client_with(server).collection_children(9)
 
 
+class _NeverAdvancing(_FakeServer):
+    """Serves a full page whose ``totalSize`` sits far ahead of ``start``, forever.
+
+    None of the loop's existing exits fire: the page is never empty, never short, and the
+    reported total is always ahead. Refuses once asked past the cap, so deleting the cap fails
+    this test instead of hanging the suite (rule 118).
+    """
+
+    def __init__(self, limit: int) -> None:
+        super().__init__([_FakeSection(1, "movie")], {})
+        self._limit = limit
+
+    def query(self, path: str) -> Any:
+        self.queries.append(path)
+        if len(self.queries) > self._limit:
+            raise AssertionError("asked for a page past the cap")
+        return fromstring(
+            '<MediaContainer size="1" totalSize="10000">'
+            f'<Video ratingKey="{len(self.queries)}"/>'
+            "</MediaContainer>"
+        )
+
+
+class TestASweepThatNeverFinishesIsBounded:
+    """Rule 56/89's page backstop, on the one paged read of four that lacked one.
+
+    ``plex.SWEEP_MAX_PAGES`` carries why it raises and what a runaway sweep costs.
+    """
+
+    async def test_a_section_sweep_stops_and_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The page count is what stops it, never the total: the fixture's 10,000 would end on
+        its own after 10,000 pages. It raises rather than returning short, matching
+        ``seerr.MAX_PAGES`` and not ``history_sync.MAX_HISTORY_PAGES``, because ``_iter_pages``
+        is complete-or-raise and every caller reads a protection source."""
+        monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 3)
+        server = _NeverAdvancing(limit=4)
+
+        with pytest.raises(PlexError, match="never finished, after 3 items"):
+            await _client_with(server).section_rating_keys(1, kind="movie")
+
+        assert len(server.queries) == 3
+
+    async def test_the_shelf_read_is_bounded_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The two shelf reads enter ``_iter_pages`` directly rather than through
+        ``_iter_section_pages``, and a different cap value from the case above so neither test
+        rests on one number (rule 141). Production is 1,000."""
+        monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 2)
+        server = _NeverAdvancing(limit=3)
+
+        with pytest.raises(PlexError, match="never finished, after 2 items"):
+            await _client_with(server).collection_children(9)
+
+        assert len(server.queries) == 2
+
+    async def test_a_listing_that_ends_on_the_cap_still_reads_in_full(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The trip sits after the ``start >= totalSize`` exit, so a listing whose last page is
+        the cap'th page returns everything. Off by one the other way and the cap would refuse
+        reads that finished."""
+        monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 2)
+        page0 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="1"/></MediaContainer>'
+        page1 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="2"/></MediaContainer>'
+        server = _FakeServer(
+            [_FakeSection(1, "movie")],
+            {
+                "/library/sections/1/all?type=1&X-Plex-Container-Start=0": page0,
+                "/library/sections/1/all?type=1&X-Plex-Container-Start=1": page1,
+            },
+        )
+
+        assert await _client_with(server).section_rating_keys(1, kind="movie") == {1, 2}
+
+
 class TestSectionPaths:
     """B-2/B2-2: the path table addresses sections by KEY, and its failures are PlexError."""
 
