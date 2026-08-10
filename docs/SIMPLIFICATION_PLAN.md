@@ -290,6 +290,7 @@ here first and never reconstructed later.
 | #670 | 8 | W3, `api/deps.py` row | `api/deps.py`, `session_factory`, `runtime_settings`, `secret_box`, `newest_snapshot` | no | The request accessor half only; the admin-password gate is its own `safety-path` PR, and the contradiction paragraph at *Where the phases collide* says why the split does not reopen what it settled. **The row's shape was wrong three ways** and the finding body is corrected in place: the `_sessions` three are `api/{review,runs,whitelist}.py` since `routes.py` is gone; the cluster is 7 `_factory` / 3 `_settings` / 2 `_box`, not four of each, because `setup.py` declares only `_factory`; and `_latest_snapshot` is 2 definitions and 7 calls rather than 7 copies. Four more modules imported an accessor instead of declaring one, so the collapse touches 11. **The scout's own design carried a collision it could not see**: `api/review.py` already has a route handler named `latest_snapshot`, so the helper is `newest_snapshot` and no operationId moves. `auth.py`'s `_safety` stays put, being a hardcoded read-only safety rather than an `app.state` read. `_EXPECTED_LAYERED_MODULES` 83 to 84; **the logger counter does not move**, since none of the four functions logs. 32 inline `app.state` reads are deferred in writing (rule 72): they copied no function. **The review corrected that deferral twice, and both corrections matter to whoever honors it.** Its module list omitted `api/runs.py`, which holds three of the 32 and is the one route that deletes, so a sweep walking the named modules never reaches them. And the three said to read off a bare `app` are not those three: `lists.py:218` and `:240` sit inside a handler that aliases `app = request.app`, so they can adopt today, while all three genuinely blocked reads are in `api/scan.py`'s `launch_scan(app: FastAPI)`, which holds no `Request` at all. The corrected record lives in `deps.py`'s docstring, where the next author reads it |
 | #671 | 8 | W9, `LAUNCHER_CONF_NAME` half | `config.LAUNCHER_CONF_NAME`, `_KNOWN_IMPORT_CYCLES` | no | The two services imported the process entry point to read one filename. **Measured either side with an AST walk over the 115 modules: 9 cycles to 2** under the plan's convention, the 7 that go being every cycle through `backup.py` or `restore.py`; `services.backup`'s import closure 305 to 279, the 26 being `reaper.launcher` plus 25 stdlib it pulled. The 7 that go and the 26 match the scout; **its NINE does not, and the review caught the reconciliation being false**. The scout counts 8 under this convention plus a 9th only if `TYPE_CHECKING` is counted, which this walk excludes; the real 9th is `api.plex -> api.settings -> launcher -> main`, which the scout missed, and its `list_config <-> lists` pair is invisible here. So the two sets of 9 are different sets, and the scout's "only `api.settings -> launcher -> main` survives" is refuted by this PR's own result of two survivors. Its 292 and 460 predate `text.py`. **The gate the scout proposed would not have caught the regression it was proposed for**, which is the finding here: a top-level acyclicity assertion passes with the import put back, because every one of these cycles closes on the function-local imports in `launcher.main()`. So the walk counts function-local edges and `_KNOWN_IMPORT_CYCLES` declares the two survivors as an equality. Driven red both ways, 5 cycles from `backup.py` and 2 from `restore.py`. Three gates were looking at this and none could see it: the layering walk reads four packages and `launcher.py` is outside them, the deferred-import gate reads imports that do not run, and the top-level graph is acyclic either way. **S7 held**: 83 modules and 49 loggers both unmoved, re-verified against the tree. One counter added, `_EXPECTED_SOURCE_MODULES`, at 116 after merging #670's `api/deps.py` in (it was 115 when this branch was cut, and the counter caught the difference). **The boot path is unchanged and one measurement says so out loud**: importing `reaper.launcher` now pulls 170 more modules, 100 to 270, all of them already in `reaper.preflight`'s closure which `main()` imports a few lines later. Seven citations re-anchored, two broken by this diff and five already stale by 2 to 35 lines |
 | #669 | 8 | W6-4 | `reaper.text.fold`, `test_the_comparison_form_of_a_name_is_one_derivation` | no | Rule 88's comparison form as one function, adopted at every site spelling the composite. **Every count written down was low**: measured at the tip it is 37 expressions over 33 lines in 14 modules, against the row's "~28 across 10" and the correction's "30 across 11", plus five more in frozen `alembic/` revisions that are out of the walk. **No exemption list**, which is the design: `fold(value)` is `value.strip().casefold()` exactly, so adoption is behavior-identical by construction, and the gate bans the COMPOSITE only, so the three already-stripped bare `.casefold()` sites need no entry. **The correction's reason for those three is wrong and is the more frightening one** -- it says they omit `strip()` on purpose, where each reads input a line above already stripped -- and it is amended in place. `normalize_label`, `_tag_key` and `_name_key` delegate rather than being deleted, each keeping the domain reason a generic docstring should not absorb. **What the walk cannot see is stated in its own docstring** (rule 147): a bare `.casefold()` on unstripped input, or `.strip().lower()`, of which 16 are deliberate and two more fold PATHS. Driven red by putting one site back. **The `func.lower` divergence is made louder, not repaired**: `_refuse_name_twice` compares SQLite's ASCII-only `lower()` against Python's `casefold`, and the `NOCASE` collation behind it is ASCII-only too, so both layers answer the same way today; named at both ends. **`libraries_for_ids` had no test at all** and is the entire input to the stale-mapping guard, whose two callers fold the other side, so a one-sided fold would warn the operator their correct mapping is wrong. Placement is top-level `src/reaper/text.py`, so `_EXPECTED_LAYERED_MODULES` stays 83, `_EXPECTED_LAYER_EDGES` does not move and the logger count stays 49. Rule 88 names the symbol now, and `docs/LEARNINGS.md`'s "only comparison form" sentence survives only because the helper delegates, which it now says |
+| #PR_B | 8 | W9, the finding-body corrections | none, prose only | no | Three claims in W9 that a reader would act on. **The header's counts**: 108 modules is 116, and 514 edges is a number no walk in the repository reproduces, since an edge count depends on how `from package import name` resolves; the line now points at the gate that measures it instead. "Zero top-level cycles" holds, measured under all three conventions either side of #671. **The cycle arithmetic**: "8" is 9 and "6 of them" is 7, both re-measured at `80d8a39~1`; two cycles survive the move rather than one, the second being `api.plex → api.settings → launcher → main`, which phase 6 created after W9 was measured; and `services.list_config ↔ services.lists` is a tenth needing `TYPE_CHECKING` counted, not the ninth. **The `LAUNCHER_CONF_NAME` bullet** gets a landed note: the closure was 304 to 278, never 347, and "which owns uvicorn, the tray and AppKit" is wrong about the cost, all three being deferred inside `launcher.py` and none of them ever in that closure. The 26 that left are `reaper.launcher` plus 25 stdlib. Both frontend cycles were re-checked and both still stand exactly as written, `PosterFallback` included at 12 lines |
 
 ### Killed while executing
 
@@ -2361,13 +2362,27 @@ An axis no pass has measured. Two of these are the largest single wins in either
 
 ## Wave 9: the module graph
 
-Measured: 108 Python modules, 514 edges, **zero top-level cycles**. Every cycle is already broken;
-the question is which breaks earn their keep, and most do not.
+Measured: **zero top-level cycles**, and the tree measures itself now.
+`tests/test_repo_hygiene.py`'s `test_every_import_cycle_under_src_is_one_someone_declared` walks
+every module under `src/reaper` and holds the graph to a declared set, so read the figures there
+rather than here. This line's "108 Python modules, 514 edges" is 116 and neither: an edge count
+depends on how a walk resolves `from package import name`, and the gate's is 677 at top level.
+Zero top-level cycles is the durable half and still holds. Every cycle is already broken; the
+question is which breaks earn their keep, and most do not.
 
 - **All 8 remaining cycles pass through `reaper.launcher`, and 6 of them exist for one string.**
   `services/backup.py:56` and `restore.py:62` import the application entry point, which owns
   uvicorn, the tray and AppKit, to read `LAUNCHER_CONF_NAME`. Moving that constant to `config.py`
   is ~4 lines and de-lands `reaper.launcher` from `services.backup`'s 347-module import closure.
+
+  > **Landed at #671, and every figure in the row above describes a tree that is gone.** The
+  > constant is `config.LAUNCHER_CONF_NAME` and neither service imports `reaper.launcher` any
+  > more, so both line citations are dead. The closure was **304 before and 278 after**, never
+  > 347. **"Which owns uvicorn, the tray and AppKit" is wrong about what the import cost**:
+  > all three are deferred inside `launcher.py`, so none of them was ever in that closure. The
+  > 26 modules that left are `reaper.launcher` itself plus 25 stdlib it pulls at module level,
+  > `webbrowser` and the `urllib` / `http` / `email` chain behind it. Measured either side, on
+  > the tree #671 landed against.
 - **`api/auth.py` holds five helpers it never calls**, and `api/backup.py` and `api/settings.py`
   reach across into its underscore namespace for them. `_verify_admin_password` and
   `record_password_failure` appear exactly once in `auth.py`: the `def` line. This is the gate
@@ -2412,12 +2427,18 @@ the question is which breaks earn their keep, and most do not.
 > coupling is that the reader would split from its writers. Soften off `behavior`. It is also not
 > the only such edge: `api/runs.py:32 → api/scan.py` is a second.
 >
-> **"6 of the 8 cycles exist for one string" is 7.** Only `api.settings → launcher → main →
-> api.settings` does not pass through `backup.py`/`restore.py`. The 8-count also depends on an
-> unstated convention — count `TYPE_CHECKING` edges and there is a 9th,
-> `services.list_config ↔ services.lists`, not through launcher. `reaper.launcher` loads neither
-> uvicorn nor AppKit at import; both are deferred. The move saves 25 modules, and `config.py` is a
-> clean leaf, so it cannot cycle.
+> **"6 of the 8 cycles exist for one string" is 7, and the 8 is 9.** Re-measured at `80d8a39~1`,
+> the tree #671 landed against, under the convention `_KNOWN_IMPORT_CYCLES` uses: function-local
+> imports counted, `TYPE_CHECKING` excluded. Nine, of which seven pass through `backup.py` or
+> `restore.py` and went with the constant. **Two survive, not one.** The second is
+> `api.plex → api.settings → launcher → main`, created by phase 6's `api/plex.py` after W9 was
+> measured. Counting `TYPE_CHECKING` edges as well gives a tenth,
+> `services.list_config ↔ services.lists`, not through launcher; the sentence this replaces called
+> that one the ninth, and it is the one cycle in the tree that never runs. Top level alone is zero
+> cycles under every convention, either side of the move. `reaper.launcher` loads neither uvicorn
+> nor AppKit at import, confirmed: both are deferred, as is pystray. `config.py` is a clean leaf
+> and cannot cycle. The saving is 26 modules off `services.backup`'s closure, `reaper.launcher`
+> plus the 25 stdlib modules it pulls, which is where the 25 above comes from.
 
 ## Wave 10: already drifted
 
