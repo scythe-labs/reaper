@@ -59,8 +59,15 @@ function ServiceCard({
     // Announced, like `ServiceModal`'s own test and the webhook's in `NotificationsPanel` --
     // three siblings of one
     // result that reached nobody by ear (#192, rule 72). `testSentence` is the one wording.
-    onSuccess: (r) => {
-      setTest({ result: r, of: testedWith() });
+    //
+    // What this request is ABOUT, captured when it is issued rather than computed at success
+    // time, the same as those siblings. Here the fingerprint moves under a REFETCH, not under
+    // typing. The Edit modal opens over this card, and saving a new address there invalidates
+    // `instances`. A test still in flight for the old address would settle stamped with the new
+    // one, and the card would read "Reached" for a host nobody tried.
+    onMutate: () => ({ of: testedWith() }),
+    onSuccess: (r, _v, issued) => {
+      setTest({ result: r, of: issued.of });
       announce(testSentence(r));
       invalidate();
     },
