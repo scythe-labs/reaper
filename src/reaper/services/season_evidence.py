@@ -135,15 +135,25 @@ class SeasonPolicy:
     incomplete (rule 144). Adding a field here now means adding it to :meth:`from_body`, and
     the scan and the replay both get it or neither does.
 
-    The value-level guard is ``tests/test_scan_pipeline.py``'s exactness test, which is what
-    proves the road carries the operator's numbers rather than merely the field names: it
-    drives a real scan under a body with every one of these set away from its default, then
-    replays the frozen bundle under that same body and demands the scan's own verdicts back.
+    The value-level guard is ``tests/test_scan_pipeline.py``'s exactness test, which proves
+    the road carries the operator's numbers and not merely the field names. **Its
+    discriminating assertion is the scan-against-scan one**, ``scanned_before !=
+    scanned_after``, and that changed when the second road went: with the scan and the replay
+    both reading this class, a value dropped here is dropped identically on both sides, so
+    the replay still reproduces the scan and ``replayed == scanned_after`` stays green. What
+    reds is the first scan and the edited scan agreeing when the edit should have moved them.
+    That assertion's message reads like a precondition and is now the guard, so do not delete
+    it as a sanity check.
 
-    No field declares a default, and that is the safety property, not a style choice. Seven
-    of the nine defaulted on ``gather`` before it took this carrier, all but two of them
-    protective, so a caller omitting one silently widened what was prunable. Here an omission
-    is a mypy error and a ``TypeError`` (rule 141).
+    No field declares a default, and that is the safety property rather than a style choice.
+    Seven of the nine defaulted on ``gather`` before it took this carrier. Five of those
+    seven were the *protective* pole, so what an omission cost was the operator's edit being
+    overridden in the keeping direction, which is rule 141's reading of a fixture that cannot
+    tell a passed value from a defaulted one; ``season_lookahead`` at 0 and
+    ``in_progress_hold_days`` at 180 are the two that could widen. Here an omission is a mypy
+    error and a ``TypeError``, and ``tests/test_season_evidence_codec.py``'s
+    ``TestNoSeasonSettingCanBeOmitted`` is what fails when a default is added back, since
+    both build sites pass all nine and neither would notice.
     """
 
     keep_last_seasons: int

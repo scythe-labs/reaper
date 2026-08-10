@@ -1099,10 +1099,14 @@ async def gather(
     activity_degraded: bool,
     # The nine season settings as the one carrier ``plan_from_frozen`` and ``_judge_series``
     # already take, rather than nine loose fields this frame repacked into it. Required and
-    # defaultless, because ``SeasonPolicy`` declares no default for any of the nine: a caller
-    # cannot omit a protective one and silently get a permissive value, and mypy is what
-    # catches the omission (rule 141). Seven of the nine defaulted here until #499's carrier
-    # reached this frame; ``_judge_series`` took it then and this one was left behind.
+    # defaultless, because ``SeasonPolicy`` declares no default for any of the nine, so a
+    # caller cannot omit one and plan against a value the operator never chose. Seven of the
+    # nine defaulted here, and what those defaults cost was rule 141's reading rather than a
+    # widening: five were the protective pole, so an omission overrode the operator's edit in
+    # the keeping direction, and the two that could widen are ``season_lookahead`` at 0 and
+    # ``in_progress_hold_days`` at 180. #499 brought the carrier into this frame as a local
+    # and ``_judge_series`` took it as a parameter; this signature kept the loose copy until
+    # now, which is what left two roads from a ``PolicyBody`` to the planner.
     season_policy: season_evidence.SeasonPolicy,
     window_days: int,
     whitelisted: set[str],

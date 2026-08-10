@@ -244,7 +244,9 @@ on each of the two roads a `PolicyBody` then took to the planner, `SeasonPolicy.
 which is exactly "this road drops the operator's edit". Every one reds its OWN parametrization,
 so the sweep discriminates all nine settings rather than catching them in a bundle. The repack
 is gone since and `gather` takes the carrier, so nine of the eighteen have no site left to
-mutate and the second road cannot drop an edit the first one carries. **Comparing guard reasons rather than
+mutate. What that costs the sweep is worth writing down: with one road, a value dropped in
+`from_body` is dropped on the scan and the replay alike, so the replay still reproduces the
+scan and the *scan-against-scan* assertion is the one that reds. **Comparing guard reasons rather than
 verdict tallies is what made that possible**: a setting routinely changes why a season is kept
 without changing whether it is. Four more fail too — restoring the skip, collapsing the
 three-state to `{}`, returning the frozen guard instead of re-deriving it, and dropping the
