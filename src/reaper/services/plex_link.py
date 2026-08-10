@@ -14,6 +14,11 @@ in exactly those words rather than implying a boundary that does not exist.
 
 We store it anyway, because it is what ``plexapi.connect()`` uses and there is no
 narrower credential on offer. What we do *not* do is pretend.
+
+Two things here are not about linking, and both are here because the sign-in flow in
+:mod:`reaper.services.login` needs them too: :func:`client_identifier`, our stable
+identity to plex.tv, and :func:`start_pin`, which opens either flow's PIN and is told
+which one by ``purpose``. Only the polling halves belong to one flow each.
 """
 
 from __future__ import annotations
@@ -47,8 +52,14 @@ log = structlog.get_logger(__name__)
 CLIENT_ID_KEY = "plex_client_identifier"
 
 #: How long a browser has to finish a PIN flow, sign-in or link, before the pending row
-#: expires. Twice ``PlexTvClient.PIN_TIMEOUT`` so the row outlives the poll window rather
-#: than expiring underneath an operator who is still typing their plex.tv password.
+#: expires. It has to outlive the window the browser actually polls for, which is
+#: ``DEADLINE_MS`` in ``frontend/src/components/PlexPin.tsx``, the one poll hook all three
+#: flows drive, or a row expires underneath an operator still typing their plex.tv
+#: password. Twice it today, and `test_the_pending_pin_ttl_outlives_the_browsers_poll`
+#: holds the pair, since nothing else spans the two languages.
+#: ``PlexTvClient.PIN_TIMEOUT`` is NOT the bound, though it is the same 5 minutes and this
+#: comment used to cite it: that governs ``wait_for_pin``, whose only caller is the CLI
+#: :func:`link`, and that path writes no pending row at all.
 PIN_TTL = timedelta(minutes=10)
 
 #: Which flow a pending row belongs to. ``poll_plex_login`` reads only ``"login"`` rows and

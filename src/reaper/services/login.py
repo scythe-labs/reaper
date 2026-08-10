@@ -2,10 +2,10 @@
 """Logging in: Plex OAuth (with the ownership check) and the local fallback.
 
 This is distinct from :mod:`reaper.services.plex_link`, which *links the server*.
-Linking is a one-time setup act; logging in happens every session. What they share
-lives there and is imported here: the client identifier, the PIN start
-(:func:`~reaper.services.plex_link.start_pin`, told which flow it is opening), and the
-ownership decision. The polling halves are not shared, and the note above
+Linking is a one-time setup act; logging in happens every session. What they share lives
+there: the client identifier and the ownership decision, both imported here, and the PIN
+start (:func:`~reaper.services.plex_link.start_pin`), which each flow's own route calls
+with its purpose. The polling halves are not shared, and the note above
 :func:`poll_plex_login` says why.
 
 Three shapes of sign-in resolve to the same thing -- a minted session for a
@@ -97,14 +97,13 @@ def _view(user: AppUser) -> UserView:
 
 
 # ---------------------------------------------------------------------------
-# Plex. The flow opens at plex_link.start_pin(purpose="login"); this is the half that
-# is not shared with the link flow, and the divergence is the point rather than drift.
-# The two pollers agree on the plex.tv round trip and on nothing after it. This one
-# mints a session and never stores the token, refuses an account that does not own the
-# already-linked machine, and consumes the pending row on refusal so a rejected token
-# cannot be replayed. poll_link stores the token, has no ownership check to make because
-# ownership is what it is establishing, and consumes in a finally. Merging them would
-# put both contracts behind a flag, which is what killed W6-3's shared paged().
+# Plex. The flow opens at plex_link.start_pin(purpose="login"); what follows is the half
+# that is not shared with the link flow. The two pollers agree on the plex.tv round trip
+# and diverge after it, so one function serving both would take a flag, which is what
+# killed W6-3's shared paged(). The divergence: this one mints a session, and it branches
+# on whether a server is already linked, authorizing against that machine id when one is
+# and running first-run setup through complete_link when none is. It consumes the pending
+# row on each refusal arm, where poll_link consumes in a finally.
 # ---------------------------------------------------------------------------
 
 

@@ -303,6 +303,27 @@ class TestThePinPurposeFence:
             return_value=httpx.Response(201, json={"id": 8321, "code": "ABCD"})
         )
 
+    def _approval_chain(self, httpx2_mock: respx.Router) -> respx.Route:
+        """Everything behind an approved PIN 42, mocked, and the returned route is the
+        first call a poller that got past the fence would make.
+
+        The whole chain is here so that removing the fence fails these tests with "DID
+        NOT RAISE", naming the defect. With only the PIN mocked they still go red, but on
+        an unmocked-request error that reads like a broken fixture.
+        """
+        httpx2_mock.get("https://plex.tv/api/v2/user").mock(
+            return_value=httpx.Response(200, json={"id": 7, "username": "owner"})
+        )
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
+            return_value=httpx.Response(200, json=[_resource("ours")])
+        )
+        httpx2_mock.get("https://x.plex.direct:32400/identity").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        return httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
+            return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
+        )
+
     @pytest.mark.parametrize("purpose", ["login", "link"])
     async def test_start_pin_records_the_purpose_it_was_handed(
         self,
@@ -328,11 +349,19 @@ class TestThePinPurposeFence:
             assert row.purpose == purpose
             assert row.pin_id == 8321
 
-    async def test_start_pin_drops_pendings_that_have_expired(
+    async def test_start_pin_drops_the_expired_pendings_and_only_those(
         self, factory: async_sessionmaker[AsyncSession], pins: respx.Route
     ) -> None:
         """The only sweeper this table has, and it covers every purpose: an abandoned
-        link must not keep a row alive forever because the next start was a sign-in."""
+        link must not keep a row alive forever because the next start was a sign-in.
+
+        Both states are driven, because the sweep and an unconditional
+        ``delete(PendingPlexLogin)`` are indistinguishable when only the expired one is
+        (rule 145). The live row is what makes them differ, and it is not a contrived
+        case: the two flows overlap whenever an admin with a re-link in flight opens the
+        sign-in route in another tab, and wiping it there costs them the whole approval
+        round trip.
+        """
         async with factory() as session:
             session.add(
                 PendingPlexLogin(
@@ -342,13 +371,24 @@ class TestThePinPurposeFence:
                     expires_at=utcnow() - timedelta(hours=1),
                 )
             )
+            session.add(
+                PendingPlexLogin(
+                    pin_id=102,
+                    purpose="link",
+                    created_at=utcnow(),
+                    expires_at=expiry(PIN_TTL),
+                )
+            )
             await session.commit()
 
         await start_pin(factory, purpose="login", safety=SAFETY)
 
         async with factory() as session:
             rows = (await session.execute(select(PendingPlexLogin))).scalars().all()
-            assert [(r.pin_id, r.purpose) for r in rows] == [(8321, "login")]
+            assert sorted((r.pin_id, r.purpose) for r in rows) == [
+                (102, "link"),  # still in flight, and the new sign-in must not touch it
+                (8321, "login"),
+            ]
 
     async def test_a_link_pin_cannot_be_spent_as_a_sign_in(
         self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
@@ -357,9 +397,7 @@ class TestThePinPurposeFence:
         an authenticated re-link created. Refused before plex.tv is asked anything."""
         await _link_server(factory, "ours")
         await _pending(factory, 42, purpose="link")
-        approved = httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
-            return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
-        )
+        approved = self._approval_chain(httpx2_mock)
 
         with pytest.raises(LoginError, match="no longer valid"):
             await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
@@ -378,9 +416,7 @@ class TestThePinPurposeFence:
         """The mirror. Without it the fence is pinned in one direction only, which is
         how both halves drifted into agreeing (rule 72)."""
         await _pending(factory, 42, purpose="login")
-        approved = httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
-            return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
-        )
+        approved = self._approval_chain(httpx2_mock)
 
         with pytest.raises(PlexLinkError, match="no longer valid"):
             await poll_link(factory, _box(), pin_id=42, safety=SAFETY)
