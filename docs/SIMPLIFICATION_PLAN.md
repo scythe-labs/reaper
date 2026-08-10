@@ -393,7 +393,7 @@ third was killed there and un-killed later, once a PR was already paying the dri
 had refused to buy. Grep for the counter
 before closing a PR that adds or removes a member. **The phase-3 counters, by name:**
 `_EXPECTED_LAYERED_MODULES` (**84** modules under the four packages), the logger counter in
-`tests/test_capturable_loggers.py` (**49**), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (**0** sites,
+`tests/test_capturable_loggers.py` (**50**), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (**0** sites,
 empty; of the three that went, one had moved file in #612). Empty is the interesting state for
 that one, not a broken one: every cross-package edge in the four packages runs at import time now,
 so the runtime graph is the whole truth about them. **Phase 8 added a fourth counter**,
