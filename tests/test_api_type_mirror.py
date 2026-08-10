@@ -759,7 +759,14 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
 
     def test_every_collapsed_site_is_in_the_table_above(self) -> None:
         """A flag-shaped table cannot see a site that never joined it (rule 145). The count
-        is of the CALL SITES, which is six rather than the seven pairs."""
+        is of the CALL SITES, which is six rather than the seven pairs.
+
+        It reads one spelling and only one (rule 147): the ``from_attributes=True`` keyword
+        at the call. A model that sets ``model_config = ConfigDict(from_attributes=True)``
+        and then calls a bare ``model_validate`` is the same collapse and is invisible here,
+        so a site written that way is added to the table by hand. No model in the tree does
+        that today, and this is not worded as if the walk would catch it.
+        """
         sites = [
             f"{path.relative_to(REPO)}:{n}"
             for path in sorted((REPO / "src" / "reaper" / "api").rglob("*.py"))
