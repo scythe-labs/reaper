@@ -190,7 +190,7 @@ row moving is indistinguishable from one that never started.
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
 | 6 | Structural motion | **done** | 6 of 8, 2 dropped | The by-design ceiling. Exit task finished: every `path:NNN` in this document resolves against the tree |
 | 7 | Wire contract | **done** | 8 of 8 | C7, C11 and C8 all settled. Eight items, not ~5: W8-3 measures 20 unread fields and W8-4's anonymous payloads are 11 routes over 4 shapes. W8-1 took two PRs, the route's shape then the rollup |
-| 8 | Dedup and carriers | in progress | 5 of ~25 | W6-2 landed early as #618: #556 made rule 94's bound a live defect, not a tidiness item. The three already-drifted rows still open are the executor's size interlock (`safety-path`, gated on C9), the two panel heads (a divergence to decide, not inherit), and W3's parameter objects. **C14 is settled**: the pinning test landed at #659, so `_call` is unblocked |
+| 8 | Dedup and carriers | not started | 5 of ~25 | W6-2 landed early as #618: #556 made rule 94's bound a live defect, not a tidiness item. The three already-drifted rows still open are the executor's size interlock (`safety-path`, gated on C9), the two panel heads (a divergence to decide, not inherit), and W3's parameter objects. **C14 is settled** and `_call` is unblocked, the pinning test having landed at #659. W9's `LAUNCHER_CONF_NAME` half is scouted and NOT built: measured, it breaks 7 of 9 cycles and moves neither counter S7 says it moves |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
 
 Status vocabulary, and nothing else: `not started`, `in progress`, `blocked`, `done`. `blocked`
@@ -360,8 +360,12 @@ the case that will hit this first.
 
 **S7. Hand-reconciled counters move with the populations they count.** S1 names two
 (`EXPECTED_INTERFACES`, `EXPECTED_PAIRS`); `DECISION_SECTIONS` is a third, and every gate phase 3
-lands under rule 145 adds another. Phase 6 splits two routers and phase 8 creates `api/deps.py` and
-moves `LAUNCHER_CONF_NAME` — both move populations that phase 3's gates count. Grep for the counter
+lands under rule 145 adds another. Phase 6 splits two routers and phase 8 creates `api/deps.py`,
+which moves populations that phase 3's gates count. **`LAUNCHER_CONF_NAME` does not, and this
+paragraph used to say it did**: the layering walk covers the four packages only, and `launcher.py`
+and `config.py` sit outside it, so moving a constant between them moves neither the module figure
+nor the logger count. Measured on a patched tree, not reasoned. The counter that half does move is
+`_DEFERRED_CROSS_PACKAGE_IMPORTS`, from 3 to 0. Grep for the counter
 before closing a PR that adds or removes a member. **The phase-3 counters, by name:**
 `_EXPECTED_LAYERED_MODULES` (**83** modules under the four packages), the logger counter in
 `tests/test_capturable_loggers.py` (**49**), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (the three
