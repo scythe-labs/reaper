@@ -188,33 +188,36 @@ function Dashboard({ user }: { user: AuthUser }) {
   // records itself.
   const { pushNav } = useBackNav();
 
-  // What each view is currently aimed at, held here rather than inside the view: `App` outlives
-  // the mount, so a jump can name a destination for a page that is not on screen yet. Each is
-  // acted on once, counted by its nonce -- revisiting the page later must not replay the jump
-  // that first brought you there. Rule 72: three of these now, and a fourth belongs in the same
-  // three places (declared here, cleared on a plain tab visit, handed to the view).
-  const [policyFocus, setPolicyFocus] = useState<Focus<{ section: PolicySectionId }> | null>(null);
-  const [settingsFocus, setSettingsFocus] = useState<Focus<{ panel: Panel }> | null>(null);
-  const [reviewFocus, setReviewFocus] = useState<Focus<{ search: string }> | null>(null);
-  const clearFocus = () => {
-    setPolicyFocus(null);
-    setSettingsFocus(null);
-    setReviewFocus(null);
-  };
+  // What the app is currently aimed at, held here rather than inside the view: `App` outlives
+  // the mount, so a jump can name a destination for a page that is not on screen yet. It is
+  // acted on once, counted by its nonce: revisiting the page later must not replay the jump that
+  // first brought you there.
+  const [focus, setFocus] = useState<Focus | null>(null);
+  // Each view reads only the aim that names it. The check is not a formality. `goTo` sets the
+  // focus and the view in one commit and the effect below drops a stale one only after that
+  // commit, so a single render can hold the previous view's aim while the new view is on screen.
+  const reviewFocus = focus?.view === "review" ? focus : null;
+  const policyFocus = focus?.view === "policy" ? focus : null;
+  const settingsFocus = focus?.view === "settings" ? focus : null;
 
-  // A destination dies with the visit it aimed at. Clearing on a nav click (below) is not enough,
-  // because that is not the only way a view is left: a Back press restores `view` through the raw
-  // setter and runs no handler at all. The queue unmounts on the way out, so its once-per-nonce
-  // ref goes with it, and the next mount seeds the search box from a jump the operator had
-  // already backed out of -- they asked to return to the Review list they started from and got a
-  // one-title list with a chip they never typed. Clearing a focus as its view goes off screen
-  // also covers the search they cleared BY HAND, which the box would otherwise refill on the way
-  // back. Keyed on `view`, so clicking the tab you are already on still changes nothing (B-23).
-  // Rule 72: all three focuses, not just the one that was shown to replay.
+  // A destination dies with the visit it aimed at, and a nav click is not the only way a view is
+  // left: a Back press restores `view` through the raw setter and runs no handler at all. The
+  // queue unmounts on the way out, so its once-per-nonce ref goes with it, and the next mount
+  // seeded the search box from a jump the operator had already backed out of. They asked to
+  // return to the Review list they started from and got a one-title list with a chip they never
+  // typed. Dropping the aim as its view goes off screen also covers the search they cleared BY
+  // HAND, which the box would otherwise refill on the way back.
+  //
+  // Keyed on `view`, so clicking the tab you are already on still changes nothing (B-23):
+  // Settings is mounted under `settingsFocus.nonce`, and dropping the aim there would remount
+  // the whole subtree and throw away whatever is typed into it. Arriving from a
+  // "Settings → Jobs" link, typing a name, then clicking Settings in the nav used to discard it.
+  //
+  // It names no view, so nothing here goes stale when a fourth destination is added. The line it
+  // replaced named all three by hand, and had to be corrected once already: it started out
+  // dropping only the one focus that had been shown to replay.
   useEffect(() => {
-    if (view !== "review") setReviewFocus(null);
-    if (view !== "policy") setPolicyFocus(null);
-    if (view !== "settings") setSettingsFocus(null);
+    setFocus((f) => (f?.view === view ? f : null));
   }, [view]);
 
   // Every jump in the app, in one place. The caller names a whole destination (navIntent.ts) and
@@ -255,12 +258,14 @@ function Dashboard({ user }: { user: AuthUser }) {
     if (intent.view === "review") {
       setVerdict(lane);
       if (intent.select !== undefined) setSelected(intent.select);
-      if (intent.search !== undefined) setReviewFocus({ search: intent.search, nonce: Date.now() });
+      if (intent.search !== undefined)
+        setFocus({ view: "review", search: intent.search, nonce: Date.now() });
     } else if (intent.view === "policy") {
       if (intent.section !== undefined)
-        setPolicyFocus({ section: intent.section, nonce: Date.now() });
+        setFocus({ view: "policy", section: intent.section, nonce: Date.now() });
     } else if (intent.view === "settings") {
-      if (intent.panel !== undefined) setSettingsFocus({ panel: intent.panel, nonce: Date.now() });
+      if (intent.panel !== undefined)
+        setFocus({ view: "settings", panel: intent.panel, nonce: Date.now() });
     }
     setView(intent.view);
   };
@@ -430,12 +435,10 @@ function Dashboard({ user }: { user: AuthUser }) {
         <SectionNav
           view={view}
           onChange={(next) => {
-            // A plain tab visit must not replay an old cross-page jump -- but clicking the
-            // tab you are ALREADY on is not a visit, and clearing the focus there changes
-            // the key Settings is mounted under, remounting the whole subtree and throwing
-            // away whatever is typed into it (B-23). Arriving from a "Settings → Jobs" link,
-            // typing a name, then clicking Settings in the nav used to silently discard it.
-            if (next !== view) clearFocus();
+            // No focus handling here. A plain tab visit must not replay an old cross-page jump,
+            // and the effect above is what drops it: the aim names its view, so a tab change
+            // takes it and a click on the tab you are already on leaves it alone (B-23).
+            //
             // Leaving Scales (or re-entering it) closes any open Scales panel, so the
             // split view never lingers on a tab that has no panel to show. Both the person
             // panel and the "not in the last scan" panel are cleared, matching the

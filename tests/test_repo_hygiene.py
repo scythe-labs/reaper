@@ -3915,6 +3915,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "components/TestBadgeFreshness.test.tsx": "one badge's freshness, audited in the panels",
     "components/PlexPin.test.tsx": "the poll's state machine; it mounts the announcer, no screen",
     "focus.test.tsx": "focus moves, not a screen",
+    "AppFocus.test.tsx": "which view holds a jump's aim; both routes it drives to are stubs",
 }
 
 # The population the walk itself collects: every `*.test.tsx` under frontend/src that mounts
@@ -3930,7 +3931,9 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # state, where the server and connection pickers are.
 # +1 for `PanelHead.test.tsx`, which mounts the item panel and the show panel to compare the head
 # they share. It audits that head with every link set, the state neither panel's own suite drives.
-_EXPECTED_RENDERING_TEST_FILES = 55
+# +1 for `AppFocus.test.tsx`, which is exempt rather than audited: it mounts the shell to ask
+# which view is holding a jump's aim, and the two routes it drives to are stubs printing a prop.
+_EXPECTED_RENDERING_TEST_FILES = 56
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -4997,6 +5000,161 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
         assert isinstance(node, (ast.Import, ast.ImportFrom))
         resolved = [c for c in _module_candidates(node, "reaper.services") if c in modules]
         assert expected in resolved, f"{source!r} resolved to {resolved}, expected {expected}"
+
+
+# --- the frontend has no import cycles at all ----------------------------------------------
+
+#: Every `.ts`/`.tsx` file under `frontend/src`, which is the population the walk below parses.
+#: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
+#: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
+#: graph exactly.
+_EXPECTED_FRONTEND_MODULES = 204
+
+#: A static `import`/`export` of a relative specifier, in every spelling the tree uses: a bare
+#: side-effect import, a default, a braced list running over several lines, and a re-export.
+#: The body may not cross a quote, a paren or a semicolon, so it cannot run out of its own
+#: statement and pick up the next one's string.
+#:
+#: `import type` and `export type` are left out, and under `verbatimModuleSyntax` (set in
+#: `frontend/tsconfig.json`) that is the exact line the compiler draws: the `type` STATEMENT is
+#: erased, and `import { type A } from "./x"` emits `import {} from "./x"`, a real runtime edge
+#: this therefore counts. Measured on this tree, putting the type-only edges back changes
+#: nothing: both spellings of the walk found the same two cycles before wave 9 and find none now.
+_TS_STATIC_IMPORT = re.compile(
+    r"""(?m)^[ \t]*(?:import|export)\s+(?!type[\s{])(?:[^'"();]*?\bfrom\s*)?['"](\.[^'"]+)['"]"""
+)
+
+#: `await import("./x")`, which is a runtime edge like any other: `App.tsx` reaches five of the
+#: six routes this way and nothing else reaches them at all. `typeof import("./x")` is a type
+#: position and is skipped, the same carve-out the statement form gets.
+_TS_DYNAMIC_IMPORT = re.compile(r"""(?<!typeof )\bimport\(\s*['"](\.[^'"]+)['"]""")
+
+
+@lru_cache(maxsize=1)
+def _frontend_import_graph() -> dict[str, frozenset[str]]:
+    """Every module under `frontend/src`, mapped to the in-tree modules it imports at RUNTIME.
+
+    Named by their repo-relative path with the extension dropped, so a failure reads as
+    ``components/PolicyEditor -> components/PolicyRuleEditors``.
+
+    Test files are in the population rather than filtered out. A component never imports a
+    test, so they close no cycle, and leaving them in means no skip list to keep current.
+
+    A specifier is tried as written and then with each extension the tree can spell, `index`
+    barrels included: `./x.css` resolves to nothing and drops out, `../format` finds
+    `format.ts`, `./PolicyEditor` finds `PolicyEditor.tsx`. There are no barrels today, so
+    that pair of candidates is what stops a future one from silently dropping its edges.
+    """
+    files = {
+        path.relative_to(FRONTEND_SRC).with_suffix("").as_posix(): path
+        for path, _ in _repo_text_files()
+        if path.suffix in {".ts", ".tsx"} and path.is_relative_to(FRONTEND_SRC)
+    }
+    graph: dict[str, frozenset[str]] = {}
+    for name, path in files.items():
+        text = path.read_text(encoding="utf-8")
+        specs = [m.group(1) for m in _TS_STATIC_IMPORT.finditer(text)]
+        specs += [m.group(1) for m in _TS_DYNAMIC_IMPORT.finditer(text)]
+        reached = set()
+        for spec in specs:
+            base = (path.parent / spec).resolve()
+            for candidate in (base, *(base.with_name(base.name + s) for s in (".ts", ".tsx"))):
+                if not candidate.is_relative_to(FRONTEND_SRC):
+                    continue
+                target = candidate.relative_to(FRONTEND_SRC).with_suffix("").as_posix()
+                if target in files and target != name:
+                    reached.add(target)
+            for barrel in ("index.ts", "index.tsx"):
+                target = (base / barrel).relative_to(FRONTEND_SRC).with_suffix("").as_posix()
+                if target in files and target != name:
+                    reached.add(target)
+        graph[name] = frozenset(reached)
+    return graph
+
+
+def test_the_frontend_has_no_import_cycles() -> None:
+    """The SPA had two, and each was one borrowed symbol.
+
+    `PolicyRuleEditors` was lifted out of `PolicyEditor` and left three lookup tables behind,
+    so the new module imported them back out of the file it had just left; the same import
+    also carried `humanDays`, which `PolicyEditor` re-exported after the function itself had
+    already moved to `format.ts` to break a different cycle. `UnmatchedList` reached into
+    `ScalesPanel` for a twelve-line poster placeholder, while `ScalesPanel` renders
+    `UnmatchedList`. Both are gone, and the expected set is empty rather than declared: a
+    browser bundle tolerates a cycle until an initialization order changes under it, and
+    nothing here needs one.
+
+    The Python twin above declares its two instead, because those are a coupling someone chose
+    and cannot cheaply undo. The walk is shared: this builds the graph, `_import_cycles` finds
+    the cycles, and `test_the_cycle_walk_reports_the_cycles_it_is_given` is what proves the
+    finder is not simply returning nothing.
+    """
+    graph = _frontend_import_graph()
+    assert len(graph) == _EXPECTED_FRONTEND_MODULES, (
+        f"expected {_EXPECTED_FRONTEND_MODULES} .ts/.tsx files under frontend/src/, walked "
+        f"{len(graph)}.\n\n"
+        "If you ADDED or DELETED one, bump the number. If you did not, the walk lost part of\n"
+        "the tree, and an empty expected cycle set is green on a graph it never read."
+    )
+    found = _import_cycles(graph)
+    assert found == set(), (
+        "a new import cycle under frontend/src:\n  "
+        + "\n  ".join(" -> ".join(c) for c in sorted(found))
+        + "\n\nBreak it where the dependency is wrong, never by deferring the import: a\n"
+        "`import type` or a dynamic `import()` written to dodge this leaves the coupling and\n"
+        "hides the edge. Where a constant, a type or one small component is the whole reason\n"
+        "for the edge, move it to a leaf both sides already import.\n"
+        "`components/PosterFallback.tsx` is what that looks like."
+    )
+
+
+def test_the_frontend_import_walk_reads_the_spellings_the_tree_uses() -> None:
+    """The gate above is an absence, so the two matchers behind it are driven (rule 147).
+
+    A regex is bounded by the syntax it parses, and this tree spells an import six ways. The
+    synthetic half fixes what each form must resolve to, including the two that must resolve
+    to NOTHING. The live half then asserts edges the real tree has, because a matcher can be
+    right about a string and still never fire against a file: `App.tsx` reaches `ReviewQueue`
+    statically and `PolicyEditor` only through `lazy(() => import(...))`, so those two edges
+    are one proof each for the two matchers.
+    """
+    graph = _frontend_import_graph()
+    assert "components/ReviewQueue" in graph["App"], (
+        "the static-import matcher found no edge from App.tsx to the review queue, which it "
+        "imports at the top of the file."
+    )
+    assert "components/PolicyEditor" in graph["App"], (
+        "the dynamic-import matcher found no edge from App.tsx to the policy editor, which is "
+        "reached only through `lazy(async () => (await import(...)))`."
+    )
+
+    static = {
+        'import { PosterFallback } from "./PosterFallback";': ["./PosterFallback"],
+        'import App from "./App";': ["./App"],
+        'import "./index.css";': ["./index.css"],
+        'export { humanDays } from "../format";': ["../format"],
+        'import {\n  a,\n  b,\n} from "./x";': ["./x"],
+        # Erased by the compiler, so it cannot make a cycle real.
+        'import type { Focus } from "./navIntent";': [],
+        'export type { Panel } from "./Settings";': [],
+        # A value import that merely mentions `type` inline still emits, and still counts.
+        'import { type Focus, goTo } from "./navIntent";': ["./navIntent"],
+        # Not an import at all, and the shape a `from`-anchored matcher reads as one.
+        'const cfg = { from: "./x" };': [],
+    }
+    for source, expected in static.items():
+        assert [m.group(1) for m in _TS_STATIC_IMPORT.finditer(source)] == expected, (
+            f"the static-import matcher misread {source!r}"
+        )
+
+    dynamic = {
+        'const m = await import("./components/Settings");': ["./components/Settings"],
+        'type Api = typeof import("./api");': [],
+    }
+    for source, expected in dynamic.items():
+        assert [m.group(1) for m in _TS_DYNAMIC_IMPORT.finditer(source)] == expected, (
+            f"the dynamic-import matcher misread {source!r}"
+        )
 
 
 # --- the HTTP status an InstanceError means is declared once (rule 144) ---------------
