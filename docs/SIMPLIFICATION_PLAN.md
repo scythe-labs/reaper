@@ -2213,7 +2213,7 @@ added to the first.
 
 | Site | The two copies | Lines | Risk |
 | --- | --- | --- | --- |
-| `snapshot.py:1606` vs `engine/explanation.py:31` | The stored explanation built as a 110-line hand-typed dict on the write side, declared as Pydantic models on the read side. The reader's own docstring records that `keeps` and `match` were **silently dropped** here until the fields were declared, which is why the panel's keep breakdown never rendered. `facts_codec.py:39` is the in-tree precedent that raises at import on an unhandled field | ~30 net | `behavior` |
+| `snapshot.py:1600` vs `engine/explanation.py:224` | The stored explanation built as a 110-line hand-typed dict on the write side, declared as Pydantic models on the read side. The reader's own docstring (`:232`) records that `keeps` and `match` were **silently dropped** here until the fields were declared, which is why the panel's keep breakdown never rendered. `facts_codec.py:40` is the in-tree precedent that raises at import on an unhandled field | ~30 net | `behavior` |
 | `snapshot.py:1286` `Display` | The 15-field carrier exists; `RawItem` and `SeasonJudgment` both re-declare its fields flat, then `:1057` and `:1157` re-pack them field for field, then `_judge_item` unpacks it again | ~60 | `none` |
 | `season_scan.py:1099` `gather` | Nine loose policy fields taken one frame above the `SeasonPolicy` that groups them, re-packed at `:1147`. This is the sole reason the second road exists: `SeasonPolicy.from_body` is the same nine assignments written again, and `season_evidence.py:140` already names it "rule 144's shape" | ~40 | `behavior` |
 | `api/breakdown.py:22` + 6 siblings | 18 identically named fields copied by hand from the service dataclass to the wire model, plus a nested list re-packed 4 for 4. Same shape at `api/backup.py:214`, `api/fairness.py:159`, `api/settings.py:547` **and** `:626`, both `SeerrServiceOut(` (written twice; the second
@@ -2229,7 +2229,7 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 
 > **Corrected: W5-1 is `safety-path`, not `behavior`.** The hash question is answered correctly and
 > is the wrong question. Two deletion-path readers parse the stored explanation:
-> `executor._equivalent_keys` (`:1870-1893`) raw-parses `match.merged_rating_keys` to build the key
+> `executor._equivalent_keys` (`:1888-1911`) raw-parses `match.merged_rating_keys` to build the key
 > set the **streaming veto** and the played-since-approval check consult, catching only
 > `(ValueError, AttributeError)`; and `condemned.reap_override_verdict_decoded` (`:167-226`)
 > decides whether a hand reap condemns.
@@ -2238,10 +2238,10 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 > (`schemas.py`'s `CandidateDetail`), so making it the writer welds the on-disk format to the API: a later
 > `exclude_none` or alias change made for the wire silently changes what is written to disk. And as
 > declared it would **drop** an unhandled write-side key rather than raise, because Pydantic
-> defaults to `extra="ignore"` — the cited precedent raises at `facts_codec.py:75`, so the rebuild
+> defaults to `extra="ignore"` — the cited precedent raises at `facts_codec.py:67`, so the rebuild
 > needs `extra="forbid"` or it reproduces the exact incident this row is written about, moved to
 > write time where no reader can recover it. `_explain` also writes the two flags on
-> `protections_unknown` alone deliberately (`explanation.py:111-116`); building all three lists
+> `protections_unknown` alone deliberately (`explanation.py:122-127`); building all three lists
 > from one model writes them on the fired copy too, making that docstring false.
 >
 > Smaller corrections: `Display` is 16 fields, not 15, repacked at `:1057` and `:1160`; `RawItem`
@@ -2258,6 +2258,51 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 > `PlexPollOut` and `PlexLinkPollOut`, which is the shape a re-anchor cannot see, and the duplicate **masks the mirror test**:
 > `_server_models` buckets on `__name__`, so the two classes collide into one key and a future
 > divergence is checked against only the survivor.
+
+> **Killed: W5-1's collapse. The pinning test lands as the gate**,
+> `test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared`. Built first, measured,
+> then killed on the measurement.
+>
+> **There is no live drift to fix.** The writer's 13 top-level keys, `match`'s 6, a signal row's 8,
+> a keep's 5 and a `protections_unknown` entry's 4 are exactly the fields the models declare, and
+> `protections_fired`/`protections_checked` carry `{gate, detail}`, which is the documented
+> asymmetry. Every raw `.get` in `src/` reads a declared key. So the row buys a guard against the
+> NEXT divergence, which is what CLAUDE.md's "write the gate instead" clause is for.
+>
+> **The collapse, built as the row asks, drops the entire match block.**
+> `Explanation(match=MatchOut(...))` yields `match=None` on `dev` today: `_thaw_match` is
+> `mode="before"` and reads a submodel instance as "not a mapping". Nothing raises, and the
+> correction's mandated `extra="forbid"` does not see it, being about unknown KEYS. **C9 drove what
+> that costs**, 31 scenarios per tree: the streaming veto stops seeing the second listing of a
+> merged bind (`watched_now` True to False), the played-since-approval check the same on both the
+> movie and the season query, and a bad Plex match stops holding a hand reap (`protect` to
+> `condemn`), because `condemned.bad_match` reads an absent match block as genuinely absent, which
+> is the permissive arm rule 96 exists to keep off an unreadable one.
+>
+> **The suite catches one of those and it is the cosmetic one.** Against the collapse, 4,161 tests
+> pass and the only pre-existing failure is
+> `test_signal_state.TestWhatReachesTheWire.test_the_score_is_the_whole_number_the_decision_used`,
+> on `score` going `52` to `52.0`. Zero pre-existing tests see the dropped match block. The four
+> that do are the four written before the decision, which is the caveat's own instruction landing.
+>
+> **The general reason, which no amount of care in the build removes.** The read model's three
+> `mode="before"` validators exist so an illegible STORED byte degrades one field instead of
+> blanking the whole panel. On the write side the same leniency normalizes a writer's own value to
+> `None` with nothing raising: `thaw_threshold(70.5)` and `thaw_threshold(True)` are both `None`.
+> One model cannot be lenient for a reader of ten-month-old rows and strict for the writer, and the
+> lenient half is the one that ships to disk. Two silent widenings come with it, `score` and
+> `keeps[].max_discount` both int to float, because the read annotations are as wide as a legacy row
+> needs. `_server_models`' pinned count moves 140 to 141 across three tests, `engine.explanation`
+> being an INNER module of that walk, which is the correction's "already the wire model" measured
+> rather than argued.
+>
+> **What lands.** The walk derives its blocks off `Explanation` rather than listing them, so a
+> nested block added there enters it without anyone extending the test (rule 145), and the one
+> deliberate asymmetry is a named exception rather than a hole. Driven red four ways: a written key
+> the reader does not declare, a declared key the writer drops, the two flags written on the fired
+> list, and a nested block added to the reader. `explanation.py:122-127`'s claim that the flags are
+> never written on the other two lists had no test at all and now has one (rule 7/24). Both source
+> files name the gate and the failure message names both files (rule 144).
 
 > **Killed: W5-2, the `Display` collapse.** `_judge_item` already takes the carrier as ONE
 > parameter and both packs already pass it whole, so the row removes no parameter and no net
