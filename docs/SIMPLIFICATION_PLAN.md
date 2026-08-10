@@ -318,6 +318,7 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | W3's executor size-interlock extraction | Built twice and measured. Reason-only is +7 lines and splits one operator sentence into a two-slot template (rule 21); whole-branch is +9 and returns `an optional StepOutcome`, and dropping that sentinel at one call site fails exactly one test of 4,235 while a real unmonitor reaches Sonarr. `_grew_materially` is already the predicate's one declaration, so the extraction guards nothing that can drift. The rule 144 half is real and lands: two byte-identical `check=` sentences, one of them in the branch the row exempts | Phase 8, measured on two patched trees |
 | W3's cache-database row | Two bootstraps not three, two stamps in one spelling not three in two, and "~90 lines" matches nothing (418-line cluster, 25 to 35 removable). Merging two opposite stale-shape policies would need a per-caller flag, which is the one thing that must never be shared. The lock is extracted instead, and it carries the fix for a `dev` defect the row does not name | Phase 8, measured before building |
 | W3's pragma unification, the sqlite half of the `backup`/`restore`/`retention` row | `_configure_sqlite` is already one declaration for both engines, and the correction takes `_read_revision` and `retention`'s `isolation_level=None` out of scope. What is left is two one-line `busy_timeout` calls whose values differ by design and three sites needing no pragma, so a `(connection, ms)` helper replaces one line with one line. The duplication is the VALUE: `5000` is quoted as prose in five docstrings, none derived. Two gates land instead. The row's operator-string half stays open | Phase 8, measured before building |
+| W3c, all six parameter objects | Every keyword at every production call site classified: `build_season_facts` assembles its 24 from 18 locals a carrier would hold one frame up, `_judge_item`'s two sites unpack off two different record types, `scan`'s 12 pass-through arguments come from four unrelated sources, and `plan_series_prune` has 87 test call sites resting on the defaults the correction calls the protection. The match record is the one clean pass-through and holds two identity-path join keys, which is W5-2's reason. `gather`'s nine policy fields stay open as W5-3. The real hazard is the twelve parallel `movie_*`/`tv_*` locals, and a gate closes it from `tests/` | Phase 8, measured before building |
 
 ## Execution
 
@@ -1680,6 +1681,53 @@ nothing structurally preventing the movie loop being handed `tv_keeps`.
 > default and is not an example of this.) `gather` is the same. Both are `safety-path`; the other
 > four are `none`. Three more functions at 15 parameters go unnamed: `judge_facts`, `_judge_series`
 > and `_protection_reason`.
+
+> **Killed: all six parameter objects. One gate lands instead**,
+> `test_a_judged_item_is_never_handed_the_other_lanes_policy`. Every count above is exact today,
+> re-derived by AST, and the addresses are `_judge_item` `snapshot.py:1441`, `gather`
+> `season_scan.py:1090`, `build_season_facts` `season_scan.py:464`, `plan_series_prune`
+> `season_pruning.py:414`, `scan` `snapshot.py:572`; the three unnamed 15s are `judge_facts`
+> `snapshot.py:1350`, `_judge_series` `season_scan.py:1568` and `_protection_reason`
+> `season_pruning.py:586`. The counts are right and the fix is not.
+>
+> **Every keyword at every production call site was classified**, and no candidate survives it.
+> `build_season_facts`'s one call site assembles its 24 arguments from 18 locals, 7 of them
+> already same-named, plus 6 expressions evaluated per season; a carrier holds the same 18
+> assignments one frame up and the 6 stay where they are. `_judge_item`'s two sites unpack 10 and
+> 11 arguments off `RawItem` and `SeasonJudgment`, which are different types, so one carrier
+> parameter cannot serve both and building one at each site is S5's object that nets to zero.
+> `scan`'s 12 pass-through arguments arrive in `scan_runner.run_scan` from four unrelated
+> sources, the clients, the two policies, the Seerr reads and the caller, so the only carrier
+> that fits them is a bag of everything. `plan_series_prune` has 2 production call sites and
+> **87 in tests**, each passing 3 to 7 of the 20 and taking the rest as defaults; the correction
+> above is why those defaults are the protection, and a carrier either repeats them field for
+> field and buys nothing, or drops them and rewrites 87 tests to spell 20 fields.
+>
+> **The Plex match record is 6 parameters through 3 signatures, not 4**, and it is the one clean
+> pass-through in the paragraph: `plex_rating_key`, `matched_by`, `match_detail`, `match_status`,
+> `merged_rating_keys` and `match_candidates` are declared on `_judge_item`, `judge_facts` and
+> `_explain` (`snapshot.py:1600`), and nothing between branches on one. Five reach `_explain`
+> alone; `plex_rating_key` also goes onto the stored `Candidate` row at `snapshot.py:1520`. It is
+> still a kill, for W5-2's reason: `plex_rating_key` and `merged_rating_keys` are identity-path
+> join keys read off a `RawItem` at `snapshot.py:291`, `:437`, `:874` and `:876`, so a carrier
+> held on the record files a join key one attribute deeper (rules 29/106), and a carrier built at
+> the call site spends 6 lines to save 6.
+>
+> **`gather`'s nine loose policy fields are W5-3's row, still open, and are not killed here.**
+>
+> **What is real is this paragraph's own sharp case**, re-anchored from `snapshot.py:928` to
+> `:931`. `scan` derives twelve locals that differ only by a `movie_` / `tv_` prefix and hands six
+> of each to `_judge_item`. Cross `custom_condemn`, `keeps` and `policy` at the movie call site
+> and the new gate is the only test in the suite that fails, 4,238 passed and 1 failed: the keep
+> rules a movie is judged against and the threshold it is condemned at can both come from the TV
+> policy with nothing else reading it, which is rule 118's gap. `gates`, `signals` and
+> `window_days` are the three `tests/test_scan_pipeline.py` already catches, measured one at a
+> time. A lane carrier would close it by construction and costs a
+> `safety-path` diff in `services/snapshot.py` plus S3 and C9; the gate closes the same hole from
+> `tests/`, binds a third call site written by someone who never read this paragraph, and is
+> CLAUDE.md's "write the gate instead". Driven red eight ways: each of the six crossed on its own,
+> both sites made to read one lane, and one value computed inline rather than taken off a prefixed
+> local.
 
 > **Corrected, wave 3's `safety-path` items. Four must not be built as described.**
 >
