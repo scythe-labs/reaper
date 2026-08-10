@@ -3244,8 +3244,12 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # Then 36 -> 35: the policy editor's two standing recovery notices became one render over the
 # `top` half of `REPAIR_NOTICES`. Still standing, and for the same reason -- a repair is carried
 # by the fetch, so it is the state of the page from its first paint (#516).
+# Then 36: the setup wizard's password step, the second drawing of `AdminPasswordForm` and the
+# one place its live complaint was still announced. Same `{pw.length} so far` inside a live
+# region on every keystroke, on the form that sets the key arming deletion; the sibling above has
+# been standing since #394 and this copy was never swept (rule 72).
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 35
+_EXPECTED_STANDING = 36
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
@@ -3738,6 +3742,174 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     )
 
 
+#: The surfaces that hold a connection-test verdict beside the fingerprint it was computed for,
+#: so a badge can be withdrawn once it stops describing what is on screen. This is the population
+#: the ban below scans, not a second one beside it (rule 147): every shipped file spelling an
+#: ``of:`` key outside a comment. Pinned by name, because the fifth surface is written by copying
+#: whichever of these four its author happened to open, and three of the four were the wrong copy.
+_VOUCHED_TEST_SURFACES = {
+    "frontend/src/components/DiscordModal.tsx",
+    "frontend/src/components/NotificationsPanel.tsx",
+    "frontend/src/components/ServiceModal.tsx",
+    "frontend/src/components/ServicesPanel.tsx",
+}
+
+_OF_KEY = re.compile(r"\bof:")
+
+#: What an ``of:`` key may be handed: a name, or a path of them. ``issued.of`` is the fingerprint
+#: captured when the request was issued; ``string`` is the type annotation on the state that holds
+#: it. Everything else is an expression, and an expression under ``of:`` is evaluated where it is
+#: written, which is the question this asks.
+_CAPTURED_NAME = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$")
+
+
+def _without_comments_keeping_lines(text: str) -> str:
+    """``_without_comments``, with every removed line still there as an empty one.
+
+    The offender list reports line numbers, so the collapsing form cannot be used. A block
+    comment becomes its own newlines.
+    """
+    blanked = _BLOCK_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    return _without_line_comments(blanked)
+
+
+def _value_after_of(line: str) -> str | None:
+    """The expression ``line`` hands to an ``of:`` key, or ``None`` where it has no such key.
+
+    Bounded crudely, at the first ``,``, ``;`` or closing bracket. That cuts a value carrying one
+    of those inside a string (``of: `${kind}, ${baseUrl()}` ``) short, and the check below is
+    written so a short read is a FAILURE rather than a pass: half a template literal is not a
+    name either. An exact walk over bracket depth was tried first and is what made the cut matter,
+    since it counted brackets and not quotes and so mis-read the same line the other way.
+    """
+    key = _OF_KEY.search(line)
+    if key is None:
+        return None
+    for i in range(key.end(), len(line)):
+        if line[i] in ",;)]}":
+            return line[key.end() : i]
+    return line[key.end() :]
+
+
+def _settle_time_fingerprints(text: str) -> list[int]:
+    """Line numbers where an ``of:`` key is handed anything but a name, outside ``onMutate``.
+
+    Written as an allowlist rather than as a hunt for a call, because the defect is not "a call
+    ran here" but "this value was computed here", and a template literal spelling out the same
+    fingerprint is the same defect with no call in it. The first draft asked for a call and let
+    exactly that through. So the two shapes a stored fingerprint may take are named and everything
+    else fails, which is the direction a gate on this tree resolves.
+    """
+    found = []
+    for n, line in enumerate(_without_comments_keeping_lines(text).splitlines(), 1):
+        if "onMutate" in line:
+            continue
+        value = _value_after_of(line)
+        if value is not None and not _CAPTURED_NAME.match(value.strip()):
+            found.append(n)
+    return found
+
+
+def test_a_held_test_result_is_stamped_when_its_request_is_issued() -> None:
+    """A "Passed" badge must describe the address that was tested, not the one now on screen.
+
+    Four surfaces store ``{ result, of }`` and show the badge only while ``of`` still matches what
+    the form holds. That comparison is the honesty of the badge (rule 85), and it is satisfied by
+    computing the fingerprint at EITHER end -- which is why three of the four computed it at
+    success time, where it is no longer the address the request asked about. The boxes stay live
+    while the request is out, so pasting a second webhook while the first is being sent to left the
+    two matching by construction and "Passed" beside a channel nobody tried. ``ServiceModal``
+    captured it in ``onMutate`` and the other three did not, and nothing in the suite could see the
+    difference; #178 and #264 each fixed one site of this family by hand.
+
+    **The forms this reads** (rule 147): the value an ``of:`` key is handed, on a line that does
+    not also spell ``onMutate``, in a shipped ``.ts``/``.tsx`` with block comments blanked and
+    ``//`` runs cut. It passes a name or a path of names, ``issued.of`` and ``string``; everything
+    else fails, template literals and concatenations included.
+    ``test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of`` runs both lists.
+
+    One thing it cannot see, and the population pin is what covers it: a fingerprint computed into
+    a local at success time and handed over by that local's name. The pin is over the same ``of:``
+    keys this scans rather than over the helper's name, so a fifth surface arrives here to be read
+    whatever it calls its fingerprint.
+
+    One thing the pin cannot see either, named rather than implied: ``_BLOCK_COMMENT`` reads a
+    ``/*`` inside a string literal as an opener, so the span to the next ``*/`` is blanked. The
+    tree holds one, ``docs/toMdx.ts:21``'s ``GENERATED_MARKER``, measured at 123 characters over
+    no line break and covering no ``of:``.
+    """
+    holders = {
+        str(path.relative_to(REPO))
+        for path in _shipped_frontend_source()
+        if any(
+            _OF_KEY.search(line)
+            for line in _without_comments_keeping_lines(
+                path.read_text(encoding="utf-8")
+            ).splitlines()
+        )
+    }
+    assert holders == _VOUCHED_TEST_SURFACES, (
+        "the surfaces pairing a test result with its fingerprint moved.\n"
+        f"expected: {sorted(_VOUCHED_TEST_SURFACES)}\nfound:    {sorted(holders)}\n"
+        "A new one: capture the fingerprint in the mutation's `onMutate` and read it back off\n"
+        "the context in `onSuccess`, the way `ServiceModal` does, then add the file here. One\n"
+        "that went away: drop it."
+    )
+
+    offenders = [
+        f"{path.relative_to(REPO)}:{n}"
+        for path in _shipped_frontend_source()
+        for n in _settle_time_fingerprints(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        "these compute a test result's fingerprint where the result is STORED, which is after\n"
+        "the request came back. The operator can keep typing while it is out, so the answer gets\n"
+        "filed against an address it was never asked about and the badge vouches for a host\n"
+        "nobody tried (rule 85). Capture it at issuance instead:\n"
+        "  onMutate: () => ({ of: testedWith() }),\n"
+        "  onSuccess: (r, _v, issued) => setTest({ result: r, of: issued.of }),\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -> None:
+    """The gate above is a source-text scan, so it is worth what its matcher can parse (rule 147).
+
+    Every case here is a way the check could read green over a real one, or red over an innocent
+    line. Four earned their place by failing a draft of it: the call hunt this replaced passed
+    ``of: [kind, baseUrl()].join(" ")``, then passed an inlined template literal with no call in
+    it at all, and the bracket walk written to fix the first counted brackets and not quotes, so a
+    comma inside a template literal ended the value early. The JSX case is the fail-closed one, a
+    block comment's continuation line, which the per-line prefix skip could not see.
+    """
+    caught = [
+        "      setTest({ result: r, of: testedWith() });",
+        '      setTest({ result: r, of: [kind, baseUrl()].join(" ") });',
+        "  setProbe({ of: fingerprint(), result: r });",
+        "      setTest({ result: r, of: `${instance.base_url} ${instance.has_key}` });",
+        '      setTest({ result: r, of: "a, " + testedWith() });',
+        '      setTest({ result: r, of: host + ":" + port });',
+    ]
+    passed = [
+        "      setTest({ result: r, of: issued.of });",
+        "    onMutate: () => ({ of: testedWith() }),",
+        "    of: string;",
+        "  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);",
+        # The value is a name; the call belongs to the member after it.
+        "      setTest({ of: issued.of, result: normalize(r) });",
+        # Prose, in the three shapes the tree writes it. Both blocks are whole, because a
+        # continuation line is only ever reached with its opener: `ListsPanel` writes the JSDoc
+        # one, "covers only part of:", and the diff that added this gate wrote the JSX one.
+        "      // of: testedWith() is what this used to be",
+        "/** A list a rule covers\n *  only part of: what it keeps (roughly).\n */",
+        "{/* Two lines, and this is the second:\n    of: the operator presses Test again. */}",
+    ]
+    for line in caught:
+        assert _settle_time_fingerprints(line) == [1], f"should be caught: {line}"
+    for line in passed:
+        assert _settle_time_fingerprints(line) == [], f"should NOT be caught: {line}"
+
+
 # Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
 # count once carried past were #147's library pickers, which shipped nameless; they have names
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
@@ -3936,7 +4108,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # they share. It audits that head with every link set, the state neither panel's own suite drives.
 # +1 for `AppFocus.test.tsx`, which is exempt rather than audited: it mounts the shell to ask
 # which view is holding a jump's aim, and the two routes it drives to are stubs printing a prop.
-_EXPECTED_RENDERING_TEST_FILES = 56
+_EXPECTED_RENDERING_TEST_FILES = 57
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5011,7 +5183,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 204
+_EXPECTED_FRONTEND_MODULES = 205
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
