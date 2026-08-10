@@ -2247,7 +2247,7 @@ added to the first.
 
 | Site | The two copies | Lines | Risk |
 | --- | --- | --- | --- |
-| `snapshot.py:1600` vs `engine/explanation.py:224` | The stored explanation built as a 110-line hand-typed dict on the write side, declared as Pydantic models on the read side. The reader's own docstring (`:232`) records that `keeps` and `match` were **silently dropped** here until the fields were declared, which is why the panel's keep breakdown never rendered. `facts_codec.py:40` is the in-tree precedent that raises at import on an unhandled field | ~30 net | `behavior` |
+| `snapshot.py:1600` vs `engine/explanation.py:226` | The stored explanation built as a 110-line hand-typed dict on the write side, declared as Pydantic models on the read side. The reader's own docstring (`:234`) records that `keeps` and `match` were **silently dropped** here until the fields were declared, which is why the panel's keep breakdown never rendered. `facts_codec.py:40` is the in-tree precedent that raises at import on an unhandled field | ~30 net | `behavior` |
 | `snapshot.py:1286` `Display` | The 15-field carrier exists; `RawItem` and `SeasonJudgment` both re-declare its fields flat, then `:1057` and `:1157` re-pack them field for field, then `_judge_item` unpacks it again | ~60 | `none` |
 | `season_scan.py:1099` `gather` | Nine loose policy fields taken one frame above the `SeasonPolicy` that groups them, re-packed at `:1147`. This is the sole reason the second road exists: `SeasonPolicy.from_body` is the same nine assignments written again, and `season_evidence.py:140` already names it "rule 144's shape" | ~40 | `behavior` |
 | `api/breakdown.py:22` + 6 siblings | 18 identically named fields copied by hand from the service dataclass to the wire model, plus a nested list re-packed 4 for 4. Same shape at `api/backup.py:214`, `api/fairness.py:159`, `api/settings.py:547` **and** `:626`, both `SeerrServiceOut(` (written twice; the second
@@ -2275,7 +2275,7 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 > defaults to `extra="ignore"` — the cited precedent raises at `facts_codec.py:67`, so the rebuild
 > needs `extra="forbid"` or it reproduces the exact incident this row is written about, moved to
 > write time where no reader can recover it. `_explain` also writes the two flags on
-> `protections_unknown` alone deliberately (`explanation.py:122-127`); building all three lists
+> `protections_unknown` alone deliberately (`explanation.py:124-129`); building all three lists
 > from one model writes them on the fired copy too, making that docstring false.
 >
 > Smaller corrections: `Display` is 16 fields, not 15, repacked at `:1057` and `:1160`; `RawItem`
@@ -2342,7 +2342,7 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 > `isinstance(value, int)` filter comes back empty. Driven red six ways: a written key the reader
 > does not declare, a declared key the writer drops, the two flags written on the fired list, a
 > nested block added to the reader as `MatchOut | None`, the same block spelled `list[X] | None`,
-> and an entry moved between protection lists. `explanation.py:122-127` and `:145-148` claim the
+> and an entry moved between protection lists. `explanation.py:124-129` and `:147-150` claim the
 > two flags are never written on the other two lists, which had no test at all and now has one
 > (rule 7/24). Both source files name the gate and the failure message names both files
 > (rule 144).
