@@ -242,7 +242,9 @@ class PendingPlexLogin(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     pin_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    purpose: Mapped[str] = mapped_column(String(20))  # "setup" | "login"
+    # plex_link.PinPurpose: "login" | "link". Read the comment there before changing a
+    # value; each poller filters on its own, and that filter is the fence between them.
+    purpose: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[UtcTimestamp]
     expires_at: Mapped[UtcTimestamp]
 

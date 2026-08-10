@@ -64,7 +64,7 @@ from reaper.services.plex_link import (
     PlexServerChoiceNeededError,
     client_identifier,
     poll_link,
-    start_link,
+    start_pin,
     switch_server,
 )
 
@@ -295,8 +295,11 @@ async def plex_link_start(
 ) -> PlexLinkStartOut:
     async with session_factory(request)() as session:
         safety = await app_settings.runtime_safety(session, runtime_settings(request))
-    start = await start_link(
-        session_factory(request), safety=safety, forward_url=payload.forward_url()
+    start = await start_pin(
+        session_factory(request),
+        purpose="link",
+        safety=safety,
+        forward_url=payload.forward_url(),
     )
     return PlexLinkStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
 

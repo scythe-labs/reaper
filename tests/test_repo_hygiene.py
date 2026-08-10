@@ -20,6 +20,7 @@ import re
 import subprocess
 import xml.etree.ElementTree as ET
 from collections import Counter
+from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -37,6 +38,7 @@ from reaper.engine.gates import (
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
+from reaper.services import plex_link
 from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
 
 REPO = Path(__file__).resolve().parents[1]
@@ -5940,6 +5942,168 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
     assert found["src/reaper/m.py:2 RadarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
     assert found["src/reaper/m.py:4 SonarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
     assert found["src/reaper/m.py:12 RadarrClient"] == set()
+
+
+#: The one place a pending plex.tv PIN is written, ``plex_link.start_pin``.
+#:
+#: Two flows wrote their own before W3b-6 merged them, and the merge buys exactly one
+#: thing: a third flow cannot arrive without the expiry sweep and without a ``purpose``.
+#: Both matter. The sweep is the only thing bounding the table, and ``purpose`` is the
+#: fence between an open sign-in route and an admin-only link route, so a row created
+#: without one is a row either poller might spend. A docstring saying "go through
+#: ``start_pin``" binds nobody who has not read it, which is what this counts instead
+#: (rule 72, and CLAUDE.md's "write the gate instead").
+#:
+#: **Spellings the walk reads** (rule 147, written down before shipping the matcher, and
+#: each one driven in ``test_the_pending_pin_walk_reads_every_spelling``): the bare name;
+#: the ``models.PendingPlexLogin(...)`` attribute form; a local alias, because
+#: ``from … import X as Y`` is live idiom here and not a hypothetical
+#: (``services/list_rules.py`` imports ``Policy as PolicyModel``); and the Core
+#: ``insert(PendingPlexLogin)``, which is a write with no construction in it at all.
+#: **What it cannot read**: a name reached through ``getattr``. Nothing in ``src/``
+#: addresses a model that way, and a walk that tried would be matching strings.
+_PENDING_PIN_CONSTRUCTION_SITE = "src/reaper/services/plex_link.py"
+
+
+def _names_the_pending_model(node: ast.expr, local_names: set[str]) -> bool:
+    """Is this expression the model itself, bare, aliased, or attribute-qualified?"""
+    if isinstance(node, ast.Name):
+        return node.id in local_names
+    if isinstance(node, ast.Attribute):
+        return node.attr == "PendingPlexLogin"
+    return False
+
+
+def _pending_pin_construction_sites(root: Path) -> set[str]:
+    """Every write of a ``PendingPlexLogin`` row under ``src/``, by address.
+
+    Resolves the model's local names per file from that file's own ``ImportFrom`` nodes,
+    rather than matching the class's own spelling: anchoring on the spelling would read
+    the site that already complies and go blind to an aliased one, which is the form a
+    second site is most likely to arrive in (rule 147). The constant above lists every
+    spelling this accepts and the one it does not.
+    """
+    found: set[str] = set()
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        local_names = {"PendingPlexLogin"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                local_names.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name == "PendingPlexLogin"
+                )
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            verb = node.func
+            # Constructing the model, or naming it as the target of a Core insert.
+            # `select(PendingPlexLogin)` is the same AST shape as the second and is a
+            # read, so the verb is what separates them.
+            writes_a_row = _names_the_pending_model(verb, local_names) or (
+                isinstance(verb, ast.Name | ast.Attribute)
+                and (verb.id if isinstance(verb, ast.Name) else verb.attr) == "insert"
+                and bool(node.args)
+                and _names_the_pending_model(node.args[0], local_names)
+            )
+            if writes_a_row:
+                found.add(f"{path.relative_to(REPO).as_posix()}:{node.lineno}")
+    return found
+
+
+def test_a_pending_plex_pin_is_written_in_exactly_one_place() -> None:
+    sites = _pending_pin_construction_sites(SRC)
+    assert len(sites) == 1 and next(iter(sites)).startswith(_PENDING_PIN_CONSTRUCTION_SITE), (
+        f"expected one PendingPlexLogin write, in {_PENDING_PIN_CONSTRUCTION_SITE}, "
+        f"walked {sorted(sites)}. A new plex.tv PIN flow calls plex_link.start_pin with its "
+        "own purpose rather than inserting a row: start_pin is what sweeps expired pendings "
+        "and what sets the TTL, and a hand-written row gets neither."
+    )
+
+
+def test_the_pending_pin_ttl_outlives_the_browsers_poll() -> None:
+    """``PIN_TTL`` is a producer bound whose consumer is in the other language (rule 131).
+
+    The row `start_pin` writes has to outlive the window the browser polls for, or it
+    expires under an operator who is still on plex.tv and the sign-in fails for a reason
+    nothing reports. The two numbers are declared 5 minutes apart in two languages and
+    nothing but this reads both, which is why `PIN_TTL`'s comment used to cite
+    ``PlexTvClient.PIN_TIMEOUT`` instead: same 5 minutes, but it governs ``wait_for_pin``,
+    whose only caller is the CLI ``link``, and that path writes no pending row.
+    """
+    source = (REPO / "frontend" / "src" / "components" / "PlexPin.tsx").read_text()
+    match = re.search(r"^const DEADLINE_MS = (.+);$", source, re.MULTILINE)
+    assert match, (
+        "DEADLINE_MS is gone from frontend/src/components/PlexPin.tsx, or is no longer a "
+        "top-level const. It is the window services/plex_link.py's PIN_TTL is sized "
+        "against; re-point both this matcher and that comment at whatever replaced it."
+    )
+    # `5 * 60 * 1000`, an arithmetic literal rather than a number, so it is evaluated
+    # rather than parsed: `int()` reads the current spelling and nothing else.
+    deadline = timedelta(milliseconds=eval(match.group(1), {"__builtins__": {}}))  # noqa: S307
+
+    assert deadline <= plex_link.PIN_TTL, (
+        f"services/plex_link.py's PIN_TTL is {plex_link.PIN_TTL}, shorter than the "
+        f"{deadline} PlexPin.tsx polls for, so a pending PIN expires while the browser is "
+        "still asking about it. Raise PIN_TTL, or lower DEADLINE_MS."
+    )
+
+
+def test_the_pending_pin_walk_reads_every_spelling(tmp_path: Path) -> None:
+    """Rule 147: proven against the forms the tree does NOT use today, since those are
+    the ones a second site arrives in, and against the reads it must not collect.
+
+    The aliased form is the one that matters. A first draft of this walk matched the
+    class's own spelling, and `from reaper.db.models import PendingPlexLogin as Pending`
+    walked straight past it while the gate stayed green.
+    """
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "from reaper.db.models import AuthSession, PendingPlexLogin\n"
+        "def bare():\n"
+        "    session.add(PendingPlexLogin(pin_id=1, purpose='login'))\n"
+        "def qualified():\n"
+        "    session.add(\n"
+        "        models.PendingPlexLogin(\n"
+        "            pin_id=2,\n"
+        "            purpose='link',\n"
+        "        )\n"
+        "    )\n"
+        "def core_insert():\n"
+        "    return insert(PendingPlexLogin).values(pin_id=3, purpose='login')\n"
+        "def reads_are_not_writes():\n"
+        "    return select(PendingPlexLogin), delete(PendingPlexLogin)\n"
+        "def a_different_model_is_not_this_one():\n"
+        "    return AuthSession(token_hash=h)\n",
+        encoding="utf-8",
+    )
+    (scratch / "aliased.py").write_text(
+        "from reaper.db.models import PendingPlexLogin as Pending\n"
+        "def sneaks_one_in():\n"
+        "    session.add(Pending(pin_id=4, purpose='login'))\n",
+        encoding="utf-8",
+    )
+    # A local named `Pending` that is NOT this model: the alias set is per file, so the
+    # name is only privileged in the file that imported the model under it.
+    (scratch / "other.py").write_text(
+        "from somewhere.other import Pending\ndef unrelated():\n    return Pending(whatever=1)\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        found = _pending_pin_construction_sites(scratch)
+    finally:
+        REPO = real
+
+    assert found == {
+        "src/reaper/m.py:3",
+        "src/reaper/m.py:6",
+        "src/reaper/m.py:12",
+        "src/reaper/aliased.py:3",
+    }, found
 
 
 #: The six configuration values ``snapshot.scan`` holds once per media type and hands to

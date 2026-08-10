@@ -2,8 +2,11 @@
 """Logging in: Plex OAuth (with the ownership check) and the local fallback.
 
 This is distinct from :mod:`reaper.services.plex_link`, which *links the server*.
-Linking is a one-time setup act; logging in happens every session. They share the
-plex.tv PIN mechanics and the ownership decision, but nothing else.
+Linking is a one-time setup act; logging in happens every session. What they share lives
+there: the client identifier and the ownership decision, both imported here, and the PIN
+start (:func:`~reaper.services.plex_link.start_pin`), which each flow's own route calls
+with its purpose. The polling halves are not shared, and the note above
+:func:`poll_plex_login` says why.
 
 Three shapes of sign-in resolve to the same thing -- a minted session for a
 verified admin:
@@ -32,7 +35,6 @@ tab. We do not.)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 
 import structlog
 from sqlalchemy import delete, select
@@ -42,7 +44,7 @@ from reaper.auth.passwords import generate_password, hash_password, verify_passw
 from reaper.auth.sessions import open_session
 from reaper.clients.base import IntegrationError
 from reaper.clients.plextv import PlexAccount, PlexTvClient
-from reaper.clock import expiry, utcnow
+from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import AppUser, AuthProvider, PendingPlexLogin, PlexServer
@@ -55,11 +57,6 @@ from reaper.services.plex_link import (
 )
 
 log = structlog.get_logger(__name__)
-
-# The browser is given this long to complete the plex.tv sign-in. A little longer
-# than PlexTvClient.PIN_TIMEOUT so the pending row outlives the poll window rather
-# than expiring underneath a user who is still typing their password.
-PLEX_LOGIN_TTL = timedelta(minutes=10)
 
 # A precomputed hash to verify against when the account does not exist, so a login
 # attempt costs the same Argon2 work whether or not the username is real. Without
@@ -90,12 +87,6 @@ class LoginResult:
     setup: bool = False
 
 
-@dataclass(frozen=True)
-class PlexLoginStart:
-    pin_id: int
-    auth_url: str
-
-
 def _view(user: AppUser) -> UserView:
     return UserView(
         id=user.id,
@@ -106,45 +97,14 @@ def _view(user: AppUser) -> UserView:
 
 
 # ---------------------------------------------------------------------------
-# Plex
+# Plex. The flow opens at plex_link.start_pin(purpose="login"); what follows is the half
+# that is not shared with the link flow. The two pollers agree on the plex.tv round trip
+# and diverge after it, so one function serving both would take a flag, which is what
+# killed W6-3's shared paged(). The divergence: this one mints a session, and it branches
+# on whether a server is already linked, authorizing against that machine id when one is
+# and running first-run setup through complete_link when none is. It consumes the pending
+# row on each refusal arm, where poll_link consumes in a finally.
 # ---------------------------------------------------------------------------
-
-
-async def start_plex_login(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    safety: RuntimeSafety,
-    forward_url: str | None = None,
-) -> PlexLoginStart:
-    """Create a PIN and return the URL to open. Records the pending login.
-
-    ``forward_url`` is where plex.tv sends the sign-in window when the operator is done,
-    which is how that window gets closed (``schemas.PLEX_FORWARD_PATH``).
-    """
-    async with session_factory() as session:
-        cid = await client_identifier(session)
-        # Opportunistically drop stale pendings so the table cannot grow without
-        # bound from abandoned sign-ins.
-        await session.execute(
-            delete(PendingPlexLogin).where(PendingPlexLogin.expires_at <= utcnow())
-        )
-        await session.commit()
-
-    async with PlexTvClient(cid, safety=safety) as plextv:
-        pin = await plextv.create_pin()
-
-    async with session_factory() as session:
-        session.add(
-            PendingPlexLogin(
-                pin_id=pin.pin_id,
-                purpose="login",
-                created_at=utcnow(),
-                expires_at=expiry(PLEX_LOGIN_TTL),
-            )
-        )
-        await session.commit()
-
-    return PlexLoginStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid, forward_url))
 
 
 async def poll_plex_login(
