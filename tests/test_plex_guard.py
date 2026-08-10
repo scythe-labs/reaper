@@ -26,6 +26,7 @@ from reaper.clients.base import SafetyViolationError
 from reaper.clients.plex import (
     GuardedSession,
     PlexClient,
+    PlexError,
     benign_shelf_write,
     declared_mutation,
     normalize_label,
@@ -315,8 +316,12 @@ class _WritesOnFirstTouch:
 
 
 class TestAGuardRefusalReachesTheCallerAsARefusal:
-    """The eight mutating methods each carry ``except SafetyViolationError: raise`` ahead
-    of their catch-all, and until now nothing anywhere pinned a single one of them.
+    """The eight mutating methods let a guard refusal through ahead of their catch-all, and
+    until this class nothing anywhere pinned a single one of them.
+
+    They carried that arm each, one copy per method, when this was written. They inherit it
+    from ``PlexClient._call`` now (C14), which is why every case below still discriminates:
+    delete the one arm and all eight fail, plus the helper case at the end.
 
     Deleting all eight was measured green: 4,161 passed, identical to baseline. That is
     the shape this class exists for. Map ``except Exception`` uniformly and a guard
@@ -384,6 +389,40 @@ class TestAGuardRefusalReachesTheCallerAsARefusal:
         ):
             _WritesOnFirstTouch(session).library  # noqa: B018
         assert _sent(send) == ("PUT", "http://plex.test/library/sections/1/all")
+
+    async def test_a_write_that_declares_no_arm_of_its_own_still_refuses(self) -> None:
+        """What the eight arms becoming one declaration actually buys, and the only thing
+        here that would not have been true before it.
+
+        The cases above go through the eight methods that exist today. This goes through
+        ``_call`` with a body that has no arm anywhere near it, which is the shape a ninth
+        mutating method written next year takes: someone adds a closure and hands it to
+        ``_call``, and the refusal reaches the caller without their having thought about
+        it. Delete the arm from ``_call`` and this fails while every case above still
+        passes, because those assert the METHODS and this asserts the helper (rule 118).
+        """
+        client = self._client()
+
+        def refuses() -> None:
+            raise SafetyViolationError("deletion is turned off on this host")
+
+        with pytest.raises(SafetyViolationError, match="turned off"):
+            await client._call(refuses, what="do something nobody has written yet")
+
+    async def test_an_ordinary_plexapi_failure_is_still_mapped(self) -> None:
+        """The other half, and the reason the arm is ahead of the catch-all rather than
+        instead of it: everything that is NOT a refusal still becomes a ``PlexError``
+        naming the attempt (rule 9/110), so a caller's ``except PlexError`` keeps working.
+
+        The ``what`` is the whole message minus the exception, so this also pins that the
+        helper's template is what the 18 adopting sites used to spell out."""
+        client = self._client()
+
+        def boom() -> None:
+            raise ValueError("the server said no")
+
+        with pytest.raises(PlexError, match="Could not read the thing: the server said no"):
+            await client._call(boom, what="read the thing")
 
 
 class TestEveryRefusalIsOnTheRecord:

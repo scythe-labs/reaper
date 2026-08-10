@@ -194,10 +194,10 @@ def refuse_mutation(event: str, method: str, path: str, *, reason: str, message:
     follow-up, and each logs the guard's own sentence under an event naming the wrong
     cause. What was missing there is a discriminator, since rules 92/93 forbid reading the
     sentence. ``sync_shelves._reconcile`` catches ``PlexError`` alone, so a shelf refusal
-    escapes it untouched **today** -- the eight ``except SafetyViolationError: raise`` arms
-    in ``clients/plex.py`` are what keep it from becoming one, and collapsing those into a
-    shared wrapper is exactly what checkpoint C14 weighs. This line is the insurance
-    against that, written before the wrapper rather than after it.
+    escapes it untouched -- what keeps it escaping is now ONE arm, in ``plex.PlexClient._call``,
+    where it was eight per-method copies when this line was written. C14 settled that collapse
+    and it landed; this line is the insurance that survived it, since it covers every write
+    either guard refuses rather than the eight that had thought put into them.
 
     Raising from here rather than at each site is what makes that structural. A refusal
     added later cannot arrive without its log line, and the ``reason`` is the discriminator
