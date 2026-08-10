@@ -65,6 +65,7 @@ from reaper.services.condemned import (
 )
 from reaper.services.planner import MediaRef, PlanError
 from reaper.services.profiles import active_policy
+from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import SeriesPrunePlan
 from reaper.services.snapshot import HAND_SPARE_DETAIL, effective_fate, judge_facts
 
@@ -325,8 +326,6 @@ async def _replay_simulation(
     deciding it live here was one edit away from the simulator promising a deletion the
     planner holds.
     """
-    from reaper.services.scan_runner import build_gates
-
     gates = build_gates(policy)
     signals = [
         SignalConfig(signal=s.signal, weight=s.weight, saturate_at=s.saturate_at, floor=s.floor)
