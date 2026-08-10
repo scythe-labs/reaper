@@ -316,8 +316,12 @@ class _WritesOnFirstTouch:
 
 
 class TestAGuardRefusalReachesTheCallerAsARefusal:
-    """The eight mutating methods each carry ``except SafetyViolationError: raise`` ahead
-    of their catch-all, and until now nothing anywhere pinned a single one of them.
+    """The eight mutating methods let a guard refusal through ahead of their catch-all, and
+    until this class nothing anywhere pinned a single one of them.
+
+    They carried that arm each, one copy per method, when this was written. They inherit it
+    from ``PlexClient._call`` now (C14), which is why every case below still discriminates:
+    delete the one arm and all eight fail, plus the helper case at the end.
 
     Deleting all eight was measured green: 4,161 passed, identical to baseline. That is
     the shape this class exists for. Map ``except Exception`` uniformly and a guard

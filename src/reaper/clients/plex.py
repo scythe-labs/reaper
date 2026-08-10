@@ -601,8 +601,10 @@ class PlexClient:
             connected = self._server
             if connected is not None:
                 return connected
-            # Not through `_call`: this is what builds the server `_call` takes for granted,
-            # and its message names an address rather than an attempt.
+            # Not through `_call`: its message would in fact be reproduced byte for byte by
+            # `what=f"reach Plex at {self._base_url}"`, so this is a contract boundary and not
+            # a mapping difference. `_call` describes one call against the connected server;
+            # this is the call that runs before there is one.
             try:
                 built = await asyncio.to_thread(build)
             except Exception as exc:
@@ -633,17 +635,24 @@ class PlexClient:
         directions, and both executor call sites swallow the refusal into a warning, so it would
         break quietly.
 
-        **Five methods do not read through this and each says why in place**: ``_connect``
-        (it builds the server this takes for granted), ``active_streams`` (its message is the
-        fail-closed reasoning, not a verb phrase), ``refresh_running`` (it degrades to a warning
-        rather than raising), ``aclose`` (no mapping at all, it is teardown), and ``trash_count``
-        (its own read raises ``PlexError``, which this would wrap a second time).
+        ``what`` completes the sentence ``Could not {what}: {exc}``, so it is a verb phrase and
+        not a noun. ``_iter_pages`` in this same file takes a ``what`` that IS a noun, which is
+        the one way to get ``Could not GUID sweep: ...`` out of this.
+
+        **Five methods do not read through this and each says why in place**: ``_connect`` (the
+        one call that runs before there is a server, so this contract does not describe it),
+        ``active_streams`` (its message is the fail-closed reasoning, not a verb phrase),
+        ``is_refreshing`` (it degrades to a warning rather than raising), ``aclose`` (no mapping
+        at all, it is teardown), and ``trash_count`` (its own read raises ``PlexError``, which
+        this would wrap a second time).
         """
         try:
             return await asyncio.to_thread(work)
-        # Ahead of the catch-all, deliberately. `SafetyViolationError` is off `PlexError` and
-        # must reach the caller as itself; `clients/base.refuse_mutation` has already logged it
-        # at the point of refusal.
+        # Ahead of the catch-all, deliberately. `SafetyViolationError` and `PlexError` are
+        # siblings off `RuntimeError`, neither derived from the other, so an `except PlexError`
+        # downstream does NOT catch a refusal -- and this arm is what keeps it that way. It must
+        # reach the caller as itself; `clients/base.refuse_mutation` has already logged it at
+        # the point of refusal.
         except SafetyViolationError:
             raise
         except Exception as exc:
