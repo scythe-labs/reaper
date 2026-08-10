@@ -35,6 +35,7 @@ above says nothing announces.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import importlib
 import pkgutil
@@ -733,6 +734,18 @@ COLLAPSED_PAIRS = (
 )
 
 
+#: The call sites, reconciled by hand against the pair table above. Seven pairs over six
+#: sites: two models validate inside their parent, and ``SeerrServiceOut`` builds at two routes.
+_COLLAPSE_SITES = [
+    "src/reaper/api/backup.py:235",
+    "src/reaper/api/breakdown.py:28",
+    "src/reaper/api/fairness.py:162",
+    "src/reaper/api/review.py:1300",
+    "src/reaper/api/settings.py:584",
+    "src/reaper/api/settings.py:655",
+]
+
+
 class TestAWireModelReadsOnlyFieldsItsRecordCarries:
     """The other half of this file's mirror: the hop from a service record to the wire model,
     where a field list used to be transcribed by hand at the route.
@@ -758,22 +771,32 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
         )
 
     def test_every_collapsed_site_is_in_the_table_above(self) -> None:
-        """A flag-shaped table cannot see a site that never joined it (rule 145). The count
-        is of the CALL SITES, which is six rather than the seven pairs.
+        """A table nothing reconciles cannot see a site that never joined it (rule 145).
 
-        It reads one spelling and only one (rule 147): the ``from_attributes=True`` keyword
-        at the call. A model that sets ``model_config = ConfigDict(from_attributes=True)``
-        and then calls a bare ``model_validate`` is the same collapse and is invisible here,
-        so a site written that way is added to the table by hand. No model in the tree does
-        that today, and this is not worded as if the walk would catch it.
+        It walks the AST rather than the text, which is what makes it immune to the two
+        things a matcher of this shape usually misses (rule 147): the call spelled over
+        several lines, and a docstring that names the keyword without calling anything.
+
+        **One spelling it still cannot see**, stated rather than implied: a model setting
+        ``model_config = ConfigDict(from_attributes=True)`` and then calling a bare
+        ``model_validate`` is the same collapse. No model in the tree does that, and a site
+        written that way is added to the pair table by hand.
+
+        The assertion is the site LIST, not its length, so swapping one collapse for another
+        cannot hold the number still while ``COLLAPSED_PAIRS`` goes stale.
         """
-        sites = [
-            f"{path.relative_to(REPO)}:{n}"
-            for path in sorted((REPO / "src" / "reaper" / "api").rglob("*.py"))
-            for n, line in enumerate(path.read_text().splitlines(), 1)
-            if "from_attributes=True" in line
-        ]
-        assert len(sites) == 6, (
-            f"{len(sites)} sites build a wire model off a service record: {sites}. Add the "
-            "new pair to COLLAPSED_PAIRS above and move this count."
+        sites = []
+        for path in sorted((REPO / "src" / "reaper" / "api").rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                for keyword in node.keywords:
+                    value = keyword.value
+                    if keyword.arg == "from_attributes" and getattr(value, "value", None) is True:
+                        sites.append(f"{path.relative_to(REPO)}:{node.lineno}")
+
+        assert sorted(sites) == _COLLAPSE_SITES, (
+            f"the sites building a wire model off a service record are now {sorted(sites)}. "
+            "Add or remove its pair in COLLAPSED_PAIRS above, then move this list."
         )

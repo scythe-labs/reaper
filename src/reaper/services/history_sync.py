@@ -53,8 +53,6 @@ is what makes the guard real.
 
 from __future__ import annotations
 
-import asyncio
-import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -62,6 +60,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.aio import per_loop_lock
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 
@@ -214,24 +213,9 @@ _WATCH_EVENT_COLUMNS = (
 )
 
 
-#: One rebuild lock per event loop, created lazily so it always binds to the running loop.
-#: A single module-level ``asyncio.Lock`` would bind to whichever loop first awaited it and
-#: raise on every other -- and the test suite runs a fresh loop per test. Weak-keyed on the
-#: loop so a closed loop's lock is collected. In production there is exactly one loop, hence
-#: one lock, which is what serializes the rebuild across every concurrent caller in the
-#: process (the scan, the fairness route, the nightly sync).
-_rebuild_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
-    weakref.WeakKeyDictionary()
-)
-
-
-def _rebuild_lock() -> asyncio.Lock:
-    loop = asyncio.get_running_loop()
-    lock = _rebuild_locks.get(loop)
-    if lock is None:
-        lock = asyncio.Lock()
-        _rebuild_locks[loop] = lock
-    return lock
+#: Serializes the rebuild across every concurrent caller in the process: the scan, the
+#: fairness route, the nightly sync. What it prevents is at ``ensure_schema``'s write path.
+_rebuild_lock = per_loop_lock()
 
 
 async def ensure_schema(engine: AsyncEngine) -> None:

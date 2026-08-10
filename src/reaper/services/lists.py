@@ -49,6 +49,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from reaper.aio import per_loop_lock
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
 from reaper.clients.public import PublicClient
@@ -727,6 +728,10 @@ _ADDED_COLUMNS = {"plex_rating_key": "INTEGER"}
 #: it reads as its display name, which is what it was matched by before the column existed.
 _ADDED_LIST_COLUMNS = {"stats_json": "TEXT", "rule_name": "TEXT"}
 
+#: Serializes the widening in :func:`ensure_schema`, which is a check-then-write that SQLite
+#: does not serialize for us. Whole-process, so it holds across the seven callers.
+_widen_lock = per_loop_lock()
+
 
 @dataclass(frozen=True, slots=True)
 class Membership:
@@ -788,23 +793,25 @@ async def ensure_schema(engine: AsyncEngine) -> None:
         for statement in SCHEMA.strip().split(";"):
             if statement.strip():
                 await conn.execute(text(statement))
-        stored = {
-            str(row.name)
-            for row in (await conn.execute(text("PRAGMA table_info(protection_list_item)"))).all()
-        }
-        for column, kind in _ADDED_COLUMNS.items():
-            if column not in stored:
-                # No ADD COLUMN IF NOT EXISTS in SQLite, so the PRAGMA above is the guard.
-                await conn.execute(
-                    text(f"ALTER TABLE protection_list_item ADD COLUMN {column} {kind}")
-                )
-        list_stored = {
-            str(row.name)
-            for row in (await conn.execute(text("PRAGMA table_info(protection_list)"))).all()
-        }
-        for column, kind in _ADDED_LIST_COLUMNS.items():
-            if column not in list_stored:
-                await conn.execute(text(f"ALTER TABLE protection_list ADD COLUMN {column} {kind}"))
+    # Each shape is re-read INSIDE the lock and its ALTERs decided from THAT, never from a
+    # read taken before it (rule 58). Nothing at the SQLite level serializes these: pysqlite
+    # autocommits DDL, so `engine.begin()` above and below opens no transaction around it,
+    # and there is no ADD COLUMN IF NOT EXISTS. Two callers reading the pre-widen shape both
+    # ALTER and the second raises `duplicate column name`, which aborts a scan -- and two
+    # callers is ordinary, since the Lists screen, a running scan and the nightly refresh all
+    # reach here on three different job ids.
+    async with _widen_lock(), engine.begin() as conn:
+        for table, added in (
+            ("protection_list_item", _ADDED_COLUMNS),
+            ("protection_list", _ADDED_LIST_COLUMNS),
+        ):
+            stored = {
+                str(row.name)
+                for row in (await conn.execute(text(f"PRAGMA table_info({table})"))).all()
+            }
+            for column, kind in added.items():
+                if column not in stored:
+                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {kind}"))
         for statement in INDEXES.strip().split(";"):
             if statement.strip():
                 await conn.execute(text(statement))
