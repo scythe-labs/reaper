@@ -78,10 +78,6 @@ import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
 
-/** Re-exported from `format`, where it moved so `signalRamp` could read it without a cycle
- *  back through this module. Several sites import it from here. */
-export { humanDays };
-
 /** The DOM id of the `i`th warning rendered at one anchor. Both ends of the association are
  *  named by this one function, so the control's `aria-describedby` and the notice's `id` cannot
  *  drift apart the way two hand-written strings would. */
@@ -1002,42 +998,6 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
     </>
   );
 }
-
-// ---------------------------------------------------------------------------
-// The owner's own rules: sentences in, sentences out.
-// ---------------------------------------------------------------------------
-
-export const OP_LABELS: Record<string, string> = {
-  gte: "is at least",
-  lte: "is at most",
-  eq: "is",
-  in: "is one of",
-  contains: "contains",
-};
-
-// A vocabulary field already handled by a built-in protection above -> not offered as a
-// custom rule, so the two never say the same thing twice. Only fields with no built-in gate
-// (size, all-time watchers, vote count, season rank) remain to be authored here.
-export const FIELD_TO_GATE: Record<string, string> = {
-  days_unwatched: "min_dormancy",
-  recent_watchers: "server_popularity",
-  imdb_rating: "rating_floor",
-  streaming_now: "streaming_now",
-  // `whitelisted` and `on_curated_list` were here, mapped to the two list gates. Both gates
-  // are retired -- every list now protects through an `on_list` keep rule the operator
-  // authors -- so their fields stay authorable and nothing filters them.
-};
-
-// The built-in signals already cover these fields, so they are not offered as custom
-// "remove" rules -- the two never say the same thing twice. That leaves the new metadata
-// fields (genre, requested, quality, release age, show ended) to be authored here.
-export const FIELD_TO_SIGNAL: Record<string, string> = {
-  days_unwatched: "unwatched",
-  recent_watchers: "few_watchers",
-  imdb_rating: "low_rating",
-  season_rank: "season_rank",
-  size_bytes: "size",
-};
 
 /** Live advisory beside the keep-last input: how many shows a keep-last-N value fully
  *  protects, computed from the last scan's season shape -- no re-scan, since the shape does

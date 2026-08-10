@@ -90,8 +90,9 @@ export function coverage(bp: number): string {
  *  accounting.
  *
  *  Lives here rather than in `PolicyEditor`, which is where it started, because
- *  `signalRamp` needs it too and the editor imports `signalRamp`. Re-exported there so the
- *  existing callers keep their import. */
+ *  `signalRamp` needs it too and the editor imports `signalRamp`. The editor re-exported it
+ *  for a while so its old callers could keep their import, and that re-export was one half of
+ *  the `PolicyEditor` / `PolicyRuleEditors` cycle. Import it from here. */
 export function humanDays(days: number): string {
   const whole = Math.round(days);
   if (whole <= 0) return "less than a day";

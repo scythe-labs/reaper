@@ -753,20 +753,16 @@ async def scan(
                 reach_days=context.reach_days,
                 active_rating_keys=context.active_rating_keys,
                 activity_degraded=context.activity_degraded,
-                keep_last_seasons=tv_policy.keep_last_seasons,
-                keep_first_season=tv_policy.keep_first_season,
+                # The scan and the simulator now reach the planner's nine season settings
+                # through one road, ``SeasonPolicy.from_body``. Unpacking the body into nine
+                # keywords here was the second road, and a field added to the season card
+                # had to be written onto both (rule 144).
+                season_policy=season_evidence.SeasonPolicy.from_body(tv_policy),
                 window_days=tv_policy.popularity_window_days(),
                 whitelisted=tag_only_whitelist,
                 degrade=context.degrade,
                 requested=requested,
                 request_index=request_index,
-                keep_last_scope=tv_policy.keep_last_scope,
-                season_lookahead=tv_policy.season_lookahead,
-                keep_in_progress=tv_policy.keep_in_progress,
-                in_progress_hold_days=tv_policy.in_progress_hold_days,
-                keep_specials=tv_policy.keep_specials,
-                protect_incomplete_seasons=tv_policy.protect_incomplete_seasons,
-                flag_keep_conflicts=tv_policy.flag_keep_conflicts,
                 membership_index=membership_index,
                 allowed_sections=allowed_sections,
             ),
