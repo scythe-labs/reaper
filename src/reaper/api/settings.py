@@ -872,9 +872,10 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     one click. If no admin password has been set yet, enabling is refused with a message
     pointing at the password step.
 
-    The check runs through :func:`reaper.api.deps.require_admin_password`, which is the same
-    lockout and Argon2 concurrency gate as login: arming is a password-guessing surface too,
-    and Argon2 is expensive by design.
+    The check runs through :func:`reaper.api.deps.require_admin_password`. That is the same
+    per-IP + per-account lockout shape as login and the same Argon2 concurrency gate
+    (``argon2_gate``), on its own counter (``password_throttle``, not ``login_throttle``):
+    arming is a password-guessing surface too, and Argon2 is expensive by design.
     """
     keys = (f"ip:{client_ip(request)}", "account:safety-arm")
     async with session_factory(request)() as session:

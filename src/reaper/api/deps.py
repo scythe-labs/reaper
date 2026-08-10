@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """What every router needs off the request, and the gate that gets asked before deletion is armed.
 
-Two things live here, and the second is why this module is under ``.claude/rules/auth.md``'s
-globs.
+Two things live here. The gate is why this module is under ``.claude/rules/auth.md``'s globs;
+the accessors would not have earned that on their own.
 
 **The admin-password gate.** Four routes ask for the admin password before doing something
 consequential: arming deletion, changing that password, forgetting the watch record, and

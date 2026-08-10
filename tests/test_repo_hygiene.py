@@ -475,7 +475,7 @@ def test_http_clients_are_only_constructed_in_clients() -> None:
 
 
 def test_the_admin_password_lockout_is_reached_through_one_function() -> None:
-    """Rules 11/98 as a gate: only ``api/deps.py`` may touch ``password_throttle``.
+    """Rules 11/98 as a gate: only ``api/deps.py`` reaches the lockout or the verify.
 
     Four routes ask for the admin password before doing something consequential, and each
     used to run the same four steps by hand: check the lockout, verify, record the failure,
@@ -483,28 +483,38 @@ def test_the_admin_password_lockout_is_reached_through_one_function() -> None:
     four, and the step most easily dropped is the one no route-level test used to reach --
     ``record_success``, whose absence makes a near-miss cost the operator a real lockout.
 
-    Prose cannot bind an author who never read it, so the ban is on the name instead: a route
-    that cannot reach the throttle cannot get its ritual wrong. The two files below are the
-    declaration and the one implementation. Anything else is a fifth copy starting.
+    Prose cannot bind an author who never read it, so the ban is on the names instead: a route
+    that can reach neither the throttle nor the verify cannot get the ritual wrong. Two names
+    are banned rather than one, and the second is the one that matters. Banning
+    ``password_throttle`` alone stops a gate with three of the four steps; a gate calling
+    ``admin_password.verify`` straight is a gate with **none** of them, and every one of these
+    routers already imports that module, so it is the shorter mistake to make.
 
-    **What this cannot catch**: a caller reaching the singleton through
-    ``reaper.auth.ratelimit.password_throttle`` written out in full, or rebinding it under
-    another name. Both are visible in review in a way a silently-missing step is not, which is
-    the trade this makes.
+    **Measured against the spellings, not assumed (rule 147).** The matcher is a substring test
+    over `_strip_prose`, so it catches the dotted form
+    (``ratelimit.password_throttle.record_failure(...)``), the fully qualified form, and an
+    ``import ... as`` rebinding, which is caught at the import line. What it does not catch is a
+    name assembled at runtime (``getattr(ratelimit, "password_" + "throttle")``). An earlier
+    version of this docstring named the first two as blind spots and both were already covered;
+    the escape it missed is the one now banned on the second line.
     """
-    allowed = {SRC / "auth" / "ratelimit.py", SRC / "api" / "deps.py"}
+    allowed = {
+        "password_throttle": {SRC / "auth" / "ratelimit.py", SRC / "api" / "deps.py"},
+        "admin_password.verify": {SRC / "api" / "deps.py"},
+    }
     offenders = [
-        f"{p.relative_to(REPO)}:{n}"
+        f"{p.relative_to(REPO)}:{n}  {banned}"
+        for banned, exempt in allowed.items()
         for p in SRC.rglob("*.py")
-        if p not in allowed
+        if p not in exempt
         for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
-        if "password_throttle" in _strip_prose(line)
+        if banned in _strip_prose(line)
     ]
     assert not offenders, (
-        "reach the admin-password lockout through reaper.api.deps.require_admin_password, "
+        "reach the admin-password gate through reaper.api.deps.require_admin_password, "
         "which is the whole ritual -- lockout check, verify, record the failure, clear both "
         "keys on success -- rather than spelling any part of it again (rule 11/98):\n"
-        + "\n".join(offenders)
+        + "\n".join(sorted(offenders))
     )
 
 
