@@ -44,11 +44,18 @@ import reaper.api
 REPO = Path(__file__).resolve().parents[1]
 API_TS = REPO / "frontend" / "src" / "api.ts"
 
-#: The modules whose Pydantic models the browser mirrors. ``api.*`` is the wire layer and wins
-#: any name collision with the two engine modules, which the browser also mirrors directly:
-#: ``PolicyBody``/``ProfileSettings`` exist in BOTH, and the browser's copy is the wire one.
+#: The modules whose Pydantic models the browser mirrors. ``api.*`` is the wire layer, and the
+#: two engine modules the browser also mirrors directly are kept in a second bucket, so a name
+#: living in both is a pairing question rather than a clash -- ``ALIAS`` is where those are
+#: written down. This used to name ``PolicyBody``/``ProfileSettings`` as existing in both; the
+#: wire spells them ``PolicyBodyOut`` and ``ProfileSettingsIO``, so no name is shared today.
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
+
+#: Reconciled by hand against the tree: 125 under ``reaper.api.*`` and 15 across the two engine
+#: modules. It is here because the collision assertion below is flag-shaped, and a flag cannot
+#: see a member that left the walk (rule 145).
+_EXPECTED_SERVER_MODELS = 140
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
 #: field sets are compared -- and the rename is the only reason a suffix rule cannot find it.
@@ -194,6 +201,8 @@ def _server_models() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     """
     wire: dict[str, set[str]] = {}
     inner: dict[str, set[str]] = {}
+    homes: dict[tuple[str, str], type[BaseModel]] = {}
+    collisions: list[str] = []
     names = [f"{WIRE_PACKAGE}{m.name}" for m in pkgutil.iter_modules(reaper.api.__path__)]
     for module_name in [*names, *INNER_MODULES]:
         module = importlib.import_module(module_name)
@@ -205,7 +214,33 @@ def _server_models() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 and value is not BaseModel
                 and value.__module__ == module_name
             ):
+                # Keyed per BUCKET, because only a same-bucket collision masks: ``wire``
+                # and ``inner`` are separate dicts, so an engine model sharing a name with a
+                # wire model overwrites nothing. Keying on the name alone would forbid the
+                # engine/wire pairing ``ALIAS`` exists to describe.
+                seen = "wire" if bucket is wire else "inner"
+                prior = homes.get((seen, value.__name__))
+                if prior is not None and prior is not value:
+                    collisions.append(f"{value.__name__}: {prior.__module__} and {module_name}")
+                homes[(seen, value.__name__)] = value
                 bucket[value.__name__] = set(value.model_fields)
+    assert len(wire) + len(inner) == _EXPECTED_SERVER_MODELS, (
+        f"expected {_EXPECTED_SERVER_MODELS} models under {WIRE_PACKAGE}* plus "
+        f"{', '.join(INNER_MODULES)}, walked {len(wire)} + {len(inner)}. A flag-shaped "
+        "assertion cannot tell a model that COMPLIES from one that dropped out of the walk "
+        "(rule 145), and this walk is narrower than it looks: pkgutil.iter_modules does not "
+        "recurse, so an api module moved under a subpackage leaves silently. Three BaseModels "
+        "sit outside it deliberately -- config.InstanceSeed and config.RuntimeSafety are not "
+        "wire types, and main.HealthResponse IS a published component whose name could collide "
+        "with an api one without this walk seeing either."
+    )
+    assert collisions == [], (
+        "two different models share one class name, so this walk keeps only the one imported "
+        "last and every comparison below runs against it alone. FastAPI names the published "
+        "component off the class too, so both operations get module-qualified component names "
+        "the moment either side gains a field, including the operation nobody edited. Declare "
+        "it once, or give one a distinct name:\n  " + "\n  ".join(sorted(collisions))
+    )
     return wire, inner
 
 

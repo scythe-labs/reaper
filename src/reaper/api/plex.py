@@ -46,7 +46,12 @@ from reaper.api.auth import (
     _verify_admin_password,
     record_password_failure,
 )
-from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn, RemovedOut
+from reaper.api.schemas import (
+    NO_PLEX_FORWARD,
+    PlexServerChoiceOut,
+    PlexStartIn,
+    RemovedOut,
+)
 
 # Private on purpose, and imported rather than copied: see the module docstring.
 from reaper.api.settings import _box, _factory, _require_web_url, _required_web_url, _settings
@@ -124,11 +129,6 @@ class PlexLinkPollIn(BaseModel):
     # The certificate-check choice made in the link form. Off lets a self-signed HTTPS
     # server be reached at all; it is stored on the server row when the link completes.
     verify_tls: bool = True
-
-
-class PlexServerChoiceOut(BaseModel):
-    name: str
-    machine_identifier: str
 
 
 class PlexLinkPollOut(BaseModel):
