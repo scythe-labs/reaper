@@ -3345,7 +3345,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | --- | --- | --- | --- |
 | W11-1 | 22 sites, 3 modules, every fallback the dataclass default | 17 tests, 20 reads, 3 modules; one fallback is `row.get(_SPINE_LIBRARY)` | kill, the rewrite fabricates a `rating_key` |
 | W11-2 | 3 to 5 re-parses, ~12 | count right, size is +2 | defer, carrier for #709 only |
-| W11-3 | 6 dispatch places, no test pins the conversions | block above | build, test first |
+| W11-3 | 6 dispatch places, no test pins the conversions | block above; 30 sites over two spellings | **built**, test and type; table killed, 4 unlike dispatches |
 | W11-4 | 12 arms, 6 bare, the test is already that table | block above | kill |
 | W11-5 | `scan.py`'s condemned counter | right, in `services/snapshot.py` | build, -3 |
 | W11-6 | triple ×4 plus 3 parallel dicts | 1 triple, 4 pairs, 1 dict | kill, the file has no such shape |
@@ -3364,9 +3364,9 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-19 | caller written twice, ~15 | right, nets -8 | build |
 | W11-20 | 6 callbacks, depth 3 to 4, ~40 | 7 or 8 props, max depth 2 | unsettled, scout kills it, verifier makes it an owner call |
 | W11-21 | 3 hand-rolled 250 ms debounces | right, one is already a hook | unsettled, scout kills on ~0 lines, verifier builds the shared timer |
-| W11-22 | mirror written 3 times | right, plus 3 child effects and a 4th copy of the guard in `ServiceModal` | build |
+| W11-22 | mirror written 3 times | right, plus 3 child effects and a 4th copy of the guard in `ServiceModal` | **built**, code net 0; the value is `ScheduleModal`'s one-term mirror |
 | W11-23 | 21 sites across 7 files, ~40 | block above | kill |
-| W11-24 | same component twice, ~28 | right, nets -23 | build |
+| W11-24 | same component twice, ~28 | right on the copies; **-23 is wrong, code net +2** | **built**, for the copy divergence, not the lines |
 | W11-25 | 12 blocks, 4 sets, ~28 | right, the one count that survived re-derivation | build, cascade test scoped to `.strip-sq` |
 | W11-26 | 3 wrappers, each commented at the other two | 3 of 6 sites are that shape, 2 of the 3 carry a comment, and both point at `ScanLine` | build, 3 of 6, `ReapBar` excluded |
 | W11-27 | computed and marked up twice, ~14 | right, nets -6 | build, the shared `aria-label` is the reason |
