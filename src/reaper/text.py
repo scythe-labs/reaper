@@ -3,7 +3,8 @@
 
 One derivation, because rule 88 is a fail-open protection rule: when one side of a name
 comparison is folded and the other is not, the keep rule stops matching and nothing
-announces it. It was spelled inline at 33 places before this module existed.
+announces it. It was spelled inline 37 times over 33 lines in 14 modules before this module
+existed.
 """
 
 from __future__ import annotations
