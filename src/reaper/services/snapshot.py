@@ -953,9 +953,9 @@ async def scan(
     expired_spares = await whitelist.purge_expired_spares(session, now)
     if expired_spares:
         log.info("scan.spares_expired", snapshot=snapshot.id, count=len(expired_spares))
-    condemned = 0
     total = len(items) + len(season_judgments)
 
+    # Both lanes append here, and every count of the condemned set is this list's length.
     condemned_keys: list[str] = []
     # Which rung of the size ladder actually fired, counted across the whole scan. This
     # answers a question nothing in Reaper has ever measured: how often is a size simply
@@ -1089,7 +1089,6 @@ async def scan(
             watch_blind=blind_reason is not None if reading is not None else None,
         )
         if verdict == "condemn":
-            condemned += 1
             condemned_keys.append(item.media_key)
 
     # What each show's season plan was decided from, frozen once per show. Every season of a
@@ -1187,7 +1186,6 @@ async def scan(
             ),
         )
         if verdict == "condemn":
-            condemned += 1
             condemned_keys.append(judgment.media_key)
 
     # Grace clocks for everything condemned this run, in one batched pass -- the
@@ -1247,7 +1245,7 @@ async def scan(
         )
 
     score_ms = round((time.monotonic() - score_started) * 1000)
-    emit(Progress("done", total, total, f"{condemned} candidates"))
+    emit(Progress("done", total, total, f"{len(condemned_keys)} candidates"))
 
     log.info(
         "scan.size_source_tally",
@@ -1260,7 +1258,7 @@ async def scan(
         snapshot=snapshot.id,
         items=len(items),
         seasons=len(season_judgments),
-        condemned=condemned,
+        condemned=len(condemned_keys),
         degraded=context.degraded,
     )
     # The intra-gather split scan_runner's scan.completed points at: which source owns the

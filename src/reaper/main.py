@@ -8,7 +8,6 @@ import hashlib
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
 from platform import python_version
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -60,7 +59,7 @@ from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.recovery import clear_recovery_file, mint_recovery_token, recovery_base_url
 from reaper.auth.sessions import clear_recovery_marks
-from reaper.buildinfo import build_version, install_kind, install_root, is_release, short_commit
+from reaper.buildinfo import build_version, install_kind, is_release, project_root, short_commit
 from reaper.config import (
     Settings,
     get_settings,
@@ -794,8 +793,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # directory that was never built -- so that case still warns rather than passing.
     # In a packaged install (frozen bundle, snap) the install root stands in for the
     # repo root: the built SPA travels inside it, with no src/ level above the package.
-    root = install_root() or Path(__file__).resolve().parent.parent.parent
-    dist = root / "frontend" / "dist"
+    dist = project_root() / "frontend" / "dist"
     if not settings.serve_spa:
         log.info(
             "frontend.not_served",

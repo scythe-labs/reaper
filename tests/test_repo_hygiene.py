@@ -2454,6 +2454,66 @@ def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
     )
 
 
+#: Every ``run:`` script under `.github/workflows/` that turns on `pipefail`, counted so a
+#: block leaving the walk is visible rather than silently dropping out of the ban below
+#: (rule 145). Reconciled against the walk: `binaries.yml` 8, `ci.yml` 3, `release.yml` 5,
+#: `virustotal.yml` 2. The other five workflows set it nowhere, and a block without it is
+#: out of scope on purpose: there the pipeline's status is the reader's, which is the answer
+#: the step wanted. A first hand count said 14, and the walk is what corrected it.
+_PIPEFAIL_RUN_BLOCKS = 18
+
+
+def test_no_pipefail_gate_reads_its_verdict_through_a_short_circuiting_pipe() -> None:
+    """Under `pipefail` a pipeline reports its rightmost failure, and `head` makes one.
+
+    `head -c N` and `grep -q` both exit as soon as they have their answer, which can kill the
+    writer with SIGPIPE. The pipeline's status is then the writer's, so the step fails while
+    the thing it was testing succeeded. **Whether it fires depends on how much the writer
+    produced**: under the pipe buffer the writer finishes and exits 0 before either reader
+    closes. `binaries.yml`'s three boot probes read the served page through
+    `curl … | head -c 200 | grep -qi`, and were measured passing on a 4 KB page and failing on
+    a 200 KB one, so a healthy build whose page grew would have read as a bundle that lost its
+    SPA. CLAUDE.md's rule 134 names the mechanism; this is the gate for it, because the prose
+    binds an author who read it and a workflow is edited by one who did not.
+
+    **Spellings accepted** (rule 147): `| head`, `|head`, and the same two for `tail`, anywhere
+    in a script that sets `pipefail`. A reader that short-circuits under another name is out of
+    reach and is named here rather than implied covered. Redirect to a file and read the file.
+    """
+    workflows = REPO / ".github" / "workflows"
+    scripts: list[tuple[str, str]] = []
+    for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_name, job in (workflow.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                script = step.get("run")
+                if isinstance(script, str) and "pipefail" in script:
+                    scripts.append((f"{path.name}:{job_name}:{step.get('name', 'run')}", script))
+
+    assert len(scripts) == _PIPEFAIL_RUN_BLOCKS, (
+        f"the pipefail run blocks moved: {len(scripts)} found, "
+        f"{_PIPEFAIL_RUN_BLOCKS} expected.\n"
+        "Reconcile the count above by hand, then update _PIPEFAIL_RUN_BLOCKS. A block that\n"
+        "left the walk is missing from the ban below as well as from this number.\n"
+        "  " + "\n  ".join(name for name, _ in scripts)
+    )
+
+    offenders = [
+        f"{name} -> {line.strip()}"
+        for name, script in scripts
+        for line in script.splitlines()
+        if "| head" in line or "|head" in line or "| tail" in line or "|tail" in line
+    ]
+    assert not offenders, (
+        "a pipefail'd workflow step decides on a pipeline whose reader short-circuits:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nThe writer takes SIGPIPE once its output outgrows the pipe buffer, so the step\n"
+        "fails on a healthy result. Redirect to a file and read the file instead:\n"
+        '  curl -s "$url" > out.html || true\n'
+        '  if grep -qi "<!doctype html>" out.html; then spa=true; fi'
+    )
+
+
 #: ``plan`` and the four jobs it fans out to. Pinned because the reconciliation below is
 #: vacuously true against a walk that stopped finding jobs (rule 145): a publisher renamed
 #: out of the scan is missing from the check and from its own count at the same time.

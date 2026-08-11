@@ -3305,6 +3305,38 @@ pairs; the other two sit 40 and about 150 lines apart, so collapsing them reloca
 instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
 filtered two-column select to an unfiltered three-column one.
 
+## A dedup's stated saving counts the deletion and not the declaration (2026-08-10)
+
+Six wave 11 backend rows, built and measured as code net with comments counted and tests
+excluded. Stated: -3, -7, -5, -3, index-only, +2. Measured: **-2, -2, +2, -1, +4 plus a 42-line
+revision, +7.** Five of the six cost more than the row said and none cost less.
+
+**The error is one-sided because of how the figure is derived.** A reader counts the statements
+that will be deleted. What replaces them is a constant, a helper, or the docstring explaining why
+a parameter narrowed, and none of that is on the page yet when the estimate is written. So the
+estimate is systematically optimistic by whatever the replacement costs, which for a one-line
+declaration with a three-line comment is four lines against a four-line saving.
+
+**Two of the six were worth building at a positive line count, for reasons the figure never
+carried.** The cron refusal (`api/settings.py`) was one sentence written twice in one function
+with two tests asserting only its status code, so either copy could be reworded alone; the
+declaration plus a test matching both arms against it costs +2. The root walk (`buildinfo`,
+`launcher`, `main`) was `main.py` counting three parents from its own file to reach the directory
+it serves the built SPA out of, agreeing with `launcher.py`'s count only because the two modules
+sit at the same depth; one shared `project_root()` costs +7 and makes moving either file an
+import error rather than a stale UI.
+
+**A greppable-violation gate is not automatically the cheaper answer.** The root walk was the row
+where a hygiene ban was the stated alternative. After the consolidation `src/` holds one
+multi-parent walk, inside the helper, so the ban would scan a population of one; before it, the
+ban would have to exempt the two sites it exists to catch. A gate is worth its line when the
+population it scans can grow, and the consolidation is what shrinks that population to one.
+
+**The one measurement that decided an item on its own was not a line count.** `ActionStep.run_id`
+was unindexed and `EXPLAIN QUERY PLAN` returned `SCAN action_step` for the executor's own filter,
+against a table retention never sweeps. The test asserts the query plan rather than the index's
+presence, so an index that exists and is not chosen still fails.
+
 ## A shell gate can be green because the page is small (2026-08-10)
 
 `binaries.yml`'s boot probes check the packaged build serves the SPA and not a JSON 404:
@@ -3319,31 +3351,41 @@ is non-zero with `grep` having matched. **Whether that happens depends on the pa
 Measured with the same one-liner: a 4 KB body passes, a 200 KB body fails. Under the pipe buffer
 curl writes the whole response and exits 0 before either reader closes.
 
-Today's `index.html` is 4,276 bytes, so all three copies of that line are green on a margin
-nobody chose. The build that trips it is a healthy one whose page grew, and the log says the
+The page the probe reads is the BUILT `index.html`, not the source one, and today it is under
+5 KB. So all three copies of that line are green on a margin nobody chose, and it moves with
+every build. The build that trips it is a healthy one whose page grew, and the log says the
 bundle lost its SPA. Redirecting to a file and grepping the file removes the pipeline.
+
+`tests/test_repo_hygiene.py` now bans the shape in any pipefail'd workflow step, so this cannot
+come back in a workflow nobody thought to re-read.
 
 The general shape: **`| head` inside a pipefail gate makes the verdict a function of how much the
 writer produced**, not of what it produced. CLAUDE.md's rule 134 names `| head` for the sibling
 case, a command dying partway and reporting that as its own result; this is the same mechanism
 reaching the opposite conclusion, a command that succeeded reported as failed.
 
-## Four dedups, three wrong figures, and none of them landing on lines (2026-08-10)
+## Four dedups, and the line count answered four different ways (2026-08-10)
 
-Wave 11's W11-42, W11-19, W11-18 and W11-10, built and measured in one pass. Code net: **-8, -8,
--3 and +2**. Stated: ~85 (~16 believed removable), ~15, ~25, ~45. Only W11-19's held.
+Wave 11's W11-42, W11-19, W11-18 and W11-10, built and measured in one pass. Code net,
+non-comment and non-blank: **-8, -8, -3 and -6**, so **-25** over the four. Stated: ~85 (~16
+believed removable), ~15, ~25, ~45. Only W11-19's -8 held exactly.
 
-**Each is roughly canceled by the comment the shared thing now carries.** Two copies each carry
-half an explanation, or one carries it and the other carries a pointer to it; one shared
-declaration carries the whole thing, and this repository writes that out. So the *total* diff for
-all four is close to zero while the *code* falls by 17. S5 read as a line test kills all four.
+**The raw diff over the same files is +21.** Two copies each carry half an explanation, or one
+carries it and the other carries a pointer to it; one shared declaration carries the whole
+thing, and this repository writes that out. So the code falls and the file grows, and which of
+those two numbers you quote decides the verdict.
 
-**What each one actually bought was a rule that had already been forgotten once.**
+**Counting is where this went wrong first, and the error inverted a verdict.** W11-10 was first
+reported at **+2** because the counter scored the new helper's docstring body as code. Docstring
+lines are the one prose form with no comment marker on them, so a diff filter written for `#`,
+`//` and `*` reads them as source. It measures -6. The row would have concluded that the item
+buys nothing on lines when it is in fact the second-largest saver of the four.
 
-- **W11-10** is the clearest, at +2 code. "No `await` between the read and the write" is what
-  stops two requests installing two different per-app objects, and it was written at one of four
-  copies and depended on at three. A plain `def` cannot acquire an await without every call site
-  turning async first.
+**What each one bought is a rule that had already been forgotten once.**
+
+- **W11-10**: "no `await` between the read and the write" stops two requests installing two
+  different per-app objects. It was written at one of four copies and depended on at three. A
+  plain `def` cannot acquire an await without every call site turning async first.
 - **W11-19**'s two copies had already cost a bug: one surface found that the notice must clear on
   a Save and not only on Discard, and the other then carried a comment *pointing at* that fix
   rather than sharing it. The extraction also found a fourth caller nobody had counted, by
@@ -3354,9 +3396,9 @@ all four is close to zero while the *code* falls by 17. S5 read as a line test k
   fixed twice.
 
 The plan's S5 already carries the standing form, that a kill needs both halves said. What these
-four add is the measurement: across four independent cases the code fell by 17 lines and the
-diff by nothing, so on this codebase the line half decides almost nothing on its own. The
-question that did the work each time was **"is there a rule here that only one copy states"**.
+four add is that the line half is not one number: it is -25 or +21 on the same change, and the
+question that did the work every time was **"is there a rule here that only one copy states"**.
+
 ## A helper measured at zero lines was measured in the wrong shape (2026-08-10)
 
 Two settings findings were killed on "an extraction that nets to zero lines is not worth its

@@ -176,10 +176,8 @@ describe("the confirm that refuses a switch away from unsaved edits", () => {
     expect(commit).toHaveBeenCalledExactlyOnceWith("security");
   });
 
-  // B-31: the notice used to survive a Save, still warning that a switch "discards them" and
-  // still offering a red Discard for changes that no longer existed. The policy editor fixed
-  // that in its own copy while Settings carried a comment pointing at the fix; one hook now
-  // holds it for both. Saving is not a decision to leave, so nothing switches here.
+  // B-31, whose history is on `useSwitchConfirm`. Saving is not a decision to leave, so the
+  // notice goes and nothing switches.
   it("goes away when the edits do, without switching", async () => {
     const user = userEvent.setup();
     const commit = vi.fn();

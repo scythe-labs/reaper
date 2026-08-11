@@ -1517,8 +1517,7 @@ export function PolicyEditor({
   // The Movies/TV switch the owner asked for while the draft still holds unsaved edits.
   // Switching re-seeds the draft from the other saved policy, which would silently throw
   // those edits away, so it waits for the same two-step confirm the rest of the app uses
-  // (never a native confirm()). `useSwitchConfirm` is the shared caller half, and B-31's
-  // fix (the notice clearing on a Save, not only on Discard) lives inside it now.
+  // (never a native confirm()). `useSwitchConfirm` is the shared caller half.
   const confirmSwitch = useSwitchConfirm(mediaType, dirty, setMediaType);
 
   // Section jump targets for the rail. Memoized (the refs themselves are stable) so the
