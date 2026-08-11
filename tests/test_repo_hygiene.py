@@ -29,6 +29,8 @@ from typing import Any, NamedTuple
 import pytest
 import yaml
 
+from reaper.api import settings as settings_api
+
 # The one guard here that reads the app rather than the tree: the documented example of a
 # checked protection is derived by running the gate that builds it, never transcribed
 # (rule 119). The hygiene CI lane installs the whole package, so this costs nothing extra.
@@ -39,7 +41,7 @@ from reaper.engine.gates import (
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
-from reaper.services import plex_link
+from reaper.services import app_settings, plex_link
 from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
 from reaper.services.season_scan import SeasonJudgment
 from reaper.services.snapshot import Display, RawItem
@@ -7177,4 +7179,78 @@ def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None
     assert {next(iter(bases)) for _, bases in packs.values()} == set(_DISPLAY_PACK_SOURCES), (
         f"the Display packs do not cover both lanes: {sorted(packs)}. One packs a movie and "
         "the other a season, so pointing them at one record silences the check above."
+    )
+
+
+#: Where the built-in accent is spelled outside the Python declaration that owns it, and what
+#: shape each copy takes. The stylesheet carries it once per theme block, the two operator
+#: sentences carry it inside a sentence, and `accent.ts` carries it as an export the brand
+#: modules import. `website/src/css/custom.css` is deliberately absent: its `--rp-accent` is
+#: already compared against the app's token by `test_the_site_palette_matches_the_app_palette`,
+#: and a second check of the same pair would fail twice for one edit.
+_ACCENT_DEFAULT_COPIES: dict[str, int] = {
+    "src/reaper/api/settings.py": 1,
+    "frontend/src/accent.ts": 1,
+    "frontend/src/components/GeneralPanel.tsx": 2,
+    "frontend/src/styles/00-tokens.css": 4,
+}
+
+
+def test_the_accent_default_and_its_hex_shape_agree_across_both_languages() -> None:
+    """The accent is declared once in Python and mirrored eight times, twice of that in
+    TypeScript and twice more inside a sentence an operator reads.
+
+    Rule 144's case, and the reason it is a gate rather than a comment: nothing here can be
+    generated. A stylesheet needs a literal so the page paints before any script runs,
+    `index.html` pre-paints from the same literal for the same reason, and the two refusal
+    sentences are operator copy that has to name a real color. So every copy is hand-written,
+    and the failure is quiet in the worst direction -- the app refuses a color while telling
+    the operator to type a different one, or Reset returns to a shade the backend does not
+    store.
+
+    The hex SHAPE is the same duplication one layer down: `api/settings.py` refuses on one
+    regex and `accent.ts` disables the save on another, so a widening on either side alone is
+    a value one language accepts and the other rejects.
+
+    The failure message names each file, because a comment asking the next author to remember
+    the others does nothing (rule 144).
+    """
+    expected = app_settings.DEFAULT_ACCENT_COLOR
+    assert re.fullmatch(r"#[0-9a-f]{6}", expected), (
+        f"the declaration itself is malformed: {expected!r}"
+    )
+
+    found = {
+        path: (REPO / path).read_text(encoding="utf-8").count(expected)
+        for path in _ACCENT_DEFAULT_COPIES
+    }
+    assert found == _ACCENT_DEFAULT_COPIES, (
+        f"the built-in accent is {expected!r}, declared at "
+        "src/reaper/services/app_settings.py's DEFAULT_ACCENT_COLOR. These files carry a copy "
+        f"and no longer agree (found, expected): {found}, {_ACCENT_DEFAULT_COPIES}.\n"
+        "Retuning the accent means editing every one of them, and a stale copy shows the "
+        "operator a color the server will not store. If a copy was deliberately added or "
+        "removed, move its count here."
+    )
+
+    ts = (FRONTEND_SRC / "accent.ts").read_text(encoding="utf-8")
+    ts_default = re.search(r'export const DEFAULT_ACCENT = "([^"]+)";', ts)
+    assert ts_default is not None, (
+        "frontend/src/accent.ts no longer spells DEFAULT_ACCENT the way this check reads it "
+        "(rule 147). Re-read the file and widen the matcher."
+    )
+    assert ts_default.group(1) == expected
+
+    ts_shape = re.search(r"^const HEX = /(.+)/;$", ts, flags=re.MULTILINE)
+    assert ts_shape is not None, (
+        "frontend/src/accent.ts no longer spells its hex regex the way this check reads it "
+        "(rule 147). Re-read the file and widen the matcher."
+    )
+    assert ts_shape.group(1) == settings_api._HEX_COLOR.pattern, (
+        "the accent's hex shape is written twice, in two languages: "
+        f"src/reaper/api/settings.py's _HEX_COLOR is {settings_api._HEX_COLOR.pattern!r} and "
+        f"frontend/src/accent.ts's HEX is {ts_shape.group(1)!r}.\n"
+        "The backend refuses a save on one and the panel disables it on the other, so a "
+        "widening on one side alone is a color the operator can type, the panel accepts, and "
+        "the server then refuses."
     )

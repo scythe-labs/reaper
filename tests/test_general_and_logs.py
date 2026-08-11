@@ -20,6 +20,7 @@ The rules pinned here:
 
 from __future__ import annotations
 
+import inspect
 import json
 import time
 from collections.abc import Iterator
@@ -30,12 +31,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import structlog
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session as SyncSession
 from starlette.requests import Request
 
 from reaper import logbuffer
+from reaper.api import settings as settings_api
 from reaper.api.middleware import (
     _API_KEY_READS_DENIED,
     _API_KEY_WRITES,
@@ -300,6 +303,63 @@ class TestGeneralSettings:
         client.put("/api/settings/general", json={"proxy_trust_enabled": False})
         assert client.app.state.trusted_proxies == ()  # type: ignore[attr-defined]
 
+    def test_every_general_field_is_a_row_or_a_declared_exception(self) -> None:
+        """The route walks ``_GENERAL_FIELDS`` twice, so a field added to the request model
+        and forgotten there is accepted, echoed back unchanged, and silently never stored.
+        That is the shape issue #90 had, and no route test can see it: a field nobody wrote
+        a case for is a field nobody sends.
+
+        Derived from the model rather than listed here (rule 103), so the reconciliation is
+        with the declaration and not with a second copy of it. A field that genuinely
+        cannot be a row joins ``_GENERAL_FIELD_EXCEPTIONS`` with the reason, which is what
+        makes this fail *loudly* rather than invite a silencing edit.
+        """
+        covered = {field.name for field in settings_api._GENERAL_FIELDS}
+        declared = covered | set(settings_api._GENERAL_FIELD_EXCEPTIONS)
+        assert declared == set(settings_api.GeneralSettingsIn.model_fields), (
+            "every GeneralSettingsIn field is either an app-settings row in _GENERAL_FIELDS "
+            "or carries its reason in _GENERAL_FIELD_EXCEPTIONS."
+        )
+        assert not covered & set(settings_api._GENERAL_FIELD_EXCEPTIONS), (
+            "a field cannot be both a row and an exception to being one."
+        )
+        assert all(why.strip() for why in settings_api._GENERAL_FIELD_EXCEPTIONS.values()), (
+            "an exception with an empty reason is a silenced gate."
+        )
+
+    def test_the_checking_pass_refuses_with_no_session_in_hand(self) -> None:
+        """The no-partial-write promise rests on two independent layers, and the route tests
+        cannot tell them apart. ``test_one_bad_field_writes_none_of_the_others`` above and
+        ``test_a_refused_tray_writes_none_of_the_settings_beside_it`` below both hold whether
+        the checks run before the writes or after them, because the single commit at the end
+        of the route rolls a half-applied save back either way. Measured, not argued: the
+        desktop checks were moved back below the write loop and both stayed green. So neither
+        one discriminates the layers, and neither is named as if it did (rule 118).
+
+        This is the half that can be pinned. The checking pass takes the payload and nothing
+        else, so it holds no session and cannot write through one. Thread a session into
+        either signature and this fails.
+        """
+        assert list(inspect.signature(settings_api._cleaned_general_values).parameters) == [
+            "payload"
+        ]
+        assert list(inspect.signature(settings_api._validated_desktop_values).parameters) == [
+            "payload"
+        ]
+
+        with pytest.raises(HTTPException) as bad_zone:
+            settings_api._cleaned_general_values(
+                settings_api.GeneralSettingsIn(
+                    application_name="Media Reaper", timezone="Nowhere/Nothing"
+                )
+            )
+        assert "time zone" in bad_zone.value.detail
+        # The suite runs from source, so `desktop_platform()` is None and this is the
+        # container operator's refusal, reached with no session and nothing written.
+        with pytest.raises(HTTPException) as bad_platform:
+            settings_api._validated_desktop_values(settings_api.GeneralSettingsIn(tray=False))
+        assert "Windows and macOS apps" in bad_platform.value.detail
+
 
 class TestDesktopSettings:
     """The Desktop app group's lane: present only on a frozen desktop build, saved to
@@ -322,6 +382,25 @@ class TestDesktopSettings:
         response = client.put("/api/settings/general", json={"tray": False})
         assert response.status_code == 422
         assert "Windows and macOS apps" in response.json()["detail"]
+
+    def test_a_refused_tray_writes_none_of_the_settings_beside_it(self, client: TestClient) -> None:
+        """The other half of ``test_one_bad_field_writes_none_of_the_others``, for the one
+        refusal that is not a settings row. The save bar sends every unsaved field at once,
+        so a container operator with the Desktop group somehow on screen sends this shape,
+        and nothing pinned it: that test's body carries no ``tray``.
+
+        Named for what it pins, which is the operator-visible promise that a refusal changes
+        nothing. It does not discriminate the two layers that deliver it, and
+        ``test_the_checking_pass_refuses_with_no_session_in_hand`` above says why."""
+        before = client.get("/api/settings/general").json()
+
+        response = client.put(
+            "/api/settings/general",
+            json={"application_name": "Media Reaper", "accent_color": "#4f46e5", "tray": False},
+        )
+        assert response.status_code == 422
+        assert "Windows and macOS apps" in response.json()["detail"]
+        assert client.get("/api/settings/general").json() == before
 
     def test_a_desktop_save_lands_in_launcher_conf_and_the_next_read(
         self,

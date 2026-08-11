@@ -13,7 +13,7 @@ import { type CSSProperties, type RefObject, useEffect, useState } from "react";
 import { accentInk, accentText, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { announce } from "../announce";
 import { useSavebarFocus, useSuccessorFocus } from "../focus";
-import { api, type ExpandSeasonsMode } from "../api";
+import { api, type ExpandSeasonsMode, type GeneralSettings } from "../api";
 import { useGeneralSettings } from "../useGeneralSettings";
 import { useMediaQuery } from "../useMediaQuery";
 import { FixedQuantity } from "./QuantityInput";
@@ -94,6 +94,76 @@ const SPARE_DAYS_SEED = 30;
  *  rendered -- which is exactly when the box points at it. */
 const ACCENT_ERROR_ID = "accent-hex-error";
 
+type TextFieldName = "application_name" | "application_url" | "timezone";
+
+/** One field of this panel whose whole draft is a string, compared one way and sent one way.
+ *  `seed` reads the stored value, `clean` is the canonical form both the compare and the
+ *  request use (rule 39), and `patch` is the request body naming the field. */
+type TextField = {
+  name: TextFieldName;
+  /** What the save bar calls it while it is unsaved. */
+  label: string;
+  seed: (data: GeneralSettings) => string;
+  clean: (draft: string) => string;
+  patch: (value: string) => Parameters<typeof api.saveGeneral>[0];
+};
+
+/** The three fields a descriptor covers. Five echoes walk this instead of naming each field
+ *  once apiece: the seed, the re-seed after a save, the dirty check, the save bar's entry, and
+ *  Discard. The sixth the finding counted was the `useState`, which is one record now rather
+ *  than one hook per field. The JSX below is deliberately not a sixth walker -- a row names its
+ *  own field, its own label and its own control, and generating those is a different job from
+ *  this one (rule 45: help binds to exactly one control). Adding a plain text setting is a row
+ *  here plus a row on screen.
+ *
+ *  THREE of this panel's six drafts are deliberately not in it, and each is hand-written just
+ *  below with its reason: the accent alone blocks the save, the default spare length is one
+ *  stored number held as two pieces of state, and the proxy list is counted unsaved exactly
+ *  where it is kept OUT of the bar (rule 146). Folding those in would need a per-field escape
+ *  hatch each, which is most of what the descriptor is here to remove -- and the third hatch
+ *  would re-derive the bar from the dirty set, which is the defect rule 146 exists for.
+ *
+ *  #90 was this shape: one `> 0` condition shared by three of these echoes, plus a fourth that
+ *  did not handle the field at all. */
+const TEXT_FIELDS: readonly TextField[] = [
+  {
+    name: "application_name",
+    label: "Application name",
+    seed: (data) => data.application_name,
+    clean: (draft) => draft.trim(),
+    patch: (value) => ({ application_name: value }),
+  },
+  {
+    name: "application_url",
+    label: "Application URL",
+    // Null on the wire means "no URL"; the box shows that as empty, and empty saves back as
+    // the same nothing.
+    seed: (data) => data.application_url ?? "",
+    clean: (draft) => draft.trim(),
+    patch: (value) => ({ application_url: value }),
+  },
+  {
+    name: "timezone",
+    label: "Time zone",
+    seed: (data) => data.timezone,
+    // A <select> value, so there is no stray whitespace to fold away.
+    clean: (draft) => draft,
+    patch: (value) => ({ timezone: value }),
+  },
+];
+
+const EMPTY_TEXT: Record<TextFieldName, string> = {
+  application_name: "",
+  application_url: "",
+  timezone: "",
+};
+
+function seededText(data: GeneralSettings): Record<TextFieldName, string> {
+  const next = { ...EMPTY_TEXT };
+  for (const field of TEXT_FIELDS) next[field.name] = field.seed(data);
+  return next;
+}
+
 export function GeneralPanel({
   /** Called whenever the save bar gains or loses a draft, so the section rail can hold a
    *  switch that would discard one. Pass a STABLE function: it is an effect dependency. */
@@ -109,9 +179,17 @@ export function GeneralPanel({
   // below either is a different hook order on those renders.
   const bar = useSavebarFocus();
 
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [tz, setTz] = useState("");
+  // One record over `TEXT_FIELDS`, not one `useState` per field: the echoes below walk the
+  // descriptor, and a field it does not know about would still need its own state here.
+  //
+  // Every writer of this record uses the functional form, and that is load-bearing rather than
+  // style. Three `useState`s had three queues, so a keystroke could not collide with anything;
+  // one record has one, and a `setText({ ...text, ... })` built from the render's own value
+  // replays over a still-pending update and throws it away. The two that can be pending are
+  // the mount seed and the re-seed after a save, so what would be lost is a box snapping back
+  // to a pre-save draft, or `seeded` going true over boxes that were never filled -- which is
+  // the save bar naming fields nobody typed in, #139's shape, reported upward by rule 146.
+  const [text, setText] = useState<Record<TextFieldName, string>>(EMPTY_TEXT);
   const [proxies, setProxies] = useState("");
   const [accent, setAccent] = useState(DEFAULT_ACCENT);
   // The default spare length, as a draft in two halves: which mode is chosen, and the box's
@@ -152,9 +230,7 @@ export function GeneralPanel({
   useEffect(() => {
     if (!general.data || seeded) return;
     setSeeded(true);
-    setName(general.data.application_name);
-    setUrl(general.data.application_url ?? "");
-    setTz(general.data.timezone);
+    setText(seededText(general.data));
     setProxies(general.data.trusted_proxies.join(", "));
     setAccent(general.data.accent_color);
     setSpareForever(general.data.default_spare_days === 0);
@@ -179,9 +255,13 @@ export function GeneralPanel({
       // whose success was nothing at all.
       announce("Settings saved.");
       queryClient.setQueryData(["general-settings"], data);
-      if ("application_name" in sent) setName(data.application_name);
-      if ("application_url" in sent) setUrl(data.application_url ?? "");
-      if ("timezone" in sent) setTz(data.timezone);
+      setText((current) => {
+        const next = { ...current };
+        for (const field of TEXT_FIELDS) {
+          if (field.name in sent) next[field.name] = field.seed(data);
+        }
+        return next;
+      });
       if ("trusted_proxies" in sent) setProxies(data.trusted_proxies.join(", "));
       if ("accent_color" in sent) setAccent(data.accent_color);
       if ("default_spare_days" in sent) {
@@ -358,9 +438,9 @@ export function GeneralPanel({
   // so it has to ask which value it was seeded FROM rather than merely whether it has been.
   const ready = !!data && seeded;
 
-  const nameDirty = ready && name.trim() !== data.application_name;
-  const urlDirty = ready && url.trim() !== (data.application_url ?? "");
-  const tzDirty = ready && tz !== data.timezone;
+  const dirtyText = ready
+    ? TEXT_FIELDS.filter((field) => field.clean(text[field.name]) !== field.seed(data))
+    : [];
   const accentValid = isHexColor(accent);
   const accentDirty = ready && accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
   const proxyList = proxies
@@ -386,10 +466,9 @@ export function GeneralPanel({
   // reaches the server, so it has no draft to hold. The spare-length `Segmented` was a third
   // until it started staging `default_spare_days` here instead (see `spareValue` above).
   const pending: { label: string; patch: Parameters<typeof api.saveGeneral>[0] }[] = [];
-  if (nameDirty)
-    pending.push({ label: "Application name", patch: { application_name: name.trim() } });
-  if (urlDirty) pending.push({ label: "Application URL", patch: { application_url: url.trim() } });
-  if (tzDirty) pending.push({ label: "Time zone", patch: { timezone: tz } });
+  for (const field of dirtyText) {
+    pending.push({ label: field.label, patch: field.patch(field.clean(text[field.name])) });
+  }
   if (accentDirty)
     pending.push({ label: "Accent color", patch: { accent_color: accent.trim().toLowerCase() } });
   if (spareDirty)
@@ -445,9 +524,7 @@ export function GeneralPanel({
 
   const discardDrafts = () => {
     bar.leaving();
-    setName(data.application_name);
-    setUrl(data.application_url ?? "");
-    setTz(data.timezone);
+    setText(seededText(data));
     setAccent(data.accent_color);
     setProxies(data.trusted_proxies.join(", "));
     setSpareForever(data.default_spare_days === 0);
@@ -481,9 +558,11 @@ export function GeneralPanel({
             <div className="set-control">
               <input
                 type="text"
-                value={name}
+                value={text.application_name}
                 maxLength={60}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) =>
+                  setText((current) => ({ ...current, application_name: e.target.value }))
+                }
                 aria-label="Application name"
               />
             </div>
@@ -497,9 +576,11 @@ export function GeneralPanel({
             <div className="set-control">
               <input
                 type="text"
-                value={url}
+                value={text.application_url}
                 placeholder="https://reaper.example.com"
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={(e) =>
+                  setText((current) => ({ ...current, application_url: e.target.value }))
+                }
                 aria-label="Application URL"
               />
             </div>
@@ -508,7 +589,11 @@ export function GeneralPanel({
             <span className="set-label">Time zone</span>
             <p className="help">The server's time zone.</p>
             <div className="set-control">
-              <select value={tz} aria-label="Time zone" onChange={(e) => setTz(e.target.value)}>
+              <select
+                value={text.timezone}
+                aria-label="Time zone"
+                onChange={(e) => setText((current) => ({ ...current, timezone: e.target.value }))}
+              >
                 {zoneOptions.map((z) => (
                   <option key={z} value={z}>
                     {z}
