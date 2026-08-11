@@ -13,13 +13,18 @@
   letter-spacing: 0.08em;
   color: var(--muted);
 }
-/* Its width is stated at a specificity that clears the control-standard rules, which also
-   match this input. It cannot ride on `width: 100%` like the single-box rows: the key row is
-   a cluster (field plus four buttons), so its column shrink-wraps, and a percentage width
-   inside a shrink-to-fit box has nothing to resolve against. */
+/* Its width AND its family are stated at a specificity that clears the control-standard rules,
+   which also match this input. The width cannot ride on `width: 100%` like the single-box rows:
+   the key row is a cluster (field plus four buttons), so its column shrink-wraps, and a
+   percentage width inside a shrink-to-fit box has nothing to resolve against. The family is
+   here because the standard's `font: inherit` is (0,2,1) and the base rule above is (0,1,0), so
+   the standard wins the longhand and the key comes out in the app's sans. A key is read
+   character by character, which is what the mono is for, so it is re-stated where it can hold.
+   `.hexfield` takes the same treatment for the same reason (`27-settings-rows.css`). */
 .set-row .set-control > input.keyfield {
   width: 17rem;
   min-width: 0;
+  font-family: var(--mono);
 }
 /* On a phone it fills the width like every other box. Placed immediately BELOW its base rule,
    not up in the 640px settings block: the two selectors are the same specificity, so source

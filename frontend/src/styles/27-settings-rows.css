@@ -256,7 +256,10 @@
   border-radius: 0;
 }
 /* Win over the control-standard input rules (which also match these two inputs) so the
-   field is borderless and stays field-width, and the swatch fill covers its whole box. */
+   field is borderless and stays field-width, and the swatch fill covers its whole box.
+   `font-variant-numeric` is here for the same reason: the standard's `font: inherit` is a
+   CSS-wide keyword, so it sets every font longhand including that one, and at (0,2,1) it beats
+   the base `.hexfield` rule's (0,1,0). A hex code is six digits read as columns. */
 .set-control .hex-join .hexfield {
   width: 8.5rem;
   min-width: 0;
@@ -264,6 +267,7 @@
   border: 0;
   border-radius: 0;
   background: none;
+  font-variant-numeric: tabular-nums;
 }
 .set-control .hex-join .hexfield:focus {
   outline: none;

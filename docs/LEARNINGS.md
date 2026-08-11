@@ -3334,6 +3334,26 @@ source order today and the later rule wins; the evidence is `:271`, a third rule
 re-override the pair inside `.hex-join`. Reachable only through one DOM shape at this tip, so
 latent. A gate landed instead, and it caught the drift the extraction was supposed to prevent.
 
+**Putting the standard back costs more than the family, because `font` is a shorthand.** A
+CSS-wide keyword sets every longhand it owns, so `font: inherit` also took the inherited 1.55
+line height, where those controls had the UA's `normal`. The boxes grew about 6px. That one is
+the standard arriving rather than a side effect: in a cluster row the box had been sitting
+8.25px shorter than the button beside it, and it now sits 1.92px off. The other two were
+regressions, and both were controls whose own rule declared one font detail at (0,1,0) under a
+(0,2,1) `font: inherit`: the API key's monospace and the accent hex field's tabular figures. A
+revealed API key came out in the app's sans, against a comment on its own rule saying monospace
+is there so the key reads unambiguously.
+
+**A block declaring only `font-size` hides that hazard, which is why the repair is the risky
+half.** The old block set no family, so nothing it could outrank was at stake, and the two
+lower-specificity rules had been correct for as long as the drift existed. The fix is what put
+them under a shorthand. So the sweep after adding a CSS-wide keyword is not "what did this
+element look like before", it is **"what other rule declares any longhand this keyword owns, at
+lower specificity, on anything this selector matches"**. That is `font-family`,
+`font-variant-numeric`, `font-weight`, `font-style`, `font-stretch` and `line-height`, and a
+computed-style dump over the real markup is the only way to see it: the diff shows one added
+line and the failure is two files away.
+
 ## A shell gate can be green because the page is small (2026-08-10)
 
 `binaries.yml`'s boot probes check the packaged build serves the SPA and not a JSON 404:

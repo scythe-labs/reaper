@@ -8,7 +8,15 @@
 // `.set-row .set-control input, .set-row .set-control select` and `.log-search` set `font-size`
 // and no `font`. A form control does not inherit its family, so those boxes rendered in the
 // browser's default form font while their labels rendered in the app's. The block declares five
-// of the six fields correctly. The symptom reads as a size difference, not a wrong typeface.
+// of the six fields correctly, and the symptom is a typeface, which is not what a reader
+// checking a block against a list is looking for.
+//
+// `font` is a shorthand, so putting it back moves the inherited line height with the family, and
+// those boxes grow about 6px. That is the standard arriving rather than a side effect: in a
+// cluster row the box sat 8.25px shorter than the button beside it and now sits 1.92px off.
+// Two controls keep a font detail of their own and re-state it above (0,2,1), because a
+// CSS-wide keyword sets every longhand: `.keyfield`'s monospace and `.hexfield`'s tabular
+// figures.
 //
 // A block is ON the standard when it pads with `--control-pad`. That is the token's own
 // definition ("a control that wants different padding is not on the standard") and it needs no
@@ -131,6 +139,34 @@ describe("rule 40's control standard", () => {
     expect(literal).toEqual([]);
   });
 
+  it("does not swallow the two font details that outrank it", () => {
+    // `font: inherit` is a CSS-wide keyword, so it sets EVERY font longhand, and the standard's
+    // Settings block carries it at (0,2,1). Two controls in that column declare one font detail
+    // of their own at (0,1,0) and lose it: `.keyfield`'s monospace, which its own comment says is
+    // there so a revealed API key reads unambiguously, and `.hexfield`'s tabular figures. Each is
+    // re-stated on the rule that already clears the standard for that control's width, and the
+    // re-statement reads as redundant beside the base rule, which is why it is pinned here.
+    //
+    // A pinning test, not a general one (rule 118). It cannot see a THIRD control that declares a
+    // font longhand under the standard: that needs selector-overlap analysis, and the two known
+    // cases did not justify it. What a new one costs is one property, silently.
+    for (const [selector, decl] of [
+      [".set-row .set-control > input.keyfield", "font-family: var(--mono)"],
+      [".set-control .hex-join .hexfield", "font-variant-numeric: tabular-nums"],
+    ] as const) {
+      const block = blocksOf().find((b) => b.selector === selector);
+      expect(
+        block,
+        `${selector} is gone; the font detail it re-states has nowhere to live`,
+      ).toBeDefined();
+      const body = (block as { body: string }).body.replace(/\s+/g, " ");
+      expect(
+        body,
+        `${selector} stopped re-stating ${decl}, so the control standard takes it`,
+      ).toContain(decl);
+    }
+  });
+
   it("is worded the same in 00-tokens.css and 01-base.css", () => {
     // Rule 144: the standard is written out twice besides the declarations. `00-tokens.css`
     // carries the standard itself. `01-base.css`'s iOS-zoom comment rests on it to explain why
@@ -139,7 +175,9 @@ describe("rule 40's control standard", () => {
     // fails when either sentence stops saying it, so the prose cannot drift out from under the
     // declarations above.
     for (const [file, sentence] of [
-      ["styles/00-tokens.css", "font: inherit"],
+      // The phrase, not the two words: a bare `font: inherit` would go vacuous the day a real
+      // declaration of it lands in this file.
+      ["styles/00-tokens.css", "color var(--text); font: inherit; and on :focus"],
       ["styles/01-base.css", "the control standard is font: inherit"],
     ] as const) {
       // Whitespace collapsed: both sentences sit inside wrapped comments, so the phrase spans

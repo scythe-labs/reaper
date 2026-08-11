@@ -68,8 +68,15 @@ export interface Block {
  *  The match is innermost-first. A `@media` head never matches, since `[^{}]*` cannot span the
  *  nested brace, so a rule inside one is returned as itself. A flat at-rule like `@font-face`
  *  does match, and the `@` check drops it. Keyframe steps (`from`, `0%`) are returned as ordinary
- *  blocks. Both `styles-scales.test.ts` and `styles-control-standard.test.ts` read the stylesheet
- *  through here, so a parse fixed for one is fixed for the other. */
+ *  blocks.
+ *
+ *  `styles-scales.test.ts` and `styles-control-standard.test.ts` both walk blocks through here,
+ *  so a parse fixed for one is fixed for the other. The scales file still reads `CSS` directly
+ *  for its whole-text checks, which is not this walk.
+ *
+ *  A caller splitting `body` on `;` is safe only while no declaration carries one inside a value.
+ *  There is no `url(` and no `data:` anywhere in `styles/`, so none does today. A data URI would
+ *  break that split, and this is the line that says so. */
 export function blocksOf(): Block[] {
   // Blanked rather than deleted, so every offset still resolves to its real line (`siteOf`).
   const code = CSS.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
