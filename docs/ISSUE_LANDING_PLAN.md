@@ -130,6 +130,10 @@ string.
 
 ## On the branch, in this order
 
+**All sixteen landed, 2026-08-11**, as PRs #757 through #771; #736 and #740 shared one, which is
+why fifteen PRs close sixteen rows. Each row below says what it cost and where it differed from
+what the issue proposed. Four did differ, and the reason is written into the row.
+
 Sixteen issues. Each is a sub-PR cut from `audit/simplification-plan` and squash-merged into it,
 the same way every phase item arrives. Every row here was checked at its fix site.
 
