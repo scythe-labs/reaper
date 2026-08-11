@@ -3829,12 +3829,10 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 
 # Every "couldn't load" sentence the shipped tree renders, and the file rendering each one. The
 # count above matches the WORD `reload` per file, so it is blind to two panels drifting apart on
-# the sentence they print when a read never landed, which is what W11-36 is about: "Couldn't load
+# the sentence they print when a read never landed. That is what W11-36 is about: "Couldn't load
 # these settings. Reload to try again." is written at four sites and "Couldn't load this page.
-# Reload to try again." at two. Three more duplications that finding did not name turned up in
-# the same walk: "Couldn't load the library list." across `PlexPanel` and `SetupPlexStep`,
-# "Couldn't load your connections." across `ServicesPanel` and `SetupConnectStep`, and
-# `PolicyRuleEditors`' rule-picker sentence twice inside one file.
+# Reload to try again." at two. Three more keys below hold two files each, and the finding named
+# none of them.
 #
 # `PolicyEditor`'s "Couldn't load these settings." is the deliberate fifth copy and holds a row of
 # its own. It drops "Reload to try again." because that panel is an editor holding unsaved work
@@ -3917,10 +3915,10 @@ _NEVER_LOADED = re.compile("(?i)(?:reaper )?could(?:n['\\u2019]t| not) load[^<\"
 
 
 def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
-    """Six of these are written at more than one site, so they drift apart one copy at a time.
+    """Five of these are written at more than one site, so they drift apart one copy at a time.
 
     Rule 144's shape on failure copy. One fact, "this panel has nothing to show you", is written
-    32 times in 25 sentences, each by someone reading a different one, and the reload-advice count
+    32 times in 25 sentences, each by someone reading a different one. The reload-advice count
     above cannot see it: a file keeps its ``reload`` count while the sentence around the word
     changes.
 
@@ -3965,9 +3963,9 @@ _FIELD_SM_CONTAINERS = {
 #: One whole line: a `<label>` or `<div>` open tag whose `className` is the only attribute on it.
 #: Accepts the two spellings the tree uses, a string literal and a one-line ternary of them
 #: (`SecurityPanel`'s `viaRecovery ? "field-sm dim" : "field-sm"`). Everything it cannot read is
-#: caught by the count beside it rather than skipped, which is the half rule 147 asks for: a class
-#: list broken over several lines, a template literal, or a `field-sm` on any other tag all leave
-#: the walk while still being counted by `_FIELD_SM_WORD`, so the two figures disagree and fail.
+#: caught by the count beside it rather than skipped (rule 147). A class list broken over several
+#: lines, a template literal, and a `field-sm` on any other tag all leave the walk while
+#: `_FIELD_SM_WORD` still counts their line, so the two figures disagree and the run fails.
 _FIELD_SM_OPEN = re.compile(r'^\s*<(label|div) className=(?:"[^"\n]*"|\{[^\n]*\})>\s*$')
 _FIELD_SM_WORD = re.compile(r"\bfield-sm\b")
 _FIELD_LABEL_SPAN = '<span className="field-label">'
@@ -3976,18 +3974,17 @@ _FIELD_LABEL_SPAN = '<span className="field-label">'
 def test_every_field_sm_box_is_a_label_over_one_control_or_a_named_div() -> None:
     """A `<label>` around two controls names the first one and leaves the second nameless.
 
-    26 boxes across 9 files ride this rule and nothing declared it, so the 27th was going to be
-    written by copying whichever of the 26 its author had open. The population is pinned per file
-    and per tag: a new `<div className="field-sm">` is the interesting one, since it is the choice
-    that has to be argued, and it cannot be added without editing the comment above that says why
-    each existing one is a div.
+    26 boxes across 9 files ride this rule and nothing declared it, so the 27th would copy
+    whichever of the 26 its author had open. The population is pinned per file and per tag. A new
+    `<div className="field-sm">` is the interesting one, and it cannot be added without editing
+    the comment above that says why each existing one is a div.
 
     **What the walk reads and what it cannot** (rule 147). It reads the open tag and the line
-    under it. It does NOT count controls, because the two facts that decide label-versus-div are
-    invisible in source text: `ListModal`'s Plex library box holds a `<select>` and an `<input>`
-    in the two arms of a ternary, so one control renders, and `ServiceModal`'s pickers hold one
-    `<select>` inside a `.map()`, so many do. A count of tags reads those two backwards. The
-    per-file tag counts are what a wrong choice has to get past instead.
+    under it. It does NOT count controls, because what decides label-versus-div is invisible in
+    source text. `ListModal`'s Plex library box holds a `<select>` and an `<input>` in the two
+    arms of a ternary, so one renders. `ServiceModal`'s pickers hold one `<select>` inside a
+    `.map()`, so many do. A count of tags reads both backwards, and the per-file tag counts are
+    what a wrong choice has to get past instead.
     """
     walked: dict[str, dict[str, int]] = {}
     unnamed: list[str] = []
