@@ -3356,23 +3356,33 @@ line and the failure is two files away.
 
 ## Two counts of one diff, and only one of them belongs in the table (2026-08-10)
 
-Six wave 11 backend rows, built and measured twice. **Total lines: -2, -2, +2, -1, +4 with a
-42-line revision, +7. Code lines, non-comment and non-blank: -3, -5, -3, -3, +4 with an 11-line
-revision, -2.** Stated in the plan: -3, -7, -5, -3, index-only, +2.
+**`SIMPLIFICATION_PLAN.md`'s line figures are code net: non-comment, non-blank, docstrings
+excluded.** That is the unit in every verdict cell and every *Landed* row. A total-line count put
+in the same column is not a rougher measurement of the same thing. It is a different quantity in
+the same units, and it is normally larger, because what a dedup adds back is mostly the docstring
+or comment carrying the rule the copies had split between them.
 
-**The two bases disagree about the outcome, not just the size.** On total lines five of the six
-cost more than stated and none cost less, which reads as a systematic optimism in how the wave
-estimates. On code lines two are exact, two are short in the same direction, and one beats its
-estimate. The first reading was published, and the write-up built a general claim on it about
-estimates counting the deletion and never the declaration. **The claim is an artifact of the
-basis.** Every other row in that table is code-net, so a total-line figure dropped into the same
-column is not a worse measurement, it is a different quantity wearing the same units.
+Six wave 11 backend rows, measured both ways. **Total lines: -2, -2, +2, -1, +4 with a 42-line
+revision, +7. Code net: -3, -5, -3, -3, +4 with an 11-line revision, -2.** Stated in the plan:
+-3, -7, -5, -3, index-only, +2.
 
-**The identical slip had happened one pull request earlier**, a getters row read at +2 by scoring
-a helper's docstring as code, corrected to -6, which inverted its verdict. Twice in one phase, in
-opposite directions, from the same cause. **So state the basis beside any line figure**, and when
-a measurement contradicts a document, check the units before writing the lesson: the write-up is
-the expensive part to get wrong, because it is what the next reader takes as settled.
+**The two readings disagree about the outcome, not about the size.** On total lines, five of the
+six cost more than stated and none cost less, which reads as a systematic optimism in how the wave
+estimates. On code net, two are exact, two are short in the same direction, and one beats its
+estimate. The first reading was published, with a general claim built on it about estimates
+counting the deletion and never the declaration. **The claim was an artifact of the unit.**
+
+**This is the second time the same confusion moved a verdict, in the opposite direction.** One
+pull request earlier a getters row read at +2 by scoring a helper's docstring as code and was
+corrected to -6, which flipped it from a marginal build to a clear one. Here the flip ran the
+other way: W11-43 read as +7 against a stated +2, which is a row that overran, and it is actually
+-2, a row that beat its estimate.
+
+**So print the unit next to the number, and check the unit before writing the lesson.** A figure
+disagreeing with a document is the moment to ask what the document is counting, not the moment to
+explain why the document was optimistic. The write-up is the expensive half to get wrong: the six
+numbers are an instance a later reader can re-derive in a minute, and a wrong general claim about
+how the wave estimates is what they will take as settled and never re-measure.
 
 **The row that moved most is the one whose verdict depended on it.** W11-43 was offered as "build
 at +2, or write the gate", with the gate the better answer if the consolidation cost lines. It

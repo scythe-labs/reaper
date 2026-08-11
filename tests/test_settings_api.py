@@ -1320,13 +1320,20 @@ class TestSchedule:
         spelled the sentence out, byte-identically, with nothing asserting either, so a reword
         of one would have shipped an operator two explanations of one refusal (rule 144).
 
-        **Three mutations, and no single assertion catches more than one.** Rendering the two
-        responses cannot see a re-inlined copy at all, because the copy this replaced produced
-        identical output, so the source count is what closes rule 144's gap. Matching the
-        declaration's halves cannot see an arm that raises ``_BAD_CRON`` unformatted, because
-        the raw template starts and ends with those very halves and its literal ``{reason}``
-        satisfies a length bound, which ships the placeholder to the operator (rule 21). Every
-        expectation is derived from the declaration, so none of this restates the sentence.
+        **Three mutations, one assertion each, and none of the three catches another.** Do not
+        collapse them:
+
+        - *An arm is reworded.* Caught by ``startswith``/``endswith``. This is the only one the
+          first version of this test caught.
+        - *An arm re-inlines the sentence verbatim.* Caught by the source count alone. Both
+          copies render identically, which is what the dedup means, so no assertion over a
+          response can ever see it.
+        - *An arm raises ``_BAD_CRON`` unformatted.* Caught by the ``{reason}`` assertion alone.
+          The raw template starts and ends with the very halves being compared, and its literal
+          ``{reason}`` is long enough to satisfy the length bound, so every other check here
+          passes while the placeholder ships to the operator (rule 21).
+
+        Every expectation is derived from the declaration, so none of this restates the sentence.
         """
         prefix, suffix = _BAD_CRON.split("{reason}")
 

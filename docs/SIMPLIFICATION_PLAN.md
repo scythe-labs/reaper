@@ -3969,7 +3969,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-40 | unindexed, never swept, grows for the life of the install | 3 tree claims right, framing wrong, block above | **built**, the index only, +4 code and an 11-line revision |
 | W11-41 | 13 models | 15 models | kill, byte-identical DDL is why nothing is gained |
 | W11-42 | ~85 lines, all `ci` | populations right; the probe is **-8 code**, and the **provenance pair is settled**, both differences forced | **built** the probe, composite actions deferred |
-| W11-43 | spelled 3 times | right, and `schema_gate.py` is a 4th deliberately different shape | **built**, **code -2**, so the +2 never had to be traded; no gate, one site would be left to scan |
+| W11-43 | spelled 3 times | right, and `schema_gate.py` is a 4th deliberately different shape; **built at code -2, so the estimate was met** | **built**, and **the row's trade was never live**: it offered "+2, or write the gate" with the gate winning if the consolidation cost lines, and it costs none. An earlier cell here read +7 and that was total lines, the wrong quantity for this column (#743). Settled, do not re-open. No gate either way: after the build `src/` holds one multi-parent walk, so a ban would scan a population of one |
 | W11-44 | written 3 times, ~23 | count right, 3 runtimes rather than 3 copies | kill, sharing costs +10 on the boot path |
 
 > **Built: the six backend rows W11-5, W11-33, W11-34, W11-35, W11-40 and W11-43. Every symbol
@@ -4025,8 +4025,10 @@ behind it; it is a verdict, not a gap left to fill in later.
 > the index free, neither true; both corrected at #743, along with the column docstring and the
 > test docstring, which had each restated the revision's reasoning in full (rule 144).
 >
-> **W11-43 costs -2 code, so the trade the row offered never had to be made.** After the
-> consolidation
+> **W11-43 costs -2 code, so the trade the row offered never had to be made.** It asked for "+2,
+> or write the gate", with the gate the better answer if the consolidation cost lines. It costs
+> none, so the estimate was met and the question is closed. The +7 this block first carried was
+> total lines, which is not what this table's column means. After the consolidation
 > `src/` holds exactly one multi-parent walk, inside `buildinfo.project_root`, so a ban on the
 > spelling would guard a population of one. A gate would also have to run *after* this change or
 > exempt the two sites it exists to catch, which is the exclusion-list shape. The drift it removes
