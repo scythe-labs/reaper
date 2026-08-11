@@ -583,7 +583,14 @@ async def get_discord_webhook(
     """
     stored = await _get(session, DISCORD_WEBHOOK_KEY, default=None)
     if stored is not None:
-        return _decrypted_or_absent(box, stored)
+        # `or None`: a stored value decrypting to empty is nothing configured, the same
+        # answer the seed branch below gives an empty seed. Without it the two branches
+        # spelled "no webhook" two ways, every consumer tests `is None`, and an empty
+        # string would have built a `DiscordNotifier("")` that posts nowhere while the
+        # panel said connected (#729). The clause is here rather than in
+        # `_decrypted_or_absent`, which answers a decrypt FAILURE and is also read by
+        # `get_api_key`, where nothing measured an empty key.
+        return (_decrypted_or_absent(box, stored) or "").strip() or None
     seed = settings.discord_webhook
     if seed is None:
         return None
@@ -622,7 +629,10 @@ async def has_discord_webhook(
     """
     stored = await _get(session, DISCORD_WEBHOOK_KEY, default=None)
     if stored is not None:
-        return _decrypted_or_absent(box, stored) is not None
+        # Same clause as `get_discord_webhook`'s stored branch, and it has to be: this
+        # answers whether the panel says connected and that one answers whether a send
+        # happens, so the two disagreeing is the whole of #729.
+        return bool((_decrypted_or_absent(box, stored) or "").strip())
     if settings is not None and settings.discord_webhook is not None:
         return bool(settings.discord_webhook.get_secret_value().strip())
     return False

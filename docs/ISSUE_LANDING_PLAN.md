@@ -220,13 +220,19 @@ site verbatim. Write it here, against three refusals.
 here for the first reason above: the branch replaced the line the fix edits, so a `dev`-side fix is
 a modify/delete or a hand merge. None touches another's file.
 
-**8. #729, the empty webhook.** Hunks `@@ -561,10 +583,7` and `@@ -603,11 +622,7` deleted the
+**8. #729, the empty webhook. Landed.** Hunks `@@ -561,10 +583,7` and `@@ -603,11 +622,7` deleted the
 `try` / `except ValueError` block from both `get_discord_webhook` and `has_discord_webhook`, which
 is the fix site twice over. The branch's replacement is `_decrypted_or_absent` at
 `app_settings.py:185`, and it answers a decrypt failure rather than an empty string, so the issue's
 shape is still here. Put the clause at the two call sites, `:586` and `:625`, not in the helper:
 `get_api_key` reads the same helper at `:410` and the issue measured nothing about API keys.
 `tests/test_app_settings_precedence.py:143` is the neighboring test and is also branch-only.
+
+**The pin writes `box.encrypt("")` directly**, because no writer can reach the state today,
+which is what the issue is a question about. That is why it belongs in the suite: the URL
+validator is the only thing keeping the shape unreachable and nothing was watching it. A second
+test pins that `get_api_key` is untouched, so the narrow answer to rule 72's sweep is recorded as
+a decision rather than an omission.
 
 **9. #734, the unreachable Plex server.** `dev`'s `except PlexError as exc:` is now the three-class
 tuple at `api/leaving_soon.py:40`, and the comment three lines above it names #734 and says the
