@@ -3088,6 +3088,38 @@ the `RatingRule` dataclass's own default. That argues for pinning the boundary r
 it: the dataclass default is 0, every percentage bar carries 0, and one validator is the only
 thing standing between them.
 
+## Two frontend extractions saved no lines, and were worth building anyway (2026-08-10)
+
+Wave 11's W11-22 and W11-24 were both scoped as duplications with a line saving. Measured across
+the built diff, splitting comment lines from code: **W11-22 is code +29 / -29, W11-24 is
++54 / -52.** The plan's `-23` for W11-24 is wrong. W11-22 never carried a figure. Both were built
+regardless, for the same reason in each case: **what came out was a divergence.**
+
+W11-22 is three modals mirroring their `canClose` into a ref their parent's Back guard reads.
+Two mirrored the whole predicate. `ScheduleModal` mirrored one term of it, `save.isPending`,
+against a shell handed `!save.isPending`. Those agree, and agree only while `canClose` has one
+term. A second reason to stay open leaves browser Back the one dismissal ignoring a guard every
+other dismissal honors, which is rule 80. `ServiceModal` already has two reasons, having grown
+its second at this same shape once before. `useBackCloseMirror` takes the whole predicate as an
+argument, so the one-term spelling has nowhere to live.
+
+W11-24 is two panel fallbacks that were the same component twice, with three comments saying as
+much. The structure was identical and one string was not: the why panel's failure added "The item
+itself is unaffected" and the Scales panel's did not. Neither copy was wrong on its own, which is
+why it survived three passes.
+
+**The generalizable part is the search, not the two results.** A duplication found by counting
+lines is scored on the lines. A duplication found by *diffing the copies against each other*
+tells you which of them is wrong, and that is a defect whatever the extraction costs. Both of
+these came out of the second reading. So a wave row's line estimate is a locator, and a zero-net
+extraction is a kill only when the copies also agree.
+
+**W11-3's type found a fixture nobody had read.** `VocabField.type` was a bare `string`; it is now
+a six-member union in `api.ts`, pinned against `engine.fields.FieldType`. Typing it failed the
+build on `StaleReadSweep.test.tsx`, which composed a rule on a `runtime_minutes` field of type
+`"int"`. The server can serve neither. It compiled for as long as the field was a `string`, which
+is rule 119's invented expectation caught by the type system rather than by a test.
+
 ## What the callee already enforces is not what the duplication costs (2026-08-10)
 
 Six hand-written `PlexClient(...)` constructions, four of them passing the same four arguments

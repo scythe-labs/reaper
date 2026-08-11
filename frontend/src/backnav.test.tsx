@@ -5,9 +5,16 @@
 // sentinel is parked -- so the unwinding order is pinned regardless of jsdom's history timing.
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type RefObject } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BackNavProvider, useBackGuard, useBackNav, useModalLayer, useModalOpen } from "./backnav";
+import {
+  BackNavProvider,
+  useBackCloseMirror,
+  useBackGuard,
+  useBackNav,
+  useModalLayer,
+  useModalOpen,
+} from "./backnav";
 
 afterEach(() => {
   // Restore first, and here rather than at the end of each test: a test that fails mid-way never
@@ -69,6 +76,43 @@ function GuardedOverlay() {
       <button onClick={() => setLocked(true)}>lock</button>
       <button onClick={() => setLocked(false)}>unlock</button>
       {open && <div role="dialog">the overlay</div>}
+    </div>
+  );
+}
+
+/** The split the three real modals use, which `GuardedOverlay` above cannot show: the parent
+ *  owns the Back registration and the ref, and the modal inside it mirrors its whole `canClose`
+ *  into that ref. No modal here can be the one holding the lock in the parent, because the
+ *  reason to stay open is the modal's own mutation state. */
+function MirroredModal({
+  blockCloseRef,
+  onClose,
+}: {
+  blockCloseRef: RefObject<boolean>;
+  onClose: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  useBackCloseMirror(blockCloseRef, !saving);
+  return (
+    <div role="dialog">
+      <button onClick={() => setSaving(true)}>start saving</button>
+      <button onClick={onClose}>close it</button>
+    </div>
+  );
+}
+
+function MirroredOverlay() {
+  const [open, setOpen] = useState(false);
+  const blockCloseRef = useRef(false);
+  useBackGuard(
+    open,
+    () => setOpen(false),
+    () => !blockCloseRef.current,
+  );
+  return (
+    <div>
+      <button onClick={() => setOpen(true)}>open</button>
+      {open && <MirroredModal blockCloseRef={blockCloseRef} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -196,6 +240,51 @@ describe("backnav", () => {
     await userEvent.click(screen.getByText("unlock"));
     pressBack();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("closes on Back until the modal says otherwise, and refuses once it does", async () => {
+    // The child half of the guard (`useBackCloseMirror`). The parent registers Back and reads
+    // nothing but the ref, so a modal whose reason to stay open is its own mutation state has to
+    // put the WHOLE predicate there.
+    //
+    // Both directions, in one drive. A hook that wrote a constant would pass either half alone,
+    // and one of the two constants is "always refusing", which is the trap rule 146 is about.
+    render(
+      <BackNavProvider>
+        <MirroredOverlay />
+      </BackNavProvider>,
+    );
+    await userEvent.click(screen.getByText("open"));
+
+    pressBack();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("open"));
+    await userEvent.click(screen.getByText("start saving"));
+
+    pressBack();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // Refused, not spent: the sentinel is re-parked, so the modal's own control still closes it.
+    await userEvent.click(screen.getByText("close it"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("clears the ref when a modal unmounts still refusing", async () => {
+    // Read at the ref rather than through Back, because no caller can observe it there. All
+    // three parents arm the guard on the same state that mounts the modal, so the guard is gone
+    // in the same commit, and the next open writes its own value before any press lands. This
+    // pins the hook's contract, not a reachable failure (rule 118).
+    const ref = { current: false };
+    const { unmount } = render(<MirroredModal blockCloseRef={ref} onClose={() => {}} />);
+    expect(ref.current).toBe(false);
+
+    await userEvent.click(screen.getByText("start saving"));
+    expect(ref.current).toBe(true);
+
+    unmount();
+
+    expect(ref.current).toBe(false);
   });
 
   it("parks its own history entry per layer, so each Back reveals that layer's own snapshot", async () => {

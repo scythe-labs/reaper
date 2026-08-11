@@ -606,15 +606,18 @@ describe("the expanded season list through a failed refetch", () => {
 
 // --- the add-a-rule form ------------------------------------------------------------------
 
+/** A real condemn field, movie lane, that no built-in signal filters out of the composer. It
+ *  was an invented `runtime_minutes` of type `"int"`, and `VocabField.type` typed as `string`
+ *  is what let a type the server cannot serve sit in a fixture (rule 119). */
 const VOCAB: Vocabulary = {
   lane: "condemn",
   fields: [
     {
-      key: "runtime_minutes",
-      label: "Runtime",
-      help_text: "How long the movie runs.",
-      type: "int",
-      unit_suffix: "min",
+      key: "release_age",
+      label: "Age since release",
+      help_text: "How long ago the title was released.",
+      type: "days",
+      unit_suffix: "days",
       ops: ["gte", "lte"],
     },
   ],
@@ -626,13 +629,13 @@ describe("the add-a-rule form through a failed refetch", () => {
     const client = renderWithClient(
       <RemoveRulesEditor condemn={[]} onCondemn={() => {}} mediaType="movie" />,
     );
-    expect(await screen.findByRole("option", { name: "Runtime" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Age since release" })).toBeInTheDocument();
 
     // `SetupWizard` fires a bare `invalidateQueries()`, so every key refetches: this arrives
     // without the operator touching the policy page at all.
     await blink(client, apiMock.vocabulary, ["vocabulary"]);
 
-    expect(screen.getByRole("option", { name: "Runtime" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Age since release" })).toBeInTheDocument();
     expect(screen.queryByText(/couldn't load the things a rule can look at/i)).toBeNull();
   });
 

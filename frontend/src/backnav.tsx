@@ -40,6 +40,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 
 /** One thing a Back press can unwind. `onBack` closes an overlay or restores a prior tab. */
@@ -331,4 +332,28 @@ export function useBackGuard(
     });
     return () => ctx.remove(id);
   }, [ctx, open]);
+}
+
+/**
+ * The child half of `useBackGuard`. The modal owns its reasons to stay open, the parent owns the
+ * Back registration, and this ref is the only thing between them. Back then refuses exactly what
+ * the scrim, Escape and the ✕ refuse (rule 80). Cleared on unmount, so a stale refusal never
+ * outlives the modal.
+ *
+ * It takes the WHOLE predicate, never one term of it. `ScheduleModal` mirrored `save.isPending`
+ * against a shell handed `!save.isPending`. Those agree, and agree only while `canClose` has one
+ * term. A second reason to stay open leaves Back the one dismissal that ignores it, and
+ * `ServiceModal` already has two.
+ */
+export function useBackCloseMirror(
+  blockCloseRef: RefObject<boolean> | undefined,
+  canClose: boolean,
+): void {
+  useEffect(() => {
+    if (!blockCloseRef) return;
+    blockCloseRef.current = !canClose;
+    return () => {
+      blockCloseRef.current = false;
+    };
+  }, [canClose, blockCloseRef]);
 }
