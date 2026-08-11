@@ -321,6 +321,8 @@ here first and never reconstructed later.
 
 | #723 | 8 | W11-3 (test and type; its table killed), W11-22, W11-24 | `api.FieldType`, `test_the_browser_knows_every_field_type_the_vocabulary_serves`, `backnav.useBackCloseMirror`, `WhyShell.PanelFallback` | no | **Three frontend wave-11 rows, and the lines were the deliverable in none of them.** **W11-3 re-measured: 30 dispatch sites, not six**, all in `PolicyRuleEditors.tsx`, counted two spellings (`.type ===` and `.type !==`, 29 lines carrying 30 comparisons). **The table is killed.** The four ladders are four different dispatches on one discriminator, not one copied four times: `rampDefaults` returns a pair, `coerceValue` does arithmetic, `describeCondition` formats and clears a unit, and the ramp bound picks between two *components*. A `Record<FieldType, …>` covering all four is longer than what it replaces, and a `satisfies` on the one that matters would give a compile error at that ladder while the other three stayed silent, which is rule 144's reassuring-copy shape in types. **What lands instead is the test and the type.** `VocabField.type` was a bare `string` (`api.ts:575`) and `FieldType` did not exist in the frontend at all; it is now the six-member union, pinned against `engine.fields.FieldType` by a mirror test whose failure names all eight dispatch sites, since not one is exhaustive. **Eight, not five**: three of them pick a `step`, and a whole step makes `QuantityInput` withhold a fractional keystroke, so a new fractional member is untypeable before `coerceValue` ever sees it. That message is the one place the list lives and `api.ts` points at it (rule 144). **Six tests pin the three conversions**, both directions, driven red five ways: dropping the `bytes` and `rating_tenths` arms of `coerceValue`, adding a spurious `days` arm, dropping the read-back unit suffix, and mis-scaling the read-back divisor. `days` reaches `coerceValue` through the fall-through and is pinned as such. **Typing it immediately found an invented fixture**: `StaleReadSweep.test.tsx` composed a rule on `runtime_minutes` of type `"int"`, and the server can serve neither. **W11-22's three is right and there is a fourth**, `ServiceModal` spelling its `canClose` expression at `:659` and again at `:751`, whose declaration comment already claimed it was "computed ONCE and handed to every path" (rule 7/24, now true). The defect under the duplication is `ScheduleModal` mirroring one TERM, `save.isPending`, against a shell handed `!save.isPending`: correct by coincidence, a rule 80 hole the moment a second refusal reason lands. `useBackCloseMirror(ref, canClose)` takes the whole predicate, so the one-term spelling has nowhere to live; two tests, one driving Back through the real parent/child split and one reading the unmount clear at the ref, which no caller can observe because all three parents arm the guard on the same state that mounts the modal (said in the test, rule 118). **W11-24's `~28` is code net +2**, and it landed for the copy divergence the two copies were hiding: the why panel's failure said "The item itself is unaffected" and its mirror did not. **Cut, not mirrored** (mocked before the edit): the panel opens beside cards carrying Spare and Reap, so an operator who just pressed one reads it as their decision not having landed; there is no honest version of it for a panel about a person's requests; and nothing on this path writes anything, so it reassures against a fear the failure never raised. `_EXPECTED_NOTICES` 143 → 142 for the one call site that left the walk. **Neither extraction saved a line**, W11-22 at code net 0 and W11-24 at +2, and the reasoning is in `LEARNINGS.md`: a duplication found by diffing the copies against each other tells you which is wrong, and a zero-net extraction is a kill only when the copies also agree |
 
+| #733 | 8 | W11-42, W11-19, W11-18, W11-10 (getters; its job blocks killed) | `binaries.yml`'s `probe`, `deps.state_singleton`, `useSwitchConfirm`, `useSuggestedMap` | no | **Four dedups, three of the four stated figures wrong, and not one of them lands on lines.** Code net: the macOS boot probe -8, `useSwitchConfirm` -8, `useSuggestedMap` -3, the four `app.state` getters **+2**. Every one is roughly canceled by the comment the shared thing now carries, so **S5 as a line test kills all four**; each is here on whether it removes a place a future author has to remember something, and each removed one that had already been forgotten. **The probe's two copies were carrying a live defect.** `curl -s … \| head -c 200 \| grep -qi` under `set -o pipefail` reports curl's status, and curl takes SIGPIPE once the page outgrows the pipe buffer: measured passing at 4 KB and **failing at 200 KB** against an `index.html` of 4,276 bytes, so a shipped gate is green on a size accident. Three copies on `dev`, two collapsed into the function and the snap's fixed beside it (rule 72). Driven four ways against a fake binary: healthy passes, 200 KB passes where the old form exits 1, a root serving JSON still fails, a binary that never boots still fails. **`binaries.yml`'s provenance pair is settled rather than left**: both differences are forced, the `--out` paths by two consumers that read two locations (`reaper.spec:25` off `SPECPATH`, `snapcraft.yaml:100` off the repo root) and the interpreters by two jobs with different toolchains, and both steps now say so. The composite actions stay deferred. **`useSwitchConfirm` found a fourth caller the row does not count**, `JobsPanel`'s `onGoToPlex` at `Settings.tsx:208`, and its test harness was a third copy of the caller half, rewired onto the hook (rule 119). Four mutations driven red, one test each; the nonce bump was pinned by nothing. **`useSuggestedMap`'s no-clobber rule was unpinned behind rule 141**: the saved-mapping test set the stored value and the suggestion both to `TV`. Set apart it still passed, the assertion landing before the effect; a second folder the prefill may touch is what makes the wait mean anything. Three mutations driven red. **`state_singleton` is the one that buys no lines**, and it exists because "no `await` between the read and the write" was written at one of four sites and depended on at three; it is a plain `def`, so the invariant cannot be broken without turning every call site async. No behavior change anywhere, so `STATUS.md` is untouched |
+
 ### Killed while executing
 
 A finding that turns out to be wrong is struck here rather than silently skipped, so the next
@@ -349,6 +351,7 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | W5-1, one model for the stored explanation | Built as the row asks, then measured: the collapse drops the whole match block, and three interlocks fail open with it. The read model's three `mode="before"` validators exist so an illegible stored byte degrades one field instead of blanking the panel, and on the write side that same leniency normalizes the writer's own value to `None`. One model cannot be lenient for a reader of old rows and strict for the writer, so `extra="forbid"` catches none of it. The row's premise was also unfounded: all 36 written keys already match the declarations. A pinning test lands instead | Phase 8, PR #706, measured against a C9 drive |
 | W3b-9, a `stored_or_seed` helper | **Killed, then rebuilt in a different shape. Read both halves.** The kill was right about the row and wrong about the item. Right: "7 times in 3 spellings" is seven exactly and five spellings, and the gate it landed instead found **three of the seven precedence sites unpinned across the entire suite** (a stored empty proxy list reverting to the env seed, rule 1's shape and claimed by its own docstring; a stale env webhook clobbering a UI edit; a credential under a rotated key reporting "connected"). Wrong: it measured ONE helper that swallows the `_get` call, priced it at 0 to 2 lines, and read that arithmetic as the verdict (S5). Two helpers taking the value `_get` already returned cost neither the line nor the gate, and the rebuild lands them | Phase 8, PR #703, all seven mutations driven red |
 | W3b-11, four frontend hooks | All four extractions net positive, and two of the four counts are wrong. Non-blank lines throughout. The image-fallback ladder is **two** ladders at **four** sites: 14 lines at each of `Backdrop` and `WhyHero`, plus a five-line comment that relocates, so 33 leave and 35 come back, 29 of them a leaf module both callers can import without a cycle. The dirty-report **5** is exact and is the sub-item worth least, 20 out against 29 back, because rule 146's obligation is per-site and a hook cannot carry it. The test-result pairing is **four** sites, and it stays a kill on shape rather than on lines: one stores a union of two payload shapes and reads the held result at three places, the others store one and read it at one. The password form is **two**, 8 shared lines out, three boxes against two and three complaint branches against two. What the measurement found instead is **three of the four test surfaces computing the fingerprint at settle time**, where the boxes have already moved, so a badge vouches for an address nobody tried; plus a live complaint announced on every keystroke on the wizard's password step, and one ungenerated copy of the length floor. All fixed, with a gate over the fingerprint family | Phase 8, PR #719, the gate driven red and its own first two drafts fail-open |
+| W11-10's two detached-background-job blocks (its four getters are built) | **Half a finding, so W11-10 is in *Landed* too and the two counts do not sum**; W11-3's killed table is recorded on its Landed row instead, and the two conventions disagree. `~45` is unreachable. `launch_scan`'s `run()` is 50 lines and `execute_run`'s `_reap()` is 90, and they share **8**: a catch-all writing `phase="error"` and `error=str(exc)`, and a `finally` clearing `running`. The bodies are unlike by kind, one looping to consume a queued follow-up scan and the other walking an `AsyncExitStack` over the deletion clients and publishing a report. The status models differ too, `stopping` only on the reap and `followup_queued` only on the scan, so a shared wrapper takes both as parameters and holds nothing. The row already conceded the shape by making the cancel-and-await asymmetry a parameter (rule 128), and the second block is the deletion path | Phase 8, measured before building |
 | W11-39, one read for the overrides and their expiries | Built as the row asks and measured: `whitelist.py` +14/-7 and `review.py` +2/-4, a **net +5**. The loop that splits one result set into two maps is ten lines, where each read it replaces is two statements, so the extraction is larger than what it removes (S5). **"Back to back at four call sites" is wrong**: two are adjacent pairs, `breakdown.py`'s pair sits 40 lines apart across the condemned read and `effective_condemned`, and `review.py`'s fourth sits about 150 apart, so collapsing either moves a read rather than removing one. `review.py:489` reads `spare_expiries` alone and would go from a filtered two-column select to an unfiltered three-column one. The benefit is two fewer SELECTs against a table holding one row per manual override, on two page loads, and the only version reaching the row's own figure widens the `overrides()` read the executor issues before every item of a live reap (rule 112) | Phase 8, built and measured, then reverted |
 
 ## Execution
@@ -3486,6 +3489,27 @@ caller, with `services/fairness.py`'s `_enrich_titles` fanning out up to 80 live
 `auth/ratelimit.py:200` ships an unused `ConcurrencyGate` (~20, `behavior`: adding the bound is a
 fix, so ship it separately).
 
+> **W11-10 splits, and both halves of the disagreement were right about a different half.**
+> **The four getters are built and the `-7` is wrong: the collapse is code +2.** They are
+> `api/scan.py:_status`, `api/runs.py:_reap_status`, `api/fairness.py:_request_cache` and
+> `api/poster.py`'s inline `artwork_client_lock`, at 6, 6, 5 and 7 lines; they become 2, 2, 1 and
+> 1, against an 8-line helper and four import lines. **So the line case is gone and the item is
+> built on the other test.** All four are read-build-store with no `await` in the middle, which is
+> what stops two concurrent requests installing different objects, and that reason was written
+> down at exactly one of the four (`poster.py:59`) and silently depended on at the other three.
+> `deps.state_singleton` is a plain `def`, so it cannot acquire an await without every call site
+> turning async first. `reap_in_flight` reads the same attribute and deliberately does not create
+> one, so it is not a fifth site and stays as it is.
+>
+> **The two job blocks are killed: `~45` is unreachable.** `launch_scan`'s `run()` is 50 lines and
+> `execute_run`'s `_reap()` is 90, and what they share is 8: a catch-all setting `phase="error"`
+> and `error=str(exc)`, and a `finally` clearing `running`. Everything else differs by kind, one
+> looping to consume a queued follow-up scan and the other walking an `AsyncExitStack` over the
+> deletion clients and publishing a report. The status models differ too, `stopping` existing only
+> on the reap and `followup_queued` only on the scan, so a shared wrapper takes both as parameters
+> and holds nothing. The row already conceded the shape by making the cancel-and-await asymmetry a
+> parameter (rule 128); that asymmetry is the point, and the second block is the deletion path.
+
 > **Built: W11-15 as the fan-out bound alone, and both halves of its justification were wrong.**
 > `ConcurrencyGate` has three production callers, not none: `argon2_gate`, the one instance
 > `ratelimit.py:265` builds, is acquired at `api/auth.py:296`, `api/settings.py:949` and
@@ -3538,6 +3562,34 @@ destination type
 **W11-22** The
 parent-Back-guard ref mirror written three times. **Landed**, as a rule 80 fix and not a dedup:
 code net 0, and `ScheduleModal` mirrored one TERM of its `canClose`.
+
+> **W11-19 built at -8, the one figure in this batch the plan had right.** `useSwitchConfirm` in
+> `SwitchConfirm.tsx` holds the three rules that have to be true together and none of which is
+> local to a caller: the nonce bumps on every refused press, the pending destination clears when
+> `dirty` goes false, and a press of the section already open is not a switch. **The duplication
+> had already cost once, in writing**: the policy editor found B-31 on its own, that a notice keyed
+> to the Discard handler survives a Save and goes on offering a red Discard for changes that no
+> longer exist, and Settings' copy then carried a comment *pointing at* that fix rather than
+> sharing it. **A fourth caller was hiding in the JSX**, `JobsPanel`'s `onGoToPlex` at
+> `Settings.tsx:208`, which the row's "written twice" does not count and which the extraction found
+> by breaking it. **The test harness was a third copy** and is rewired onto the hook (rule 119), so
+> the three focus tests now drive what ships; three more pin Discard, the clear-on-clean and the
+> same-section press. All four mutations driven red, each by exactly one test, and the nonce bump
+> was pinned by nothing before this.
+>
+> **W11-18 built at code -3, not the measured -8 to -12.** The two machines and both
+> `exhaustive-deps` disables are exactly as the row says, and `useSuggestedMap` collapses them to
+> one of each. **The lines are not the reason and one invariant was untestable in place.** All
+> three rules the two copies shared are about what must not happen: a stored pick is never
+> overwritten by a suggestion, a stored pick is never tagged "suggested", and picking clears the
+> tag even when the value did not change. **The first was unpinned across the whole suite**, and
+> the reason is rule 141: `keeps a saved mapping and does not tag it 'suggested'` set the saved
+> value and the suggestion both to `TV`, so prefill clobbering a saved pick was invisible. Setting
+> them apart was not enough either, since the assertion lands before the effect runs and passes on
+> the first render; a second folder the prefill IS allowed to touch is what makes the wait mean
+> something. **The one deliberate difference is preserved and now stated**: a blank
+> `suggested_library` is no suggestion, where a null `suggested_instance_id` is, so each caller
+> normalizes its own rather than the hook deciding for both.
 
 **Frontend components and CSS.** **W11-23** The `.field-sm` triplet typed 21 times across 7 files,
 which is
@@ -3617,6 +3669,36 @@ to sit at the same depth, so moving either file breaks one of them silently. **W
 → serve` written three times where only `serve` is genuinely per-environment (~23, `behavior`, and
 it is a deletion tool's boot path, so rank it last).
 
+> **W11-42: the macOS probe is built at code -8, and the provenance pair is settled as
+> deliberate.** The five populations all hold. What was built is the last of them, the boot probe
+> written twice inside one step: one `probe()` taking binary, port and log, called for the
+> one-folder build and for the `.app`.
+>
+> **The line the two copies shared was carrying a defect, which is the argument for the merge
+> rather than the -8.** `curl -s … | head -c 200 | grep -qi` runs under `set -o pipefail`, so the
+> pipeline reports curl's status, and curl dies of SIGPIPE once the page outgrows the pipe buffer.
+> Measured: the same probe passes on a 4 KB page and **fails on a 200 KB one**, and today's
+> `index.html` is 4,276 bytes. So the gate is green on a size accident, and a healthy build would
+> have gone red on a page that grew. The body lands in a file now. `dev` has three copies of that
+> line, two in this step and one in the snap job, and the snap's is fixed here (rule 72); the
+> Windows probe uses `Invoke-WebRequest` and has no pipeline.
+>
+> **The provenance question is settled: both differences are forced, and neither is drift.** The
+> `--out` paths differ because the two consumers do: `packaging/pyinstaller/reaper.spec:25` reads
+> the file out of `SPECPATH`, and `snap/snapcraft.yaml:100` reads it from the repo root. The
+> interpreters differ because the jobs do: the `build` job installs uv and syncs, and runs on
+> Windows and macOS; the `snap` job installs no Python toolchain at all, so `python3` is the
+> runner's own, and `write_buildinfo.py` imports only the stdlib so neither needs a venv. Both
+> steps now say so, so the next reader does not reopen it or fold them together. No gate: each
+> mistake fails loudly at build time, on a missing file or a missing `uv`.
+>
+> **The composite actions are deferred, as the verdict asked**, and the reason is now measured
+> rather than assumed: the uv bootstrap is 3 sites, the ghcr login and image name 4 jobs across 3
+> workflows, and the store-credential probe 2 byte-identical plus a third shape in `virustotal.yml`
+> and a fourth in `submit-winget.yml`'s pwsh. A composite action is a new file per family and a
+> `uses:` line per site, so the ghcr family is the only one that could pay, and it cannot be
+> measured without building it.
+
 **Per-item verdicts, all 43 that remain. This table supersedes the counts in the sentences above
 wherever they disagree.** `right` means the sentence's count and the symbol beside it both hold.
 The eleven rows the measured block already argues say `block above` rather than repeating it.
@@ -3634,7 +3716,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-7 | 2 class names, ~14 | 2 class pairs plus 3 local names, nets -2 | kill, #655 shipped the AST gate instead |
 | W11-8 | 4 slug sets, 4 sweeps, ~10 | right, and `_retire` is already the helper | kill, nets 0 |
 | W11-9 | 2 identical loops, ~10 | 2 loops, opposite polarity, different returns | kill, indirection on the canary check |
-| W11-10 | getter ×4 plus 2 job blocks, ~45 | 4 getters exact, the job blocks share ~8 lines | unsettled, scout builds the getters at -7, verifier kills the item |
+| W11-10 | getter ×4 plus 2 job blocks, ~45 | 4 getters exact but the collapse is **code +2**, not -7; the job blocks share 8 lines of 50 and 90 | **split**: getters **built** for the invariant, job blocks **killed** |
 | W11-11 | 11 times, 7 in `run_scan` | 12 times, the 7 are in `_run_scan_locked` | kill, a helper costs +7 |
 | W11-12 | 4 call sites, ~40 | 5 sites, -14; `~40` sized the rebuild, not the parameter | **built**, -10 net |
 | W11-13 | 2 parsers differ on a negative header | right | kill, block above |
@@ -3642,8 +3724,8 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-15 | 80 unbounded, `ratelimit.py:200` an unused gate | block above; the gate has 3 callers and sheds load | **built**, +31 (bound, deadline) |
 | W11-16 | 4 keys, 4 existing shared hooks, ~40 | block above | build, 2 keys |
 | W11-17 | hand-written 6 times, ~20 | 6 sites, 4 to 5 hand-written, the rest already hooks | kill, no two of the residue do the same work |
-| W11-18 | 2 machines, deps-disable twice, ~25 | right, nets -8 to -12 | build, low priority |
-| W11-19 | caller written twice, ~15 | right, nets -8 | build |
+| W11-18 | 2 machines, deps-disable twice, ~25 | 2 machines and 2 disables right; **code -3**, not -8 to -12 | **built**, for the prefill rule no test could see |
+| W11-19 | caller written twice, ~15 | right, and **-8 holds**, the one figure of these four that did | **built** |
 | W11-20 | 6 callbacks, depth 3 to 4, ~40 | 7 or 8 props, max depth 2 | unsettled, scout kills it, verifier makes it an owner call |
 | W11-21 | 3 hand-rolled 250 ms debounces | right, one is already a hook | unsettled, scout kills on ~0 lines, verifier builds the shared timer |
 | W11-22 | mirror written 3 times | right, plus 3 child effects and a 4th copy of the guard in `ServiceModal` | **built**, code net 0; the value is `ScheduleModal`'s one-term mirror |
@@ -3665,7 +3747,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-39 | 4 call sites, ~15 | 4 sites, only 2 adjacent; built at **+5** | **killed**, S5 |
 | W11-40 | unindexed, never swept, grows for the life of the install | 3 tree claims right, framing wrong, block above | **built**, the index only |
 | W11-41 | 13 models | 15 models | kill, byte-identical DDL is why nothing is gained |
-| W11-42 | ~85 lines, all `ci` | populations right, ~16 removable, provenance pair unresolved | build the macOS probe, defer the composite actions |
+| W11-42 | ~85 lines, all `ci` | populations right; the probe is **-8 code**, and the **provenance pair is settled**, both differences forced | **built** the probe, composite actions deferred |
 | W11-43 | spelled 3 times | right, and `schema_gate.py` is a 4th deliberately different shape | **built**, +7 not +2; no gate, one site would be left to scan |
 | W11-44 | written 3 times, ~23 | count right, 3 runtimes rather than 3 copies | kill, sharing costs +10 on the boot path |
 

@@ -16,7 +16,8 @@ attributes of
 ``api/settings.py`` and ``api/setup.py``, ``_sessions`` in ``api/review.py``,
 ``api/runs.py`` and ``api/whitelist.py`` -- and four more modules imported one of those
 copies rather than adding an eighth. ``_latest_snapshot`` was written twice and called
-from four modules. They are one declaration each now.
+from four modules. They are one declaration each now. :func:`state_singleton` is the same
+collapse for the lazily-built per-app objects, which were four copies of one read-build-store.
 
 Routers that read ``request.app.state`` inline are left alone. They copied no function,
 so they are outside what this module collapses, and the pull request that landed it
@@ -30,10 +31,10 @@ deferral. Exactly three cannot adopt these accessors without a signature change,
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import structlog
-from fastapi import HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -62,6 +63,26 @@ def runtime_settings(request: Request) -> Settings:
 def secret_box(request: Request) -> SecretBox:
     box: SecretBox = request.app.state.secret_box
     return box
+
+
+def state_singleton[T](app: FastAPI, name: str, build: Callable[[], T]) -> T:
+    """The one ``app.state.<name>`` for this app, built on first ask.
+
+    Four callers keep a per-app object this way: the scan status, the reap status, the
+    Scales request cache, and the artwork client's lock. One per app rather than one in
+    the lifespan, so a test app that never ran a lifespan still gets its own, bound to
+    its own running loop.
+
+    **There is no await between the read and the write**, so two concurrent requests
+    cannot both install one and hand out different objects. That was written down at one
+    of the four call sites and silently relied on at the other three; keeping it true is
+    now this function's job rather than each caller's.
+    """
+    existing: T | None = getattr(app.state, name, None)
+    if existing is None:
+        existing = build()
+        setattr(app.state, name, existing)
+    return existing
 
 
 async def newest_snapshot(session: AsyncSession) -> Snapshot | None:
