@@ -404,11 +404,14 @@ how big a session is, never whether the change is worth making.
 second question that gets its own answer.** Nine of phase 8's fourteen kills rested on a line
 count, six of them citing S5 by name, and a dedup's usual payoff is not lines: it is that one
 declaration cannot drift from itself. So ask both. A change that nets to zero lines and removes a
-drift surface is worth making, and W3b-11's image ladder is the case — the first pass measured a
+drift surface is worth making, and W3b-11's image ladder is the case. The first pass measured a
 shared COMPONENT, whose chrome the two sites do not share, and never measured the hook, which is
 the part they do. A change that nets to zero and removes nothing is what S5 is right about, and
 `_judge_item`'s carrier is still that. Where the honest answer is "the duplication is fine and
-nothing stops it drifting", the gate is the answer, which is what eight of those nine landed.
+nothing stops it drifting", the gate is the answer, and six of those nine landed one: W5-6, the
+pragma row, W3b-8, W3b-9, W3c and W3b-11. W5-2 is the seventh and lands its gate here. The two
+that landed code instead are W3b-2, whose two inner handlers came out with W11-32, and the
+executor size interlock, which landed two constants and four pinning tests.
 
 **A kill also has to ask whether the divergence it preserves is correct.** Measuring two copies to
 decide they are cheaper apart reads each copy for its line count and neither for its behavior.
@@ -2029,8 +2032,8 @@ here is preventing a future divergence.
   >
   > > **Un-killed, the art ladder only: it lands as a HOOK, `components/artFallback.ts`.** The
   > > kill above measured a shared COMPONENT and is right about it. The two sites share the
-  > > ladder and share none of the chrome — a fragment with `card-bg`/`card-scrim` against a
-  > > `div.why-hero` with its fade — so a component has to take that chrome as props, which is
+  > > ladder and share none of the chrome. A fragment with `card-bg`/`card-scrim` against a
+  > > `div.why-hero` with its fade, so a component has to take that chrome as props, which is
   > > where its 35 lines back came from. `useArtFallback(posterUrl)` returns `{ src, onError }`
   > > and each site keeps its own markup: **41 lines out of the two sites against 6 back plus 2
   > > imports, and a 38-line leaf module of which 14 are its docstring**, so about zero on total
