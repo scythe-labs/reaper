@@ -195,8 +195,11 @@ class TestSchemaGate:
     def test_it_refuses_a_database_it_cannot_verify(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path)
         archive = _make_archive(tmp_path / "backup.reaper", revision=None)
-        with pytest.raises(RestoreError):
+        with pytest.raises(RestoreError) as excinfo:
             restore.stage_upload(settings, archive)
+        # `_summarize` owns this sentence outright now: `_check_schema` carried a second copy
+        # of it behind an `if revision is None` its only caller had already refused.
+        assert "couldn't be verified" in str(excinfo.value)
 
     def test_it_reads_the_revision_from_the_database_not_the_manifest(self, tmp_path: Path) -> None:
         # S-2: a manifest claiming a known revision cannot launder a database that carries a

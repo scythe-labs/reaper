@@ -209,8 +209,8 @@ jobs:
       # A binary that ships must have booted once: fresh data dir, migrations, and a
       # 200 from its own health probe. This is the packaged twin of ci.yml's docker
       # buildability gate. The .app is a second build of the same tree, so it gets a
-      # second boot on its own port, against the same two checks. Written once: the
-      # two copies this replaces had to be edited together, and nothing said so.
+      # second boot on its own port, against the same two checks. The two copies this
+      # replaces had to be edited together, and nothing said so.
       - name: Boot the binary and probe it (macOS)
         if: runner.os == 'macOS'
         run: |

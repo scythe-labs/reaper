@@ -2,6 +2,8 @@
 """The About-page version string: a release shows the plain version, every other build
 shows "dev" plus the short commit it was cut from."""
 
+from pathlib import Path
+
 import pytest
 
 from reaper import __version__, buildinfo
@@ -78,3 +80,28 @@ class TestTheEnvBooleanVocabulary:
         ``os.environ``, and passing an empty mapping must not be how that happens."""
         monkeypatch.setenv("K", "on")
         assert buildinfo.env_flag("K", default=False) is True
+
+
+class TestProjectRoot:
+    """The one walk from this package up to the checkout root, and its packaged override."""
+
+    def test_a_packaged_install_uses_the_root_it_names(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("REAPER_HOME", str(tmp_path))
+        assert buildinfo.project_root() == tmp_path
+
+    def test_a_source_checkout_reaches_the_directory_holding_src(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Asserted on what the root must CONTAIN, not on a second count of the levels.
+
+        The two callers that inlined this walk read ``frontend/`` and ``alembic/`` out of
+        the answer, and both sit beside ``src/`` in the checkout. Counting parents here
+        instead would agree with a wrong depth as readily as with the right one (rule 119).
+        """
+        monkeypatch.delenv("REAPER_HOME", raising=False)
+        root = buildinfo.project_root()
+        assert (root / "src" / "reaper" / "buildinfo.py").is_file(), root
+        assert (root / "alembic" / "env.py").is_file(), root
+        assert (root / "frontend").is_dir(), root
