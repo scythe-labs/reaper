@@ -1759,19 +1759,29 @@ class Executor:
                 check="You spared this by hand. Kept.",
             )
 
-        # The mirror case: an item that was in the plan only because of a hand reap, whose
-        # override has since been removed. It is no longer in the effective set, so it is
-        # kept -- visibly, not silently dropped from the report.
+        # An item must pass BOTH halves, and each half is a different fact, so each gets its
+        # own sentence. They were one guard under one sentence until #691: the sentence
+        # belonged to the second half and the first half fired at operators who had just put
+        # a reap back, and at scan-condemned items that never had a hand reap at all.
         #
-        # Both halves are consulted, and an item must pass BOTH. ``_effective_keys`` is the
-        # set as it stood when the run was claimed -- the ceiling, so a reap added mid-run
-        # cannot smuggle in an item outside what the operator confirmed. ``effective_verdict``
-        # is the same production function ``effective_condemned`` decides membership with
-        # (rule 3/22), applied to the freshly re-read decisions, so a reap withdrawn DURING
-        # the run also drops its item. Intersecting the two makes the set only ever shrink.
-        if candidate.media_key not in self._effective_keys or (
-            effective_verdict(candidate, self._decisions) != "condemn"
-        ):
+        # ``_effective_keys`` is the set as it stood when the run was claimed -- the ceiling,
+        # so a reap added mid-run cannot smuggle in an item outside what the operator
+        # confirmed, and an item spared before the claim stays out even if that spare is
+        # withdrawn while the run walks. Neither says anything about a hand reap.
+        if candidate.media_key not in self._effective_keys:
+            return self._mark_skipped(
+                delete,
+                "this was not part of the run you confirmed, so it is kept",
+                check="Not part of the run you confirmed. Kept.",
+            )
+
+        # The mirror case: an item that was in the plan only because of a hand reap, whose
+        # override has since been removed. ``effective_verdict`` is the same production
+        # function ``effective_condemned`` decides membership with (rule 3/22), applied to
+        # the freshly re-read decisions, so a reap withdrawn DURING the run drops its item --
+        # visibly, not silently dropped from the report. A spare added mid-run never reaches
+        # here; the spare check above answers it in its own words.
+        if effective_verdict(candidate, self._decisions) != "condemn":
             return self._mark_skipped(
                 delete,
                 "the hand reap on this was removed, so it is kept",
