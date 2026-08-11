@@ -55,7 +55,8 @@ from reaper.buildinfo import env_flag
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.config import RuntimeSafety, Settings
-from reaper.db.models import AppSetting, InstanceKind, PlexServer
+from reaper.crypto import SecretBox
+from reaper.db.models import InstanceKind, PlexServer
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import (
     admin_password,
@@ -1066,8 +1067,12 @@ class GeneralSettingsOut(BaseModel):
     accent_color: str
     """The UI accent as ``#rrggbb``; the built-in sky blue until changed."""
     api_key_set: bool
-    """Whether a key exists at all -- the value itself only leaves through the
-    dedicated reveal route, never rides along on a settings read."""
+    """Whether a key this install can actually use exists -- the value itself only leaves
+    through the dedicated reveal route, never rides along on a settings read. Read through
+    ``get_api_key``, so a key written under a secret key that has since rotated reports as
+    absent here exactly as it does to the header lane that would authenticate with it (rule
+    76). It used to report the row, which promised a working credential to an operator whose
+    reveal button then 404s."""
     expand_seasons_mode: ExpandSeasonsMode
     """Which screens the review queue opens each show's season list expanded on. A display
     preference; ``off`` until the operator picks a screen."""
@@ -1125,13 +1130,15 @@ def _desktop_out() -> DesktopSettingsOut | None:
     )
 
 
-async def _general_out(session: AsyncSession, settings: Settings) -> GeneralSettingsOut:
+async def _general_out(
+    session: AsyncSession, settings: Settings, box: SecretBox
+) -> GeneralSettingsOut:
     return GeneralSettingsOut(
         application_name=await app_settings.get_application_name(session),
         application_url=await app_settings.get_application_url(session),
         timezone=await app_settings.get_timezone(session, settings),
         accent_color=await app_settings.get_accent_color(session),
-        api_key_set=(await session.get(AppSetting, app_settings.API_KEY_KEY)) is not None,
+        api_key_set=await app_settings.get_api_key(session, box) is not None,
         expand_seasons_mode=await app_settings.get_expand_seasons_mode(session),
         default_spare_days=await app_settings.get_default_spare_days(session),
         proxy_trust_enabled=await app_settings.proxy_trust_enabled(session, settings),
@@ -1184,7 +1191,7 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
 @router.get("/general", tags=[api_tags.GENERAL])
 async def get_general(request: Request) -> GeneralSettingsOut:
     async with session_factory(request)() as session:
-        return await _general_out(session, runtime_settings(request))
+        return await _general_out(session, runtime_settings(request), secret_box(request))
 
 
 @router.put("/general", tags=[api_tags.GENERAL])
@@ -1280,7 +1287,7 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
         await _refresh_proxy_state(request, session)
         if cleaned_timezone is not None:
             await _apply_timezone_to_scheduler(request, cleaned_timezone)
-        result = await _general_out(session, runtime_settings(request))
+        result = await _general_out(session, runtime_settings(request), secret_box(request))
     log.info("settings.general_saved")
     return result
 
