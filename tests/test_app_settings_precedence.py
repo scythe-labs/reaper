@@ -156,6 +156,49 @@ class TestTheStoredValueWinsOverTheEnvironmentSeed:
             assert await app_settings.has_discord_webhook(session, current, seeded) is False
             assert await app_settings.get_discord_webhook(session, current, seeded) is None
 
+    @pytest.mark.parametrize("blank", ["", "   ", "\n"])
+    async def test_a_stored_webhook_that_decrypts_to_nothing_is_not_configured(
+        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path, blank: str
+    ) -> None:
+        """The two branches of ``get_discord_webhook`` answered "nothing configured" two ways.
+
+        The seed branch treats an empty string as absent; the stored branch returned it. Every
+        consumer tests ``is None``, and ``notify.build_notifier`` gates on ``webhook is None``,
+        so an empty string built a ``DiscordNotifier("")`` that posts nowhere while the Settings
+        panel said connected (#729). Rule 93's shape one level over: absent and present-but-empty
+        conflated in one direction and separated in the other.
+
+        Written through ``box.encrypt`` directly, because no writer can reach this state today
+        (``api/settings.py`` validates the URL, and the seed write is guarded), which is what
+        the issue is a question about. That is exactly why the pin belongs here: the guard is
+        the only thing keeping the shape unreachable, and nothing was watching it.
+
+        The seed is live beside it, so the stored row cannot merely be falling through to a
+        second empty answer.
+        """
+        box = SecretBox("test-key")
+        seeded = _seeded(tmp_path, discord_webhook=_SEED_WEBHOOK)
+        async with factory() as session:
+            await app_settings._set(session, app_settings.DISCORD_WEBHOOK_KEY, box.encrypt(blank))
+
+            assert await app_settings.get_discord_webhook(session, box, seeded) is None
+            assert await app_settings.has_discord_webhook(session, box, seeded) is False
+
+    async def test_a_stored_api_key_is_not_touched_by_that_clause(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """``_decrypted_or_absent`` is shared, and the clause deliberately is not.
+
+        It answers a decrypt FAILURE, and ``get_api_key`` reads the same helper. #729 measured
+        nothing about API keys, so the emptiness check sits at the webhook's two call sites
+        rather than in the helper both go through (rule 72's sweep, answered in the narrow
+        direction on purpose). This pins that a key still comes back exactly as stored.
+        """
+        box = SecretBox("test-key")
+        async with factory() as session:
+            await app_settings.set_api_key(session, box, "rk_live_abc")
+            assert await app_settings.get_api_key(session, box) == "rk_live_abc"
+
 
 #: The seven above, named so a matcher that stops collecting is caught rather than passing
 #: vacuously (rule 145): a subtraction against an empty population finds nothing missing.
