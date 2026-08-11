@@ -235,6 +235,18 @@ the part the next session needs.
 One row per merged sub-PR. This is the history the squash merge will destroy, so it is written
 here first and never reconstructed later.
 
+**Nine merged sub-PRs have no row here, and the owner reads that as missed rather than
+deliberate** (2026-08-10): **#581** put `tests/` on the typecheck gate; **#617** gave the Leaving
+Soon pass one sentence worded by the service; **#619** put the simulator's protections in plain
+language; **#620** refuses a database a newer Reaper migrated; **#630** made the vote floor one
+predicate; **#633** fixed three defects that branch introduced; **#637** stopped a leftover list
+protection returning a 500; **#646** stopped the trash notice naming a control that does not
+exist; **#647** finished phase 7's deletion sweep. All nine merged on 2026-08-08 or 09.
+**They are recorded here rather than back-filled**, because a row written now would be
+reconstructed from the diff, which is the one thing the paragraph above says this table exists to
+prevent. What the gap costs is the findings count: it cannot re-derive while rows are missing and
+nobody can tell a missing row from a PR that closed no finding.
+
 | Sub-PR | Phase | Finding IDs | Symbol | Baseline moved? | Notes |
 | --- | --- | --- | --- | --- | --- |
 | #562 | 1 | Tier A | `_policy_lab.pinned_baseline` | n/a, it is the baseline | 880 blocks re-pinned, every leaf additive. Fixture 754 KB → 1,574 KB |
