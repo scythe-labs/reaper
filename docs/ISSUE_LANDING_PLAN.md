@@ -187,11 +187,18 @@ all eight the issue names and omits the two `Gate` protocol stubs. `policy-inspe
 `test_repo_hygiene.py`, because the script is not in CI, and `main()` runs the same function before
 it copies anything.
 
-**5. #685, the rule-scope gate.** Not because `test_repo_hygiene.py` is long, though a `dev`-side
-append now lands on the same anchor as the branch's own 2,329 lines. It belongs here because **both
-of the gate's inputs moved on the branch**: `.claude/rules/*.md` is +74/-26 across five files and
-`CLAUDE.md` is +26/-5. A gate written against `dev`'s scopes would be asserting the wrong pairs the
-day it lands.
+**5. #685, the rule-scope gate. Landed.** Not because `test_repo_hygiene.py` is long, though a
+`dev`-side append now lands on the same anchor as the branch's own 2,329 lines. It belonged here
+because **both of the gate's inputs moved on the branch**: `.claude/rules/*.md` is +74/-26 across
+five files and `CLAUDE.md` is +26/-5. A gate written against `dev`'s scopes would be asserting the
+wrong pairs the day it lands.
+
+**The comparison is the file set, not the glob strings**, which the two copies deliberately do not
+spell the same way: the cell abbreviates (`secrets.py`) and the review-queue row names components
+(`ReviewQueue`) rather than paths. Two resolution rules cover every fragment the five rows use, as
+written and then as `**/<fragment>*`, and both were measured rather than guessed. All five rows
+agree today. The gate fails in three directions: a cell claiming a file the frontmatter does not
+load, a frontmatter loading a file the cell does not claim, and a fragment matching nothing.
 
 **6. #558, half one.** The document first put this in "after" and that was wrong. All four fix
 sites of half one were rewritten: `update_check.py:119`, `launcher.py:325`, `:377` and `:578` are

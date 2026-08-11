@@ -7320,3 +7320,124 @@ def test_every_mutation_omission_carries_a_reason() -> None:
                 f"an argument: {group.reason!r}"
             )
             assert group.functions, f"the {name} zone has an Omission naming no functions"
+
+
+# --- a rule file's paths: against CLAUDE.md's Governs cell (#685) ---------------------
+
+
+def _expand_braces(pattern: str) -> list[str]:
+    """``api/{settings,plex}.py`` into two patterns. Both copies spell scopes this way."""
+    brace = re.search(r"\{([^}]*)\}", pattern)
+    if brace is None:
+        return [pattern]
+    return [
+        expanded
+        for option in brace.group(1).split(",")
+        for expanded in _expand_braces(pattern[: brace.start()] + option + pattern[brace.end() :])
+    ]
+
+
+def _glob_to_regex(glob: str) -> re.Pattern[str]:
+    """``**`` crosses directory separators, ``*`` does not.
+
+    Written out rather than taken from ``fnmatch``, whose ``*`` crosses ``/`` too: under it
+    ``frontend/src/*.tsx`` would claim every component, so the two copies could disagree about
+    a whole directory and still compare equal.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(glob):
+        if glob.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif glob[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(glob[i]))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def _files_matching(pattern: str, population: list[str]) -> set[str]:
+    matchers = [_glob_to_regex(p) for p in _expand_braces(pattern)]
+    return {f for f in population if any(m.match(f) for m in matchers)}
+
+
+def _governs_rows() -> list[tuple[str, str]]:
+    """Each rule file named in CLAUDE.md's table, with its ``Governs`` cell."""
+    table = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    return [
+        (path, governs)
+        for path, governs, _rules in re.findall(
+            r"^\| `(\.claude/rules/[^`]+)` \| (.*?) \| ([^|]*)\|$", table, re.MULTILINE
+        )
+    ]
+
+
+def test_each_rule_files_paths_and_its_governs_cell_describe_the_same_files() -> None:
+    """The scope of a rule set is written twice, by hand, and nothing compared the copies.
+
+    The ``paths:`` frontmatter is what actually loads a rule set for a session. CLAUDE.md's
+    ``Governs`` cell is what a reader consults to find out which rules bind a file. When they
+    disagree the prose says a file is covered while the loader skips it, and the session edits
+    that file having read none of the rules scoped to it.
+
+    Twice already, both found by hand rather than by a gate: `auth.md` scoped rules to
+    `api/settings.py` and the watch-evidence gate then moved to `api/plex.py`; and
+    `api/auth.py`, which held every admin-password helper, was never under
+    `src/reaper/auth/**/*.py` at all (#685).
+
+    **The comparison is the set of repository files each side matches**, not the glob strings,
+    which are deliberately not written the same way: the cell abbreviates, and the review-queue
+    row names components rather than paths. Two rules resolve a cell fragment, and they are the
+    two the five rows actually use -- a fragment is tried as written from the repo root, and
+    then as ``**/<fragment>*``, which is what makes `secrets.py` and `ReviewQueue` resolve. A
+    fragment that resolves to nothing fails rather than being skipped, since a fragment nobody
+    can resolve is exactly the drift this reads for (rule 147).
+    """
+    population = [str(path.relative_to(REPO)) for path, _ in _repo_text_files()]
+    complaints: list[str] = []
+
+    for rule_path, governs in _governs_rows():
+        frontmatter = (REPO / rule_path).read_text(encoding="utf-8").split("---", 2)[1]
+        declared = re.findall(r'-\s+"([^"]+)"', frontmatter)
+        loads = set[str]().union(*(_files_matching(g, population) for g in declared))
+
+        # The cell is `globs — prose`. The em dash ends the scope and starts the summary.
+        claimed: set[str] = set()
+        for fragment in re.findall(r"`([^`]+)`", governs.split("—")[0]):
+            hit = _files_matching(fragment, population) or _files_matching(
+                f"**/{fragment}*", population
+            )
+            if not hit:
+                complaints.append(
+                    f"CLAUDE.md's Governs cell for {rule_path} names `{fragment}`, which "
+                    "matches no file in the checkout. Spell it as a path."
+                )
+            claimed |= hit
+
+        for only_claimed in sorted(claimed - loads):
+            complaints.append(
+                f"{only_claimed} is claimed by CLAUDE.md's Governs cell for {rule_path} but "
+                f"no paths: glob in {rule_path} matches it, so the rules never load for it."
+            )
+        for only_loaded in sorted(loads - claimed):
+            complaints.append(
+                f"{only_loaded} loads {rule_path} through its paths: frontmatter, and "
+                "CLAUDE.md's Governs cell does not say so."
+            )
+
+    assert not complaints, (
+        "a rule set's scope disagrees with the Governs cell that describes it:\n  "
+        + "\n  ".join(complaints)
+        + "\n\nThe two copies are `.claude/rules/<file>.md`'s paths: frontmatter and the "
+        "Governs column of CLAUDE.md's table. Fix whichever is wrong; the frontmatter is the "
+        "one that decides what a session actually reads."
+    )
