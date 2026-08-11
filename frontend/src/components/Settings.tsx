@@ -10,7 +10,7 @@
 // Nothing here can delete anything: the deletion switch lives in Policy -> Deletion, and the
 // Security panel only manages the admin password that confirms it.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { AboutPanel } from "./AboutPanel";
 import { BackupPanel } from "./BackupPanel";
@@ -22,7 +22,7 @@ import { NotificationsPanel } from "./NotificationsPanel";
 import { PlexPanel } from "./PlexPanel";
 import { SecurityPanel } from "./SecurityPanel";
 import { ServicesPanel } from "./ServicesPanel";
-import { SwitchConfirm } from "./SwitchConfirm";
+import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
 
 // Two names that moved out of this file and are still imported FROM it: `DiscordModal` reads the
 // webhook check, `SetupPasswordStep` the password floor. The name stays available at this path
@@ -103,11 +103,6 @@ export function Settings({
   const [webhookDirty, setWebhookDirty] = useState(false);
   const [securityDirty, setSecurityDirty] = useState(false);
   const [backupDirty, setBackupDirty] = useState(false);
-  const [pendingSwitch, setPendingSwitch] = useState<Panel | null>(null);
-  // Bumped on every refused press so `SwitchConfirm` can move focus even when the press changed
-  // no state at all -- pressing the same section twice sets `pendingSwitch` to the value it
-  // already holds, which React treats as nothing happening (see SwitchConfirm.tsx).
-  const [switchNonce, setSwitchNonce] = useState(0);
 
   // Every panel classified, in `PANELS` order. A `false` here is a claim that the section has
   // nothing to lose on the way out, so each one says why -- verified in the tree.
@@ -138,25 +133,11 @@ export function Settings({
   };
   const leavingDirty = dirtyPanels[panel];
 
-  // The notice exists only because there are edits to lose, so it goes when they do -- by
-  // Discard, or by a Save that stores them. Keyed on the draft rather than on the Discard
-  // handler so the save path is covered too, which is the bug `PolicyEditor` fixed in its own
-  // copy of this: it kept warning about changes that no longer existed.
-  useEffect(() => {
-    if (!leavingDirty) setPendingSwitch(null);
-  }, [leavingDirty]);
-
-  const switchPanel = (next: Panel) => {
-    if (next === panel) return;
-    if (leavingDirty) {
-      setPendingSwitch(next);
-      setSwitchNonce((n) => n + 1);
-      return;
-    }
-    setPendingSwitch(null);
-    setPanel(next);
-  };
-  const pendingLabel = PANELS.find((p) => p.id === pendingSwitch)?.label ?? "";
+  // The refusal, the focus nonce, and the clear-on-clean are `useSwitchConfirm`'s, shared with
+  // the policy editor's Movies/TV switch. This file supplies only what is local: which panel is
+  // open, whether it holds anything, and what a yes does.
+  const confirmSwitch = useSwitchConfirm(panel, leavingDirty, setPanel);
+  const pendingLabel = PANELS.find((p) => p.id === confirmSwitch.pending)?.label ?? "";
   // The section being LEFT, so one string serves every panel that raises the shared sentence.
   const leavingLabel = PANELS.find((p) => p.id === panel)?.label ?? "";
   // Ten labels stop fitting one line well above this, but the app already has exactly one
@@ -172,7 +153,7 @@ export function Settings({
           <select
             value={panel}
             aria-label="Settings section"
-            onChange={(e) => switchPanel(e.target.value as Panel)}
+            onChange={(e) => confirmSwitch.request(e.target.value as Panel)}
           >
             {PANELS.map((p) => (
               <option key={p.id} value={p.id}>
@@ -191,7 +172,7 @@ export function Settings({
               data-label={p.label}
               // The active panel is stated, not just colored, the same as the masthead.
               aria-current={panel === p.id ? "page" : undefined}
-              onClick={() => switchPanel(p.id)}
+              onClick={() => confirmSwitch.request(p.id)}
             >
               {p.label}
             </button>
@@ -207,19 +188,16 @@ export function Settings({
           Backup gets its own sentence because the shared one would be false there: what is waiting
           is an uploaded file, not a setting, and switching does not merely forget it -- the card
           cancels the staged upload on its way out. */}
-      {pendingSwitch !== null && (
+      {confirmSwitch.pending !== null && (
         <SwitchConfirm
-          nonce={switchNonce}
+          nonce={confirmSwitch.nonce}
           message={
             panel === "backup"
               ? `The backup file you chose isn't restored yet. Switching to ${pendingLabel} drops it.`
               : `You have unsaved ${leavingLabel} settings. Switching to ${pendingLabel} discards them.`
           }
-          onDiscard={() => {
-            setPendingSwitch(null);
-            setPanel(pendingSwitch);
-          }}
-          onKeep={() => setPendingSwitch(null)}
+          onDiscard={confirmSwitch.discard}
+          onKeep={confirmSwitch.keep}
         />
       )}
       <div className="settings-body">
@@ -227,7 +205,7 @@ export function Settings({
         {panel === "services" && <ServicesPanel />}
         {panel === "plex" && <PlexPanel onDirtyChange={setPlexDirty} />}
         {panel === "lists" && <ListsPanel onGoToPolicy={onGoToPolicy} />}
-        {panel === "jobs" && <JobsPanel onGoToPlex={() => switchPanel("plex")} />}
+        {panel === "jobs" && <JobsPanel onGoToPlex={() => confirmSwitch.request("plex")} />}
         {panel === "notifications" && <NotificationsPanel onDirtyChange={setWebhookDirty} />}
         {panel === "security" && <SecurityPanel onDirtyChange={setSecurityDirty} />}
         {panel === "backup" && <BackupPanel onDirtyChange={setBackupDirty} />}

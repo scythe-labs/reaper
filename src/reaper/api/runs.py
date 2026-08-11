@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
-from reaper.api.deps import newest_snapshot, session_factory
+from reaper.api.deps import newest_snapshot, session_factory, state_singleton
 from reaper.api.scan import launch_scan
 from reaper.api.schemas import (
     ActionStepOut,
@@ -462,11 +462,7 @@ class ReapStatus(BaseModel):
 
 
 def _reap_status(app: FastAPI) -> ReapStatus:
-    status: ReapStatus | None = getattr(app.state, "reap_status", None)
-    if status is None:
-        status = ReapStatus()
-        app.state.reap_status = status
-    return status
+    return state_singleton(app, "reap_status", ReapStatus)
 
 
 def reap_in_flight(app: FastAPI) -> bool:

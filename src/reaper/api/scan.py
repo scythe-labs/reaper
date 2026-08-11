@@ -23,6 +23,7 @@ from fastapi import APIRouter, FastAPI, Request
 from pydantic import BaseModel
 
 from reaper.api import tags as api_tags
+from reaper.api.deps import state_singleton
 from reaper.clients.base import IntegrationError
 from reaper.config import Settings
 from reaper.crypto import SecretBox
@@ -90,11 +91,7 @@ class ScanStatus(BaseModel):
 
 
 def _status(app: FastAPI) -> ScanStatus:
-    status: ScanStatus | None = getattr(app.state, "scan_status", None)
-    if status is None:
-        status = ScanStatus()
-        app.state.scan_status = status
-    return status
+    return state_singleton(app, "scan_status", ScanStatus)
 
 
 def launch_scan(app: FastAPI) -> ScanStatus:
