@@ -50,6 +50,7 @@ import { useGeneralSettings } from "../useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
+import { useArtFallback } from "./artFallback";
 import { CardOpen } from "./CardOpen";
 import { FilterMenu } from "./FilterMenu";
 import { PosterFallback } from "./PosterFallback";
@@ -212,13 +213,7 @@ function FilterChip({
 /** The dimmed backdrop behind a card. Tries the wide Plex art first and falls back to the
  *  poster when a title has no separate backdrop; a paired scrim keeps the text readable. */
 function Backdrop({ posterUrl }: { posterUrl: string | null }) {
-  const [src, setSrc] = useState(posterUrl ? `${posterUrl}?kind=art` : null);
-  const fellBack = useRef(false);
-
-  useEffect(() => {
-    fellBack.current = false;
-    setSrc(posterUrl ? `${posterUrl}?kind=art` : null);
-  }, [posterUrl]);
+  const { src, onError } = useArtFallback(posterUrl);
 
   if (!src) return null;
   return (
@@ -229,14 +224,7 @@ function Backdrop({ posterUrl }: { posterUrl: string | null }) {
         alt=""
         aria-hidden="true"
         loading="lazy"
-        onError={() => {
-          if (!fellBack.current && posterUrl) {
-            fellBack.current = true;
-            setSrc(posterUrl);
-          } else {
-            setSrc(null);
-          }
-        }}
+        onError={onError}
       />
       <div className="card-scrim" aria-hidden="true" />
     </>
@@ -247,9 +235,10 @@ function Backdrop({ posterUrl }: { posterUrl: string | null }) {
 export function Poster({ url, alt }: { url: string | null; alt: string }) {
   const [broken, setBroken] = useState(false);
 
-  // Reset on a new url, exactly as Backdrop does. Without this the flag latches: one
-  // failed image (a dropped session, a slow Plex) leaves the placeholder in place for
-  // every later item this row is reused for, so the art never comes back until remount.
+  // Reset on a new url, as `useArtFallback` does for the two backdrops. Without this the
+  // flag latches: one failed image (a dropped session, a slow Plex) leaves the placeholder
+  // in place for every later item this row is reused for, so the art never comes back until
+  // remount. Not the hook: that one climbs art then poster, this one has a single rung.
   useEffect(() => setBroken(false), [url]);
 
   if (!url || broken) {

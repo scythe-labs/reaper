@@ -1281,8 +1281,17 @@ async def scan(
 
 @dataclass(frozen=True, slots=True)
 class Display:
-    """The presentation fields carried onto a candidate. None of them decide anything --
-    they are what the review queue draws around the verdict."""
+    """The presentation fields carried onto a candidate. None of them feed the verdict.
+
+    Four are load-bearing off that path. ``tmdb_id``, ``imdb_id`` and ``tvdb_id`` go onto the
+    stored row and are what ``services/fairness.py`` joins a request to its candidate on
+    (rules 29/106); ``title_slug`` builds the Sonarr link (``services/deep_links.py``).
+
+    Every field defaults to ``None``, and ``scan`` packs one of these per lane by hand, so a
+    field set in the movie pack and forgotten in the season pack drops that join for TV with
+    nothing raising. ``test_every_display_field_the_source_carries_reaches_its_lanes_pack``
+    is what refuses it, and its ``_DISPLAY_LANE_EXCEPTIONS`` holds the four fields one lane
+    genuinely cannot answer."""
 
     year: int | None = None
     summary: str | None = None
