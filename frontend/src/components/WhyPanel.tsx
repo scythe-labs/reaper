@@ -21,14 +21,7 @@
 // that only explains its deletions cannot be trusted about its keeps.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  type ReactNode,
-  type RefObject,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, type RefObject, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   api,
   type CandidateDetail,

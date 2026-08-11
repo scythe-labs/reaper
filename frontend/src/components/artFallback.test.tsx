@@ -3,9 +3,10 @@
 // `ReviewQueue`'s `Backdrop` is the other and reaches the same three behaviors through the
 // same `useArtFallback` call, which is the reason the hook exists: before it, this ladder was
 // written twice and neither copy had a test.
-import { fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
+import { useArtFallback } from "./artFallback";
 import { WhyHero } from "./WhyPanel";
 
 /** The banner image, which is `aria-hidden` and so is unreachable by role. */
@@ -43,7 +44,7 @@ describe("the art-then-poster ladder", () => {
     rerender(<WhyHero posterUrl="/api/poster/2" />);
     expect(hero(container)?.getAttribute("src")).toBe("/api/poster/2?kind=art");
 
-    // And the fallback is armed again for the new item, not spent on the old one.
+    // And the fallback is armed again for the new item.
     fireEvent.error(hero(container)!);
     expect(hero(container)?.getAttribute("src")).toBe("/api/poster/2");
   });
@@ -51,11 +52,23 @@ describe("the art-then-poster ladder", () => {
   it("says nothing to a screen reader, on every rung", async () => {
     // The banner is decoration: an empty `alt` and `aria-hidden` on both rungs, so a reader
     // hears the title once rather than twice. Audited at the fallback too, since that is the
-    // rung an author editing one `<img>` and not the other would leave behind.
+    // rung an author editing `WhyHero`'s <img> and leaving `Backdrop`'s alone would miss.
     const { container } = render(<WhyHero posterUrl="/api/poster/1" />);
     await expectNoA11yViolations(container);
 
     fireEvent.error(hero(container)!);
     await expectNoA11yViolations(container);
+  });
+
+  it("asks for nothing when there is no poster to ask for", () => {
+    // The one branch the extraction moved, and no component can reach it: `Backdrop` takes a
+    // nullable url and `WhyHero` is mounted behind a `poster_url &&` guard, so the hook is
+    // where it is driven (rule 145). The old `WhyHero` spelling seeded the art unconditionally
+    // and would render `src="null?kind=art"` here, with the whole suite still green.
+    const { result } = renderHook(() => useArtFallback(null));
+    expect(result.current.src).toBeNull();
+
+    act(() => result.current.onError());
+    expect(result.current.src).toBeNull();
   });
 });

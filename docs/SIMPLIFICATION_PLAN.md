@@ -334,7 +334,7 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | Finding | Killed because | Found by |
 | --- | --- | --- |
 | W1.1-l | `TautulliClient.metadata` is not dead. `scripts/validate_ingest.py:290` reads `added_at` through it for the dormancy-derivation check, and `docs/LEARNINGS.md` cites that harness. The row measured "no caller" over `src/` alone | Phase 5, PR 1 |
-| W5-2 | The carrier is already passed whole and `_judge_item` already takes it as one parameter, so the row buys zero parameters and zero net lines. Three of the movie lane's overlapping fields are identity-path join keys, and `snapshot.py` is never split. **Still killed, and the hazard under it now has a gate**: all fifteen `Display` fields default to `None`, so a field packed on one lane and forgotten on the other is silent, and one of the four join keys going missing drops a Scales join. The permitted omissions derive from the source record | Phase 8, measured before building; re-reviewed at #723 |
+| W5-2 | The carrier is already passed whole and `_judge_item` already takes it as one parameter, so the row buys zero parameters and zero net lines. Three of the movie lane's overlapping fields are identity-path join keys, and `snapshot.py` is never split. **Still killed, and the hazard under it now has a gate**: all fifteen `Display` fields default to `None`, so a field packed on one lane and forgotten on the other is silent, and a missing join key drops a Scales join where a missing `title_slug` drops the Sonarr link. The permitted omissions derive from the source record | Phase 8, measured before building; re-reviewed at #723 |
 | W5-5 | The collapse turns `PUT /api/profile {}` from a 422 into a 200 that resets every deletion cap to the shipped default, on a route an API key can write. The wire model's required fields are the protection. Reclassified `safety-path`; a seven-pair bounds test lands instead. **The smaller shape was measured and rejected too**: shared `Annotated[int, Field(ge=…)]` aliases would make the two bounds one declaration, and they move the bound on a deletion cap out of the line declaring it, where reading it in place is worth more than saving the second spelling. The gate holds both answers to one number and names both files when they disagree | Phase 8, measured before building; re-reviewed at #723 |
 | W5-6 | Any extraction is a 13-parameter helper replacing a 13-key constructor (S5), and the incident the row cites was in the loop rather than the constructor. The parity sweep already compares all 13 keys across both sites; a `NUMBERS` derivation lands instead | Phase 8, measured before building |
 | W3's executor size-interlock extraction | Built twice and measured. Reason-only is +7 lines and splits one operator sentence into a two-slot template (rule 21); whole-branch is +9 and returns `an optional StepOutcome`, and dropping that sentinel at one call site fails exactly one test of 4,235 while a real unmonitor reaches Sonarr. `_grew_materially` is already the predicate's one declaration, so the extraction guards nothing that can drift. The rule 144 half is real and lands: two byte-identical `check=` sentences, one of them in the branch the row exempts | Phase 8, measured on two patched trees |
@@ -404,22 +404,26 @@ message. But the reason to ignore them is the first paragraph, not the second: a
 how big a session is, never whether the change is worth making.
 
 **S5 is a LINE test, and "does this remove a place a future author must remember something" is a
-second question that gets its own answer.** Nine of phase 8's fourteen kills rested on a line
-count, six of them citing S5 by name, and a dedup's usual payoff is not lines: it is that one
-declaration cannot drift from itself. So ask both. A change that nets to zero lines and removes a
-drift surface is worth making, and W3b-11's image ladder is the case. The first pass measured a
-shared COMPONENT, whose chrome the two sites do not share, and never measured the hook, which is
-the part they do. A change that nets to zero and removes nothing is what S5 is right about, and
-`_judge_item`'s carrier is still that. Where the honest answer is "the duplication is fine and
-nothing stops it drifting", the gate is the answer, and six of those nine landed one: W5-6, the
-pragma row, W3b-8, W3b-9, W3c and W3b-11. W5-2 is the seventh and lands its gate here. The two
-that landed code instead are W3b-2, whose two inner handlers came out with W11-32, and the
-executor size interlock, which landed two constants and four pinning tests.
+second question that gets its own answer.** A dedup's usual payoff is that one declaration cannot
+drift from itself, and a line count does not measure that. Ten of phase 8's fifteen kills rested
+on a line count, seven of them citing S5 by name, while the same phase found five fresh drifts
+inside the code those extractions would have covered. So ask both questions.
+
+A change that nets to zero lines and removes a drift surface is worth making. W3b-11's image
+ladder is the case: the first pass measured a shared COMPONENT, whose chrome the two sites do not
+share, and never measured the hook, which is the part they do. A change that nets to zero and
+removes nothing is what S5 is right about, and `_judge_item`'s carrier is still that.
+
+Where the honest answer is "the duplication is fine and nothing stops it drifting", the gate is
+the answer, and six of those ten landed one: W3b-8, W3b-9, W3c, W3b-11, the pragma row's pair,
+and W5-6, whose `NUMBERS` derivation is a rule-103 guard. W5-2 is the seventh and lands its gate
+here. Three landed neither: W3b-2's two inner handlers came out with W11-32, the executor size
+interlock landed two constants and four pinning tests, and W11-39 landed nothing at all.
 
 **A kill also has to ask whether the divergence it preserves is correct.** Measuring two copies to
 decide they are cheaper apart reads each copy for its line count and neither for its behavior.
 W3b-11 recorded the second image ladder as "one with an `alt` and a reset effect and one with
-neither" and moved on; the missing reset turns out to be safe, but only because of a row key
+neither" and did not ask whether the absence is right. It is, and only because of a row key
 nothing had written down.
 
 **S6. `docs/STATUS.md` is full.** 120 of 120 lines, enforced at `tests/test_repo_hygiene.py`'s
@@ -2038,9 +2042,9 @@ here is preventing a future divergence.
   > > ladder and share none of the chrome. A fragment with `card-bg`/`card-scrim` against a
   > > `div.why-hero` with its fade, so a component has to take that chrome as props, which is
   > > where its 35 lines back came from. `useArtFallback(posterUrl)` returns `{ src, onError }`
-  > > and each site keeps its own markup: **41 lines out of the two sites against 6 back plus 2
-  > > imports, and a 38-line leaf module of which 14 are its docstring**, so about zero on total
-  > > lines and about -8 on code lines. That is S5's wash, and the payoff was never lines:
+  > > and each site keeps its own markup: **41 lines out of the two sites against 4 back plus
+  > > 2 imports, and a 38-line leaf module of which 13 are its docstring**, so about zero on
+  > > total lines and about -8 on code lines. That is S5's wash. The payoff was never lines:
   > > `WhyHero`'s copy carried "Mirrors ReviewQueue's Backdrop" and `Poster`'s carries "exactly
   > > as Backdrop does", two cross-references to a fix that had to be made twice (rule 72).
   > >
@@ -2048,16 +2052,21 @@ here is preventing a future divergence.
   > > art, the fall to the poster, the drop when both fail, and the reset, through `WhyHero`
   > > rather than a probe (rule 119), plus an axe audit on two rungs. Driven red three ways: the
   > > flag reset dropped (1 of 4), the fall to the poster disabled (3 of 4), the `?kind=art` seed
-  > > dropped (2 of 4). `_EXPECTED_FRONTEND_MODULES` 205 to 207 and
+  > > dropped (2 of 4). **The one thing the extraction changed is unreachable from `WhyHero`**,
+  > > whose prop is a `string`: the hook keeps `Backdrop`'s null contract, where `WhyHero` used
+  > > `""` for the give-up value and guarded nothing in `onError`. Both `WhyHero` call sites
+  > > guard with `poster_url &&`, so no render path moves, and the review lane found the whole
+  > > suite green against the other spelling. `renderHook` drives the null lane directly
+  > > (rule 145). `_EXPECTED_FRONTEND_MODULES` 205 to 207 and
   > > `_EXPECTED_RENDERING_TEST_FILES` 57 to 58.
   > >
-  > > **The second ladder stays killed and the sentence above hides a question it did not ask.**
-  > > "one with a reset effect and one with neither" is a difference this row preserved without
-  > > asking whether the absence is correct. Measured: `ScalesPanel`'s `Poster` needs no reset,
+  > > **The second ladder stays killed, and the sentence above did not ask whether the
+  > > difference it preserves is correct.** Measured: `ScalesPanel`'s `Poster` needs no reset,
   > > because its row key is `${t.item_id ?? t.group_key ?? t.title}-${i}` and a different title
-  > > is therefore a different component. Nothing said so, next to a sibling whose comment calls
-  > > the reset load-bearing, and a change to that key would latch the film strip onto every
-  > > title the row is reused for (rule 19). One comment lands at that site instead of a
+  > > is therefore a different component. That key falls back to a display title, which rule 19
+  > > forbids, so what holds it up is the first branch. Nothing said so, next to a sibling whose
+  > > comment calls the reset load-bearing, and a change to that key would latch the film strip
+  > > onto every title the row is reused for. One comment lands at that site instead of a
   > > component.
   >
   > **The dirty-report count is right, and it is the sub-item with nothing behind it.** Five, at

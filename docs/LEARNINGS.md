@@ -3204,41 +3204,40 @@ call site**, so the shared four lines are the part with no leverage in them.
 
 ## A line count and a drift surface are two measurements, and a dedup usually pays in the second (2026-08-10)
 
-Phase 8 of the simplification plan killed fourteen findings. Nine of the kills rested on a line
-count, six of them citing the plan's S5 ("a parameter object that nets to zero") by name. The
-arithmetic was right in every case that was re-measured. What it does not measure is the payoff a
-dedup usually has, which is that one declaration cannot drift from itself, and the same phase
-found five fresh instances of that drift while killing the extractions that would have prevented
-it.
+Phase 8 of the simplification plan killed fifteen findings. Ten of the kills rested on a line
+count, seven of them citing the plan's S5 ("a parameter object that nets to zero") by name. The
+arithmetic held everywhere it was re-measured. A dedup's usual payoff is that one declaration
+cannot drift from itself, and a line count does not measure that. The same phase found five fresh
+drifts inside the code those extractions would have covered.
 
-Re-reading the kills with the second question added moved two of thirteen rows and left eleven
-standing, so the line test is not wrong, it is incomplete. The shape of the two that moved:
+Thirteen of the fifteen were re-read with the second question added. Two moved and eleven stood,
+so the line test is incomplete rather than wrong. The two that moved:
 
 - **The measured shape was the wrong shape.** Two components carried the same image-fallback
   ladder, and the kill measured extracting a shared *component*: 33 lines out, 35 back, because
   the two sites share the ladder and share none of their markup, so a component takes the markup
   as props. A **hook** takes the ladder alone and leaves the markup where it is: about zero on
   total lines, about -8 on code lines, and two comments pointing at each other retired. Same
-  duplication, same arithmetic, different answer, because the first pass measured a container for
-  the shared behavior rather than the shared behavior.
+  duplication, same arithmetic, different answer.
 - **The hazard survives the kill.** Collapsing two hand-written record packs into one carrier
   removed no parameter and no line, which is a correct kill. Every field of the record defaults
   to `None`, so a field packed on one lane and forgotten on the other raises nothing and the type
-  checker sees nothing, and three of the fifteen are cross-system join keys. A gate over the two
-  packs costs 60 test lines, no production risk, and closes exactly what the carrier would have
-  closed by construction.
+  checker sees nothing. Three of the fifteen are cross-system join keys. A gate over the two packs
+  costs 60 test lines and no production risk, and closes what the carrier would have closed by
+  construction.
 
-**Two negatives worth as much.** Shared `Annotated` bound aliases would make a wire model and its
-domain twin state seven validation bounds once, and were rejected: these are the deletion caps,
-and moving the bound off the line that declares it costs a reader more than the second spelling
-costs an author. A test holding both to one answer, naming both files when they disagree, is the
-better shape and was already there. And a second image ladder of two lines per site stayed two
-lines per site, because a module is not cheaper than what it holds.
+**Two rejections, both measured.** Shared `Annotated` bound aliases would state a wire model's and
+its domain twin's seven validation bounds once. Rejected: these are the deletion caps, and moving
+a bound off the line that declares it costs a reader more than the second spelling costs an
+author. A test holding both to one answer and naming both files when they disagree was already
+there. The second image ladder of two lines per site stayed two lines per site, because a two-line
+ladder does not pay for a module.
 
 **A kill also has to ask whether the divergence it preserves is correct.** Measuring two copies to
 decide they are cheaper apart reads each copy for its size and neither for its behavior. One kill
-recorded a pair as "one with a reset effect and one with neither" and moved on. The one with
-neither is safe, and only because of a list key nothing had written down.
+recorded a pair as "one with a reset effect and one with neither" and did not ask whether the
+absence is right. It is, and only because of a list key nothing had written down.
+
 ## A cap on the work is not a bound on the burst (2026-08-10)
 
 `fairness._enrich_titles` looks bounded and is not. `_TITLE_LOOKUP_CAP = 80` caps how many
