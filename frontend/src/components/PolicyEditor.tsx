@@ -77,7 +77,7 @@ import { SETTLE_MS, usePolicyProbe } from "../usePolicyProbe";
 import { useScanStatus } from "../useScanStatus";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
-import { SwitchConfirm } from "./SwitchConfirm";
+import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
 
 /** The DOM id of the `i`th warning rendered at one anchor. Both ends of the association are
  *  named by this one function, so the control's `aria-describedby` and the notice's `id` cannot
@@ -1516,22 +1516,10 @@ export function PolicyEditor({
 
   // The Movies/TV switch the owner asked for while the draft still holds unsaved edits.
   // Switching re-seeds the draft from the other saved policy, which would silently throw
-  // those edits away -- so it waits here for the same two-step confirm the rest of the
-  // app uses (never a native confirm()).
-  const [pendingSwitch, setPendingSwitch] = useState<"movie" | "tv" | null>(null);
-  // See SwitchConfirm.tsx: a repeat press of the same segment changes no state, so focus is
-  // keyed on this rather than on `pendingSwitch`.
-  const [switchNonce, setSwitchNonce] = useState(0);
-
-  // The notice only exists because there are edits to lose, so it goes when they do -- by
-  // Discard, or by a Save that stores them. It used to survive both, still warning that a
-  // switch "discards them" and still offering a red "Discard and switch" for changes that
-  // no longer existed (B-31). Keyed on `dirty` rather than on the Discard handler so the
-  // save path is covered too; the switch itself is left to the operator, who asked to
-  // discard, not to discard and go.
-  useEffect(() => {
-    if (!dirty) setPendingSwitch(null);
-  }, [dirty]);
+  // those edits away, so it waits for the same two-step confirm the rest of the app uses
+  // (never a native confirm()). `useSwitchConfirm` is the shared caller half, and B-31's
+  // fix (the notice clearing on a Save, not only on Discard) lives inside it now.
+  const confirmSwitch = useSwitchConfirm(mediaType, dirty, setMediaType);
 
   // Section jump targets for the rail. Memoized (the refs themselves are stable) so the
   // cross-page-jump effect below can depend on the record without refiring every render.
@@ -1681,17 +1669,6 @@ export function PolicyEditor({
   const policyHeldBecause =
     pointsLeft !== 0 ? "the points add up to 100" : 'the "Can\'t save this" problem is fixed';
 
-  const switchMediaType = (next: "movie" | "tv") => {
-    if (next === mediaType) return;
-    if (dirty) {
-      setPendingSwitch(next);
-      setSwitchNonce((n) => n + 1);
-    } else {
-      setPendingSwitch(null);
-      setMediaType(next);
-    }
-  };
-
   const kind = mediaType === "tv" ? "TV" : "movie";
   const otherKind = mediaType === "tv" ? "movie" : "TV";
   const preset = activePreset(draft);
@@ -1796,11 +1773,11 @@ export function PolicyEditor({
             </p>
           </div>
           <div className="policy-head-actions">
-            {/* switchMediaType holds the two-step confirm when the draft has unsaved edits. */}
+            {/* The request is refused into the two-step confirm when the draft has edits. */}
             <Segmented
               fill
               value={mediaType}
-              onChange={switchMediaType}
+              onChange={confirmSwitch.request}
               label="Which policy"
               options={[
                 ["movie", "Movies"],
@@ -1842,17 +1819,14 @@ export function PolicyEditor({
             {notice.text}
           </Notice>
         ))}
-        {pendingSwitch !== null && (
+        {confirmSwitch.pending !== null && (
           <SwitchConfirm
-            nonce={switchNonce}
+            nonce={confirmSwitch.nonce}
             message={`You have unsaved ${kind} policy changes. Switching to ${
-              pendingSwitch === "tv" ? "TV" : "Movies"
+              confirmSwitch.pending === "tv" ? "TV" : "Movies"
             } discards them.`}
-            onDiscard={() => {
-              setPendingSwitch(null);
-              setMediaType(pendingSwitch);
-            }}
-            onKeep={() => setPendingSwitch(null)}
+            onDiscard={confirmSwitch.discard}
+            onKeep={confirmSwitch.keep}
           />
         )}
 

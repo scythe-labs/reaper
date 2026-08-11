@@ -3269,6 +3269,58 @@ pairs; the other two sit 40 and about 150 lines apart, so collapsing them reloca
 instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
 filtered two-column select to an unfiltered three-column one.
 
+## A shell gate can be green because the page is small (2026-08-10)
+
+`binaries.yml`'s boot probes check the packaged build serves the SPA and not a JSON 404:
+
+```
+if curl -s http://127.0.0.1:8461/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
+```
+
+Under `set -o pipefail` a pipeline reports its rightmost failing command. `head -c 200` exits
+after 200 bytes and `grep -q` exits on the first match, so curl can take SIGPIPE and the pipeline
+is non-zero with `grep` having matched. **Whether that happens depends on the page size.**
+Measured with the same one-liner: a 4 KB body passes, a 200 KB body fails. Under the pipe buffer
+curl writes the whole response and exits 0 before either reader closes.
+
+Today's `index.html` is 4,276 bytes, so all three copies of that line are green on a margin
+nobody chose. The build that trips it is a healthy one whose page grew, and the log says the
+bundle lost its SPA. Redirecting to a file and grepping the file removes the pipeline.
+
+The general shape: **`| head` inside a pipefail gate makes the verdict a function of how much the
+writer produced**, not of what it produced. CLAUDE.md's rule 134 names `| head` for the sibling
+case, a command dying partway and reporting that as its own result; this is the same mechanism
+reaching the opposite conclusion, a command that succeeded reported as failed.
+
+## Four dedups, three wrong figures, and none of them landing on lines (2026-08-10)
+
+Wave 11's W11-42, W11-19, W11-18 and W11-10, built and measured in one pass. Code net: **-8, -8,
+-3 and +2**. Stated: ~85 (~16 believed removable), ~15, ~25, ~45. Only W11-19's held.
+
+**Each is roughly canceled by the comment the shared thing now carries.** Two copies each carry
+half an explanation, or one carries it and the other carries a pointer to it; one shared
+declaration carries the whole thing, and this repository writes that out. So the *total* diff for
+all four is close to zero while the *code* falls by 17. S5 read as a line test kills all four.
+
+**What each one actually bought was a rule that had already been forgotten once.**
+
+- **W11-10** is the clearest, at +2 code. "No `await` between the read and the write" is what
+  stops two requests installing two different per-app objects, and it was written at one of four
+  copies and depended on at three. A plain `def` cannot acquire an await without every call site
+  turning async first.
+- **W11-19**'s two copies had already cost a bug: one surface found that the notice must clear on
+  a Save and not only on Discard, and the other then carried a comment *pointing at* that fix
+  rather than sharing it. The extraction also found a fourth caller nobody had counted, by
+  breaking it.
+- **W11-18**'s no-clobber rule was unpinned across the whole suite, behind rule 141: the test set
+  the saved value and the suggested value both to the same string.
+- **W11-42**'s two copies shared the line above, so the defect would have had to be found and
+  fixed twice.
+
+The plan's S5 already carries the standing form, that a kill needs both halves said. What these
+four add is the measurement: across four independent cases the code fell by 17 lines and the
+diff by nothing, so on this codebase the line half decides almost nothing on its own. The
+question that did the work each time was **"is there a rule here that only one copy states"**.
 ## A helper measured at zero lines was measured in the wrong shape (2026-08-10)
 
 Two settings findings were killed on "an extraction that nets to zero lines is not worth its
