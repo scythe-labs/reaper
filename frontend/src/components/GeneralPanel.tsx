@@ -21,6 +21,7 @@ import { Segmented } from "./Segmented";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
+import { SetRow } from "./SetRow";
 
 type ThemeChoice = "system" | "light" | "dark";
 
@@ -550,216 +551,226 @@ export function GeneralPanel({
       <div className="set-group">
         <h3>Application</h3>
         <div className="set-rows">
-          <div className="set-row">
-            <span className="set-label">Application name</span>
-            <p className="help">
-              Shown in Discord messages and the browser tab, so you can tell two installs apart.
-            </p>
-            <div className="set-control">
-              <input
-                type="text"
-                value={text.application_name}
-                maxLength={60}
-                onChange={(e) =>
-                  setText((current) => ({ ...current, application_name: e.target.value }))
-                }
-                aria-label="Application name"
-              />
-            </div>
-          </div>
-          <div className="set-row">
-            <span className="set-label">Application URL</span>
-            <p className="help">
-              Where people reach Reaper, for example https://reaper.example.com. Notifications use
-              it to link back here. Leave empty and notifications simply skip the link.
-            </p>
-            <div className="set-control">
-              <input
-                type="text"
-                value={text.application_url}
-                placeholder="https://reaper.example.com"
-                onChange={(e) =>
-                  setText((current) => ({ ...current, application_url: e.target.value }))
-                }
-                aria-label="Application URL"
-              />
-            </div>
-          </div>
-          <div className="set-row">
-            <span className="set-label">Time zone</span>
-            <p className="help">The server's time zone.</p>
-            <div className="set-control">
-              <select
-                value={text.timezone}
-                aria-label="Time zone"
-                onChange={(e) => setText((current) => ({ ...current, timezone: e.target.value }))}
-              >
-                {zoneOptions.map((z) => (
-                  <option key={z} value={z}>
-                    {z}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <SetRow
+            label="Application name"
+            help={
+              <>
+                Shown in Discord messages and the browser tab, so you can tell two installs apart.
+              </>
+            }
+          >
+            <input
+              type="text"
+              value={text.application_name}
+              maxLength={60}
+              onChange={(e) =>
+                setText((current) => ({ ...current, application_name: e.target.value }))
+              }
+              aria-label="Application name"
+            />
+          </SetRow>
+          <SetRow
+            label="Application URL"
+            help={
+              <>
+                Where people reach Reaper, for example https://reaper.example.com. Notifications use
+                it to link back here. Leave empty and notifications simply skip the link.
+              </>
+            }
+          >
+            <input
+              type="text"
+              value={text.application_url}
+              placeholder="https://reaper.example.com"
+              onChange={(e) =>
+                setText((current) => ({ ...current, application_url: e.target.value }))
+              }
+              aria-label="Application URL"
+            />
+          </SetRow>
+          <SetRow label="Time zone" help="The server's time zone.">
+            <select
+              value={text.timezone}
+              aria-label="Time zone"
+              onChange={(e) => setText((current) => ({ ...current, timezone: e.target.value }))}
+            >
+              {zoneOptions.map((z) => (
+                <option key={z} value={z}>
+                  {z}
+                </option>
+              ))}
+            </select>
+          </SetRow>
         </div>
       </div>
 
       <div className="set-group">
         <h3>Appearance</h3>
         <div className="set-rows">
-          <div className="set-row accent-row">
-            <span className="set-label">Accent color</span>
-            <p className="help">
-              The color Reaper uses for buttons, links, and highlights. Everyone who opens this
-              install sees it. Pick from the wheel or type a hex code.
-            </p>
-            <div className="set-control">
-              {/* Swatch and hex code are one control (the .url-join pattern): the swatch is a
-                  prefix fused inside the field's box, so a narrow screen can never split them
-                  onto two lines. */}
-              <span className="hex-join">
-                <span className="swatch-wrap">
-                  <input
-                    type="color"
-                    value={accentValid ? accent : DEFAULT_ACCENT}
-                    aria-label="Accent color"
-                    onChange={(e) => setAccent(e.target.value)}
-                  />
-                </span>
+          <SetRow
+            variant="accent"
+            label="Accent color"
+            help={
+              <>
+                The color Reaper uses for buttons, links, and highlights. Everyone who opens this
+                install sees it. Pick from the wheel or type a hex code.
+              </>
+            }
+            after={
+              <>
+                {!accentValid && (
+                  <p className="help field-error" id={ACCENT_ERROR_ID}>
+                    Enter a hex code like #25c3ff.
+                  </p>
+                )}
+                {/* role="group" is what carries the name: ARIA does not expose an aria-label on
+                    a plain div, so "Quick colors" reached nobody. Same shape as `Segmented`. */}
+                <div className="presets" role="group" aria-label="Quick colors">
+                  {ACCENT_PRESETS.map((c) => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      className="preset-dot"
+                      style={{ background: c.value }}
+                      aria-label={c.name}
+                      aria-pressed={accent.toLowerCase() === c.value}
+                      onClick={() => setAccent(c.value)}
+                    />
+                  ))}
+                </div>
+                {/* A picture of the theme, not working controls: the button is disabled and the
+                    link goes nowhere on purpose. Hidden from the accessibility tree so the dead
+                    link stops being announced as a real way to reach the deletion switch, and
+                    tabIndex -1 keeps it out of the tab order (a focusable element inside
+                    aria-hidden is itself a failure). The disabled button is already out of
+                    both. */}
+                <div
+                  className="accent-preview"
+                  aria-hidden="true"
+                  style={
+                    accentValid
+                      ? ({
+                          "--accent": accent,
+                          "--accent-ink": accentInk(accent),
+                          // --accent-text as well, or the link in the preview keeps the SAVED
+                          // accent's ink while the button beside it moves. It is not derived
+                          // from --accent at use time: the stylesheet computes it once on
+                          // :root, from the values accent.ts writes there, so a child
+                          // overriding --accent alone inherits an ink belonging to a different
+                          // color (rule 67).
+                          "--accent-text": accentText(accent, shownTheme),
+                        } as CSSProperties)
+                      : undefined
+                  }
+                >
+                  <span className="pv-label">Preview</span>
+                  <button className="primary" type="button" disabled>
+                    Scan library
+                  </button>
+                  <a href="#" tabIndex={-1} onClick={(e) => e.preventDefault()}>
+                    Policy → Deletion
+                  </a>
+                </div>
+              </>
+            }
+          >
+            {/* Swatch and hex code are one control (the .url-join pattern): the swatch is a
+                prefix fused inside the field's box, so a narrow screen can never split them
+                onto two lines. */}
+            <span className="hex-join">
+              <span className="swatch-wrap">
                 <input
-                  type="text"
-                  className="hexfield"
-                  value={accent}
-                  spellCheck={false}
-                  maxLength={7}
-                  aria-label="Accent color hex code"
-                  // The box refuses the save and the sentence saying why sits below it, out of
-                  // reach of anyone who arrived at the box by keyboard (#174).
-                  aria-invalid={accentValid ? undefined : true}
-                  aria-describedby={accentValid ? undefined : ACCENT_ERROR_ID}
+                  type="color"
+                  value={accentValid ? accent : DEFAULT_ACCENT}
+                  aria-label="Accent color"
                   onChange={(e) => setAccent(e.target.value)}
                 />
               </span>
-              {accent.toLowerCase() !== DEFAULT_ACCENT && (
-                <button className="link" onClick={() => setAccent(DEFAULT_ACCENT)}>
-                  Reset to default
-                </button>
-              )}
-            </div>
-            {!accentValid && (
-              <p className="help field-error" id={ACCENT_ERROR_ID}>
-                Enter a hex code like #25c3ff.
-              </p>
-            )}
-            {/* role="group" is what carries the name: ARIA does not expose an aria-label on a
-                plain div, so "Quick colors" reached nobody. Same shape as `Segmented`. */}
-            <div className="presets" role="group" aria-label="Quick colors">
-              {ACCENT_PRESETS.map((c) => (
-                <button
-                  key={c.value}
-                  type="button"
-                  className="preset-dot"
-                  style={{ background: c.value }}
-                  aria-label={c.name}
-                  aria-pressed={accent.toLowerCase() === c.value}
-                  onClick={() => setAccent(c.value)}
-                />
-              ))}
-            </div>
-            {/* A picture of the theme, not working controls: the button is disabled and the link
-                goes nowhere on purpose. Hidden from the accessibility tree so the dead link stops
-                being announced as a real way to reach the deletion switch, and tabIndex -1 keeps
-                it out of the tab order (a focusable element inside aria-hidden is itself a
-                failure). The disabled button is already out of both. */}
-            <div
-              className="accent-preview"
-              aria-hidden="true"
-              style={
-                accentValid
-                  ? ({
-                      "--accent": accent,
-                      "--accent-ink": accentInk(accent),
-                      // --accent-text as well, or the link in the preview keeps the SAVED
-                      // accent's ink while the button beside it moves. It is not derived from
-                      // --accent at use time: the stylesheet computes it once on :root, from
-                      // the values accent.ts writes there, so a child overriding --accent alone
-                      // inherits an ink belonging to a different color (rule 67).
-                      "--accent-text": accentText(accent, shownTheme),
-                    } as CSSProperties)
-                  : undefined
-              }
-            >
-              <span className="pv-label">Preview</span>
-              <button className="primary" type="button" disabled>
-                Scan library
+              <input
+                type="text"
+                className="hexfield"
+                value={accent}
+                spellCheck={false}
+                maxLength={7}
+                aria-label="Accent color hex code"
+                // The box refuses the save and the sentence saying why sits below it, out of
+                // reach of anyone who arrived at the box by keyboard (#174).
+                aria-invalid={accentValid ? undefined : true}
+                aria-describedby={accentValid ? undefined : ACCENT_ERROR_ID}
+                onChange={(e) => setAccent(e.target.value)}
+              />
+            </span>
+            {accent.toLowerCase() !== DEFAULT_ACCENT && (
+              <button className="link" onClick={() => setAccent(DEFAULT_ACCENT)}>
+                Reset to default
               </button>
-              <a href="#" tabIndex={-1} onClick={(e) => e.preventDefault()}>
-                Policy → Deletion
-              </a>
-            </div>
-          </div>
+            )}
+          </SetRow>
 
-          <div className="set-row">
-            <span className="set-label">Theme</span>
-            <p className="help">
-              Light or dark. "Match my device" follows your system setting. Applies to this browser
-              only.
-            </p>
-            <div className="set-control">
-              <select
-                value={theme}
-                aria-label="Theme"
-                onChange={(e) => {
-                  const next = e.target.value as ThemeChoice;
-                  setTheme(next);
-                  applyTheme(next);
-                }}
-              >
-                <option value="system">Match my device</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-              </select>
-            </div>
-          </div>
+          <SetRow
+            label="Theme"
+            help={
+              <>
+                Light or dark. "Match my device" follows your system setting. Applies to this
+                browser only.
+              </>
+            }
+          >
+            <select
+              value={theme}
+              aria-label="Theme"
+              onChange={(e) => {
+                const next = e.target.value as ThemeChoice;
+                setTheme(next);
+                applyTheme(next);
+              }}
+            >
+              <option value="system">Match my device</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </SetRow>
         </div>
       </div>
 
       <div className="set-group">
         <h3>Review queue</h3>
         <div className="set-rows">
-          <div className="set-row">
-            <span className="set-label">Expand seasons by default</span>
-            <p className="help">
-              TV shows in the review queue open with every season showing. Mobile means a narrow
-              screen, like a phone.
-            </p>
-            <div className="set-control">
-              {/* Four choices, so a select rather than a Segmented (rule 41), on the same
-                  control standard as the Theme picker above. */}
-              <select
-                value={data.expand_seasons_mode}
-                aria-label="Expand seasons by default"
-                disabled={save.isPending}
-                onChange={(e) =>
-                  save.mutate({ expand_seasons_mode: e.target.value as ExpandSeasonsMode })
-                }
-              >
-                <option value="off">Off</option>
-                <option value="desktop">Desktop</option>
-                <option value="both">Desktop &amp; mobile</option>
-                <option value="mobile">Mobile</option>
-              </select>
-            </div>
-          </div>
-          <div className="set-row">
-            <span className="set-label">Default spare length</span>
-            <p className="help">
-              How long a plain Spare keeps a title before Reaper judges it again. Set a different
-              length for any single title from its Spare menu.
-            </p>
-            <div className="set-control">
-              {/* Both halves read and write the DRAFT, never the stored value. A press stages
+          <SetRow
+            label="Expand seasons by default"
+            help={
+              <>
+                TV shows in the review queue open with every season showing. Mobile means a narrow
+                screen, like a phone.
+              </>
+            }
+          >
+            {/* Four choices, so a select rather than a Segmented (rule 41), on the same control
+                standard as the Theme picker above. */}
+            <select
+              value={data.expand_seasons_mode}
+              aria-label="Expand seasons by default"
+              disabled={save.isPending}
+              onChange={(e) =>
+                save.mutate({ expand_seasons_mode: e.target.value as ExpandSeasonsMode })
+              }
+            >
+              <option value="off">Off</option>
+              <option value="desktop">Desktop</option>
+              <option value="both">Desktop &amp; mobile</option>
+              <option value="mobile">Mobile</option>
+            </select>
+          </SetRow>
+          <SetRow
+            label="Default spare length"
+            help={
+              <>
+                How long a plain Spare keeps a title before Reaper judges it again. Set a different
+                length for any single title from its Spare menu.
+              </>
+            }
+          >
+            {/* Both halves read and write the DRAFT, never the stored value. A press stages
                   the mode in the save bar beside the number, so the bar names one field, one
                   Discard puts both back, and neither is written until Save.
 
@@ -767,32 +778,31 @@ export function GeneralPanel({
                   same reason: `save`'s `onSuccess` re-seeds this mode from the response, so a
                   press landing in the gap was overwritten and the bar cleared in the same
                   flush, leaving nothing that said so (#151). */}
-              <Segmented
-                value={spareForever ? "forever" : "days"}
-                options={[
-                  ["days", "Days"],
-                  ["forever", "Forever"],
-                ]}
-                label="Default spare length"
-                disabled={save.isPending}
-                onChange={(mode) => setSpareForever(mode === "forever")}
-              />
-              {/* Only while the draft is a length -- Forever hides the box, matching how a
+            <Segmented
+              value={spareForever ? "forever" : "days"}
+              options={[
+                ["days", "Days"],
+                ["forever", "Forever"],
+              ]}
+              label="Default spare length"
+              disabled={save.isPending}
+              onChange={(mode) => setSpareForever(mode === "forever")}
+            />
+            {/* Only while the draft is a length -- Forever hides the box, matching how a
                   group's sub-controls disappear when its toggle is off. */}
-              {!spareForever && (
-                <FixedQuantity
-                  value={spareDays}
-                  suffix="days"
-                  min={1}
-                  max={3650}
-                  width="narrow"
-                  ariaLabel="Default spare length in days"
-                  disabled={save.isPending}
-                  onChange={(n) => setSpareDays(Math.max(1, Math.min(3650, n)))}
-                />
-              )}
-            </div>
-          </div>
+            {!spareForever && (
+              <FixedQuantity
+                value={spareDays}
+                suffix="days"
+                min={1}
+                max={3650}
+                width="narrow"
+                ariaLabel="Default spare length in days"
+                disabled={save.isPending}
+                onChange={(n) => setSpareDays(Math.max(1, Math.min(3650, n)))}
+              />
+            )}
+          </SetRow>
         </div>
       </div>
 
@@ -800,14 +810,13 @@ export function GeneralPanel({
         <h3>API access</h3>
         <div className="set-rows">
           {/* A cluster, not a box: the key field plus four buttons. It keeps a shrink-to-fit
-              control column so those buttons stay on one line (see `.set-row-cluster`). */}
-          <div className="set-row set-row-cluster">
-            <span className="set-label">API key</span>
-            {/* This sentence is the whole basis on which an operator decides to hand a key
-                to a third-party dashboard, so it names what the fence in api/middleware.py
-                (_API_KEY_READS_DENIED / _API_KEY_WRITES) actually allows, not a rounder
-                claim. Two roundings have already been wrong here, both in the safe-sounding
-                direction:
+              control column so those buttons stay on one line (see `.set-row-cluster`).
+
+              The `help` sentence below is the whole basis on which an operator decides to
+                hand a key to a third-party dashboard, so it names what the fence in
+                api/middleware.py (_API_KEY_READS_DENIED / _API_KEY_WRITES) actually allows,
+                not a rounder claim. Two roundings have already been wrong here, both in the
+                safe-sounding direction:
 
                 - it said a key "cannot change any setting" while /api/profile sat in the
                   write allowlist, so a key holder could turn the run limits off (S-2);
@@ -831,94 +840,99 @@ export function GeneralPanel({
                 generated, so nothing here fails when the fence moves. The guard is on the
                 other side: test_the_sentence_leads_with_what_the_key_can_do pins the twin
                 phrase for phrase and names this file in every failure message. */}
-            <p className="help">
-              Send it as the X-Api-Key header so scripts and other apps can use Reaper without
-              signing in. A key reads nearly everything, your settings included, and can start
-              scans, build plans, and change your policy, run limits, and grace. Nothing else: it
-              cannot turn deletion on, run a reap, read your logs, see who watched what, or change
-              any other setting.
-            </p>
-            <div className="set-control">
-              {data.api_key_set ? (
-                <>
-                  <input
-                    className="keyfield"
-                    type="text"
-                    readOnly
-                    value={revealedKey ?? "••••••••••••••••••••••••"}
-                    aria-label="API key"
-                  />
-                  {revealedKey === null ? (
-                    <button disabled={reveal.isPending} onClick={() => reveal.mutate()}>
-                      Show
-                    </button>
-                  ) : (
-                    <button onClick={() => setRevealedKey(null)}>Hide</button>
-                  )}
-                  <button disabled={copy.isPending} onClick={() => copy.mutate()}>
-                    {copied ? "Copied" : "Copy"}
+          <SetRow
+            variant="cluster"
+            label="API key"
+            help={
+              <>
+                Send it as the X-Api-Key header so scripts and other apps can use Reaper without
+                signing in. A key reads nearly everything, your settings included, and can start
+                scans, build plans, and change your policy, run limits, and grace. Nothing else: it
+                cannot turn deletion on, run a reap, read your logs, see who watched what, or change
+                any other setting.
+              </>
+            }
+          >
+            {data.api_key_set ? (
+              <>
+                <input
+                  className="keyfield"
+                  type="text"
+                  readOnly
+                  value={revealedKey ?? "••••••••••••••••••••••••"}
+                  aria-label="API key"
+                />
+                {revealedKey === null ? (
+                  <button disabled={reveal.isPending} onClick={() => reveal.mutate()}>
+                    Show
                   </button>
-                  {confirmReplace ? (
-                    <>
-                      <button
-                        className="danger"
-                        disabled={generate.isPending}
-                        onClick={() => generate.mutate()}
-                      >
-                        Confirm replace
-                      </button>
-                      {/* Backing out clears the notice too. It is the shared one (above), and the
+                ) : (
+                  <button onClick={() => setRevealedKey(null)}>Hide</button>
+                )}
+                <button disabled={copy.isPending} onClick={() => copy.mutate()}>
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                {confirmReplace ? (
+                  <>
+                    <button
+                      className="danger"
+                      disabled={generate.isPending}
+                      onClick={() => generate.mutate()}
+                    >
+                      Confirm replace
+                    </button>
+                    {/* Backing out clears the notice too. It is the shared one (above), and the
                           only thing that clears it otherwise is the NEXT mutation starting -- so a
                           notice raised to explain a confirm outlived the confirm it explained, and
                           went on describing a button no longer on the page. Same on the twin
                           Cancel below (rule 72). */}
-                      <button
-                        onClick={() => {
-                          setConfirmReplace(false);
-                          setKeyError(null);
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
                     <button
-                      className="ghost"
-                      title="The old key stops working immediately"
-                      onClick={() => setConfirmReplace(true)}
+                      onClick={() => {
+                        setConfirmReplace(false);
+                        setKeyError(null);
+                      }}
                     >
-                      Replace…
+                      Cancel
                     </button>
-                  )}
-                  {/* Replacing swaps one working key for another, so it never closes this
+                  </>
+                ) : (
+                  <button
+                    className="ghost"
+                    title="The old key stops working immediately"
+                    onClick={() => setConfirmReplace(true)}
+                  >
+                    Replace…
+                  </button>
+                )}
+                {/* Replacing swaps one working key for another, so it never closes this
                       lane. Remove does: afterwards nothing gets in on the header at all.
                       Same two-step confirm the Replace control uses. */}
-                  {confirmRemove ? (
-                    <>
-                      <button
-                        className="danger"
-                        disabled={removeKey.isPending}
-                        onClick={() => {
-                          afterKeyRemove.arriving();
-                          removeKey.mutate();
-                        }}
-                      >
-                        Confirm remove
-                      </button>
-                      <button onClick={() => setConfirmRemove(false)}>Cancel</button>
-                    </>
-                  ) : (
+                {confirmRemove ? (
+                  <>
                     <button
-                      className="ghost"
-                      title="Anything using this key stops working immediately"
-                      onClick={() => setConfirmRemove(true)}
+                      className="danger"
+                      disabled={removeKey.isPending}
+                      onClick={() => {
+                        afterKeyRemove.arriving();
+                        removeKey.mutate();
+                      }}
                     >
-                      Remove…
+                      Confirm remove
                     </button>
-                  )}
-                </>
-              ) : confirmReplace ? (
-                /* Reached only when the re-read in `requestGenerate` could not answer, so this
+                    <button onClick={() => setConfirmRemove(false)}>Cancel</button>
+                  </>
+                ) : (
+                  <button
+                    className="ghost"
+                    title="Anything using this key stops working immediately"
+                    onClick={() => setConfirmRemove(true)}
+                  >
+                    Remove…
+                  </button>
+                )}
+              </>
+            ) : confirmReplace ? (
+              /* Reached only when the re-read in `requestGenerate` could not answer, so this
                    panel cannot prove there is no key to destroy. Same two-step shape as Replace
                    above, because it is the same act with a worse-known target; the notice under
                    the group says why it is being asked.
@@ -926,60 +940,63 @@ export function GeneralPanel({
                    effect beside the mutations) and again the moment Remove succeeds. Without
                    those it was false in both directions, and this branch opened with no notice
                    after a Remove -- a danger confirm over a key the panel had just proved gone. */
-                <>
-                  <button
-                    className="danger"
-                    disabled={generate.isPending}
-                    onClick={() => generate.mutate()}
-                  >
-                    Confirm generate
-                  </button>
-                  <button
-                    onClick={() => {
-                      setConfirmReplace(false);
-                      setKeyError(null);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </>
-              ) : (
+              <>
                 <button
-                  className="primary"
-                  ref={afterKeyRemove.ref as RefObject<HTMLButtonElement>}
-                  disabled={generate.isPending || requestGenerate.isPending}
-                  onClick={() => requestGenerate.mutate()}
+                  className="danger"
+                  disabled={generate.isPending}
+                  onClick={() => generate.mutate()}
                 >
-                  {generate.isPending
-                    ? "Generating…"
-                    : requestGenerate.isPending
-                      ? "Checking…"
-                      : "Generate API key"}
+                  Confirm generate
                 </button>
-              )}
-            </div>
-          </div>
-          {/* A link, not a box, so it releases the control track (`.set-row-plain`). */}
-          <div className="set-row set-row-plain">
-            <span className="set-label">API reference</span>
-            {/* Says "as you", not "with your key", because the page preselects your SESSION:
-                35 of the 47 writes do not offer the key at all, and the button reaches them
+                <button
+                  onClick={() => {
+                    setConfirmReplace(false);
+                    setKeyError(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                className="primary"
+                ref={afterKeyRemove.ref as RefObject<HTMLButtonElement>}
+                disabled={generate.isPending || requestGenerate.isPending}
+                onClick={() => requestGenerate.mutate()}
+              >
+                {generate.isPending
+                  ? "Generating…"
+                  : requestGenerate.isPending
+                    ? "Checking…"
+                    : "Generate API key"}
+              </button>
+            )}
+          </SetRow>
+          {/* A link, not a box, so it releases the control track (`.set-row-plain`).
+
+              The `help` sentence says "as you", not "with your key", because the page
+                preselects your SESSION: 35 of the 47 writes do not offer the key at all,
+                and the button reaches them
                 all, arming included. Naming the key here would size the blast radius by the
                 fence two rows up, which is far tighter than what this button spends (rule
                 144). The key clause above is generated and guarded; this one is hand-written
                 and its guard is test_the_reference_page_sends_the_csrf_header_it_names, which
                 names this file. */}
-            <p className="help">
-              Every endpoint, documented from the running app. The try-it-out button sends real
-              requests as you, so it can change settings and start work, not just read. Only visible
-              while signed in.
-            </p>
-            <div className="set-control">
-              <a className="btn-link" href="/api/docs" target="_blank" rel="noreferrer">
-                Open the API reference <span aria-hidden="true">↗</span>
-              </a>
-            </div>
-          </div>
+          <SetRow
+            variant="plain"
+            label="API reference"
+            help={
+              <>
+                Every endpoint, documented from the running app. The try-it-out button sends real
+                requests as you, so it can change settings and start work, not just read. Only
+                visible while signed in.
+              </>
+            }
+          >
+            <a className="btn-link" href="/api/docs" target="_blank" rel="noreferrer">
+              Open the API reference <span aria-hidden="true">↗</span>
+            </a>
+          </SetRow>
         </div>
         {keyError && <Notice tone="error">{keyError}</Notice>}
       </div>
@@ -989,41 +1006,45 @@ export function GeneralPanel({
         <div className="set-rows">
           {/* A Switch, not a box, so it releases the control track (`.set-row-plain`). The row
               below it holds the addresses box and keeps the track. */}
-          <div className="set-row set-row-plain">
-            <span className="set-label">Behind a reverse proxy</span>
-            <p className="help">
-              Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper will
-              then trust the proxy to say which address each visitor really came from, which keeps
-              sign-in rate limits accurate per visitor instead of lumping everyone together. It is
-              also how Reaper learns that visitors arrive over HTTPS, so it can mark the sign-in
-              cookie HTTPS-only.
-            </p>
-            <div className="set-control">
-              <Switch
-                checked={data.proxy_trust_enabled}
-                disabled={save.isPending}
-                ariaLabel="Behind a reverse proxy"
-                onChange={(enabled) => save.mutate({ proxy_trust_enabled: enabled })}
-              />
-            </div>
-          </div>
-          <div className={data.proxy_trust_enabled ? "set-row" : "set-row dim"}>
-            <span className="set-label">Trusted proxy addresses</span>
-            <p className="help">
-              Only requests arriving from these addresses may claim to be forwarded. Comma
-              separated, single addresses or ranges like 172.16.0.0/12.
-            </p>
-            <div className="set-control">
-              <input
-                type="text"
-                value={proxies}
-                disabled={!data.proxy_trust_enabled}
-                placeholder="172.16.0.1, 10.0.0.0/8"
-                onChange={(e) => setProxies(e.target.value)}
-                aria-label="Trusted proxy addresses"
-              />
-            </div>
-          </div>
+          <SetRow
+            variant="plain"
+            label="Behind a reverse proxy"
+            help={
+              <>
+                Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper
+                will then trust the proxy to say which address each visitor really came from, which
+                keeps sign-in rate limits accurate per visitor instead of lumping everyone together.
+                It is also how Reaper learns that visitors arrive over HTTPS, so it can mark the
+                sign-in cookie HTTPS-only.
+              </>
+            }
+          >
+            <Switch
+              checked={data.proxy_trust_enabled}
+              disabled={save.isPending}
+              ariaLabel="Behind a reverse proxy"
+              onChange={(enabled) => save.mutate({ proxy_trust_enabled: enabled })}
+            />
+          </SetRow>
+          <SetRow
+            dim={!data.proxy_trust_enabled}
+            label="Trusted proxy addresses"
+            help={
+              <>
+                Only requests arriving from these addresses may claim to be forwarded. Comma
+                separated, single addresses or ranges like 172.16.0.0/12.
+              </>
+            }
+          >
+            <input
+              type="text"
+              value={proxies}
+              disabled={!data.proxy_trust_enabled}
+              placeholder="172.16.0.1, 10.0.0.0/8"
+              onChange={(e) => setProxies(e.target.value)}
+              aria-label="Trusted proxy addresses"
+            />
+          </SetRow>
         </div>
         <p className="group-hint muted">
           Off by default, and forwarded headers from anywhere else are always ignored: a stranger
@@ -1041,41 +1062,37 @@ export function GeneralPanel({
           <p className="group-blurb">These settings apply the next time Reaper opens.</p>
           <div className="set-rows">
             {data.desktop.platform === "macos" && (
-              <div className="set-row set-row-plain">
-                <span className="set-label">Show the Dock icon</span>
-                <p className="help">
-                  Reaper lives in the menu bar. Turn this on to show a Dock icon too.
-                </p>
-                <div className="set-control">
-                  <Switch
-                    checked={data.desktop.dock_icon}
-                    disabled={save.isPending}
-                    ariaLabel="Show the Dock icon"
-                    onChange={(enabled) => save.mutate({ dock_icon: enabled })}
-                  />
-                </div>
-              </div>
+              <SetRow
+                variant="plain"
+                label="Show the Dock icon"
+                help="Reaper lives in the menu bar. Turn this on to show a Dock icon too."
+              >
+                <Switch
+                  checked={data.desktop.dock_icon}
+                  disabled={save.isPending}
+                  ariaLabel="Show the Dock icon"
+                  onChange={(enabled) => save.mutate({ dock_icon: enabled })}
+                />
+              </SetRow>
             )}
-            <div className="set-row set-row-plain">
-              <span className="set-label">
-                {data.desktop.platform === "macos" ? "Menu bar icon" : "Tray icon"}
-              </span>
-              <p className="help">
-                {data.desktop.platform === "macos"
+            <SetRow
+              variant="plain"
+              label={data.desktop.platform === "macos" ? "Menu bar icon" : "Tray icon"}
+              help={
+                data.desktop.platform === "macos"
                   ? "Open and quit Reaper from the menu bar. With this off, Reaper runs " +
                     "with nothing on screen, and quitting takes Activity Monitor."
                   : "Open and quit Reaper from the tray, next to the clock. With this off, " +
-                    "Reaper runs with nothing on screen, and quitting takes Task Manager."}
-              </p>
-              <div className="set-control">
-                <Switch
-                  checked={data.desktop.tray}
-                  disabled={save.isPending}
-                  ariaLabel={data.desktop.platform === "macos" ? "Menu bar icon" : "Tray icon"}
-                  onChange={(enabled) => save.mutate({ tray: enabled })}
-                />
-              </div>
-            </div>
+                    "Reaper runs with nothing on screen, and quitting takes Task Manager."
+              }
+            >
+              <Switch
+                checked={data.desktop.tray}
+                disabled={save.isPending}
+                ariaLabel={data.desktop.platform === "macos" ? "Menu bar icon" : "Tray icon"}
+                onChange={(enabled) => save.mutate({ tray: enabled })}
+              />
+            </SetRow>
           </div>
         </div>
       )}

@@ -127,6 +127,34 @@ describe("the save bar", () => {
     await expectNoA11yViolations();
   });
 
+  // `SetRow` is the one component every settings row goes through now, and the class list is
+  // the whole of what it decides. Nothing else pins it: the panels' other tests reach controls
+  // through their labels, so a `variant` typed wrong renders a row that still reads correct to
+  // every one of them and lays out at a different width. All four outcomes live on this panel,
+  // which is why the check is here rather than in a file of its own.
+  it("gives each row the layout class its stylesheet opt-out asks for", async () => {
+    renderPanel();
+    await screen.findByLabelText("Application name");
+    const rowFor = (label: string) => screen.getByText(label).closest(".set-row");
+    expect(rowFor("Application name")).toHaveClass("set-row", { exact: true });
+    expect(rowFor("Accent color")).toHaveClass("set-row accent-row", { exact: true });
+    expect(rowFor("API key")).toHaveClass("set-row set-row-cluster", { exact: true });
+    expect(rowFor("API reference")).toHaveClass("set-row set-row-plain", { exact: true });
+    // Off is what `STORED` holds, so the dim arm is the one this render reaches.
+    expect(rowFor("Trusted proxy addresses")).toHaveClass("set-row dim", { exact: true });
+  });
+
+  it("undims the proxy list once the switch it waits on is on", async () => {
+    apiMock.general.mockResolvedValue(STORED_BOTH_ON);
+    renderPanel();
+    await screen.findByLabelText("Trusted proxy addresses");
+    // Both arms, because `dim` is the one class computed per render rather than declared once
+    // (rule 145): a row hardcoded to dim passes the test above and fails only here.
+    expect(screen.getByText("Trusted proxy addresses").closest(".set-row")).toHaveClass("set-row", {
+      exact: true,
+    });
+  });
+
   it("never reports a draft for the frame before the boxes are seeded", async () => {
     // #139. The bar flashing was the visible half; this is the half that mattered. `hasDrafts`
     // is reported up to `Settings` through `onDirtyChange`, so for that one commit the panel

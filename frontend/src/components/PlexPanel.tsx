@@ -21,6 +21,7 @@ import { ServerPickList, usePlexPinPoll } from "./PlexPin";
 import { StaleReadSlot, collapseStaleReads } from "./StaleReadNotice";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
+import { SetRow } from "./SetRow";
 
 const MANUAL_CONNECTION = "__manual__";
 
@@ -622,276 +623,275 @@ export function PlexPanel({
           {linked && data ? (
             /* One Unlink button, not a box, so it releases the control track
                (`.set-row-plain`). */
-            <div className="set-row set-row-plain">
-              {/* Lead with the person signed in, not the server name (that lives one row down
-                  in the Server picker). The account name is live from plex.tv, which always
-                  resolves after the fast, local-only status query above, so show a neutral
-                  placeholder while it's in flight rather than flashing the server name; only
-                  fall back to the server name once resources has actually settled without a
-                  username (plex.tv unreachable). */}
-              <span className="set-label">
-                {resources.isPending ? "Loading…" : (resources.data?.owner_username ?? data.name)}
-              </span>
-              <p className="help">Signed in with Plex. {data.connection_uri}</p>
-              <div className="set-control">
-                <button
-                  className="ghost"
-                  onClick={() => unlink.mutate()}
-                  disabled={unlink.isPending}
-                >
-                  Unlink
-                </button>
-              </div>
-            </div>
+            <SetRow
+              variant="plain"
+              /* Lead with the person signed in, not the server name (that lives one row down in
+                 the Server picker). The account name is live from plex.tv, which always resolves
+                 after the fast, local-only status query above, so show a neutral placeholder
+                 while it's in flight rather than flashing the server name; only fall back to the
+                 server name once resources has actually settled without a username (plex.tv
+                 unreachable). */
+              label={
+                resources.isPending ? "Loading…" : (resources.data?.owner_username ?? data.name)
+              }
+              help={<>Signed in with Plex. {data.connection_uri}</>}
+            >
+              <button className="ghost" onClick={() => unlink.mutate()} disabled={unlink.isPending}>
+                Unlink
+              </button>
+            </SetRow>
           ) : pin.servers ? (
-            <div className="set-row">
-              <span className="set-label">Which server should Reaper manage?</span>
-              <p className="help">
-                This account owns more than one Plex server. Reaper will only ever scan and prune
-                the one you pick.
-              </p>
-              <div className="set-control server-pick">
-                <ServerPickList
-                  servers={pin.servers}
-                  onPick={(machineId) => void pin.pick(machineId)}
-                  onCancel={cancelChoice}
-                />
-              </div>
-            </div>
+            <SetRow
+              controlClass="server-pick"
+              label="Which server should Reaper manage?"
+              help={
+                <>
+                  This account owns more than one Plex server. Reaper will only ever scan and prune
+                  the one you pick.
+                </>
+              }
+            >
+              <ServerPickList
+                servers={pin.servers}
+                onPick={(machineId) => void pin.pick(machineId)}
+                onCancel={cancelChoice}
+              />
+            </SetRow>
           ) : (
-            <div className="set-row">
-              <span className="set-label">No Plex server linked</span>
-              <p className="help">
-                Sign in with Plex and Reaper discovers your servers. It never asks for a token by
-                hand.
-              </p>
-              <div className="set-control">
-                {linking ? (
-                  // The same wait the login screen shows, worded the same: a fallback link
-                  // for a blocked popup, and a way out that stops the polling.
-                  <div className="plex-waiting">
-                    <span className="spinner" aria-hidden="true" />
-                    <div>
-                      <strong>Waiting for Plex…</strong>
-                      {/* Once the sign-in is approved, the wait can continue for a second
+            <SetRow
+              label="No Plex server linked"
+              help={
+                <>
+                  Sign in with Plex and Reaper discovers your servers. It never asks for a token by
+                  hand.
+                </>
+              }
+            >
+              {linking ? (
+                // The same wait the login screen shows, worded the same: a fallback link
+                // for a blocked popup, and a way out that stops the polling.
+                <div className="plex-waiting">
+                  <span className="spinner" aria-hidden="true" />
+                  <div>
+                    <strong>Waiting for Plex…</strong>
+                    {/* Once the sign-in is approved, the wait can continue for a second
                           reason: the server itself isn't answering yet. Say which one it
                           is, so a longer wait doesn't read as a hang. Reaper keeps
                           polling either way; the sign-in stays good. */}
-                      <p className="muted">
-                        {pin.retrying ?? (
-                          <>
-                            Approve the sign-in in the Plex window.{" "}
-                            {authUrl !== "" && (
-                              <a href={authUrl} target="_blank" rel="noreferrer">
-                                Didn’t open?
-                              </a>
-                            )}
-                          </>
-                        )}
-                      </p>
-                    </div>
-                    <button className="link" onClick={cancelLink}>
-                      Cancel
-                    </button>
+                    <p className="muted">
+                      {pin.retrying ?? (
+                        <>
+                          Approve the sign-in in the Plex window.{" "}
+                          {authUrl !== "" && (
+                            <a href={authUrl} target="_blank" rel="noreferrer">
+                              Didn’t open?
+                            </a>
+                          )}
+                        </>
+                      )}
+                    </p>
                   </div>
-                ) : (
-                  <button className="btn-plex" onClick={startLink}>
-                    Link with Plex
+                  <button className="link" onClick={cancelLink}>
+                    Cancel
                   </button>
-                )}
-              </div>
-            </div>
+                </div>
+              ) : (
+                <button className="btn-plex" onClick={startLink}>
+                  Link with Plex
+                </button>
+              )}
+            </SetRow>
           )}
 
           {linked && (
-            <div className="set-row">
-              <span className="set-label">Server</span>
-              <p className="help">
-                Plex servers this account can manage. Reaper works with one at a time.
-                {resources.data?.source === "stored" &&
-                  " Showing what was remembered at link time; plex.tv didn't answer."}
-              </p>
-              <div className="set-control">
-                {resources.isPending ? (
-                  <span className="muted">Looking for servers…</span>
-                ) : resources.isError ? (
-                  <>
-                    <span className="muted">Couldn't list this account's servers.</span>
-                    <button className="ghost sm" onClick={() => void resources.refetch()}>
-                      Retry
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {/* `standing`: a plex.tv response that came back without the linked server
+            <SetRow
+              label="Server"
+              help={
+                <>
+                  Plex servers this account can manage. Reaper works with one at a time.
+                  {resources.data?.source === "stored" &&
+                    " Showing what was remembered at link time; plex.tv didn't answer."}
+                </>
+              }
+            >
+              {resources.isPending ? (
+                <span className="muted">Looking for servers…</span>
+              ) : resources.isError ? (
+                <>
+                  <span className="muted">Couldn't list this account's servers.</span>
+                  <button className="ghost sm" onClick={() => void resources.refetch()}>
+                    Retry
+                  </button>
+                </>
+              ) : (
+                <>
+                  {/* `standing`: a plex.tv response that came back without the linked server
                         makes this true on the panel's first successful read, so it is what this
                         row looks like until the server is back rather than a reply to anything.
                         The action failures further down answer their own presses and stay
                         alerts. */}
-                    {linkedServerMissing && (
-                      <Notice tone="warn" standing>
-                        Plex's list came back without the server Reaper uses
-                        {data?.name ? `, ${data.name}` : ""}. Nothing has changed. Refresh to look
-                        again; the server and connection stay as they are until it is back.
-                      </Notice>
+                  {linkedServerMissing && (
+                    <Notice tone="warn" standing>
+                      Plex's list came back without the server Reaper uses
+                      {data?.name ? `, ${data.name}` : ""}. Nothing has changed. Refresh to look
+                      again; the server and connection stay as they are until it is back.
+                    </Notice>
+                  )}
+                  <select
+                    value={currentServer?.machine_identifier ?? ""}
+                    aria-label="Server"
+                    disabled={switchServer.isPending || linkedServerMissing}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (next && next !== currentServer?.machine_identifier) {
+                        switchServer.mutate(next);
+                      }
+                    }}
+                  >
+                    {linkedServerMissing ? (
+                      // A select whose value matches no option displays its FIRST option, so
+                      // listing the others here would still show one of them as the current
+                      // server -- the exact misreading this fix exists to stop, merely no
+                      // longer savable. The box names what Reaper actually uses instead.
+                      <option value="">{data?.name ?? "The linked server"}</option>
+                    ) : (
+                      (resources.data?.servers ?? []).map((s) => (
+                        <option key={s.machine_identifier} value={s.machine_identifier}>
+                          {s.name}
+                        </option>
+                      ))
                     )}
-                    <select
-                      value={currentServer?.machine_identifier ?? ""}
-                      aria-label="Server"
-                      disabled={switchServer.isPending || linkedServerMissing}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        if (next && next !== currentServer?.machine_identifier) {
-                          switchServer.mutate(next);
-                        }
-                      }}
-                    >
-                      {linkedServerMissing ? (
-                        // A select whose value matches no option displays its FIRST option, so
-                        // listing the others here would still show one of them as the current
-                        // server -- the exact misreading this fix exists to stop, merely no
-                        // longer savable. The box names what Reaper actually uses instead.
-                        <option value="">{data?.name ?? "The linked server"}</option>
-                      ) : (
-                        (resources.data?.servers ?? []).map((s) => (
-                          <option key={s.machine_identifier} value={s.machine_identifier}>
-                            {s.name}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                    <button
-                      className="ghost sm"
-                      disabled={resources.isFetching}
-                      onClick={() => void resources.refetch()}
-                      title="Look for servers again"
-                    >
-                      {resources.isFetching ? "Refreshing…" : "Refresh"}
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
+                  </select>
+                  <button
+                    className="ghost sm"
+                    disabled={resources.isFetching}
+                    onClick={() => void resources.refetch()}
+                    title="Look for servers again"
+                  >
+                    {resources.isFetching ? "Refreshing…" : "Refresh"}
+                  </button>
+                </>
+              )}
+            </SetRow>
           )}
 
           {linked && (
-            <div className="set-row">
-              <span className="set-label">Connection</span>
-              <p className="help">
-                How Reaper reaches the server. A local address is usually faster; remote works from
-                anywhere. Pick "Manual address" to type your own.
-              </p>
-              <div className="set-control">
-                <select
-                  ref={afterManualSave.ref as RefObject<HTMLSelectElement>}
-                  value={connectionValue}
-                  aria-label="Connection"
-                  // Without the linked server there is nothing to list but the saved address,
-                  // and every choice here would point at another server's addresses (B-10).
-                  disabled={setConnection.isPending || resources.isPending || linkedServerMissing}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    if (next === MANUAL_CONNECTION) openManual();
-                    else {
-                      setManualOpen(false);
-                      if (next !== savedUri) setConnection.mutate(next);
-                    }
-                  }}
-                >
-                  {connections.map((c) => (
-                    <option key={c.uri} value={c.uri}>
-                      {connectionLabel(c)}
-                    </option>
-                  ))}
-                  {!savedIsDiscovered && savedUri !== "" && (
-                    <option value={savedUri}>Manual, {savedUri}</option>
-                  )}
-                  <option value={MANUAL_CONNECTION}>Manual address…</option>
-                </select>
-              </div>
-            </div>
+            <SetRow
+              label="Connection"
+              help={
+                <>
+                  How Reaper reaches the server. A local address is usually faster; remote works
+                  from anywhere. Pick "Manual address" to type your own.
+                </>
+              }
+            >
+              <select
+                ref={afterManualSave.ref as RefObject<HTMLSelectElement>}
+                value={connectionValue}
+                aria-label="Connection"
+                // Without the linked server there is nothing to list but the saved address,
+                // and every choice here would point at another server's addresses (B-10).
+                disabled={setConnection.isPending || resources.isPending || linkedServerMissing}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next === MANUAL_CONNECTION) openManual();
+                  else {
+                    setManualOpen(false);
+                    if (next !== savedUri) setConnection.mutate(next);
+                  }
+                }}
+              >
+                {connections.map((c) => (
+                  <option key={c.uri} value={c.uri}>
+                    {connectionLabel(c)}
+                  </option>
+                ))}
+                {!savedIsDiscovered && savedUri !== "" && (
+                  <option value={savedUri}>Manual, {savedUri}</option>
+                )}
+                <option value={MANUAL_CONNECTION}>Manual address…</option>
+              </select>
+            </SetRow>
           )}
 
           {linked && manualOpen && (
             // A cluster, not a box: host, port, an SSL switch and Save belong on one line, so
             // this row keeps the shrink-to-fit control column (see `.set-row-cluster`).
-            <div className="set-row set-row-cluster">
-              <span className="set-label">Manual address</span>
-              <p className="help">Hostname or IP, port, and whether to use SSL.</p>
-              <div className="set-control">
-                {/* Two boxes under one `.set-label`, named the way the accent row names its
+            <SetRow
+              variant="cluster"
+              label="Manual address"
+              help="Hostname or IP, port, and whether to use SSL."
+            >
+              {/* Two boxes under one `.set-label`, named the way the accent row names its
                     pair: the row's label, then which half this is. A placeholder is a name of
                     last resort, so without these the host box announced itself as the example
                     address in it. */}
-                <input
-                  type="text"
-                  className="input-host"
-                  value={manualHost}
-                  aria-label="Manual address host or IP"
-                  onChange={(e) => setManualHost(e.target.value)}
-                  placeholder="plex.example.net"
-                  autoComplete="off"
-                />
-                <input
-                  type="text"
-                  className="input-port"
-                  value={manualPort}
-                  aria-label="Manual address port"
-                  onChange={(e) => setManualPort(e.target.value.replace(/\D/g, ""))}
-                  placeholder="32400"
-                  inputMode="numeric"
-                />
-                <label className="toggle" title="Use SSL">
-                  <Switch checked={manualSsl} onChange={setManualSsl} ariaLabel="Use SSL" />
-                  <span>SSL</span>
-                </label>
-                <button
-                  className="primary sm"
-                  disabled={!manualHost.trim() || setConnection.isPending}
-                  onClick={() => {
-                    afterManualSave.arriving();
-                    saveManual();
-                  }}
-                >
-                  {setConnection.isPending ? "Checking…" : "Save"}
-                </button>
-              </div>
-            </div>
+              <input
+                type="text"
+                className="input-host"
+                value={manualHost}
+                aria-label="Manual address host or IP"
+                onChange={(e) => setManualHost(e.target.value)}
+                placeholder="plex.example.net"
+                autoComplete="off"
+              />
+              <input
+                type="text"
+                className="input-port"
+                value={manualPort}
+                aria-label="Manual address port"
+                onChange={(e) => setManualPort(e.target.value.replace(/\D/g, ""))}
+                placeholder="32400"
+                inputMode="numeric"
+              />
+              <label className="toggle" title="Use SSL">
+                <Switch checked={manualSsl} onChange={setManualSsl} ariaLabel="Use SSL" />
+                <span>SSL</span>
+              </label>
+              <button
+                className="primary sm"
+                disabled={!manualHost.trim() || setConnection.isPending}
+                onClick={() => {
+                  afterManualSave.arriving();
+                  saveManual();
+                }}
+              >
+                {setConnection.isPending ? "Checking…" : "Save"}
+              </button>
+            </SetRow>
           )}
 
           {/* A Switch, not a box, so it releases the control track (`.set-row-plain`). */}
-          <div className="set-row set-row-plain">
-            <span className="set-label">Check the server's certificate</span>
-            <p className="help">
-              Turn this off only for a server you run yourself, like one with a self-signed
-              certificate.
-            </p>
-            <div className="set-control">
-              <Switch
-                checked={verifyCert}
-                disabled={saveVerify.isPending}
-                ariaLabel="Check the server's certificate"
-                onChange={(next) => {
-                  setVerifyCert(next);
-                  verifyRef.current = next;
-                  if (linked) saveVerify.mutate(next);
-                }}
-              />
-            </div>
-            {!verifyCert && (
-              <Notice tone="warn">
-                Reaper will accept this server's certificate without checking who issued it.
-              </Notice>
-            )}
-          </div>
+          <SetRow
+            variant="plain"
+            label="Check the server's certificate"
+            help={
+              <>
+                Turn this off only for a server you run yourself, like one with a self-signed
+                certificate.
+              </>
+            }
+            after={
+              !verifyCert && (
+                <Notice tone="warn">
+                  Reaper will accept this server's certificate without checking who issued it.
+                </Notice>
+              )
+            }
+          >
+            <Switch
+              checked={verifyCert}
+              disabled={saveVerify.isPending}
+              ariaLabel="Check the server's certificate"
+              onChange={(next) => {
+                setVerifyCert(next);
+                verifyRef.current = next;
+                if (linked) saveVerify.mutate(next);
+              }}
+            />
+          </SetRow>
 
-          <div className="set-row">
-            <span className="set-label">Plex web address</span>
-            <p className="help">
-              Where links to your library open. Keep the default unless you host your own Plex Web.
-              Clear it and save to go back to the default.
-            </p>
-            {/* This row and Manual address above keep their own inline Save, where the General
+          {/* This row and Manual address above keep their own inline Save, where the General
                 panel now has one save bar for the whole panel (rule 43). Deferred on purpose,
                 not missed: these two save through different routes than `saveGeneral`, so
                 collecting them costs a shared draft model this change does not need. What DID
@@ -901,37 +901,44 @@ export function PlexPanel({
                 landed on them too, through `onDirtyChange` above -- a panel need not have a save
                 bar to be asked about before it is unmounted. Whoever gives Plex a save bar takes
                 both rows together. */}
-            <div className="set-control">
-              <input
-                type="url"
-                ref={afterWebUrlSave.ref as RefObject<HTMLInputElement>}
-                value={webUrl}
-                aria-label="Plex web address"
-                onChange={(e) => {
-                  setWebUrl(e.target.value);
-                  setWebUrlError(null);
-                }}
-                placeholder="https://app.plex.tv"
-                autoComplete="off"
-              />
-              {/* `webUrlDirty` above, not a second copy of its comparison: the report and this
+          <SetRow
+            label="Plex web address"
+            help={
+              <>
+                Where links to your library open. Keep the default unless you host your own Plex
+                Web. Clear it and save to go back to the default.
+              </>
+            }
+          >
+            <input
+              type="url"
+              ref={afterWebUrlSave.ref as RefObject<HTMLInputElement>}
+              value={webUrl}
+              aria-label="Plex web address"
+              onChange={(e) => {
+                setWebUrl(e.target.value);
+                setWebUrlError(null);
+              }}
+              placeholder="https://app.plex.tv"
+              autoComplete="off"
+            />
+            {/* `webUrlDirty` above, not a second copy of its comparison: the report and this
                   button are one claim, and they were two expressions until one of them grew a
                   seed guard. */}
-              {webUrlDirty && (
-                <button
-                  type="button"
-                  className="primary sm"
-                  disabled={saveWebUrl.isPending}
-                  onClick={() => {
-                    afterWebUrlSave.arriving();
-                    saveWebUrl.mutate();
-                  }}
-                >
-                  {saveWebUrl.isPending ? "Saving…" : "Save"}
-                </button>
-              )}
-            </div>
-          </div>
+            {webUrlDirty && (
+              <button
+                type="button"
+                className="primary sm"
+                disabled={saveWebUrl.isPending}
+                onClick={() => {
+                  afterWebUrlSave.arriving();
+                  saveWebUrl.mutate();
+                }}
+              >
+                {saveWebUrl.isPending ? "Saving…" : "Save"}
+              </button>
+            )}
+          </SetRow>
         </div>
 
         {connError && <Notice tone="error">{connError}</Notice>}
@@ -1043,13 +1050,17 @@ export function PlexPanel({
             <>
               <StaleReadSlot plan={stale} slot="the watch history record" />
               <div className="set-rows">
-                <div className="set-row set-row-plain">
-                  <span className="set-label">Recorded watch history</span>
-                  <p className="help">
-                    Reaper holds back a title whose plays stop being readable. After a library
-                    rebuild that can be every title at once, and this clears them all. For one
-                    title, use the button on its reasons panel instead.
-                  </p>
+                <SetRow
+                  variant="plain"
+                  label="Recorded watch history"
+                  help={
+                    <>
+                      Reaper holds back a title whose plays stop being readable. After a library
+                      rebuild that can be every title at once, and this clears them all. For one
+                      title, use the button on its reasons panel instead.
+                    </>
+                  }
+                >
                   {/* Five states, all explicit (rule 17/36). The three that are not the form
                       all fail closed: this control withdraws a protection, so a safety read
                       Reaper could not complete offers nothing to press rather than assuming a
@@ -1057,82 +1068,80 @@ export function PlexPanel({
                       and keeps its OFF direction live on an unreadable state because that
                       direction can only make Reaper safer -- this one has no such direction,
                       which is why unknown ends the branch here. */}
-                  <div className="set-control">
-                    {safety.isLoading ? (
-                      <span className="muted">Checking…</span>
-                    ) : !safety.data ? (
-                      <span className="muted">
-                        Reaper couldn't check whether an admin password is set.
-                      </span>
-                    ) : !safety.data.has_password ? (
-                      <span className="muted">
-                        Set an admin password first, in Settings → Security.
-                      </span>
-                    ) : forgetting ? (
-                      /* The same form as arming deletion: one password box, Confirm, Cancel.
+                  {safety.isLoading ? (
+                    <span className="muted">Checking…</span>
+                  ) : !safety.data ? (
+                    <span className="muted">
+                      Reaper couldn't check whether an admin password is set.
+                    </span>
+                  ) : !safety.data.has_password ? (
+                    <span className="muted">
+                      Set an admin password first, in Settings → Security.
+                    </span>
+                  ) : forgetting ? (
+                    /* The same form as arming deletion: one password box, Confirm, Cancel.
                          The placeholder is a hint that disappears on the first keystroke, so
                          the field is named by its label either way.
                          `pw-inline` because this one sits in a settings ROW, not the Security
                          panel's field pane: `.pw-form` alone is a column, which put the box and
                          BOTH buttons at full width on a phone. */
-                      <form
-                        className="pw-form pw-inline"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          forgetWatchEvidence.mutate(forgetPassword);
-                        }}
-                      >
-                        <input
-                          type="password"
-                          value={forgetPassword}
-                          onChange={(e) => setForgetPassword(e.target.value)}
-                          maxLength={128}
-                          placeholder="admin password"
-                          aria-label="Admin password"
-                          autoComplete="current-password"
-                          autoFocus
-                        />
-                        {/* `danger` and a plain button, the pair this row already had before the
+                    <form
+                      className="pw-form pw-inline"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        forgetWatchEvidence.mutate(forgetPassword);
+                      }}
+                    >
+                      <input
+                        type="password"
+                        value={forgetPassword}
+                        onChange={(e) => setForgetPassword(e.target.value)}
+                        maxLength={128}
+                        placeholder="admin password"
+                        aria-label="Admin password"
+                        autoComplete="current-password"
+                        autoFocus
+                      />
+                      {/* `danger` and a plain button, the pair this row already had before the
                             password box joined them. Not `sm`, which the arming form spells but
                             no stylesheet defines: an inert class reads as a size that was chosen
                             (rule 18). Left in place there rather than swept, since removing a
                             no-op moves no pixel. */}
-                        <button
-                          type="submit"
-                          className="danger"
-                          disabled={!forgetPassword || forgetWatchEvidence.isPending}
-                        >
-                          Confirm forget
-                        </button>
-                        {/* Cancel drops the typed password with the form, same as the arming
-                            form's own Cancel (S-5). */}
-                        <button
-                          type="button"
-                          disabled={forgetWatchEvidence.isPending}
-                          onClick={() => {
-                            afterForget.arriving();
-                            setForgetting(false);
-                            setForgetPassword("");
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </form>
-                    ) : (
                       <button
-                        ref={afterForget.ref as RefObject<HTMLButtonElement>}
-                        className="ghost"
-                        title="Reaper starts from what Plex holds now"
+                        type="submit"
+                        className="danger"
+                        disabled={!forgetPassword || forgetWatchEvidence.isPending}
+                      >
+                        Confirm forget
+                      </button>
+                      {/* Cancel drops the typed password with the form, same as the arming
+                            form's own Cancel (S-5). */}
+                      <button
+                        type="button"
+                        disabled={forgetWatchEvidence.isPending}
                         onClick={() => {
-                          setForgotten(null);
-                          setForgetting(true);
+                          afterForget.arriving();
+                          setForgetting(false);
+                          setForgetPassword("");
                         }}
                       >
-                        Forget…
+                        Cancel
                       </button>
-                    )}
-                  </div>
-                </div>
+                    </form>
+                  ) : (
+                    <button
+                      ref={afterForget.ref as RefObject<HTMLButtonElement>}
+                      className="ghost"
+                      title="Reaper starts from what Plex holds now"
+                      onClick={() => {
+                        setForgotten(null);
+                        setForgetting(true);
+                      }}
+                    >
+                      Forget…
+                    </button>
+                  )}
+                </SetRow>
                 <div className="set-row set-status">
                   {/* Says when it takes effect, because nothing on any surface moves until the
                       next scan: the record is gone, but the stored candidates and their facts
@@ -1200,39 +1209,43 @@ export function PlexPanel({
               <div className="set-rows">
                 {/* Both rows here carry a Switch and nothing else, so they release the control
                   track (`.set-row-plain`). */}
-                <div className="set-row set-row-plain">
-                  <span className="set-label">Show "Leaving Soon" in Plex</span>
-                  <p className="help">
-                    Reaper keeps a Leaving Soon collection in each library you turned on above, and
-                    puts the matching label on everything in it. Items appear when they start
-                    counting down and drop off when they're spared or removed. Updates after every
-                    scan, or from the Jobs page.
-                  </p>
-                  <div className="set-control">
-                    <Switch
-                      checked={leavingSoon.data.enabled}
-                      disabled={saveLeavingSoon.isPending}
-                      ariaLabel='Show "Leaving Soon" in Plex'
-                      onChange={(enabled) => saveLeavingSoon.mutate({ enabled })}
-                    />
-                  </div>
-                </div>
-                <div className="set-row set-row-plain">
-                  <span className="set-label">Update while read-only</span>
-                  <p className="help">
-                    Until deletion is on, Reaper writes nothing to Plex, including this shelf. Turn
-                    this on to let the warning appear while Reaper is still read-only. It can only
-                    manage the collection and label. It can never remove files.
-                  </p>
-                  <div className="set-control">
-                    <Switch
-                      checked={leavingSoon.data.allow_unarmed}
-                      disabled={saveLeavingSoon.isPending}
-                      ariaLabel="Update while read-only"
-                      onChange={(allow_unarmed) => saveLeavingSoon.mutate({ allow_unarmed })}
-                    />
-                  </div>
-                </div>
+                <SetRow
+                  variant="plain"
+                  label={'Show "Leaving Soon" in Plex'}
+                  help={
+                    <>
+                      Reaper keeps a Leaving Soon collection in each library you turned on above,
+                      and puts the matching label on everything in it. Items appear when they start
+                      counting down and drop off when they're spared or removed. Updates after every
+                      scan, or from the Jobs page.
+                    </>
+                  }
+                >
+                  <Switch
+                    checked={leavingSoon.data.enabled}
+                    disabled={saveLeavingSoon.isPending}
+                    ariaLabel='Show "Leaving Soon" in Plex'
+                    onChange={(enabled) => saveLeavingSoon.mutate({ enabled })}
+                  />
+                </SetRow>
+                <SetRow
+                  variant="plain"
+                  label="Update while read-only"
+                  help={
+                    <>
+                      Until deletion is on, Reaper writes nothing to Plex, including this shelf.
+                      Turn this on to let the warning appear while Reaper is still read-only. It can
+                      only manage the collection and label. It can never remove files.
+                    </>
+                  }
+                >
+                  <Switch
+                    checked={leavingSoon.data.allow_unarmed}
+                    disabled={saveLeavingSoon.isPending}
+                    ariaLabel="Update while read-only"
+                    onChange={(allow_unarmed) => saveLeavingSoon.mutate({ allow_unarmed })}
+                  />
+                </SetRow>
                 {lsStatus && (
                   <div className="set-row set-status">
                     <span>{lsStatus}</span>
