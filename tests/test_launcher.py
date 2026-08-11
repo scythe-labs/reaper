@@ -111,15 +111,30 @@ class TestBrowserChoice:
 
 class TestPort:
     def test_the_default_port_matches_the_container(self) -> None:
-        assert launcher._port({}) == 8420
+        assert launcher._port({}, frozen=False) == 8420
 
     def test_a_configured_port_is_used(self) -> None:
-        assert launcher._port({"REAPER_PORT": "9000"}) == 9000
+        assert launcher._port({"REAPER_PORT": "9000"}, frozen=False) == 9000
 
-    def test_garbage_stops_with_a_plain_message(self) -> None:
+    @pytest.mark.parametrize("frozen", [False, True])
+    def test_garbage_stops_with_a_plain_message(
+        self, monkeypatch: pytest.MonkeyPatch, frozen: bool
+    ) -> None:
+        """Through `_say`, so a double-clicked build shows the operator something.
+
+        On a desktop build this value comes from `launcher.conf`, the one file that shape is
+        configured through, and stderr there is `os.devnull` (#622). Both install shapes are
+        driven, because `_say`'s dialog half is the one that only fires when frozen and a
+        single case could not tell a routed refusal from a hardcoded one (rule 141).
+        """
+        said: list[tuple[str, bool]] = []
+        monkeypatch.setattr(launcher, "_say", lambda m, *, frozen: said.append((m, frozen)))
+
         with pytest.raises(SystemExit) as excinfo:
-            launcher._port({"REAPER_PORT": "eighty"})
+            launcher._port({"REAPER_PORT": "eighty"}, frozen=frozen)
+
         assert excinfo.value.code == 2
+        assert said == [("REAPER_PORT must be a port number; it is set to 'eighty'.", frozen)]
 
     #: The container's pair, spelled once so the S104 suppression sits in one place.
     DEFAULTS = (("port", "8420"), ("host", "0.0.0.0"))  # noqa: S104 -- not a bind
@@ -488,8 +503,9 @@ class TestMain:
             captured["args"] = args
             captured["kwargs"] = kwargs
 
-        def fake_preflight() -> int:
+        def fake_preflight(refuse: Any = None) -> int:
             captured["preflighted"] = True
+            captured["refuse"] = refuse
             return int(captured["preflight_code"])
 
         import uvicorn
@@ -597,6 +613,32 @@ class TestMain:
         assert excinfo.value.code == 1
         assert serve["migrated"] is False
         assert "kwargs" not in serve
+
+    @pytest.mark.parametrize("frozen", [False, True])
+    def test_preflights_fatal_sentence_is_said_out_loud(
+        self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch, frozen: bool
+    ) -> None:
+        """`preflight.main` returns an int and used to keep its sentence to itself, so a
+        double-clicked build that refused to boot closed with no window and no message
+        (#622). It takes a callback now and the launcher passes `_say`.
+
+        Both install shapes are driven: `_say`'s dialog half only fires when frozen, and one
+        case could not tell a routed refusal from a hardcoded one (rule 141).
+        """
+        monkeypatch.setattr(launcher, "_bundle_root", lambda: Path("/bundle") if frozen else None)
+        said: list[tuple[str, bool]] = []
+        monkeypatch.setattr(launcher, "_say", lambda m, *, frozen: said.append((m, frozen)))
+        serve["preflight_code"] = 1
+
+        with pytest.raises(SystemExit):
+            launcher.main()
+
+        # The launcher hands preflight a callback rather than letting it write to a stream
+        # that a windowed build has pointed at os.devnull.
+        refuse = serve["refuse"]
+        assert callable(refuse)
+        refuse("Reaper can't open this database.")
+        assert said == [("Reaper can't open this database.", frozen)]
 
     @pytest.fixture
     def tray(self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -741,7 +783,7 @@ class TestADotenvReachesTheLauncherAndTheDesktopFlags:
 
         settled = configured_env()
 
-        assert launcher._port(settled) == 8433
+        assert launcher._port(settled, frozen=False) == 8433
         assert launcher._host(settled) == "127.0.0.1"
         # The other reader of the same two values, and the one that was already right.
         settings = Settings(data_dir=Path("data"), secret_key="k")
@@ -755,7 +797,7 @@ class TestADotenvReachesTheLauncherAndTheDesktopFlags:
         dotenv.write_text("REAPER_PORT=8433\n", encoding="utf-8")
         monkeypatch.setenv("REAPER_PORT", "8444")
 
-        assert launcher._port(configured_env()) == 8444
+        assert launcher._port(configured_env(), frozen=False) == 8444
 
     @pytest.mark.parametrize(
         ("key", "written", "expected"),

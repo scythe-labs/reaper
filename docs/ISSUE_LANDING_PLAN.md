@@ -215,13 +215,18 @@ mapping `config.load_raw_env` was already building for the instance seeder. One 
 halves, and the launcher's second spellings of `8420` and `0.0.0.0` are read off
 `Settings.model_fields`.
 
-**7. #622, and this one has a safety consequence.** The branch **added a third fatal stderr-only
-refusal**: `preflight.main` now writes `schema_gate.refusal`'s message and returns an int, the same
-shape as the two the issue names. #622's fix gives `preflight.main` a `refuse` callback "used for
-the two fatal messages only." A fix written on `dev` covers two and leaves the branch's third
-invisible on a frozen desktop build, which is the exact fail-open class the issue exists for. The
-branch also inserted four comment lines immediately after `raise SystemExit(code)`, the second fix
-site verbatim. Write it here, against three refusals.
+**7. #622, and this one has a safety consequence. Landed.** The branch **added a third fatal
+stderr-only refusal**: `preflight.main` now writes `schema_gate.refusal`'s message and returns an
+int, the same shape as the two the issue names. #622's fix gives `preflight.main` a `refuse`
+callback "used for the two fatal messages only." A fix written on `dev` covers two and leaves the
+branch's third invisible on a frozen desktop build, which is the exact fail-open class the issue
+exists for. It was written here, against **three** refusals, and each is driven by name.
+
+**The callback replaces the stderr write rather than doubling it**, so a caller routing a refusal
+elsewhere does not also print it on a console build. The default is still the stderr write, which
+is what the container and `scripts/dev-local.sh` get: both reach `main` through
+`python -m reaper.preflight` and pass nothing. The four housekeeping lines stay on stderr, and a
+test drives that distinction rather than leaving it as prose.
 
 **8 through 11 are backend one-liners, and their order among themselves does not matter.** Each is
 here for the first reason above: the branch replaced the line the fix edits, so a `dev`-side fix is

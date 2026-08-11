@@ -23,6 +23,7 @@ import pytest
 
 from reaper import preflight
 from reaper.config import DataDirError, Settings
+from reaper.db import schema_gate
 from reaper.services import backup, restore
 
 
@@ -252,3 +253,110 @@ def test_preflight_prints_message_and_returns_one(
     assert "chown -R" in captured.err
     # The actionable message goes to stderr, not stdout.
     assert captured.out == ""
+
+
+class TestTheThreeFatalMessagesReachTheCaller:
+    """A frozen desktop build's operator sees a refusal, or sees nothing at all (#622).
+
+    Windows is windowed and macOS is `LSUIElement`, PyInstaller leaves the streams `None`,
+    and `packaging/pyinstaller/entry.py` rebinds them to `os.devnull`. So a stderr-only
+    refusal is written to the null device: a double-clicked Reaper that will not start
+    closes with no window, no dialog and no message. `preflight.main` returned an int and
+    kept its sentence to itself, so the launcher had nothing to hand `_say`.
+
+    **Three fatal messages ride this path, not the two the issue names.** The third is the
+    schema gate's refusal, which `audit/simplification-plan` added, and it has exactly the
+    same shape. A fix written against `dev` would have covered two and left it invisible.
+    """
+
+    @staticmethod
+    def _refusals() -> tuple[list[str], object]:
+        seen: list[str] = []
+        return seen, seen.append
+
+    def test_an_unwritable_data_folder_reaches_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        class _Unwritable:
+            def ensure_data_dir(self) -> Path:
+                raise DataDirError(tmp_path, PermissionError(errno.EACCES, "Permission denied"))
+
+        monkeypatch.setattr(preflight, "get_settings", lambda: _Unwritable())
+        seen, refuse = self._refusals()
+
+        assert preflight.main(refuse) == 1  # type: ignore[arg-type]
+
+        assert len(seen) == 1
+        assert "chown -R" in seen[0]
+        # And it is no longer ALSO on stderr, so a caller routing it elsewhere does not
+        # print it twice on a console build.
+        assert capsys.readouterr().err == ""
+
+    def test_a_restore_that_could_not_complete_reaches_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _raise(_settings: object) -> None:
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
+        monkeypatch.setattr(restore, "apply_pending_restore", _raise)
+        seen, refuse = self._refusals()
+
+        assert preflight.main(refuse) == 1  # type: ignore[arg-type]
+
+        assert len(seen) == 1
+        assert "the restore could not be completed" in seen[0]
+
+    def test_the_schema_gates_refusal_reaches_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The third one, and the reason this could not be fixed on `dev`.
+
+        `preflight.main` gained the schema-gate refusal on this branch, in the same
+        stderr-only shape as the two the issue names.
+        """
+        monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
+        monkeypatch.setattr(
+            schema_gate, "refusal", lambda _revision: "Reaper can't open this database."
+        )
+        seen, refuse = self._refusals()
+
+        assert preflight.main(refuse) == 1  # type: ignore[arg-type]
+
+        assert seen == ["Reaper can't open this database."]
+
+    def test_the_housekeeping_lines_do_not_reach_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The distinction the callback is drawn on, driven rather than argued.
+
+        A swept temp directory and a cleared unconfirmed restore are notes about work that
+        succeeded. Routing them here would put a dialog on the screen at every desktop start
+        and train the operator to dismiss the one that matters.
+        """
+        monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
+        monkeypatch.setattr(backup, "sweep_stale_temp", lambda _settings: 3)
+        monkeypatch.setattr(restore, "clear_unarmed_staging", lambda _settings: True)
+        seen, refuse = self._refusals()
+
+        assert preflight.main(refuse) == 0  # type: ignore[arg-type]
+
+        assert seen == []
+        printed = capsys.readouterr().err
+        assert "cleared 3 leftover" in printed
+        assert "never confirmed" in printed
+
+    def test_the_default_is_still_stderr(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The container reads stderr through `docker logs` and passes no callback."""
+
+        class _Unwritable:
+            def ensure_data_dir(self) -> Path:
+                raise DataDirError(tmp_path, PermissionError(errno.EACCES, "Permission denied"))
+
+        monkeypatch.setattr(preflight, "get_settings", lambda: _Unwritable())
+
+        assert preflight.main() == 1
+
+        assert "chown -R" in capsys.readouterr().err
