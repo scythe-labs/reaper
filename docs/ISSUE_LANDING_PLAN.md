@@ -78,7 +78,7 @@ one question and only one: which tree does this fix get written against.
 | 736 | Low | on branch | `styles-chip-dismiss.test.ts:131` pins `.bar-x`, branch-only |
 | 740 | Low | on branch | the shared hover the fix folds into is branch-only |
 | 657 | Medium | after | no `dev` spelling survives the merge; see below |
-| 549 | Low | after | PR #560 is open on `dev`; the port is real work, see below |
+| 549 | Low | on branch | PR #560's 45 lines sit inside a 1,601-line branch deletion |
 | 566 | High | after | builds on #565, which has not landed yet |
 | 550 | Medium | after | `services/planner.py` is not among the 368 |
 | 623 | Medium | after | `describe_bar` is byte-identical; its gate appends, see below |
@@ -130,7 +130,7 @@ string.
 
 ## On the branch, in this order
 
-Fifteen issues. Each is a sub-PR cut from `audit/simplification-plan` and squash-merged into it,
+Sixteen issues. Each is a sub-PR cut from `audit/simplification-plan` and squash-merged into it,
 the same way every phase item arrives. Every row here was checked at its fix site.
 
 **A row is here when a `dev`-side fix would not survive the merge as written.** Three ways that
@@ -147,7 +147,7 @@ Sonarr, which is what settles this. Plan an item, spare it, claim the run, remov
 mid-run, read `outcome.detail`. Confirmed means one copy fix. Unreachable means close it
 `Reviewed/Invalid` and write the refutation into `references/refuted.md`.
 
-**2. #624, the shelf status line.** The strongest collision of the fifteen. The branch's hunk
+**2. #624, the shelf status line.** The strongest collision of the sixteen. The branch's hunk
 `@@ -505,11 +489,36` replaces the whole `lsStatus` closure, five lines becoming thirty, and
 `LeavingSoonRow` moved into the new `JobsPanel.tsx`. The issue's "Where" section names lines that
 no longer exist. The defect survives the rewrite: the new closure still never reads
@@ -235,11 +235,19 @@ byte-identical on both trees, so the three-line gate merges, and it would then b
 that has six more failures than the one it was written against: `SetupPlexStep.test.tsx` carries 6
 of the 20 and exists only here. The `App.test.tsx` half is a collision outright, the branch having
 replaced `dev`'s hand-listed `apiMock` literal with `makeApiMock()` from `test/apiMock.ts`, which
-is where the missing `vocabularyValues` answer now goes. Last of the fifteen because the count is
+is where the missing `vocabularyValues` answer now goes. Second to last because the count is
 measured rather than reasoned and the tree it measures has to stop moving first: #726, #736 and
 #740 are all frontend items above it. It still reads 20 here (`npx vitest run
 --disableConsoleIntercept`, 2026-08-11, exit 0). Fix both files first, then add the gate, or it
 lands red.
+
+**16. #549, PR #560 ported.** The work is written and reviewed; only its target is wrong. #560 adds
+45 lines at `engine/policy.py:1395`, inside the branch's `@@ -996,1601 +994,26` deletion, and
+`own_list_media_scope` now lives at `engine/policy_migrations.py:369`. Landing it on `dev` leaves a
+modify/delete conflict to resolve by hand into a file `dev` has never had, which is the one shape
+this file exists to prevent. Port the diff onto a branch cut from `audit/simplification-plan` and
+close #560 as superseded, naming the port. That is a relocation, not a discard: no reviewed line is
+thrown away. Last because it is the only row whose fix already exists, so nothing else waits on it.
 
 ### Three issue bodies the branch invalidates
 
@@ -260,7 +268,7 @@ not be there.
 
 ## After the branch lands
 
-Twenty issues. All but five carry a caution that is not obvious from the issue text.
+Nineteen issues. All but five carry a caution that is not obvious from the issue text.
 
 **A row is here because a `dev` fix survives the merge, or because no `dev` fix can be written at
 all.** Those are different reasons and the row says which. Everything that does collide is on the
@@ -275,12 +283,6 @@ a `dev` author copies the sibling idiom, `.strip().casefold()`, and
 `test_repo_hygiene.py:538` bans that literal anywhere under `src/`. The alternative spelling is not
 available either: `src/reaper/text.py` does not exist on `dev` (`git show origin/dev:` exits 128).
 Written as `fold(...)` after the merge it is a one-line change.
-
-**#549's port is real work, not a merge.** PR #560 adds 45 lines to `engine/policy.py:1395`, which
-sits inside the branch's `@@ -996,1601 +994,26` deletion, and `own_list_media_scope` now lives at
-`engine/policy_migrations.py:369`. That is a modify/delete conflict resolved by hand into a file
-that does not exist on `dev`. Landing it on `dev` is still right, since holding a finished PR for
-weeks costs more. Whoever runs the next weekly dev merge should expect this one.
 
 **#566 waits on #565 by construction.** The pre-migration snapshot is a call site plus a retention
 bound, and the revision-skew guard it sits beside is on the branch. Build it on top of
