@@ -99,12 +99,25 @@ def install_root() -> Path | None:
     """Where a packaged install keeps the pieces that live beside the code: the built
     SPA, the migrations, and ``buildinfo.json``. ``REAPER_HOME`` names it outright
     (the snap sets it to ``$SNAP``); a frozen (PyInstaller) build is its unpacked
-    bundle. A source checkout returns ``None`` and callers fall back to the repo
-    root, so development never needs either value set."""
+    bundle. A source checkout returns ``None``, and `project_root` is the fallback,
+    so development never needs either value set."""
     named = os.environ.get("REAPER_HOME", "").strip()
     if named:
         return Path(named)
     return frozen_bundle()
+
+
+def project_root() -> Path:
+    """Where the pieces beside the code are, in every install shape: `install_root`
+    when a packaged install names one, the repo root otherwise.
+
+    The walk counting levels up to the checkout root lives here and nowhere else. Two
+    callers inlined it from two modules that happened to sit at the same depth, so moving
+    either one gave a silently wrong answer instead of an import error.
+    `db.schema_gate.alembic_dir` keeps its own shape on purpose: it tries every parent for
+    a directory that identifies itself, which answers for shapes this cannot.
+    """
+    return install_root() or Path(__file__).resolve().parent.parent.parent
 
 
 def build_version() -> str:

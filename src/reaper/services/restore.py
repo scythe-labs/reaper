@@ -176,19 +176,17 @@ class RestoreSummary:
 known_revisions = schema_gate.known_revisions
 
 
-def _check_schema(revision: str | None) -> str:
+def _check_schema(revision: str) -> str:
     """Refuse a backup this build cannot serve; return the verdict for one it can.
 
-    ``None`` means the snapshot carried no ``alembic_version`` row -- a corrupt or
-    foreign database, refused. A revision this build does not know came from a newer
-    Reaper, also refused (409). Otherwise it is ``"current"`` (matches head) or
-    ``"older"`` (an ancestor this build will upgrade on boot).
+    A revision this build does not know came from a newer Reaper, refused (409).
+    Otherwise it is ``"current"`` (matches head) or ``"older"`` (an ancestor this build
+    will upgrade on boot).
+
+    A database carrying no ``alembic_version`` row is refused by :func:`_summarize`, which
+    needs the revision for its manifest cross-check and so asks first. ``str`` keeps that
+    the only copy of the refusal: a caller that skipped it cannot type-check.
     """
-    if revision is None:
-        raise RestoreError(
-            "The database in this backup couldn't be verified. "
-            "It may be damaged, or not a Reaper backup."
-        )
     try:
         known = known_revisions()
     except Exception as exc:  # any failure to read the migrations fails closed

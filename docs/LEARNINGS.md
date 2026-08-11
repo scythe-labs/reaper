@@ -3305,6 +3305,38 @@ pairs; the other two sit 40 and about 150 lines apart, so collapsing them reloca
 instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
 filtered two-column select to an unfiltered three-column one.
 
+## A dedup's stated saving counts the deletion and not the declaration (2026-08-10)
+
+Six wave 11 backend rows, built and measured as code net with comments counted and tests
+excluded. Stated: -3, -7, -5, -3, index-only, +2. Measured: **-2, -2, +2, -1, +4 plus a 42-line
+revision, +7.** Five of the six cost more than the row said and none cost less.
+
+**The error is one-sided because of how the figure is derived.** A reader counts the statements
+that will be deleted. What replaces them is a constant, a helper, or the docstring explaining why
+a parameter narrowed, and none of that is on the page yet when the estimate is written. So the
+estimate is systematically optimistic by whatever the replacement costs, which for a one-line
+declaration with a three-line comment is four lines against a four-line saving.
+
+**Two of the six were worth building at a positive line count, for reasons the figure never
+carried.** The cron refusal (`api/settings.py`) was one sentence written twice in one function
+with two tests asserting only its status code, so either copy could be reworded alone; the
+declaration plus a test matching both arms against it costs +2. The root walk (`buildinfo`,
+`launcher`, `main`) was `main.py` counting three parents from its own file to reach the directory
+it serves the built SPA out of, agreeing with `launcher.py`'s count only because the two modules
+sit at the same depth; one shared `project_root()` costs +7 and makes moving either file an
+import error rather than a stale UI.
+
+**A greppable-violation gate is not automatically the cheaper answer.** The root walk was the row
+where a hygiene ban was the stated alternative. After the consolidation `src/` holds one
+multi-parent walk, inside the helper, so the ban would scan a population of one; before it, the
+ban would have to exempt the two sites it exists to catch. A gate is worth its line when the
+population it scans can grow, and the consolidation is what shrinks that population to one.
+
+**The one measurement that decided an item on its own was not a line count.** `ActionStep.run_id`
+was unindexed and `EXPLAIN QUERY PLAN` returned `SCAN action_step` for the executor's own filter,
+against a table retention never sweeps. The test asserts the query plan rather than the index's
+presence, so an index that exists and is not chosen still fails.
+
 ## A shell gate can be green because the page is small (2026-08-10)
 
 `binaries.yml`'s boot probes check the packaged build serves the SPA and not a JSON 404:
@@ -3357,6 +3389,7 @@ The plan's S5 already carries the standing form, that a kill needs both halves s
 four add is the measurement: across four independent cases the code fell by 17 lines and the
 diff by nothing, so on this codebase the line half decides almost nothing on its own. The
 question that did the work each time was **"is there a rule here that only one copy states"**.
+
 ## A helper measured at zero lines was measured in the wrong shape (2026-08-10)
 
 Two settings findings were killed on "an extraction that nets to zero lines is not worth its
