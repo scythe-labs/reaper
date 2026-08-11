@@ -153,11 +153,15 @@ the one the issue described: an item spared before the claim, un-spared mid-run,
 hand-reaped at all. Both now read the sentence. The guard is two `if`s, each with its own copy;
 the run-start-set arm says `this was not part of the run you confirmed, so it is kept`.
 
-**2. #624, the shelf status line.** The strongest collision of the sixteen. The branch's hunk
+**2. #624, the shelf status line. Landed.** The strongest collision of the sixteen. The branch's hunk
 `@@ -505,11 +489,36` replaces the whole `lsStatus` closure, five lines becoming thirty, and
 `LeavingSoonRow` moved into the new `JobsPanel.tsx`. The issue's "Where" section names lines that
-no longer exist. The defect survives the rewrite: the new closure still never reads
-`leavingSoon.data.enabled`. Gate it the way the Jobs row does, or say "Off" in its place.
+no longer exist. The defect survived the rewrite: the new closure never read
+`leavingSoon.data.enabled` either.
+
+**The line is gated, not reworded.** The Jobs row draws "Off." because its switch is on another
+screen; on this panel the switch sits two rows above the line, so saying it again would restate a
+control already on screen. `lsStatus` returns `null` while the shelf is off.
 
 **3. #584, the Plex library sync success path.** `_sync_libraries` moved from
 `api/settings.py:1201` to `api/plex.py:599`, and `tests/test_settings_api.py` changed inside
