@@ -69,9 +69,9 @@ def state_singleton[T](app: FastAPI, name: str, build: Callable[[], T]) -> T:
     """The one ``app.state.<name>`` for this app, built on first ask.
 
     Four callers keep a per-app object this way: the scan status, the reap status, the
-    Scales request cache, and the artwork client's lock. One per app rather than one in
-    the lifespan, so a test app that never ran a lifespan still gets its own, bound to
-    its own running loop.
+    Scales request cache, and the artwork client's lock. It is built here rather than in
+    the lifespan. That way a test app that never ran one still gets its own, bound to its
+    own running loop.
 
     **There is no await between the read and the write**, so two concurrent requests
     cannot both install one and hand out different objects. That was written down at one

@@ -388,6 +388,38 @@ def test_add_import_exclusion_still_adds_the_column_when_missing(
     engine.dispose()
 
 
+def test_a_runs_journal_read_searches_an_index_rather_than_scanning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading one run's journal uses ``ix_action_step_run_id``.
+
+    SQLite does not index a foreign key on its own, and nothing removes rows from this table:
+    retention deletes snapshots and skips every snapshot a run points at, so ``action_step``
+    grows for the life of the install and every journal read scanned all of it. Asserted on
+    the query plan of the executor's own filter, not on the index appearing in the schema, so
+    an index that exists but is not chosen still fails.
+    """
+    config = _alembic_config(tmp_path, monkeypatch)
+    command.upgrade(config, "head")
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    with engine.connect() as conn:
+        plan = " ".join(
+            str(row[3])
+            for row in conn.execute(
+                text(
+                    "EXPLAIN QUERY PLAN SELECT * FROM action_step "
+                    "WHERE run_id = 1 ORDER BY ordinal, id"
+                )
+            )
+        )
+
+    assert "SCAN action_step" not in plan, plan
+    assert "ix_action_step_run_id" in plan, plan
+
+    engine.dispose()
+
+
 def test_heal_migration_relaxes_old_not_null_size_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

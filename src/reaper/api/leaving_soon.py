@@ -22,6 +22,7 @@ from reaper.clients.plex import PlexError
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.services import leaving_soon
+from reaper.services.leaving_soon import LeavingSoonDegradedError, LeavingSoonDisabledError
 
 router = APIRouter(prefix="/api", tags=[api_tags.JOBS])
 
@@ -31,13 +32,11 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
     settings: Settings = request.app.state.settings
     box: SecretBox = request.app.state.secret_box
 
+    # One refusal for the three ways a pass declines: the shelf is off, the last scan could
+    # not be trusted, or no Plex server is linked. Each raiser writes the operator's sentence.
     try:
         result = await leaving_soon.run_sync(request.app.state.session_factory, settings, box)
-    except leaving_soon.LeavingSoonDisabledError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except leaving_soon.LeavingSoonDegradedError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except PlexError as exc:
+    except (LeavingSoonDisabledError, LeavingSoonDegradedError, PlexError) as exc:
         raise HTTPException(400, str(exc)) from exc
 
     # ``ok`` and ``result`` are the pass's own words, already stored on the Jobs row by the

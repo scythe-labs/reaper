@@ -46,7 +46,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
 
-from reaper.buildinfo import env_flag, frozen_bundle, install_root
+from reaper.buildinfo import env_flag, frozen_bundle, install_root, project_root
 from reaper.config import LAUNCHER_CONF_NAME
 
 if TYPE_CHECKING:
@@ -66,10 +66,6 @@ _BUILDINFO_KEYS = {
 def _bundle_root() -> Path | None:
     """The unpacked PyInstaller bundle, or ``None`` when running from source."""
     return frozen_bundle()
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent.parent
 
 
 def export_buildinfo(env: MutableMapping[str, str], path: Path | None) -> None:
@@ -379,7 +375,7 @@ def _tray_image() -> Any | None:
         from PIL import Image
     except ImportError:
         return None
-    root = install_root() or _repo_root()
+    root = project_root()
     for candidate in (
         root / "frontend" / "dist" / "icon-512.png",
         root / "frontend" / "public" / "icon-512.png",
@@ -497,7 +493,7 @@ def main() -> None:
     # Before anything touches the disk: a plain `pip install reaper` puts this script
     # on PATH with no migrations beside it (site-packages has no alembic/), and
     # continuing would create a data folder that can never be brought current.
-    root = install_root() or _repo_root()
+    root = project_root()
     if not (root / "alembic").is_dir():
         sys.stderr.write(
             "Reaper can't find its database migrations next to this install. Run the "
