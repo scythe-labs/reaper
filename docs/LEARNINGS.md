@@ -3599,6 +3599,17 @@ unit the invariant is stated in, or pin the population and say plainly what the 
 Rule 147 says a matcher is bounded by the syntax it can parse; this is the same bound one level
 up, at what the matcher is a matcher *of*.
 
+**A count is only an independent half of a ban while the two read different populations.** Both
+gates walked shipped `.tsx` and reconciled the members they read against the mentions they found
+in the same files. A class name or an operator sentence exported from a `.ts` module and used
+from a component is outside that walk, so it left the matcher and the count together and the two
+figures still agreed. Measured: a 27th `.field-sm` box with two controls and no name read green,
+and so did a 26th never-loaded sentence. Rule 145's failure with the count already in place.
+Two more from the same review pass, both about where a run of text begins. Matching forward from
+`could` left the front of the sentence open, so prepending a clause to one of a pinned pair moved
+nothing. And splitting a line at the first `//` truncated it at any URL, taking the rest of that
+line out of every walk in the file.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

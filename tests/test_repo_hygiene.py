@@ -3799,10 +3799,10 @@ def _without_comments(text: str) -> str:
 def test_the_reload_advice_population_is_pinned_per_file() -> None:
     """Telling an operator to reload throws away their draft, so each one is deliberate (#195).
 
-    Matches the bare word ``reload``, case-insensitively, in what is left of a shipped ``.tsx``
-    once comments are gone. Deliberately looser than the sentence it is about (rule 147): the tree
-    spells the advice three ways -- "Reload to try again.", "Reload the page to try again." and
-    "then reload this page." -- and the second of those WRAPS across two source lines in
+    Matches the bare word ``reload``, case-insensitively, in what is left of a shipped ``.tsx`` or
+    ``.ts`` once comments are gone. Deliberately looser than the sentence it is about (rule 147):
+    the tree spells the advice three ways -- "Reload to try again.", "Reload the page to try
+    again." and "then reload this page." -- and the second of those WRAPS across two source lines in
     ``NotInScanPanel``, so a per-line match on the full phrase would have missed it. A word cannot
     wrap. The cost is that the walk also collects a Refresh button's tooltip, which is listed
     above rather than filtered out, because a matcher that quietly drops what does not fit stops
@@ -3813,7 +3813,7 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     one reads green here: the per-branch claims are pinned in the component tests.
     """
     found: dict[str, int] = {}
-    for path in _shipped_tsx():
+    for path in _shipped_frontend_source():
         n = len(re.findall(r"(?i)\breload", _without_comments(path.read_text(encoding="utf-8"))))
         if n:
             found[str(path.relative_to(REPO))] = n
@@ -3834,11 +3834,13 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # Reload to try again." at two. Three more keys below hold two files each, and the finding named
 # none of them.
 #
-# `PolicyEditor`'s "Couldn't load these settings." is the deliberate fifth copy and holds a row of
-# its own. It drops "Reload to try again." because that panel is an editor holding unsaved work
-# and a reload takes it with no ask (#195; `frontend/src` has no `beforeunload` handler). So the
-# two keys differing by exactly that clause are both correct, and a sixth panel dropping the
-# advice earns its own key here with the same reasoning written down.
+# `PolicyEditor`'s "Couldn't load these settings." is the deliberate fifth copy and holds a key of
+# its own. The distinction is per BRANCH rather than per panel, and that file carries both: at
+# `:1618` the whole draft failed to read, so the workspace never rendered and there is nothing to
+# lose, while `:2355` sits inside a mounted editor whose savebar may be holding unsaved edits, and
+# a reload takes them with no ask (#195; `frontend/src` has no `beforeunload` handler). So the two
+# keys differing by exactly that clause are both correct, and a sixth site dropping the advice
+# earns its own key here with the same reasoning written down.
 _NEVER_LOADED_COPY = {
     "Couldn't load Scales.": ["frontend/src/components/Fairness.tsx"],
     "Couldn't load new lines, and updates are paused.": ["frontend/src/components/LogsPanel.tsx"],
@@ -3903,15 +3905,21 @@ _NEVER_LOADED_COPY = {
     ],
 }
 
-#: Accepts, and these are the spellings the tree uses plus the ones it could reach for without
-#: anyone noticing (rule 147): ``Couldn't load``, ``Could not load``, the same with a typographic
-#: apostrophe (U+2019, which an editor substitutes on its own), each of those behind a leading
-#: ``Reaper``, in any casing. Matched against the file flattened to a single line, so a sentence
-#: that WRAPS across source lines is still one match: ``PolicyRuleEditors`` wraps two and
-#: ``ReviewQueue`` a third. Rejects, and both land as a truncated key rather than as a silent
-#: pass: a sentence interpolating a value, since the run stops at the first ``{``, and one
-#: assembled in a local, which no text match can see.
-_NEVER_LOADED = re.compile("(?i)(?:reaper )?could(?:n['\\u2019]t| not) load[^<\"`{}]*")
+#: What makes a run of text one of these. Accepts the spellings the tree uses plus the ones it
+#: could reach for without anyone noticing (rule 147): ``couldn't load``, ``could not load``, and
+#: the same with a typographic apostrophe (U+2019, which an editor substitutes on its own), in any
+#: casing and anywhere in the run.
+_NEVER_LOADED = re.compile("(?i)could(?:n['\\u2019]t| not) load")
+
+#: What bounds one. The key is the WHOLE run between two of these, not the sentence starting at
+#: the matched words, so a clause added at the FRONT of one copy moves that key: matching forward
+#: from ``could`` left the front open, and prepending "Something went wrong." to one of a pinned
+#: pair read green. These five are where JSX text, a string literal and a template all end.
+#: Everything is read off the file flattened to a single line, so a sentence that WRAPS across
+#: source lines is still one run, which four of them do. What this cannot see is a sentence
+#: interpolating a value, since the run ends at the brace, and one assembled in a local; both land
+#: as a shorter key rather than as a silent pass.
+_TEXT_RUN = re.compile(r"[<>\"`{}]")
 
 
 def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
@@ -3925,12 +3933,17 @@ def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
     Keyed by sentence rather than by file, because a copy moving between files is not what this
     is about. A fifth panel picking up "Couldn't load these settings. Reload to try again." has to
     add itself to that key's list, where the four already on it are in view.
+
+    Over ``.ts`` as well as ``.tsx``, because a sentence exported from a ``.ts`` module and
+    rendered from a component is invisible to a ``.tsx``-only walk. That was demonstrated: a 26th
+    sentence declared that way read green before the walk was widened.
     """
     found: dict[str, list[str]] = {}
-    for path in _shipped_tsx():
+    for path in _shipped_frontend_source():
         flat = " ".join(_without_comments(path.read_text(encoding="utf-8")).split())
-        for match in _NEVER_LOADED.finditer(flat):
-            found.setdefault(match.group(0).strip(), []).append(str(path.relative_to(REPO)))
+        for run in _TEXT_RUN.split(flat):
+            if _NEVER_LOADED.search(run):
+                found.setdefault(run.strip(), []).append(str(path.relative_to(REPO)))
     assert {sentence: sorted(files) for sentence, files in found.items()} == _NEVER_LOADED_COPY, (
         "the never-loaded copy moved.\n"
         f"expected: {_NEVER_LOADED_COPY}\nfound:    {found}\n"
@@ -3961,48 +3974,65 @@ _FIELD_SM_CONTAINERS = {
 }
 
 #: One whole line: a `<label>` or `<div>` open tag whose `className` is the only attribute on it.
-#: Accepts the two spellings the tree uses, a string literal and a one-line ternary of them
-#: (`SecurityPanel`'s `viaRecovery ? "field-sm dim" : "field-sm"`). Everything it cannot read is
-#: caught by the count beside it rather than skipped (rule 147). A class list broken over several
-#: lines, a template literal, and a `field-sm` on any other tag all leave the walk while
-#: `_FIELD_SM_WORD` still counts their line, so the two figures disagree and the run fails.
+#: Accepts the two spellings the tree uses, a string literal and any one-line braced expression,
+#: which covers `SecurityPanel`'s `viaRecovery ? "field-sm dim" : "field-sm"` and a template
+#: literal alike. Rejects a class list broken over several lines, a second attribute on the open
+#: tag, and any other tag. Those three leave the walk while `_FIELD_SM_WORD` still reads their
+#: line, so the assertion below names them rather than skipping them (rule 147).
 _FIELD_SM_OPEN = re.compile(r'^\s*<(label|div) className=(?:"[^"\n]*"|\{[^\n]*\})>\s*$')
 _FIELD_SM_WORD = re.compile(r"\bfield-sm\b")
 _FIELD_LABEL_SPAN = '<span className="field-label">'
 
 
-def test_every_field_sm_box_is_a_label_over_one_control_or_a_named_div() -> None:
+def test_every_field_sm_box_names_itself_and_the_population_holds_still() -> None:
     """A `<label>` around two controls names the first one and leaves the second nameless.
 
-    26 boxes across 9 files ride this rule and nothing declared it, so the 27th would copy
-    whichever of the 26 its author had open. The population is pinned per file and per tag. A new
-    `<div className="field-sm">` is the interesting one, and it cannot be added without editing
-    the comment above that says why each existing one is a div.
+    26 boxes across 9 files ride that rule and nothing declared it, so the 27th would copy
+    whichever of the 26 its author had open. `.field-sm` is a `<label>` wherever exactly one
+    control renders inside it and a `<div>` wherever no single control does.
 
-    **What the walk reads and what it cannot** (rule 147). It reads the open tag and the line
-    under it. It does NOT count controls, because what decides label-versus-div is invisible in
-    source text. `ListModal`'s Plex library box holds a `<select>` and an `<input>` in the two
-    arms of a ternary, so one renders. `ServiceModal`'s pickers hold one `<select>` inside a
-    `.map()`, so many do. A count of tags reads both backwards, and the per-file tag counts are
-    what a wrong choice has to get past instead.
+    **This does not check the rule, and is named for what it does check** (rule 118). It pins two
+    things: that every box opens with one `span.field-label`, and the population per file and per
+    tag. What decides label-versus-div is invisible in source text, so a tag count would read the
+    tree backwards at three of the 26. `ListModal`'s Plex library box holds a `<select>` and an
+    `<input>` in the two arms of a ternary, so one renders. `ServiceModal`'s two pickers hold one
+    `<select>` inside a `.map()`, so many do. A label over two controls therefore reads green
+    here, and the per-file tag counts are what a wrong choice has to get past instead: a new
+    `<div className="field-sm">` cannot be added without editing the comment above that says why
+    each existing one is a div.
+
+    Over `.ts` as well as `.tsx`, because a box taking its class from a constant in a `.ts` module
+    leaves BOTH the matcher and the count at once, which is the shape rule 145 warns about. That
+    was demonstrated: a 27th box holding two controls and no name read green before the walk was
+    widened.
     """
     walked: dict[str, dict[str, int]] = {}
     unnamed: list[str] = []
-    counted = 0
-    for path in _shipped_tsx():
-        stripped = _without_comments(path.read_text(encoding="utf-8"))
-        lines = stripped.splitlines()
-        counted += sum(1 for line in lines if _FIELD_SM_WORD.search(line))
+    unread: list[str] = []
+    for path in _shipped_frontend_source():
+        lines = _without_comments(path.read_text(encoding="utf-8")).splitlines()
         for number, line in enumerate(lines):
-            match = _FIELD_SM_OPEN.match(line)
-            if not match or not _FIELD_SM_WORD.search(line):
+            if not _FIELD_SM_WORD.search(line):
                 continue
             name = str(path.relative_to(REPO))
+            match = _FIELD_SM_OPEN.match(line)
+            if not match:
+                unread.append(f"{name}:{number + 1} -> {line.strip()[:70]}")
+                continue
             walked.setdefault(name, {}).setdefault(match.group(1), 0)
             walked[name][match.group(1)] += 1
             below = lines[number + 1].strip() if number + 1 < len(lines) else ""
             if not below.startswith(_FIELD_LABEL_SPAN):
                 unnamed.append(f"{name}:{number + 1} -> {below[:60]}")
+    assert not unread, (
+        "`field-sm` is written where the box matcher cannot read it:\n  "
+        + "\n  ".join(unread)
+        + "\nEach of these is either a box spelled in a form `_FIELD_SM_OPEN` rejects, which is a\n"
+        "class list broken over several lines, a second attribute on the open tag, or a tag other\n"
+        "than `<label>`/`<div>`, or a mention of the class that is not a box at all. Widen the\n"
+        "matcher for the first. For the second, this walk needs a second population before it can\n"
+        "tell one from the other, since one of each cancels out."
+    )
     assert not unnamed, (
         "a `.field-sm` box whose first child is not its name:\n  " + "\n  ".join(unnamed) + "\n"
         f"Every one of them opens with {_FIELD_LABEL_SPAN}, which is what a screen reader reads\n"
@@ -4015,14 +4045,6 @@ def test_every_field_sm_box_is_a_label_over_one_control_or_a_named_div() -> None
         "counting a `.map()` as many and a ternary as one, then bump the count here. If more\n"
         "than one renders, or none does, it is a `<div>` and the comment above gains a clause\n"
         "saying which of those it is."
-    )
-    assert counted == sum(sum(tags.values()) for tags in walked.values()), (
-        f"`field-sm` is mentioned outside comments on {counted} lines but the walk read "
-        f"{sum(sum(tags.values()) for tags in walked.values())} boxes.\n"
-        "One of them is spelled in a form `_FIELD_SM_OPEN` cannot read: a class list broken over\n"
-        "several lines, a template literal, a second attribute on the open tag, or a tag other\n"
-        "than `<label>`/`<div>`. Widen the matcher rather than the count, then re-derive both.\n"
-        "Lines, not occurrences: `SecurityPanel`'s ternary writes the class twice on one line."
     )
 
 
@@ -4204,9 +4226,16 @@ def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -
 _EXPECTED_SELECTS = 23
 
 
+#: A ``//`` that starts a comment, which is any ``//`` not preceded by a colon. Splitting on the
+#: bare pair truncated a line at the first URL in it, taking the rest of that line out of every
+#: walk below: `ServiceModal` writes an example address in running help text, and a sentence after
+#: one would have been unscannable.
+_LINE_COMMENT = re.compile(r"(?<!:)//.*")
+
+
 def _without_line_comments(chunk: str) -> str:
-    """``chunk`` with every ``//`` run to end-of-line removed."""
-    return "\n".join(line.split("//", 1)[0] for line in chunk.splitlines())
+    """``chunk`` with every ``//`` run to end-of-line removed, leaving a URL's ``//`` alone."""
+    return "\n".join(_LINE_COMMENT.sub("", line) for line in chunk.splitlines())
 
 
 def _select_is_named(tag: str, text: str) -> bool:
