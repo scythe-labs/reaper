@@ -18,7 +18,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-import type { Condition, GradedKeep, VocabField } from "../api";
+import type { Condition, GradedKeep, ListConfig, VocabField } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
@@ -80,6 +80,18 @@ beforeEach(() => {
   scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
   scrollIntoView.mockClear();
 });
+
+/** A list definition as the picker reads it (`/api/lists/configured`). `authorable_media` is
+ *  the server's authoritative scope: the policies a keep rule on this list may protect. Empty
+ *  means offer on neither -- the type is not known (an unsynced tag), #549. */
+function listCfg(
+  id: number,
+  name: string,
+  authorable_media: ("movie" | "tv")[],
+  source: ListConfig["source"] = "plex_collection",
+): ListConfig {
+  return { id, name, source, config: {}, policy_use: [], authorable_media };
+}
 
 describe("arrowing through the value suggester", () => {
   it("scrolls the option it just marked into view", async () => {
@@ -162,7 +174,9 @@ const VOTES: VocabField = {
   ops: ["gte", "lte"],
 };
 
-function renderKeepEditor(over: { conditions?: Condition[]; keeps?: GradedKeep[] } = {}) {
+function renderKeepEditor(
+  over: { conditions?: Condition[]; keeps?: GradedKeep[]; mediaType?: "movie" | "tv" } = {},
+) {
   const onConditions = vi.fn();
   const onKeeps = vi.fn();
   renderWithProviders(
@@ -170,7 +184,7 @@ function renderKeepEditor(over: { conditions?: Condition[]; keeps?: GradedKeep[]
       conditions={over.conditions ?? []}
       keeps={over.keeps ?? []}
       gateIds={[]}
-      mediaType="movie"
+      mediaType={over.mediaType ?? "movie"}
       onConditions={onConditions}
       onKeeps={onKeeps}
     />,
@@ -182,8 +196,8 @@ describe("a hard keep rule on a list", () => {
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
     apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 2, name: "IMDb Top 250", source: "imdb", config: {}, policy_use: [] },
+      listCfg(1, "Never Reap", ["movie", "tv"]),
+      listCfg(2, "IMDb Top 250", ["movie"], "imdb"),
     ]);
   });
 
@@ -226,9 +240,7 @@ describe("a hard keep rule on a list", () => {
 describe("a lean keep rule on a list", () => {
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
-    apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
-    ]);
+    apiMock.listConfigs.mockResolvedValue([listCfg(1, "Never Reap", ["movie", "tv"])]);
   });
 
   async function openLean(user: ReturnType<typeof userEvent.setup>) {
@@ -320,8 +332,8 @@ describe("one list, one keep rule", () => {
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
     apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 2, name: "IMDb Top 250", source: "imdb", config: {}, policy_use: [] },
+      listCfg(1, "Never Reap", ["movie", "tv"]),
+      listCfg(2, "IMDb Top 250", ["movie"], "imdb"),
     ]);
   });
 
@@ -396,7 +408,7 @@ describe("one list, one keep rule", () => {
 
     expect(
       await screen.findByText(
-        "Every list already has a keep rule. Remove one above to give it a different strength.",
+        "Every list this policy can keep already has a rule. Remove one above to give it a different strength.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
@@ -510,4 +522,142 @@ describe("a rule on a field whose stored units are not its typed ones", () => {
       ).toBeInTheDocument();
     },
   );
+});
+
+describe("the list picker filtered to what the server says it may protect", () => {
+  // #549: `authorable_media` is the server's authoritative scope. A Movies policy offers a list
+  // whose scope includes "movie" -- a movie or both-type list, or a synced-but-empty one the
+  // operator may fill -- and hides a shows-only list and an unsynced one whose type is unknown.
+  beforeEach(() => {
+    apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
+    apiMock.listConfigs.mockResolvedValue([
+      listCfg(1, "Movie Night", ["movie"]),
+      listCfg(2, "Saturday Cartoons", ["tv"]),
+      listCfg(3, "Family Watchlist", ["movie", "tv"]),
+      listCfg(4, "Empty Collection", ["movie", "tv"]), // synced but empty: offered on both
+    ]);
+  });
+
+  it("offers movie, both, and synced-empty lists, and hides a shows-only one", async () => {
+    const { user } = renderKeepEditor();
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument(),
+    );
+
+    expect(within(lists).getByRole("option", { name: "Family Watchlist" })).toBeInTheDocument();
+    expect(within(lists).getByRole("option", { name: "Empty Collection" })).toBeInTheDocument();
+    expect(
+      within(lists).queryByRole("option", { name: "Saturday Cartoons" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One list isn't shown here: it holds only shows, which this policy can't keep.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("filters the lean picker the same way (rule 72)", async () => {
+    const { user } = renderKeepEditor();
+    await user.click(await screen.findByRole("button", { name: "Leans toward keeping" }));
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument(),
+    );
+
+    expect(
+      within(lists).queryByRole("option", { name: "Saturday Cartoons" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("flips the filter and the words on a shows policy", async () => {
+    // The other direction, so a hardcoded "movie"/"shows" cannot pass: the movies-only list is
+    // now the one that can never be kept, and the offered lists swap.
+    const { user } = renderKeepEditor({ mediaType: "tv" });
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Saturday Cartoons" })).toBeInTheDocument(),
+    );
+
+    expect(within(lists).getByRole("option", { name: "Family Watchlist" })).toBeInTheDocument();
+    expect(within(lists).queryByRole("option", { name: "Movie Night" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One list isn't shown here: it holds only movies, which this policy can't keep.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("hides an unsynced list and says to check it, while still offering a known one", async () => {
+    // A synced-empty list is offered (verified, fillable); an unsynced one is withheld until a
+    // check reads it. The two carry different notes because the fix differs.
+    apiMock.listConfigs.mockResolvedValue([
+      listCfg(1, "Movie Night", ["movie"]),
+      listCfg(20, "Fresh List", []), // no sync has read it: offered on neither
+    ]);
+    const { user } = renderKeepEditor();
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument(),
+    );
+
+    expect(within(lists).queryByRole("option", { name: "Fresh List" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One list isn't shown here yet: it hasn't synced. Check it on Settings → Lists.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says to add a movie list when the only list holds shows", async () => {
+    apiMock.listConfigs.mockResolvedValue([listCfg(2, "Saturday Cartoons", ["tv"])]);
+    const { user } = renderKeepEditor();
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "None of your lists holds movies. Add a movie list on Settings → Lists.",
+      ),
+    ).toBeInTheDocument();
+    // Not the "you have no lists" message: the operator has one, it just can't be kept here.
+    expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
+  });
+
+  it("says to sync when the only list has never been read", async () => {
+    apiMock.listConfigs.mockResolvedValue([listCfg(20, "Fresh List", [])]);
+    const { user } = renderKeepEditor();
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "Your lists haven't synced yet. Check them on Settings → Lists so Reaper knows what's on them.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the already-ruled copy true when an unsynced list is also hidden", async () => {
+    // The keepable list is named and an unsynced one is hidden, so the picker is empty. The copy
+    // is qualified ("this policy can keep") so it does not claim the unsynced list has a rule.
+    apiMock.listConfigs.mockResolvedValue([
+      listCfg(1, "Movie Night", ["movie"]),
+      listCfg(20, "Fresh List", []),
+    ]);
+    const { user } = renderKeepEditor({
+      conditions: [{ field: "on_list", op: "eq", value: "Movie Night" }],
+    });
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "Every list this policy can keep already has a rule. Remove one above to give it a different strength.",
+      ),
+    ).toBeInTheDocument();
+  });
 });

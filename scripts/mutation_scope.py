@@ -1185,8 +1185,11 @@ ZONES: dict[str, Zone] = {
                 "The one-way list-protection conversion and its helpers. This zone is the two "
                 "shims that rewrite a stored body on LOAD, and `REPAIR_SHIM_PROBE` reads a "
                 "repaired body back; the conversion runs once per body and answers a different "
-                "question, so it wants its own zone and probe rather than a share of this one.",
+                "question, so it wants its own zone and probe rather than a share of this one. "
+                "`authorable_media_scope` joined them at #549: it decides what the POLICY EDITOR "
+                "offers, which no probe here reads and which gates no deletion.",
                 (
+                    "authorable_media_scope",
                     "convert_list_protections",
                     "has_legacy_list_protections",
                     "conversion_list_names",

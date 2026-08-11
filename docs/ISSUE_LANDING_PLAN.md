@@ -325,13 +325,24 @@ measured rather than reasoned and the tree it measures has to stop moving first:
 --disableConsoleIntercept`, 2026-08-11, exit 0). Fix both files first, then add the gate, or it
 lands red.
 
-**16. #549, PR #560 ported.** The work is written and reviewed; only its target is wrong. #560 adds
+**16. #549, PR #560 ported. Landed.** The work is written and reviewed; only its target is wrong. #560 adds
 45 lines at `engine/policy.py:1395`, inside the branch's `@@ -996,1601 +994,26` deletion, and
 `own_list_media_scope` now lives at `engine/policy_migrations.py:369`. Landing it on `dev` leaves a
 modify/delete conflict to resolve by hand into a file `dev` has never had, which is the one shape
-this file exists to prevent. Port the diff onto a branch cut from `audit/simplification-plan` and
-close #560 as superseded, naming the port. That is a relocation, not a discard: no reviewed line is
-thrown away. Last because it is the only row whose fix already exists, so nothing else waits on it.
+this file exists to prevent. The diff was ported onto a branch cut from
+`audit/simplification-plan` and #560 closed as superseded, naming the port. That is a relocation,
+not a discard: no reviewed line was thrown away. Last because it is the only row whose fix already
+existed, so nothing else waited on it.
+
+**Six of the ten files conflicted and each was resolved toward the branch's shape**, not the
+patch's. `authorable_media_scope` went to `policy_migrations.py` beside its twin, so its three
+prose citations moved with it (rule 144). `.strip().casefold()` became `fold(...)`, which
+`test_repo_hygiene.py` bans under `src/`. `OP_LABELS`, `FIELD_TO_GATE` and `FIELD_TO_SIGNAL` are
+local to `PolicyRuleEditors.tsx` here, so the patch's import from `PolicyEditor` was dropped and
+only the `ListConfig` type taken. The test harness kept `renderWithProviders` and took the one
+`mediaType` prop the new cases need. **The relocation also tripped the zone gate #598 landed**,
+which is that gate working: the new function was declared in `policy-repair-shims`'s omission
+list with the reason it is not mutated there.
 
 ### Three issue bodies the branch invalidates
 

@@ -30,6 +30,7 @@ const PLEX_DEF: ListConfig = {
   source: "plex_collection",
   config: { library: "Films", collection: "Never Reap" },
   policy_use: [],
+  authorable_media: ["movie"],
 };
 
 function renderModal(editing: ListConfig | null = null) {

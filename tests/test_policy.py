@@ -53,6 +53,7 @@ from reaper.engine.policy import (
     SignalSetting,
 )
 from reaper.engine.policy_migrations import (
+    authorable_media_scope,
     convert_list_protections,
     has_legacy_list_protections,
     library_media_types,
@@ -3871,6 +3872,77 @@ class TestOwnListMediaScope:
             rows, {"shows": frozenset({"tv"}), "films": frozenset({"movie"})}
         )
         assert scope["strasse"] == frozenset({"movie", "tv"})
+
+
+class TestAuthorableMediaScope:
+    """Which policy the list picker OFFERS a list on (#549). The fail-closed twin of
+    ``own_list_media_scope`` (rule 72): that scopes a legacy protection being CONVERTED and keeps
+    BOTH on an unreadable lookup so it never drops a live rule; this offers a NEW rule and gates
+    no deletion, so it WITHHOLDS a list whose type it cannot establish rather than offer it on a
+    type it may not hold. They agree wherever the type is actually known."""
+
+    @staticmethod
+    def _libs() -> dict[str, frozenset[str]]:
+        return {"films": frozenset({"movie"}), "series": frozenset({"tv"})}
+
+    def test_watchlist_offers_both_without_a_sync(self) -> None:
+        scope = authorable_media_scope("plex_watchlist", "{}", frozenset(), False, {})
+        assert scope == frozenset({"movie", "tv"})
+
+    def test_imdb_offers_movies_without_a_sync(self) -> None:
+        """Every sync stamps IMDb items movie, so the source is movies-only, run or not."""
+        scope = authorable_media_scope(
+            "imdb", json.dumps({"preset": "top250"}), frozenset(), False, {}
+        )
+        assert scope == frozenset({"movie"})
+
+    def test_a_collection_takes_its_library_type_without_a_sync(self) -> None:
+        movie = authorable_media_scope(
+            "plex_collection", json.dumps({"library": "Films"}), frozenset(), False, self._libs()
+        )
+        tv = authorable_media_scope(
+            "plex_collection", json.dumps({"library": "Series"}), frozenset(), False, self._libs()
+        )
+        assert movie == frozenset({"movie"})
+        assert tv == frozenset({"tv"})
+
+    def test_a_collection_with_an_unknown_library_falls_through_to_synced_content(self) -> None:
+        cfg = json.dumps({"library": "Gone"})
+        synced = authorable_media_scope(
+            "plex_collection", cfg, frozenset({"movie"}), True, self._libs()
+        )
+        never = authorable_media_scope("plex_collection", cfg, frozenset(), False, self._libs())
+        assert synced == frozenset({"movie"})  # content settled what the library could not
+        assert never == frozenset()  # neither the library nor a sync could say: withheld
+
+    def test_a_two_typed_library_falls_through_to_content(self) -> None:
+        """A title shared by a movie and a show library cannot pin the kind, so content decides."""
+        scope = authorable_media_scope(
+            "plex_collection",
+            json.dumps({"library": "Media"}),
+            frozenset({"tv"}),
+            True,
+            {"media": frozenset({"movie", "tv"})},
+        )
+        assert scope == frozenset({"tv"})
+
+    def test_a_tag_takes_its_synced_content(self) -> None:
+        one = authorable_media_scope("arr_tag", "{}", frozenset({"movie"}), True, {})
+        both = authorable_media_scope("arr_tag", "{}", frozenset({"movie", "tv"}), True, {})
+        assert one == frozenset({"movie"})
+        assert both == frozenset({"movie", "tv"})
+
+    def test_a_synced_but_empty_tag_is_offered_on_both(self) -> None:
+        """Verified and empty: a list the operator means to fill is protectable now (#549)."""
+        scope = authorable_media_scope("arr_tag", "{}", frozenset(), True, {})
+        assert scope == frozenset({"movie", "tv"})
+
+    def test_an_unsynced_tag_is_withheld_where_conversion_would_keep_both(self) -> None:
+        """The fail-closed / fail-open split (rule 72). No sync has read the tag, so its type is
+        unknown: the picker offers it on neither. A rule authored here could keep nothing, where
+        ``own_list_media_scope`` keeps an analogous unreadable list on both to hold a live rule."""
+        scope = authorable_media_scope("arr_tag", "{}", frozenset(), False, {})
+        assert scope == frozenset()
 
 
 class TestConvertListProtections:
