@@ -1194,18 +1194,23 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
 
 
 @dataclass(frozen=True)
-class _GeneralField:
+class _GeneralField[T]:
     """One field of ``GeneralSettingsIn`` that is stored as an app setting.
 
     ``clean`` validates the value that arrived and returns the one to store, raising
     ``HTTPException`` on a refusal; a field with nothing to check leaves it unset and
     stores what arrived. ``write`` is the setter, wrapped where its own signature is
     keyword-only.
+
+    Generic in the stored type, and each row below names it, so mypy checks that a row's
+    setter and its cleaner agree about what that field holds. Without the parameter the
+    table is a tuple of ``Any`` and a setter wired to the wrong field is caught only if some
+    route test happens to send that field alone.
     """
 
     name: str
-    write: Callable[[AsyncSession, Any], Awaitable[None]]
-    clean: Callable[[Any], Any] | None = None
+    write: Callable[[AsyncSession, T], Awaitable[None]]
+    clean: Callable[[T], T] | None = None
 
 
 def _clean_application_url(value: str) -> str:
@@ -1253,15 +1258,15 @@ def _clean_trusted_proxies(value: list[str]) -> list[str]:
     return value
 
 
-async def _write_expand_seasons_mode(session: AsyncSession, value: Any) -> None:
+async def _write_expand_seasons_mode(session: AsyncSession, value: ExpandSeasonsMode) -> None:
     await app_settings.set_expand_seasons_mode(session, mode=value)
 
 
-async def _write_default_spare_days(session: AsyncSession, value: Any) -> None:
+async def _write_default_spare_days(session: AsyncSession, value: int) -> None:
     await app_settings.set_default_spare_days(session, days=value)
 
 
-async def _write_proxy_trust_enabled(session: AsyncSession, value: Any) -> None:
+async def _write_proxy_trust_enabled(session: AsyncSession, value: bool) -> None:
     await app_settings.set_proxy_trust_enabled(session, enabled=value)
 
 
@@ -1272,15 +1277,17 @@ async def _write_proxy_trust_enabled(session: AsyncSession, value: Any) -> None:
 #: Order decides only which refusal an operator sees when two fields are both wrong, and
 #: nothing pins that: the promise is that a refusal writes nothing, whichever field earned
 #: it.
-_GENERAL_FIELDS: tuple[_GeneralField, ...] = (
-    _GeneralField("application_name", app_settings.set_application_name),
-    _GeneralField("application_url", app_settings.set_application_url, _clean_application_url),
-    _GeneralField("timezone", app_settings.set_timezone, _clean_timezone),
-    _GeneralField("accent_color", app_settings.set_accent_color, _clean_accent_color),
-    _GeneralField("expand_seasons_mode", _write_expand_seasons_mode),
-    _GeneralField("default_spare_days", _write_default_spare_days),
-    _GeneralField("proxy_trust_enabled", _write_proxy_trust_enabled),
-    _GeneralField("trusted_proxies", app_settings.set_trusted_proxies, _clean_trusted_proxies),
+_GENERAL_FIELDS: tuple[_GeneralField[Any], ...] = (
+    _GeneralField[str]("application_name", app_settings.set_application_name),
+    _GeneralField[str]("application_url", app_settings.set_application_url, _clean_application_url),
+    _GeneralField[str]("timezone", app_settings.set_timezone, _clean_timezone),
+    _GeneralField[str]("accent_color", app_settings.set_accent_color, _clean_accent_color),
+    _GeneralField[ExpandSeasonsMode]("expand_seasons_mode", _write_expand_seasons_mode),
+    _GeneralField[int]("default_spare_days", _write_default_spare_days),
+    _GeneralField[bool]("proxy_trust_enabled", _write_proxy_trust_enabled),
+    _GeneralField[list[str]](
+        "trusted_proxies", app_settings.set_trusted_proxies, _clean_trusted_proxies
+    ),
 )
 
 #: The fields of the same model that are deliberately NOT rows, each with the reason it
@@ -1379,8 +1386,9 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
     # wrote each field in turn would half-apply the save while telling them it failed.
     #
     # The commit at the end is a second, independent layer: an `HTTPException` escaping
-    # this block closes the session unwritten, so even the launcher branch's refusals --
-    # which fire after the loop below -- roll the rows back. Neither layer is trusted alone.
+    # this block closes the session unwritten. The one refusal still raised below the write
+    # loop is `_write_desktop_values`'s 500 on a launcher.conf it could not write, and that
+    # is the layer holding it. Neither layer is trusted alone.
     cleaned = _cleaned_general_values(payload)
     desktop_values = _validated_desktop_values(payload)
     async with session_factory(request)() as session:

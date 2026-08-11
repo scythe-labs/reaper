@@ -108,9 +108,13 @@ type TextField = {
   patch: (value: string) => Parameters<typeof api.saveGeneral>[0];
 };
 
-/** The three fields a descriptor covers, and the six echoes below walk this instead of naming
- *  each one six times: the seed, the re-seed after a save, the dirty check, the save bar's
- *  entry, and Discard. Adding a plain text setting is a row here.
+/** The three fields a descriptor covers. Five echoes walk this instead of naming each field
+ *  once apiece: the seed, the re-seed after a save, the dirty check, the save bar's entry, and
+ *  Discard. The sixth the finding counted was the `useState`, which is one record now rather
+ *  than one hook per field. The JSX below is deliberately not a sixth walker -- a row names its
+ *  own field, its own label and its own control, and generating those is a different job from
+ *  this one (rule 45: help binds to exactly one control). Adding a plain text setting is a row
+ *  here plus a row on screen.
  *
  *  THREE of this panel's six drafts are deliberately not in it, and each is hand-written just
  *  below with its reason: the accent alone blocks the save, the default spare length is one
@@ -175,8 +179,16 @@ export function GeneralPanel({
   // below either is a different hook order on those renders.
   const bar = useSavebarFocus();
 
-  // One record over `TEXT_FIELDS`, not one `useState` per field: the six echoes below walk the
+  // One record over `TEXT_FIELDS`, not one `useState` per field: the echoes below walk the
   // descriptor, and a field it does not know about would still need its own state here.
+  //
+  // Every writer of this record uses the functional form, and that is load-bearing rather than
+  // style. Three `useState`s had three queues, so a keystroke could not collide with anything;
+  // one record has one, and a `setText({ ...text, ... })` built from the render's own value
+  // replays over a still-pending update and throws it away. The two that can be pending are
+  // the mount seed and the re-seed after a save, so what would be lost is a box snapping back
+  // to a pre-save draft, or `seeded` going true over boxes that were never filled -- which is
+  // the save bar naming fields nobody typed in, #139's shape, reported upward by rule 146.
   const [text, setText] = useState<Record<TextFieldName, string>>(EMPTY_TEXT);
   const [proxies, setProxies] = useState("");
   const [accent, setAccent] = useState(DEFAULT_ACCENT);
@@ -548,7 +560,9 @@ export function GeneralPanel({
                 type="text"
                 value={text.application_name}
                 maxLength={60}
-                onChange={(e) => setText({ ...text, application_name: e.target.value })}
+                onChange={(e) =>
+                  setText((current) => ({ ...current, application_name: e.target.value }))
+                }
                 aria-label="Application name"
               />
             </div>
@@ -564,7 +578,9 @@ export function GeneralPanel({
                 type="text"
                 value={text.application_url}
                 placeholder="https://reaper.example.com"
-                onChange={(e) => setText({ ...text, application_url: e.target.value })}
+                onChange={(e) =>
+                  setText((current) => ({ ...current, application_url: e.target.value }))
+                }
                 aria-label="Application URL"
               />
             </div>
@@ -576,7 +592,7 @@ export function GeneralPanel({
               <select
                 value={text.timezone}
                 aria-label="Time zone"
-                onChange={(e) => setText({ ...text, timezone: e.target.value })}
+                onChange={(e) => setText((current) => ({ ...current, timezone: e.target.value }))}
               >
                 {zoneOptions.map((z) => (
                   <option key={z} value={z}>
