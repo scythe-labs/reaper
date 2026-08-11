@@ -196,6 +196,73 @@ function isWebUrl(value: string): boolean {
   }
 }
 
+/** A "pick something for each row" grid, plus which rows still show a value the server guessed
+ *  and nobody confirmed.
+ *
+ *  Two of these are on this form: each root folder to a Plex library, and each Seerr service to
+ *  a Reaper connection. They were written out twice, down to the same `exhaustive-deps` disable
+ *  for the same reason, and the rules they share are all about what must NOT happen. A stored
+ *  pick is never overwritten by a suggestion. A stored pick is never tagged as suggested, so the
+ *  tag means "check this" and not "this is set". And picking clears the tag even when the value
+ *  did not change, because the operator looking at the row and leaving it is the confirmation.
+ *
+ *  `rows` is null until a list has actually been read. A read that has not landed must not look
+ *  like an instance with nothing to map, which is what the null is for.
+ *
+ *  `suggestionOf` returns undefined for "no suggestion", so each caller decides what an empty
+ *  one means rather than this deciding for both. */
+function useSuggestedMap<Row, Value extends string | number>(
+  rows: Row[] | null,
+  saved: Record<string, Value>,
+  keyOf: (row: Row) => string,
+  suggestionOf: (row: Row) => Value | undefined,
+) {
+  const [map, setMap] = useState<Record<string, Value>>(saved);
+  const [suggested, setSuggested] = useState<Set<string>>(new Set());
+
+  // Keyed on the row list's identity, so a fresh test landing a new list re-suggests against it.
+  useEffect(() => {
+    if (!rows) return;
+    setMap((prev) => {
+      const next = { ...prev };
+      for (const row of rows) {
+        const key = keyOf(row);
+        const suggestion = suggestionOf(row);
+        if (!(key in next) && suggestion !== undefined) next[key] = suggestion;
+      }
+      return next;
+    });
+    setSuggested((prev) => {
+      const next = new Set(prev);
+      for (const row of rows) {
+        const key = keyOf(row);
+        if (!(key in saved) && suggestionOf(row) !== undefined) next.add(key);
+      }
+      return next;
+    });
+    // `saved` and both readers derive from the immutable `instance` prop, so the row list is
+    // what drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
+
+  /** Store a pick, or drop the row's entry with `undefined`. Either way the row is confirmed. */
+  const choose = (key: string, value: Value | undefined) => {
+    setMap((m) => {
+      const next = { ...m };
+      if (value === undefined) delete next[key];
+      else next[key] = value;
+      return next;
+    });
+    setSuggested((s) => {
+      const next = new Set(s);
+      next.delete(key);
+      return next;
+    });
+  };
+
+  return { map, suggested, choose };
+}
+
 export function ServiceModal({
   kind,
   instance,
@@ -302,11 +369,6 @@ export function ServiceModal({
    *  instance with nothing to map. Collapsed here once rather than at each of the five sites. */
   const probed = probeResult && !probeResult.map_error ? probeResult : null;
 
-  // The HD/4K library map: which Plex library each of this instance's root folders lands in.
-  // `suggestedRoots` marks the rows still holding an auto-suggested value the operator has not
-  // yet confirmed by picking.
-  const [libMap, setLibMap] = useState<Record<string, string>>(instance?.plex_library_map ?? {});
-  const [suggestedRoots, setSuggestedRoots] = useState<Set<string>>(new Set());
   const libKind = kind === "sonarr" ? "show" : "movie";
 
   const rootFolders = useQuery({
@@ -331,48 +393,17 @@ export function ServiceModal({
    *  (rule 19). */
   const folders: RootFolder[] | null = probed ? probed.root_folders : (rootFolders.data ?? null);
 
-  // Prefill each unmapped folder with its suggested library, marked "suggested" until the
-  // operator confirms it. A folder already in the stored map is left as saved, never
-  // overwritten by a suggestion, and never marked. Keyed on the folder list's identity, so a
-  // fresh test landing a new list re-suggests against it.
-  const savedMap = instance?.plex_library_map ?? {};
-  useEffect(() => {
-    if (!folders) return;
-    setLibMap((prev) => {
-      const next = { ...prev };
-      for (const f of folders) {
-        if (!(f.path in next) && f.suggested_library) next[f.path] = f.suggested_library;
-      }
-      return next;
-    });
-    setSuggestedRoots((prev) => {
-      const next = new Set(prev);
-      for (const f of folders) {
-        if (!(f.path in savedMap) && f.suggested_library) next.add(f.path);
-      }
-      return next;
-    });
-    // savedMap is derived from the immutable `instance` prop, so the folder data drives this.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folders]);
-
-  const setFolderLibrary = (path: string, library: string) => {
-    setLibMap((m) => ({ ...m, [path]: library }));
-    // Picking (even the same value) confirms the row, so the "suggested" tag clears.
-    setSuggestedRoots((s) => {
-      const next = new Set(s);
-      next.delete(path);
-      return next;
-    });
-  };
-
-  // The multi-Seerr requester map: which Reaper Sonarr/Radarr instance each of this portal's
-  // services adds media to. Only for a saved Seerr. `suggestedServices` marks the rows still
-  // holding an auto-suggested value the operator has not confirmed by picking.
-  const [serviceMap, setServiceMap] = useState<Record<string, number>>(
-    instance?.service_instance_map ?? {},
+  // Which Plex library each of this instance's root folders lands in, the HD/4K map.
+  const libraries = useSuggestedMap<RootFolder, string>(
+    folders,
+    instance?.plex_library_map ?? {},
+    (f) => f.path,
+    // A blank suggestion is no suggestion: it would prefill the picker with "Not set" and then
+    // tag the row for the operator to look at, over nothing.
+    (f) => f.suggested_library || undefined,
   );
-  const [suggestedServices, setSuggestedServices] = useState<Set<string>>(new Set());
+  const libMap = libraries.map;
+
   const isSeerr = kind === "seerr";
 
   const seerrServices = useQuery({
@@ -395,53 +426,23 @@ export function ServiceModal({
   // Seerr numbers Sonarr and Radarr services in SEPARATE lists (both from 0), so the map key
   // must be kind + id, not the id alone -- else a sonarr and a radarr service collide.
   const svcKey = (s: SeerrService) => `${s.kind}:${s.service_id}`;
+
+  // Which Reaper Sonarr/Radarr connection each of this portal's services adds media to. Only
+  // for a saved Seerr.
+  const requesters = useSuggestedMap<SeerrService, number>(
+    services,
+    instance?.service_instance_map ?? {},
+    svcKey,
+    (s) => s.suggested_instance_id ?? undefined,
+  );
+  const serviceMap = requesters.map;
+
   // The connection name currently chosen for a service, or undefined when it is on "Not set".
   // The picker stores the instance id, so the name the operator actually read has to be looked
   // back up; the library picker beside it needs no equivalent, because there the option's value
   // IS its title.
   const chosenInstanceName = (s: SeerrService): string | undefined =>
     instanceOptions(s.kind).find((i) => String(i.id) === String(serviceMap[svcKey(s)] ?? ""))?.name;
-
-  // Prefill each unmapped service with its suggested instance, marked "suggested" until the
-  // operator confirms it. A service already in the stored map is left as saved, never
-  // overwritten by a suggestion, and never marked. Keyed on the service list's identity.
-  const savedServiceMap = instance?.service_instance_map ?? {};
-  useEffect(() => {
-    if (!services) return;
-    setServiceMap((prev) => {
-      const next = { ...prev };
-      for (const s of services) {
-        const key = svcKey(s);
-        if (!(key in next) && s.suggested_instance_id != null) next[key] = s.suggested_instance_id;
-      }
-      return next;
-    });
-    setSuggestedServices((prev) => {
-      const next = new Set(prev);
-      for (const s of services) {
-        const key = svcKey(s);
-        if (!(key in savedServiceMap) && s.suggested_instance_id != null) next.add(key);
-      }
-      return next;
-    });
-    // savedServiceMap is derived from the immutable `instance` prop; the service list drives this.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [services]);
-
-  const setServiceInstance = (key: string, instanceId: string) => {
-    setServiceMap((m) => {
-      const next = { ...m };
-      if (instanceId) next[key] = Number(instanceId);
-      else delete next[key];
-      return next;
-    });
-    // Picking (even the same value) confirms the row, so the "suggested" tag clears.
-    setSuggestedServices((s) => {
-      const next = new Set(s);
-      next.delete(key);
-      return next;
-    });
-  };
 
   // A full URL pasted into the hostname field is split across the fields instead of
   // being stored as a "hostname" that silently contains a scheme and port.
@@ -963,7 +964,7 @@ export function ServiceModal({
                           // disabled Save button it describes is out of the Tab order entirely.
                           aria-describedby={blockedFolder === f.path ? BLOCKED_ID : undefined}
                           value={libMap[f.path] ?? ""}
-                          onChange={(e) => setFolderLibrary(f.path, e.target.value)}
+                          onChange={(e) => libraries.choose(f.path, e.target.value)}
                         >
                           <option value="">Not set</option>
                           {libOptions.map((l) => (
@@ -972,7 +973,7 @@ export function ServiceModal({
                             </option>
                           ))}
                         </select>
-                        {suggestedRoots.has(f.path) && (
+                        {libraries.suggested.has(f.path) && (
                           <span className="pl-suggested">suggested</span>
                         )}
                         {/* The chosen library, said again as ordinary wrapping text. A native
@@ -1100,7 +1101,12 @@ export function ServiceModal({
                             s.kind,
                           )}`}
                           value={String(serviceMap[svcKey(s)] ?? "")}
-                          onChange={(e) => setServiceInstance(svcKey(s), e.target.value)}
+                          onChange={(e) =>
+                            requesters.choose(
+                              svcKey(s),
+                              e.target.value ? Number(e.target.value) : undefined,
+                            )
+                          }
                         >
                           <option value="">Not set</option>
                           {instanceOptions(s.kind).map((i) => (
@@ -1109,7 +1115,7 @@ export function ServiceModal({
                             </option>
                           ))}
                         </select>
-                        {suggestedServices.has(svcKey(s)) && (
+                        {requesters.suggested.has(svcKey(s)) && (
                           <span className="pl-suggested">suggested</span>
                         )}
                         {/* The chosen connection, on exactly the terms as the library picker
