@@ -39,13 +39,17 @@ from reaper.engine.signals import MAX_SCORE, SignalId
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import is_percentage_source, source_label
 
+#: How loudly a warning reads. One declaration, because ``inspect``'s local ``warn`` defaults to
+#: the quieter of the two and would otherwise re-spell the pair.
+Severity = Literal["warn", "danger"]
+
 
 class PolicyWarning(Frozen):
     """A config that is legal but probably not what the owner meant."""
 
     field: str
     message: str
-    severity: Literal["warn", "danger"]
+    severity: Severity
 
 
 def _protect_blocks_on_reach(cond: ConditionSpec) -> ReachSpan | None:
@@ -127,19 +131,17 @@ def inspect(
     """
     warnings: list[PolicyWarning] = []
 
+    def warn(field: str, message: str, severity: Severity = "warn") -> None:
+        warnings.append(PolicyWarning(field=field, severity=severity, message=message))
+
     rating_on = any(g.gate is GateId.RATING_FLOOR and g.enabled for g in body.gates)
     if rating_on:
         if not body.keep_rating_rules:
-            warnings.append(
-                PolicyWarning(
-                    field="keep_rating_rules",
-                    severity="warn",
-                    message=(
-                        "Keep well-rated titles is turned on, but it has no rating sources "
-                        "yet, so it is not keeping anything. Add a rating source to it, or "
-                        "turn the protection off."
-                    ),
-                )
+            warn(
+                "keep_rating_rules",
+                "Keep well-rated titles is turned on, but it has no rating sources "
+                "yet, so it is not keeping anything. Add a rating source to it, or "
+                "turn the protection off.",
             )
         for rule in body.keep_rating_rules:
             label = source_label(rule.source)
@@ -155,38 +157,23 @@ def inspect(
                 # A percentage source read on the 0-10 scale is the usual mix-up: typing 8
                 # meaning "80%" sets an 8% bar that keeps everything.
                 if rule.floor <= 20:
-                    warnings.append(
-                        PolicyWarning(
-                            field=bar,
-                            severity="warn",
-                            message=(
-                                f"A bar of {rule.floor}% on {label} protects almost everything. "
-                                "This field is a percentage: for 80% enter 80, not 8."
-                            ),
-                        )
+                    warn(
+                        bar,
+                        f"A bar of {rule.floor}% on {label} protects almost everything. "
+                        "This field is a percentage: for 80% enter 80, not 8.",
                     )
             else:
                 if rule.floor >= 90:
-                    warnings.append(
-                        PolicyWarning(
-                            field=bar,
-                            severity="warn",
-                            message=(
-                                f"A bar of {rule.floor / 10:.1f} on {label} will protect almost "
-                                "nothing: very few titles rate that highly."
-                            ),
-                        )
+                    warn(
+                        bar,
+                        f"A bar of {rule.floor / 10:.1f} on {label} will protect almost "
+                        "nothing: very few titles rate that highly.",
                     )
                 if rule.floor <= 20:
-                    warnings.append(
-                        PolicyWarning(
-                            field=bar,
-                            severity="warn",
-                            message=(
-                                f"A bar of {rule.floor / 10:.1f} on {label} protects essentially "
-                                "everything. Did you mean 7.0?"
-                            ),
-                        )
+                    warn(
+                        bar,
+                        f"A bar of {rule.floor / 10:.1f} on {label} protects essentially "
+                        "everything. Did you mean 7.0?",
                     )
 
     # The span every reader of a watcher count is measured against -- NOT the enabled gate
@@ -306,20 +293,12 @@ def inspect(
         floor_short = history_shortfall(
             Known(value=history_reach_days, source="tautulli"), float(dormancy_floor.threshold)
         )
-        warnings.append(
-            PolicyWarning(
-                field=f"gates.{GateId.MIN_DORMANCY.value}.threshold",
-                severity="warn",
-                message=(
-                    # ``humanize_days``, not ``humanize_window``: the window helper drops a
-                    # lone "1" so it composes as "in the last year", and this slot has no
-                    # article to carry it ("waits year of no watching"). Rule 21.
-                    "Nothing will be flagged for removal. Reaper waits "
-                    f"{humanize_days(dormancy_floor.threshold)} of no watching before "
-                    f"anything can go, and {floor_short}, so it can't yet show a title sitting "
-                    "untouched that long. Wait for it to build up, or lower this wait."
-                ),
-            )
+        warn(
+            f"gates.{GateId.MIN_DORMANCY.value}.threshold",
+            "Nothing will be flagged for removal. Reaper waits "
+            f"{humanize_days(dormancy_floor.threshold)} of no watching before "
+            f"anything can go, and {floor_short}, so it can't yet show a title sitting "
+            "untouched that long. Wait for it to build up, or lower this wait.",
         )
 
     window_blockers = [c for c, span in blocking if span is ReachSpan.POPULARITY_WINDOW]
@@ -401,7 +380,7 @@ def inspect(
                 f"last {window_text}, and {short}. Wait for it to build up, or remove "
                 f"{'them' if many else 'that rule'}."
             )
-        warnings.append(PolicyWarning(field=field, severity="warn", message=message))
+        warn(field, message)
 
     # The OTHER span, and the reader that had no warning at all. ``watchers_all_time`` is
     # PROTECT-only and carries ``ITEM_LIFETIME``, so ``fields.evaluate`` blocks it through
@@ -440,18 +419,13 @@ def inspect(
     if lifetime_blockers and history_reach_days is not None and reach_clears_dormancy:
         many = len(lifetime_blockers) > 1
         subject = f"Your {len(lifetime_blockers)} keep rules" if many else "Your keep rule"
-        warnings.append(
-            PolicyWarning(
-                field="protect_conditions",
-                severity="warn",
-                message=(
-                    "Titles added before your watch history starts won't be flagged for "
-                    f"removal. {subject} {'count' if many else 'counts'} everyone who has ever "
-                    "watched a title, and Reaper can't count plays from before your history "
-                    "begins, so it holds those titles instead of guessing. Remove "
-                    f"{'those rules' if many else 'that rule'} if you want those titles judged."
-                ),
-            )
+        warn(
+            "protect_conditions",
+            "Titles added before your watch history starts won't be flagged for "
+            f"removal. {subject} {'count' if many else 'counts'} everyone who has ever "
+            "watched a title, and Reaper can't count plays from before your history "
+            "begins, so it holds those titles instead of guessing. Remove "
+            f"{'those rules' if many else 'that rule'} if you want those titles judged.",
         )
 
     # The CONDEMN lane, the third of the four and the one the comment above used to rule out.
@@ -543,29 +517,15 @@ def inspect(
             coverage_floor_bp=body.coverage_floor_bp,
         )
         if best_case != "condemn":
-            warnings.append(
-                PolicyWarning(
-                    # Beside the points that have to move. The built-in's slider and the
-                    # custom rules sit in different cards and one ``field`` can only claim
-                    # one of them, so it goes to whichever holds MORE of the weight rather
-                    # than to whichever holds any (rule 42). It used to fire on the built-in's
-                    # mere presence, so 5 points on the slider beside 50 on a custom rule sent
-                    # the operator to the smaller number and left the card that has to change
-                    # unmarked. Ties go to the signals card, which is the one above.
-                    field=(
-                        "signals"
-                        if on_the_signals_card * 2 >= withheld + never_earned
-                        else "custom_condemn"
-                    ),
-                    severity="warn",
-                    message=(
-                        f"Nothing will be flagged for removal. {withheld + never_earned} of "
-                        f"your {MAX_SCORE} removal points count who watched a title in the last "
-                        f"{humanize_window(window_days)}, and {window_short}, so only "
-                        f"{ceiling} points are left to judge on. Wait for it to build up, or "
-                        "move those points to a reason that doesn't count watchers."
-                    ),
-                )
+            warn(
+                "signals"
+                if on_the_signals_card * 2 >= withheld + never_earned
+                else "custom_condemn",
+                f"Nothing will be flagged for removal. {withheld + never_earned} of "
+                f"your {MAX_SCORE} removal points count who watched a title in the last "
+                f"{humanize_window(window_days)}, and {window_short}, so only "
+                f"{ceiling} points are left to judge on. Wait for it to build up, or "
+                "move those points to a reason that doesn't count watchers.",
             )
         else:
             # The PARTIAL case, the other half of issue #215: the list is not empty, and the
@@ -596,22 +556,15 @@ def inspect(
             )
             if held_case != "condemn":
                 many = never_earned_rules > 1
-                warnings.append(
-                    PolicyWarning(
-                        # The rules are the only thing that can move, and they are all on the
-                        # one card, so this needs none of the weighing the branch above does.
-                        field="custom_condemn",
-                        severity="warn",
-                        message=(
-                            f"Your removal {'rules' if many else 'rule'} won't flag the titles "
-                            f"{'they were' if many else 'it was'} written to find. "
-                            f"{'They count' if many else 'It counts'} who watched a title in "
-                            f"the last {humanize_window(window_days)}, and {window_short}, so "
-                            "Reaper holds those titles back instead of guessing. Wait for it "
-                            "to build up, or remove "
-                            f"{'those rules' if many else 'that rule'}."
-                        ),
-                    )
+                warn(
+                    "custom_condemn",
+                    f"Your removal {'rules' if many else 'rule'} won't flag the titles "
+                    f"{'they were' if many else 'it was'} written to find. "
+                    f"{'They count' if many else 'It counts'} who watched a title in "
+                    f"the last {humanize_window(window_days)}, and {window_short}, so "
+                    "Reaper holds those titles back instead of guessing. Wait for it "
+                    "to build up, or remove "
+                    f"{'those rules' if many else 'that rule'}.",
                 )
 
     # The lean lane, which the comment above used to name as a known gap. A graded keep takes
@@ -709,13 +662,7 @@ def inspect(
         move = f"Wait for it to build up, or {remedy}." if window_keeps else f"{remedy}."
         if not window_keeps:
             move = move[:1].upper() + move[1:]
-        warnings.append(
-            PolicyWarning(
-                field="graded_keeps",
-                severity="warn",
-                message=f"{scope} {said} {move}",
-            )
-        )
+        warn("graded_keeps", f"{scope} {said} {move}")
 
     # Only where the shortfall is NOT already speaking for this control: it carries the pair
     # itself in that case, and stacking both told the operator to raise and to lower the same
@@ -724,16 +671,11 @@ def inspect(
         # "A {n}-day window" would read "A 8-day" at 8, 11 and 18, all reachable under 30.
         # The article governs "watch window" instead, so no value can disagree with it (#338).
         window_text = f"{window_days} day" if window_days == 1 else f"{window_days} days"
-        warnings.append(
-            PolicyWarning(
-                field=f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
-                severity="warn",
-                message=(
-                    f"A watch window of {window_text} is very short: almost nothing gets "
-                    "watched inside it, so the few-recent-watchers pressure applies to nearly "
-                    "your whole library. A year is the usual setting."
-                ),
-            )
+        warn(
+            f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
+            f"A watch window of {window_text} is very short: almost nothing gets "
+            "watched inside it, so the few-recent-watchers pressure applies to nearly "
+            "your whole library. A year is the usual setting.",
         )
 
     # The season path's member of the same family, one field down the same editor card, and
@@ -799,15 +741,10 @@ def inspect(
                 f"{hold_short}"
             )
             remedy = "Wait for it to build up, or lower this to match your history."
-        warnings.append(
-            PolicyWarning(
-                field="in_progress_hold_days",
-                severity="warn",
-                message=(
-                    f"No TV season will be flagged for removal. {cause}, so it can't tell "
-                    f"who is partway through a show and holds every season. {remedy}"
-                ),
-            )
+        warn(
+            "in_progress_hold_days",
+            f"No TV season will be flagged for removal. {cause}, so it can't tell "
+            f"who is partway through a show and holds every season. {remedy}",
         )
 
     # The FIFTH member of the family, and the one that was deferred rather than written
@@ -883,17 +820,12 @@ def inspect(
         and reach_clears_dormancy
         and not mid_binge_holds_everything
     ):
-        warnings.append(
-            PolicyWarning(
-                field="flag_keep_conflicts",
-                severity="warn",
-                message=(
-                    "Seasons of shows added before your watch history starts won't be removed "
-                    "automatically. Reaper compares how many people watched each season, and "
-                    "it can't count plays from before your history begins, so it marks those "
-                    'shows "Needs a look" instead of guessing.'
-                ),
-            )
+        warn(
+            "flag_keep_conflicts",
+            "Seasons of shows added before your watch history starts won't be removed "
+            "automatically. Reaper compares how many people watched each season, and "
+            "it can't count plays from before your history begins, so it marks those "
+            'shows "Needs a look" instead of guessing.',
         )
 
     disabled = {g.gate for g in body.gates if not g.enabled}
@@ -925,51 +857,36 @@ def inspect(
         ),
     ):
         if gate in disabled:
-            warnings.append(
-                PolicyWarning(field=f"gates.{gate.value}.enabled", severity="danger", message=why)
-            )
+            warn(f"gates.{gate.value}.enabled", why, severity="danger")
 
     if body.condemn_at <= 30:
-        warnings.append(
-            PolicyWarning(
-                field="condemn_at",
-                severity="danger",
-                message=(
-                    f"A threshold of {body.condemn_at} condemns almost everything the "
-                    "protections do not save. Check the simulator's counts and review "
-                    "the flagged list carefully before arming this."
-                ),
-            )
+        warn(
+            "condemn_at",
+            f"A threshold of {body.condemn_at} condemns almost everything the "
+            "protections do not save. Check the simulator's counts and review "
+            "the flagged list carefully before arming this.",
+            severity="danger",
         )
 
     if settings.max_unmeasured_per_run > 0:
         # Legal, and probably not what most operators mean: exactly what this detector is
         # for. The GB caps genuinely cannot cover these items, so saying so is not a
         # scare, it is the one fact that makes the setting understandable.
-        warnings.append(
-            PolicyWarning(
-                field="max_unmeasured_per_run",
-                severity="warn",
-                message=(
-                    f"Reaper will delete up to {settings.max_unmeasured_per_run} items it "
-                    "can't measure. The GB caps won't cover them."
-                ),
-            )
+        warn(
+            "max_unmeasured_per_run",
+            f"Reaper will delete up to {settings.max_unmeasured_per_run} items it "
+            "can't measure. The GB caps won't cover them.",
         )
 
     for spec in body.custom_condemn:
         if spec.field == "size_bytes" and spec.weight > 0:
-            warnings.append(
-                PolicyWarning(
-                    field="custom_condemn",
-                    severity="danger",
-                    message=(
-                        f'Your rule "{spec.name}" removes things for being large. File size '
-                        "measures how much space you reclaim, not whether anyone wants the "
-                        "title, and big files are usually the popular 4K ones. Review what "
-                        "this rule flags over a few scans before arming it."
-                    ),
-                )
+            warn(
+                "custom_condemn",
+                f'Your rule "{spec.name}" removes things for being large. File size '
+                "measures how much space you reclaim, not whether anyone wants the "
+                "title, and big files are usually the popular 4K ones. Review what "
+                "this rule flags over a few scans before arming it.",
+                severity="danger",
             )
 
     # The same footgun through the built-in signal, which had no warning at all while the
@@ -979,17 +896,13 @@ def inspect(
         (s for s in body.signals if s.signal is SignalId.SIZE and s.weight > 0), None
     )
     if size_signal is not None:
-        warnings.append(
-            PolicyWarning(
-                field="signals",
-                severity="danger",
-                message=(
-                    f'"Large files" is adding {size_signal.weight} points toward removal. File '
-                    "size measures how much space you reclaim, not whether anyone wants the "
-                    "title, and big files are usually the popular 4K ones. Review what it "
-                    "flags over a few scans before arming it."
-                ),
-            )
+        warn(
+            "signals",
+            f'"Large files" is adding {size_signal.weight} points toward removal. File '
+            "size measures how much space you reclaim, not whether anyone wants the "
+            "title, and big files are usually the popular 4K ones. Review what it "
+            "flags over a few scans before arming it.",
+            severity="danger",
         )
 
     # A rule written on a field this media type cannot read. `Condition.validate_for`
@@ -1010,16 +923,12 @@ def inspect(
                 continue
             called = f' "{name}"' if name else ""
             where = "seasons" if body.media_type == "tv" else "movies"
-            warnings.append(
-                PolicyWarning(
-                    field=anchor,
-                    severity="danger",
-                    message=(
-                        f"Your {kind}{called} uses {field_spec.label}, which Reaper cannot read "
-                        f"for {where}, so it never does anything. Remove it here, and set it "
-                        "on your other policy instead."
-                    ),
-                )
+            warn(
+                anchor,
+                f"Your {kind}{called} uses {field_spec.label}, which Reaper cannot read "
+                f"for {where}, so it never does anything. Remove it here, and set it "
+                "on your other policy instead.",
+                severity="danger",
             )
 
     # There was a dilution warning here, telling an owner that a rule written as 20 was
@@ -1029,16 +938,11 @@ def inspect(
     # that cannot occur is worse than no warning, so it is gone rather than reworded.
 
     if body.media_type == "tv" and body.keep_last_seasons >= 10:
-        warnings.append(
-            PolicyWarning(
-                field="keep_last_seasons",
-                severity="warn",
-                message=(
-                    f"Keeping the last {body.keep_last_seasons} seasons protects every season of "
-                    "most shows, so TV pruning is effectively off: most series have fewer "
-                    "seasons than this."
-                ),
-            )
+        warn(
+            "keep_last_seasons",
+            f"Keeping the last {body.keep_last_seasons} seasons protects every season of "
+            "most shows, so TV pruning is effectively off: most series have fewer "
+            "seasons than this.",
         )
 
     # "Requested only" needs Seerr to tell a requested show from an unrequested one.
@@ -1053,31 +957,21 @@ def inspect(
         and body.keep_last_seasons > 0
         and not requests_app_configured
     ):
-        warnings.append(
-            PolicyWarning(
-                field="keep_last_scope",
-                severity="warn",
-                message=(
-                    f"Reaper is keeping the last {body.keep_last_seasons} seasons of every "
-                    "show, not just requested ones: telling them apart needs Seerr, and no "
-                    'Seerr service is connected. Connect one, or switch this to "All shows" '
-                    "so the setting says what actually happens."
-                ),
-            )
+        warn(
+            "keep_last_scope",
+            f"Reaper is keeping the last {body.keep_last_seasons} seasons of every "
+            "show, not just requested ones: telling them apart needs Seerr, and no "
+            'Seerr service is connected. Connect one, or switch this to "All shows" '
+            "so the setting says what actually happens.",
         )
 
     total_keep = sum(k.max_discount for k in body.graded_keeps)
     if total_keep >= body.condemn_at:
-        warnings.append(
-            PolicyWarning(
-                field="graded_keeps",
-                severity="warn",
-                message=(
-                    f"Your keep rules can subtract up to {total_keep} points, at or above your "
-                    f"remove threshold of {body.condemn_at}. Together they could keep almost "
-                    "everything. Check the simulator still shows items to remove."
-                ),
-            )
+        warn(
+            "graded_keeps",
+            f"Your keep rules can subtract up to {total_keep} points, at or above your "
+            f"remove threshold of {body.condemn_at}. Together they could keep almost "
+            "everything. Check the simulator still shows items to remove.",
         )
 
     return warnings

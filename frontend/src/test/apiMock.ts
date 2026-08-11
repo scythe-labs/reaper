@@ -30,12 +30,12 @@
 // tidier spelling of a gate that already existed -- for every mutation in the module, it is the
 // only thing standing between a gap and a confusing failure.
 //
-// The key list is checked against the real module by `apiMock.test.ts`, in both directions, so a
-// function added to `api.ts` fails here rather than going missing from thirty-five trees at once
-// (rule 103).
+// There is no key list to check. The names are read off `api` itself, so a function added to or
+// removed from `api.ts` is answered here on the next run, and rule 103's drift guard has nothing
+// left to guard.
 import { vi } from "vitest";
 
-import type { api } from "../api";
+import { api } from "../api";
 
 /** Every api function as a `vi.fn()`, typed against the real one so a call site that mocks the
  *  wrong shape is a compile error rather than a passing test. */
@@ -45,101 +45,5 @@ export type ApiMock = { [K in keyof typeof api]: ReturnType<typeof vi.fn> };
  *  vitest gives each test file its own module registry, so a shared instance would leak counts
  *  between them (rule 133). */
 export function makeApiMock(): ApiMock {
-  return {
-    latestSnapshot: vi.fn(),
-    candidates: vi.fn(),
-    candidate: vi.fn(),
-    group: vi.fn(),
-    setupStatus: vi.fn(),
-    instances: vi.fn(),
-    createInstance: vi.fn(),
-    updateInstance: vi.fn(),
-    deleteInstance: vi.fn(),
-    instanceRootFolders: vi.fn(),
-    instanceSeerrServices: vi.fn(),
-    testInstance: vi.fn(),
-    testSavedInstance: vi.fn(),
-    plexStatus: vi.fn(),
-    setPlexSettings: vi.fn(),
-    plexLinkStart: vi.fn(),
-    plexLinkPoll: vi.fn(),
-    plexUnlink: vi.fn(),
-    plexResources: vi.fn(),
-    plexSwitchServer: vi.fn(),
-    plexSetConnection: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-    setPlexLibraries: vi.fn(),
-    watchEvidence: vi.fn(),
-    resetWatchEvidence: vi.fn(),
-    forgetWatchEvidenceFor: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    setLeavingSoonSettings: vi.fn(),
-    about: vi.fn(),
-    update: vi.fn(),
-    general: vi.fn(),
-    saveGeneral: vi.fn(),
-    revealApiKey: vi.fn(),
-    generateApiKey: vi.fn(),
-    removeApiKey: vi.fn(),
-    logs: vi.fn(),
-    setLogLevel: vi.fn(),
-    downloadLogs: vi.fn(),
-    backupInfo: vi.fn(),
-    downloadBackup: vi.fn(),
-    restorePrepare: vi.fn(),
-    restoreConfirm: vi.fn(),
-    restoreCancel: vi.fn(),
-    restoreRestart: vi.fn(),
-    schedule: vi.fn(),
-    saveJobSchedule: vi.fn(),
-    runJob: vi.fn(),
-    safety: vi.fn(),
-    setDeletion: vi.fn(),
-    setAdminPassword: vi.fn(),
-    notifications: vi.fn(),
-    setWebhook: vi.fn(),
-    clearWebhook: vi.fn(),
-    testWebhook: vi.fn(),
-    policy: vi.fn(),
-    vocabulary: vi.fn(),
-    vocabularyValues: vi.fn(),
-    savePolicy: vi.fn(),
-    validatePolicy: vi.fn(),
-    simulate: vi.fn(),
-    probePolicy: vi.fn(),
-    seasonShape: vi.fn(),
-    startScan: vi.fn(),
-    scanStatus: vi.fn(),
-    runs: vi.fn(),
-    run: vi.fn(),
-    runSteps: vi.fn(),
-    createRun: vi.fn(),
-    dryRun: vi.fn(),
-    executeRun: vi.fn(),
-    reapStatus: vi.fn(),
-    stopRun: vi.fn(),
-    profile: vi.fn(),
-    saveProfile: vi.fn(),
-    fairness: vi.fn(),
-    person: vi.fn(),
-    reapBreakdown: vi.fn(),
-    plexTrash: vi.fn(),
-    lists: vi.fn(),
-    listConfigs: vi.fn(),
-    addList: vi.fn(),
-    editList: vi.fn(),
-    removeList: vi.fn(),
-    syncLists: vi.fn(),
-    syncLeavingSoon: vi.fn(),
-    override: vi.fn(),
-    clearOverride: vi.fn(),
-    me: vi.fn(),
-    authContext: vi.fn(),
-    plexStart: vi.fn(),
-    plexPoll: vi.fn(),
-    localLogin: vi.fn(),
-    recover: vi.fn(),
-    logout: vi.fn(),
-  };
+  return Object.fromEntries(Object.keys(api).map((name) => [name, vi.fn()])) as ApiMock;
 }

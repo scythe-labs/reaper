@@ -167,7 +167,7 @@ def write_capture(payload: dict[str, Any]) -> None:
             "refusing to write: the capture carries strings that are not an item id, a "
             "digest, or a known term, and this file is committed.\n" + "\n".join(offenders[:10])
         )
-    OUT.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n")
+    OUT.write_text(json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n")
 
 
 def committed_snapshot_id() -> int | None:

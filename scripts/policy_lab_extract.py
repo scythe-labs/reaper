@@ -159,7 +159,7 @@ def write_fixture(fixture: dict[str, Any]) -> None:
     because a second writer would restore the split this exists to remove.
     """
     fixture["scorer_version"] = SCORER_VERSION
-    OUT.write_text(json.dumps(fixture, indent=1, sort_keys=True) + "\n")
+    OUT.write_text(json.dumps(fixture, separators=(",", ":"), sort_keys=True) + "\n")
 
 
 def stamped_scorer(fixture: dict[str, Any]) -> int | None:

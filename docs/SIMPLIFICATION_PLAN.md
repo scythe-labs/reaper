@@ -4050,6 +4050,13 @@ sites calling `.toLocaleString()` where `count()` exists (~20).
 > assertion. Two jsdom limits bound what it can read and are written into the file itself, at
 > the line a reader hits them. **Five stylesheets, +57/-60, and -29 once comments are set
 > aside.**
+>
+> **The baseline was deleted once the move had landed, and the file is gone from the tree.**
+> It answered one question, whether that move changed anything, and it answered it. What it
+> would have cost from then on is 156 captured numbers to re-paste on the next legitimate
+> change to any of the six controls, against a reading jsdom already disagrees with a browser
+> on twice. `styles-control-standard.test.ts` and `styles-hand-fate.test.ts` stay: neither
+> captures a value, one holds a block to `--control-pad` and the other pins cascade order.
 
 **Errors and messages.** **W11-31** Four `IntegrationError` sentences raised twice each in
 `clients/base.py`
