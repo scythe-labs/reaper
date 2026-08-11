@@ -173,12 +173,20 @@ describe("ServiceModal HD/4K library map", () => {
   });
 
   it("keeps a saved mapping and does not tag it 'suggested'", async () => {
+    // The suggestion DIFFERS from what is saved, which is what makes this two proofs instead of
+    // one: the saved row holds "TV" because the stored pick won, not because both sides agreed
+    // (rule 141). And the second folder is what says the prefill actually ran. Without it the
+    // assertion lands on the first render and passes before the effect can overwrite anything,
+    // so a prefill that clobbers a saved pick reads green.
     renderModal(sonarr({ plex_library_map: { "/tv": "TV" } }), [
-      { path: "/tv", suggested_library: "TV" },
+      { path: "/tv", suggested_library: "TV 4K" },
+      { path: "/tv-spare", suggested_library: "TV 4K" },
     ]);
-    await waitFor(() => expect(selectForFolder("/tv").value).toBe("TV"));
-    // A folder already saved is not a suggestion, so no tag.
-    expect(screen.queryByText("suggested")).not.toBeInTheDocument();
+    await waitFor(() => expect(selectForFolder("/tv-spare").value).toBe("TV 4K"));
+
+    expect(selectForFolder("/tv").value).toBe("TV");
+    // A folder already saved is not a suggestion, so only the unsaved row is tagged.
+    expect(screen.getAllByText("suggested")).toHaveLength(1);
   });
 
   // Saving REBUILDS the map from the folders in hand, which is how an entry for a folder the *arr

@@ -5,10 +5,9 @@
 // this file is what makes the rest of the sweep hold.
 import { render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { Notice } from "./Notice";
-import { SwitchConfirm } from "./SwitchConfirm";
+import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
 
 describe("a notice", () => {
   // The defect this whole component exists for: 109 hand-rolled notices, zero live regions.
@@ -86,26 +85,31 @@ describe("a notice", () => {
 });
 
 describe("the confirm that refuses a switch away from unsaved edits", () => {
-  function Harness({ onDiscard = vi.fn() }: { onDiscard?: () => void }) {
-    const [nonce, setNonce] = useState(0);
-    const [pending, setPending] = useState(false);
+  // Driven through `useSwitchConfirm`, the caller half Settings and the policy editor share, so
+  // these are tests of what ships rather than of a fixture that re-implements it (rule 119). The
+  // harness stands in for Settings: "general" is open, "Security" is the press being refused.
+  function Harness({
+    commit = vi.fn(),
+    dirty = true,
+  }: {
+    commit?: (n: string) => void;
+    dirty?: boolean;
+  }) {
+    const confirm = useSwitchConfirm<string>("general", dirty, commit);
     return (
       <>
-        <button
-          type="button"
-          onClick={() => {
-            setPending(true);
-            setNonce((n) => n + 1);
-          }}
-        >
+        <button type="button" onClick={() => confirm.request("security")}>
           Security
         </button>
-        {pending && (
+        <button type="button" onClick={() => confirm.request("general")}>
+          General
+        </button>
+        {confirm.pending !== null && (
           <SwitchConfirm
-            nonce={nonce}
+            nonce={confirm.nonce}
             message="You have unsaved General settings. Switching to Security discards them."
-            onDiscard={onDiscard}
-            onKeep={() => setPending(false)}
+            onDiscard={confirm.discard}
+            onKeep={confirm.keep}
           />
         )}
       </>
@@ -158,5 +162,46 @@ describe("the confirm that refuses a switch away from unsaved edits", () => {
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(rail).toHaveFocus();
+  });
+
+  it("moves only when Discard is pressed, and moves to the section that was refused", async () => {
+    const user = userEvent.setup();
+    const commit = vi.fn();
+    render(<Harness commit={commit} />);
+
+    await user.click(screen.getByRole("button", { name: "Security" }));
+    expect(commit).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Discard and switch" }));
+    expect(commit).toHaveBeenCalledExactlyOnceWith("security");
+  });
+
+  // B-31: the notice used to survive a Save, still warning that a switch "discards them" and
+  // still offering a red Discard for changes that no longer existed. The policy editor fixed
+  // that in its own copy while Settings carried a comment pointing at the fix; one hook now
+  // holds it for both. Saving is not a decision to leave, so nothing switches here.
+  it("goes away when the edits do, without switching", async () => {
+    const user = userEvent.setup();
+    const commit = vi.fn();
+    const { rerender } = render(<Harness commit={commit} dirty />);
+
+    await user.click(screen.getByRole("button", { name: "Security" }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    rerender(<Harness commit={commit} dirty={false} />);
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("does not refuse a press of the section already open", async () => {
+    const user = userEvent.setup();
+    const commit = vi.fn();
+    render(<Harness commit={commit} />);
+
+    await user.click(screen.getByRole("button", { name: "General" }));
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(commit).not.toHaveBeenCalled();
   });
 });

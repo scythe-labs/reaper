@@ -3309,6 +3309,111 @@ border-box` its used width is 29.2px against the 24px token it names. The `width
 nothing. It was left as it renders and the shared rule excludes it, since folding it in would have
 needed a `padding` declaration whose only job was to cancel a shared one.
 
+## A shell gate can be green because the page is small (2026-08-10)
+
+`binaries.yml`'s boot probes check the packaged build serves the SPA and not a JSON 404:
+
+```
+if curl -s http://127.0.0.1:8461/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
+```
+
+Under `set -o pipefail` a pipeline reports its rightmost failing command. `head -c 200` exits
+after 200 bytes and `grep -q` exits on the first match, so curl can take SIGPIPE and the pipeline
+is non-zero with `grep` having matched. **Whether that happens depends on the page size.**
+Measured with the same one-liner: a 4 KB body passes, a 200 KB body fails. Under the pipe buffer
+curl writes the whole response and exits 0 before either reader closes.
+
+Today's `index.html` is 4,276 bytes, so all three copies of that line are green on a margin
+nobody chose. The build that trips it is a healthy one whose page grew, and the log says the
+bundle lost its SPA. Redirecting to a file and grepping the file removes the pipeline.
+
+The general shape: **`| head` inside a pipefail gate makes the verdict a function of how much the
+writer produced**, not of what it produced. CLAUDE.md's rule 134 names `| head` for the sibling
+case, a command dying partway and reporting that as its own result; this is the same mechanism
+reaching the opposite conclusion, a command that succeeded reported as failed.
+
+## Four dedups, three wrong figures, and none of them landing on lines (2026-08-10)
+
+Wave 11's W11-42, W11-19, W11-18 and W11-10, built and measured in one pass. Code net: **-8, -8,
+-3 and +2**. Stated: ~85 (~16 believed removable), ~15, ~25, ~45. Only W11-19's held.
+
+**Each is roughly canceled by the comment the shared thing now carries.** Two copies each carry
+half an explanation, or one carries it and the other carries a pointer to it; one shared
+declaration carries the whole thing, and this repository writes that out. So the *total* diff for
+all four is close to zero while the *code* falls by 17. S5 read as a line test kills all four.
+
+**What each one actually bought was a rule that had already been forgotten once.**
+
+- **W11-10** is the clearest, at +2 code. "No `await` between the read and the write" is what
+  stops two requests installing two different per-app objects, and it was written at one of four
+  copies and depended on at three. A plain `def` cannot acquire an await without every call site
+  turning async first.
+- **W11-19**'s two copies had already cost a bug: one surface found that the notice must clear on
+  a Save and not only on Discard, and the other then carried a comment *pointing at* that fix
+  rather than sharing it. The extraction also found a fourth caller nobody had counted, by
+  breaking it.
+- **W11-18**'s no-clobber rule was unpinned across the whole suite, behind rule 141: the test set
+  the saved value and the suggested value both to the same string.
+- **W11-42**'s two copies shared the line above, so the defect would have had to be found and
+  fixed twice.
+
+The plan's S5 already carries the standing form, that a kill needs both halves said. What these
+four add is the measurement: across four independent cases the code fell by 17 lines and the
+diff by nothing, so on this codebase the line half decides almost nothing on its own. The
+question that did the work each time was **"is there a rule here that only one copy states"**.
+## A helper measured at zero lines was measured in the wrong shape (2026-08-10)
+
+Two settings findings were killed on "an extraction that nets to zero lines is not worth its
+risk". Both were re-measured. One was killed on the wrong shape and is now built. The other loses on
+every reading, including the partial nobody had priced.
+
+**The shape decides the arithmetic, and the first shape measured was the expensive one.** The
+helper priced for `app_settings.py`'s three identical switch getters swallowed the `await _get(...)`
+call, which is what put `leaving_soon_unarmed`'s call at 104 columns against a 100-column limit
+and made it wrap to three lines. A helper taking the value `_get` already returned is pure,
+synchronous, typed `-> bool`, and leaves every call site between 76 and 79 columns. Measured
+across both helpers: **+13 total lines, -9 code lines**, the difference being 18 docstring
+lines and six blanks. The rule those docstrings hold used to be implied at three sites and
+stated as prose at two of them.
+
+**A test walk that matches on a call stops seeing any function that hands that call to a
+helper.** `tests/test_app_settings_precedence.py` derives its population by AST: a function
+that calls `_get` and takes a `Settings`. The swallowing helper would have dropped all three
+switch getters out of it, leaving the count at four and the gate green while three sites went
+uncovered. The value-taking helper keeps every `_get` call where the walk can see it. **Before
+extracting anything, grep the tests for a walk that matches on the call you are about to move.**
+
+**One declaration turns three mutations into one, and that is the payoff a line count cannot
+show.** Swapping `stored is None` for `not stored` inside the shared helper fails three named
+cases at once; before, the same defect had to be introduced three times to be caught three times.
+The credential helper reaches a third caller the finding never counted, `get_api_key`, whose own
+decrypt-failure path is pinned by nothing of its own: it stayed green under the mutation across
+296 tests in `test_settings_api.py`, `test_general_and_logs.py`, `test_foundations.py` and
+`test_api.py`. It is covered transitively now, by the one Discord case that drives the shared
+declaration.
+
+**The scheduler decorator loses even as a partial, and the partial had never been priced.** The
+kill judged it over all seven jobs. Decorating only the four that fit was built for real,
+formatted, mypy-clean and green on every scheduler test, 37 of them at the commit it was measured on: **+21 total lines, +13 non-comment
+lines, +5 statements**, against an estimate of about zero. `inspect.signature().bind()` is still needed after the
+narrowing, because three distinct argument positions survive it. And the drift question answers the
+same way the line count does: each of the four still declares its own job id, log event and
+result string at the decoration, so the only thing centralized is `ok=False`.
+
+**Writing the rule down is what found the site that broke it.** The credential helper's docstring
+says every caller has to agree that an undecryptable credential is absent. A review lane checked
+that claim against the tree and found `GeneralSettingsOut.api_key_set` computing presence from row
+existence, so a key written under a rotated secret reported as set while the reveal route 404s and
+the header lane refuses it. Rule 76's shape, one level up from a file check, and it was on `dev`.
+Fixed rather than filed, because the claim is this branch's. **The sweep found no second site**:
+instance credentials have no absent-on-broken posture at all, every `decrypt` of one letting the
+`ValueError` propagate, so `InstanceView.has_key` reading `bool(row.api_key_enc)` agrees with its
+own runtime and is not the same defect.
+
+**The general form is now in the plan's S5.** "Nets to zero" is a line test. How many places a
+future author has to keep in step is a different question, and a kill that answers only the
+first one is not finished.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
