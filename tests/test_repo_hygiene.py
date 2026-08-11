@@ -3244,8 +3244,12 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # Then 36 -> 35: the policy editor's two standing recovery notices became one render over the
 # `top` half of `REPAIR_NOTICES`. Still standing, and for the same reason -- a repair is carried
 # by the fetch, so it is the state of the page from its first paint (#516).
+# Then 36: the setup wizard's password step, the second drawing of `AdminPasswordForm` and the
+# one place its live complaint was still announced. Same `{pw.length} so far` inside a live
+# region on every keystroke, on the form that sets the key arming deletion; the sibling above has
+# been standing since #394 and this copy was never swept (rule 72).
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 35
+_EXPECTED_STANDING = 36
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
@@ -3738,6 +3742,174 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     )
 
 
+#: The surfaces that hold a connection-test verdict beside the fingerprint it was computed for,
+#: so a badge can be withdrawn once it stops describing what is on screen. This is the population
+#: the ban below scans, not a second one beside it (rule 147): every shipped file spelling an
+#: ``of:`` key outside a comment. Pinned by name, because the fifth surface is written by copying
+#: whichever of these four its author happened to open, and three of the four were the wrong copy.
+_VOUCHED_TEST_SURFACES = {
+    "frontend/src/components/DiscordModal.tsx",
+    "frontend/src/components/NotificationsPanel.tsx",
+    "frontend/src/components/ServiceModal.tsx",
+    "frontend/src/components/ServicesPanel.tsx",
+}
+
+_OF_KEY = re.compile(r"\bof:")
+
+#: What an ``of:`` key may be handed: a name, or a path of them. ``issued.of`` is the fingerprint
+#: captured when the request was issued; ``string`` is the type annotation on the state that holds
+#: it. Everything else is an expression, and an expression under ``of:`` is evaluated where it is
+#: written, which is the question this asks.
+_CAPTURED_NAME = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$")
+
+
+def _without_comments_keeping_lines(text: str) -> str:
+    """``_without_comments``, with every removed line still there as an empty one.
+
+    The offender list reports line numbers, so the collapsing form cannot be used. A block
+    comment becomes its own newlines.
+    """
+    blanked = _BLOCK_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    return _without_line_comments(blanked)
+
+
+def _value_after_of(line: str) -> str | None:
+    """The expression ``line`` hands to an ``of:`` key, or ``None`` where it has no such key.
+
+    Bounded crudely, at the first ``,``, ``;`` or closing bracket. That cuts a value carrying one
+    of those inside a string (``of: `${kind}, ${baseUrl()}` ``) short, and the check below is
+    written so a short read is a FAILURE rather than a pass: half a template literal is not a
+    name either. An exact walk over bracket depth was tried first and is what made the cut matter,
+    since it counted brackets and not quotes and so mis-read the same line the other way.
+    """
+    key = _OF_KEY.search(line)
+    if key is None:
+        return None
+    for i in range(key.end(), len(line)):
+        if line[i] in ",;)]}":
+            return line[key.end() : i]
+    return line[key.end() :]
+
+
+def _settle_time_fingerprints(text: str) -> list[int]:
+    """Line numbers where an ``of:`` key is handed anything but a name, outside ``onMutate``.
+
+    Written as an allowlist rather than as a hunt for a call, because the defect is not "a call
+    ran here" but "this value was computed here", and a template literal spelling out the same
+    fingerprint is the same defect with no call in it. The first draft asked for a call and let
+    exactly that through. So the two shapes a stored fingerprint may take are named and everything
+    else fails, which is the direction a gate on this tree resolves.
+    """
+    found = []
+    for n, line in enumerate(_without_comments_keeping_lines(text).splitlines(), 1):
+        if "onMutate" in line:
+            continue
+        value = _value_after_of(line)
+        if value is not None and not _CAPTURED_NAME.match(value.strip()):
+            found.append(n)
+    return found
+
+
+def test_a_held_test_result_is_stamped_when_its_request_is_issued() -> None:
+    """A "Passed" badge must describe the address that was tested, not the one now on screen.
+
+    Four surfaces store ``{ result, of }`` and show the badge only while ``of`` still matches what
+    the form holds. That comparison is the honesty of the badge (rule 85), and it is satisfied by
+    computing the fingerprint at EITHER end -- which is why three of the four computed it at
+    success time, where it is no longer the address the request asked about. The boxes stay live
+    while the request is out, so pasting a second webhook while the first is being sent to left the
+    two matching by construction and "Passed" beside a channel nobody tried. ``ServiceModal``
+    captured it in ``onMutate`` and the other three did not, and nothing in the suite could see the
+    difference; #178 and #264 each fixed one site of this family by hand.
+
+    **The forms this reads** (rule 147): the value an ``of:`` key is handed, on a line that does
+    not also spell ``onMutate``, in a shipped ``.ts``/``.tsx`` with block comments blanked and
+    ``//`` runs cut. It passes a name or a path of names, ``issued.of`` and ``string``; everything
+    else fails, template literals and concatenations included.
+    ``test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of`` runs both lists.
+
+    One thing it cannot see, and the population pin is what covers it: a fingerprint computed into
+    a local at success time and handed over by that local's name. The pin is over the same ``of:``
+    keys this scans rather than over the helper's name, so a fifth surface arrives here to be read
+    whatever it calls its fingerprint.
+
+    One thing the pin cannot see either, named rather than implied: ``_BLOCK_COMMENT`` reads a
+    ``/*`` inside a string literal as an opener, so the span to the next ``*/`` is blanked. The
+    tree holds one, ``docs/toMdx.ts:21``'s ``GENERATED_MARKER``, measured at 123 characters over
+    no line break and covering no ``of:``.
+    """
+    holders = {
+        str(path.relative_to(REPO))
+        for path in _shipped_frontend_source()
+        if any(
+            _OF_KEY.search(line)
+            for line in _without_comments_keeping_lines(
+                path.read_text(encoding="utf-8")
+            ).splitlines()
+        )
+    }
+    assert holders == _VOUCHED_TEST_SURFACES, (
+        "the surfaces pairing a test result with its fingerprint moved.\n"
+        f"expected: {sorted(_VOUCHED_TEST_SURFACES)}\nfound:    {sorted(holders)}\n"
+        "A new one: capture the fingerprint in the mutation's `onMutate` and read it back off\n"
+        "the context in `onSuccess`, the way `ServiceModal` does, then add the file here. One\n"
+        "that went away: drop it."
+    )
+
+    offenders = [
+        f"{path.relative_to(REPO)}:{n}"
+        for path in _shipped_frontend_source()
+        for n in _settle_time_fingerprints(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        "these compute a test result's fingerprint where the result is STORED, which is after\n"
+        "the request came back. The operator can keep typing while it is out, so the answer gets\n"
+        "filed against an address it was never asked about and the badge vouches for a host\n"
+        "nobody tried (rule 85). Capture it at issuance instead:\n"
+        "  onMutate: () => ({ of: testedWith() }),\n"
+        "  onSuccess: (r, _v, issued) => setTest({ result: r, of: issued.of }),\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -> None:
+    """The gate above is a source-text scan, so it is worth what its matcher can parse (rule 147).
+
+    Every case here is a way the check could read green over a real one, or red over an innocent
+    line. Four earned their place by failing a draft of it: the call hunt this replaced passed
+    ``of: [kind, baseUrl()].join(" ")``, then passed an inlined template literal with no call in
+    it at all, and the bracket walk written to fix the first counted brackets and not quotes, so a
+    comma inside a template literal ended the value early. The JSX case is the fail-closed one, a
+    block comment's continuation line, which the per-line prefix skip could not see.
+    """
+    caught = [
+        "      setTest({ result: r, of: testedWith() });",
+        '      setTest({ result: r, of: [kind, baseUrl()].join(" ") });',
+        "  setProbe({ of: fingerprint(), result: r });",
+        "      setTest({ result: r, of: `${instance.base_url} ${instance.has_key}` });",
+        '      setTest({ result: r, of: "a, " + testedWith() });',
+        '      setTest({ result: r, of: host + ":" + port });',
+    ]
+    passed = [
+        "      setTest({ result: r, of: issued.of });",
+        "    onMutate: () => ({ of: testedWith() }),",
+        "    of: string;",
+        "  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);",
+        # The value is a name; the call belongs to the member after it.
+        "      setTest({ of: issued.of, result: normalize(r) });",
+        # Prose, in the three shapes the tree writes it. Both blocks are whole, because a
+        # continuation line is only ever reached with its opener: `ListsPanel` writes the JSDoc
+        # one, "covers only part of:", and the diff that added this gate wrote the JSX one.
+        "      // of: testedWith() is what this used to be",
+        "/** A list a rule covers\n *  only part of: what it keeps (roughly).\n */",
+        "{/* Two lines, and this is the second:\n    of: the operator presses Test again. */}",
+    ]
+    for line in caught:
+        assert _settle_time_fingerprints(line) == [1], f"should be caught: {line}"
+    for line in passed:
+        assert _settle_time_fingerprints(line) == [], f"should NOT be caught: {line}"
+
+
 # Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
 # count once carried past were #147's library pickers, which shipped nameless; they have names
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
@@ -3936,7 +4108,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # they share. It audits that head with every link set, the state neither panel's own suite drives.
 # +1 for `AppFocus.test.tsx`, which is exempt rather than audited: it mounts the shell to ask
 # which view is holding a jump's aim, and the two routes it drives to are stubs printing a prop.
-_EXPECTED_RENDERING_TEST_FILES = 56
+_EXPECTED_RENDERING_TEST_FILES = 57
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5011,7 +5183,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 204
+_EXPECTED_FRONTEND_MODULES = 205
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -5831,11 +6003,15 @@ def test_the_membership_walk_reads_the_forms_the_tree_spells(tmp_path: Path) -> 
 
 
 #: Every argument a Sonarr or Radarr client must be handed, beyond the URL and the key.
-#: Omitting one is not a crash: the client falls back to its own default, which is
-#: ``/api/v3`` for the path and ``verify=True`` for TLS. Both are the *narrow* direction, so
+#: Omitting ``api_path_prefix`` or ``verify`` is not a crash: the client falls back to its own
+#: default, ``/api/v3`` for the path and ``True`` for TLS. Both are the *narrow* direction, so
 #: the failure is a scan that reads nothing or a Test Connection that validates a path the
-#: scan will never send to, never a wider deletion.
+#: scan will never send to, never a wider deletion. ``safety`` is the one that crashes, being
+#: keyword-only and required, so this gate can only ever report on the other two.
 _ARR_CONSTRUCTION_ARGS = frozenset({"safety", "verify", "api_path_prefix"})
+
+#: The two classes the argument set above belongs to.
+_ARR_CLIENTS = ("RadarrClient", "SonarrClient")
 
 #: Reconciled by hand against the tree, so a site that leaves the walk is noticed rather
 #: than silently dropping out of the assertion below (rule 145). **Six, which is three
@@ -5846,14 +6022,15 @@ _ARR_CONSTRUCTION_ARGS = frozenset({"safety", "verify", "api_path_prefix"})
 _EXPECTED_ARR_CONSTRUCTIONS = 6
 
 
-def _arr_construction_sites(root: Path) -> dict[str, set[str]]:
-    """Every ``RadarrClient(...)`` / ``SonarrClient(...)`` call under ``src/``, by address.
+def _client_construction_sites(root: Path, names: tuple[str, ...]) -> dict[str, set[str]]:
+    """Every ``<name>(...)`` call under ``src/`` for the given client classes, by address.
 
-    Reads the call node and inspects its keywords, rather than anchoring on the text after
-    the paren: three of the four sites wrap across five lines and one is a single line, so a
-    line-oriented matcher reads one spelling and misses the rest (rule 147). A ``**kwargs``
-    splat would defeat this, and none exists; if one arrives it is recorded as passing
-    nothing, and the assertion below names it.
+    Two gates read this, the *arr one below over six sites and the TLS one over 21. Reads the
+    call node and inspects its keywords, rather than anchoring on the text after the paren:
+    most sites wrap across several lines and some are a single line, so a line-oriented
+    matcher reads one spelling and misses the rest (rule 147). A ``**kwargs`` splat would
+    defeat this, and none exists; if one arrives it is recorded as passing nothing, and the
+    caller's membership assertion names it.
     """
     found: dict[str, set[str]] = {}
     for path in sorted(root.rglob("*.py")):
@@ -5861,7 +6038,7 @@ def _arr_construction_sites(root: Path) -> dict[str, set[str]]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                 continue
-            if node.func.id not in ("RadarrClient", "SonarrClient"):
+            if node.func.id not in names:
                 continue
             rel = path.relative_to(REPO).as_posix()
             found[f"{rel}:{node.lineno} {node.func.id}"] = {
@@ -5879,7 +6056,7 @@ def test_every_arr_client_is_built_with_the_same_arguments() -> None:
     someone who never read that note, which is what this is (rule 72, and CLAUDE.md's "write
     the gate instead" -- a shared constructor would only bind the sites that call it).
     """
-    sites = _arr_construction_sites(SRC)
+    sites = _client_construction_sites(SRC, _ARR_CLIENTS)
     assert len(sites) == _EXPECTED_ARR_CONSTRUCTIONS, (
         f"expected {_EXPECTED_ARR_CONSTRUCTIONS} *arr client constructions under src/, walked "
         f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass "
@@ -5903,10 +6080,13 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
 
     The tree spells these two ways -- one call per line, and one wrapped across five -- and a
     matcher anchored on the text after the paren reads the first and misses the second. This
-    drives both, plus the two forms that must NOT be collected: a same-named method call
-    (``self.RadarrClient(...)`` is an Attribute, not a Name) and an unrelated client. The
+    drives both, plus the form that must NOT be collected under any name set: a same-named
+    method call, ``self.RadarrClient(...)`` being an Attribute rather than a Name. The
     ``**kwargs`` splat is the one shape that defeats the argument check rather than the walk,
     so it is collected as passing nothing and the membership assertion is what names it.
+
+    The ``TautulliClient`` call is collected by the TLS name set and not by the *arr one, off
+    one scratch file read twice. A matcher serving two populations is proven in both.
     """
     scratch = tmp_path / "src" / "reaper"
     scratch.mkdir(parents=True)
@@ -5930,7 +6110,8 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
     global REPO
     real, REPO = REPO, tmp_path
     try:
-        found = _arr_construction_sites(scratch)
+        found = _client_construction_sites(scratch, _ARR_CLIENTS)
+        wider = _client_construction_sites(scratch, _TLS_CLIENTS)
     finally:
         REPO = real
 
@@ -5942,6 +6123,92 @@ def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: 
     assert found["src/reaper/m.py:2 RadarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
     assert found["src/reaper/m.py:4 SonarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
     assert found["src/reaper/m.py:12 RadarrClient"] == set()
+
+    # The same matcher under the wider name set. The Tautulli call the *arr walk must not
+    # collect is one this one must, and the attribute form stays out of both.
+    assert set(wider) == set(found) | {"src/reaper/m.py:14 TautulliClient"}, wider
+    assert wider["src/reaper/m.py:14 TautulliClient"] == {"safety", "verify"}
+
+
+#: What every client built from an address the operator typed must be handed. ``safety`` is
+#: the transport guard's state, keyword-only and required (``BaseClient.__init__``,
+#: ``PlexClient.__init__``), so omitting it raises ``TypeError`` and this gate never sees it.
+#: ``verify`` is that instance's TLS switch and falls back to ``True``, so dropping it costs
+#: agreement rather than safety. An operator whose server sits behind a self-signed
+#: certificate gets one surface that cannot reach it while every other surface can, and
+#: nothing announces the difference.
+_TLS_CLIENT_ARGS = frozenset({"safety", "verify"})
+
+#: Every class in ``clients/`` that is CONSTRUCTED against an address the operator stored.
+#: This list is the walk's real bound and no count can cover it, since a class the matcher
+#: never names contributes zero sites and the number below never moves (rule 145). So the
+#: four classes that also declare ``verify`` are excluded in writing rather than by omission:
+#:
+#: * ``PlexTvClient`` reaches plex.tv, an address nobody configured, and declares no
+#:   ``verify`` at all.
+#: * ``GuardedSession`` is the transport plexapi rides, built inside ``PlexClient`` from the
+#:   ``verify`` that client was already handed.
+#: * ``BaseClient`` and ``ArrClient`` are base classes with no direct construction anywhere.
+#:
+#: ``_ProbeClient`` IS in: it probes one advertised address of the operator's own server, and
+#: both callers thread that server's stored switch into it.
+_TLS_CLIENTS = (
+    "PlexClient",
+    "RadarrClient",
+    "SeerrClient",
+    "SonarrClient",
+    "TautulliClient",
+    "_ProbeClient",
+)
+
+#: Reconciled by hand against the tree, so a site that leaves the walk is noticed rather than
+#: silently dropping out of the assertion (rule 145). **Twenty-one**: six ``PlexClient``, five
+#: ``TautulliClient``, three ``SeerrClient``, one ``_ProbeClient``, and the six ``*arr`` the
+#: gate above counts separately. The six Plex ones are W3b-8's population, by AST at this tip.
+_EXPECTED_TLS_CONSTRUCTIONS = 21
+
+
+def test_every_client_carries_the_operators_own_tls_setting() -> None:
+    """W3b-8's six ``PlexClient`` constructions, and the fifteen siblings beside them.
+
+    The row proposed folding the six into one helper. Measured, that nets about six lines
+    and binds only the callers that adopt it, which is the reasoning
+    ``test_every_arr_client_is_built_with_the_same_arguments`` already wrote down one gate up.
+    So the row is killed and its obligation lands here instead, widened to every client built
+    against a stored address (rule 72). The *arr gate stays separate because it requires a
+    third argument these do not have.
+
+    **Two spellings are out of reach rather than covered** (rule 147): the walk matches an
+    ``ast.Name``, so ``some_module.PlexClient(...)`` and ``from … import PlexClient as PC``
+    are invisible to it. Neither is in the tree, checked by AST across ``src/`` at this tip,
+    and the count above cannot see one arriving because a site the walk never collected is
+    missing from both halves. Reading the whole call is what the shared walk already does;
+    resolving a local alias per file is what ``_pending_pin_construction_sites`` does already.
+
+    **The ceiling on the check itself**: it reads that ``verify`` was PASSED, not what was
+    passed. ``verify=True`` written by hand would satisfy it and mean the opposite. All 21
+    sites pass a stored value today (``server.verify_tls``, ``row.verify_tls``, ``r
+    .verify_tls``, ``plex_verify``, ``verify``), and a literal there is a code review's job.
+    """
+    sites = _client_construction_sites(SRC, _TLS_CLIENTS)
+    assert len(sites) == _EXPECTED_TLS_CONSTRUCTIONS, (
+        f"expected {_EXPECTED_TLS_CONSTRUCTIONS} client constructions under src/ for "
+        f"{sorted(_TLS_CLIENTS)}, walked {len(sites)}: {sorted(sites)}. A new one is fine and "
+        f"must pass {sorted(_TLS_CLIENT_ARGS)}; bump the number here AND in "
+        "docs/SIMPLIFICATION_PLAN.md's W3b-8 kill block, which states it in prose (rule 144). "
+        "A new client CLASS built against a stored address belongs in _TLS_CLIENTS, or the "
+        "walk cannot see any of its sites and this count cannot tell you."
+    )
+    missing = {
+        site: sorted(_TLS_CLIENT_ARGS - args)
+        for site, args in sites.items()
+        if not args.issuperset(_TLS_CLIENT_ARGS)
+    }
+    assert not missing, (
+        f"these clients are built without passing the operator's stored TLS setting: {missing}. "
+        "`verify` then falls back to True, so a server the operator excused from certificate "
+        "checks becomes unreachable from this one surface and reachable from every other."
+    )
 
 
 #: The one place a pending plex.tv PIN is written, ``plex_link.start_pin``.

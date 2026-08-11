@@ -223,7 +223,7 @@ function AdminPasswordForm({
               type="password"
               value={pw}
               onChange={onEdit(setPw)}
-              placeholder="at least 12 characters"
+              placeholder={`at least ${MIN_ADMIN_PASSWORD} characters`}
               autoComplete="new-password"
               maxLength={128}
               // One region carries three different complaints, so each box describes itself

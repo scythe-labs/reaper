@@ -3088,6 +3088,155 @@ the `RatingRule` dataclass's own default. That argues for pinning the boundary r
 it: the dataclass default is 0, every percentage bar carries 0, and one validator is the only
 thing standing between them.
 
+## What the callee already enforces is not what the duplication costs (2026-08-10)
+
+Six hand-written `PlexClient(...)` constructions, four of them passing the same four arguments
+in the same order. The finding proposing a helper had already answered itself. `safety` is
+keyword-only and required, so no copy can drop the transport guard. Measured, the helper takes
+20 lines out and costs about 14, and it reaches four of the six sites. Six net lines against a
+new indirection on the client that reads a stored credential is the wrong trade.
+
+**The argument the signature cannot enforce is the one worth a gate.** `verify` carries the
+operator's per-instance TLS switch and defaults to `True`. An omission there widens nothing, so
+it reads as harmless. The cost is agreement: an operator whose server carries a self-signed
+certificate gets one surface that cannot reach it while every other surface can, with nothing
+announcing the difference. The same shape had already happened once in this tree with
+`api_path_prefix` on the *arr clients. **So when judging a "written N times" finding, sort the
+repeated arguments by what the callee can refuse on its own.** The required ones are already
+bound; the defaulted ones are the population a gate has to cover, and it should cover every class
+with that parameter, not the one class the finding named.
+
+## A module at 93% can have every failure arm of a safety step unreached (2026-08-10)
+
+`services/restore.py`'s arm step runs three prepare functions before it writes the marker that
+lets the next boot swap. Each maps its failure to one operator sentence. Behind 4,283 passing
+tests and 93% line coverage for the module, **no test drove any of the three**, and no test
+anywhere asserted the sentence. Line coverage said so plainly and nobody had read it: the three
+`except` bodies were sitting in the missing-line list.
+
+The reason generalizes past this file. A staging flow's happy path is heavily tested because
+every other test needs it as setup, and the happy path is what the percentage is measuring. The
+arms that only a failure reaches are cheap to leave, and they are also where the operator-facing
+sentence lives, so a reword lands with nothing to catch it. **Read the missing-line list, not the
+percentage, on any module whose job is to refuse.**
+
+The reword is also what found a second thing the arms were hiding. Saying "nothing was restored"
+forces the question of whether that is true at every raise, and at one of them it was not: a
+confirm retried after a client-side timeout re-ran the prepare steps over a staging that was
+already armed. **A claim about state is a cheap way to audit the states a function can be called
+in**, and it fails toward reassurance if nobody checks.
+
+## A staleness comparison is satisfied at either end, and only one of them is honest (2026-08-10)
+
+Four surfaces show a connection-test badge only while the result still describes what is on
+screen. Each stores `{ result, of }`, where `of` is a fingerprint of everything the test was sent,
+and each renders the badge on `test.of === testedWith()`. That is one derivation written four
+times, and it was measured for a dedup. The dedup is a kill. What the measurement found instead
+is that **three of the four computed the fingerprint at the wrong end, and the comparison cannot
+tell.**
+
+`testedWith()` called inside `onSuccess` runs after the response lands. It fingerprints whatever
+the operator typed while the request was out. The stored `of` and the live `testedWith()` then
+match **by construction**, whatever moved, and the badge vouches for an address that was never
+tried. Computed at issuance instead (React Query's `onMutate`, whose return reaches `onSuccess` as
+context) the two disagree and the badge withdraws, which is the honest answer.
+
+**The comparison is what made this invisible.** Three tests already drove the staleness direction
+at the one site that had it right. Two edit the host and the key after a pass and assert the badge
+goes; the third types back to the tested value and asserts it returns. All three pass with the
+fingerprint computed at either end, because they change the boxes while nothing is in flight. The
+discriminating case is the retype *during* the request, and no test in the suite drove it. So the
+one site written correctly was correct by its author's reasoning alone, and its three siblings
+copied the shape without it.
+
+**A gate over the family took three drafts, and the first two were fail-open.** The obvious
+question is "was a call evaluated here", and it is the wrong one twice over. A regex bounded at
+the first comma reads `of: [kind, baseUrl()].join(" ")` as innocent. Bounding it properly by
+bracket depth fixes that case and still passes the same fingerprint inlined as a template literal,
+which is the identical defect with no call in it at all. Both drafts read green over a working
+demonstration of the bug. The version that holds inverts the question: `of:` may be handed a name
+or a path of names, and everything else fails. **A gate that hunts for the shape of the defect is
+open by omission; one that allows the shape of the fix is closed by default.**
+
+## The five-times duplication with nothing behind it (2026-08-10)
+
+Five surfaces report a draft upward through the same four lines, three settings panels and two
+children of panels, and rule 146 is written about exactly that signal. The count was the only
+figure in its finding that needed no correction, and it was the sub-item worth the least: 20 lines
+out against 29 back, and what the rule asks is per-site anyway. The signal must be declared above
+every early return, and every early-return state re-read as one the report still fires in, which
+is a claim about each surface's own branches. All five satisfy it, and the five answers differ:
+two name the branches their report survives, two say they have no early return above it, and one
+has three returns that all sit below. **A hook cannot carry an obligation whose subject is the
+call site**, so the shared four lines are the part with no leverage in them.
+
+## A cap on the work is not a bound on the burst (2026-08-10)
+
+`fairness._enrich_titles` looks bounded and is not. `_TITLE_LOOKUP_CAP = 80` caps how many
+not-in-scan titles get a live name lookup per Scales load, and the docstring said the calls were
+therefore bounded. They were bounded in total and unbounded in parallel: nothing bounded the
+burst. httpx2's default connection pool holds 100, which sits above the cap, so one page load
+could open 80 sockets to one portal.
+
+**The cap reads as the safeguard, which is why nobody looked.** A cap answers "how much". A
+semaphore answers "how much at once". A comment saying "bounded" without saying which one is
+what let this sit. Measured with a portal that counts what is in flight: 24 targets peaked at
+24 concurrent, and at 8 under `asyncio.Semaphore(8)`.
+
+**Bounding the burst lengthens the tail, and that needed fixing in the same change.** A portal
+that accepts connections and never answers costs one read timeout per wave. Unbounded that was
+one wave; at 8 it is ten, so the bound multiplied a stalled page load by ten. The enrichment had
+no deadline of its own because one wave never needed one. **A concurrency bound is a latency
+change, so the wave count is part of the fix.**
+
+**The load-shedder was the wrong tool, twice over.** The finding proposed reusing
+`auth/ratelimit.ConcurrencyGate` and called it unused. It has three production callers, and its
+`acquire` returns 0 when full so the caller sheds load rather than waiting, which for a page
+enriching titles would drop names instead of pacing the reads.
+
+## Removing a redundant parameter removes what its test could distinguish (2026-08-10)
+
+Five scheduler functions took `data_dir` beside the `settings` it came from, and every production
+call site passed `settings.data_dir`. Deleting the parameter is -14 lines for the parameter and
+-10 landed, and it leaves one source for the folder. It also costs a test its distinguishing
+power, and that is the part worth writing down.
+
+`test_the_snapshot_sweep_is_handed_the_folder_the_database_is_in` handed `build_scheduler` a
+folder that was *not* the engine's, on purpose, because the compaction opens
+`data_dir / "reaper.db"` with a raw sqlite3 connection: a wrong folder creates an empty second
+database and vacuums that while the real one is never compacted. Its docstring named rule 141
+outright, saying that pinning the engine's own path "would hold just as well if the job derived
+its own". Removing the parameter is exactly the change that makes the job derive its own, so the
+divergent value the test relied on stops existing.
+
+**The test's question was retired, not answered.** With one source the two cannot diverge. What
+is left to pin is what the old assertion took on trust: that the folder the sweep vacuums is the
+folder the engine opened. It is read back off the engine's own URL rather than recomputed from
+`settings`, which would only restate the derivation under test.
+
+**A test that pins a value's provenance is worth reading as an argument about the design.** The
+intermediate option here kept the parameter on `build_scheduler` alone, at -13 lines, and
+preserved the test verbatim. It was the worst of the three. It leaves the ratings download
+reading `settings.data_dir` while the sweep reads the argument: two sources for one folder, with
+a test proving only that one of them arrives.
+
+## An extraction can be larger than the duplication it removes (2026-08-10)
+
+`whitelist.overrides()` and `spare_expiries()` are two scans of one table, and a third function
+in the same file already reads all three columns in one statement, so folding the pair into one
+read looks like free subtraction. Built and measured: `whitelist.py` +14/-7, `review.py` +2/-4, a
+**net +5**.
+
+**The arithmetic is structural.** Each read being replaced is two statements, a `select` and a
+`dict()`. What replaces them is a loop that splits one result set into two maps, which is ten
+lines. Any extraction whose replacement must reshape data pays that. Collapsing N cheap reads
+into one richer read adds the projection code the cheap reads did not need.
+
+Two further figures in the finding were wrong. Only two of its four call sites are adjacent
+pairs; the other two sit 40 and about 150 lines apart, so collapsing them relocates a read
+instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
+filtered two-column select to an unfiltered three-column one.
+
 ## A helper measured at zero lines was the wrong helper, not the wrong idea (2026-08-10)
 
 Two settings findings were killed on "an extraction that nets to zero lines is not worth its
