@@ -22,9 +22,8 @@ export interface Probe {
  *  lets go rather than one per pixel. Shared with `PolicyEditor`'s simulate/validate timer, which
  *  used to spell the same number itself under a comment here saying the two agreed.
  *
- *  The review queue's search box debounces on its own 250, deliberately: how long a typed
- *  search waits is a separate call from how long a dragged slider does, and coupling them would
- *  move both whenever either is tuned. */
+ *  The review queue's search box debounces on its own 250 and says at its own site why it is not
+ *  this one. */
 export const SETTLE_MS = 250;
 
 export function usePolicyProbe(probe: PolicyProbe | null): Probe {

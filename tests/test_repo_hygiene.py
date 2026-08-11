@@ -3512,13 +3512,11 @@ _READ_HOOKS = {
 # The hooks that hand back PAYLOAD and no failure handle at all, so a member of their result
 # named ``error`` is the SERVER's word rather than a read that failed.
 #
-# ``ScanStatus.error`` is the case and it is the reason this set exists: the scan bar and the
-# wizard both render "The scan hit a problem: {status.error}", which is a finished scan reporting
-# what went wrong, not a status read that did not land. The walk already refused to count that
-# through ``_QUERY_PRIMITIVES``, while the query was declared inline and destructured; hoisting it
-# into ``useScanStatus`` moved the same expression onto an unknown hook bound whole. Filing it as
-# a read would have added two handles for branches that do not exist (rule 141), and there is no
-# third answer available from the two sets above.
+# ``ScanStatus.error`` is the case: the scan bar and the wizard both render "The scan hit a
+# problem: {status.error}", which is a finished scan reporting what went wrong. The walk already
+# refused to count that through ``_QUERY_PRIMITIVES``, while the query was declared inline and
+# destructured; hoisting it into ``useScanStatus`` moved the same expression onto an unknown hook
+# bound whole. Filing it as a read adds two handles for branches that do not exist (rule 141).
 _PAYLOAD_HOOKS = {"useScanStatus"}
 
 # The hooks whose failure is an action's, not a read's. Listed rather than assumed, so the walk

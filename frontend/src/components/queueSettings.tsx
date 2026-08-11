@@ -50,14 +50,9 @@ export const QueueSettingsContext = createContext<QueueSettings | null>(null);
 /** Options that make a fallback query inert while the provider is supplying the value.
  *
  *  A hook cannot be called conditionally, so both hooks below open their query either way and
- *  make it inert inside the provider. `enabled` stops the FETCH and nothing else: the observer is
- *  still subscribed, so every write to the key re-renders every component holding one -- the
- *  exact thousand-observer fan-out this file's provider exists to remove, left in place. Tracking
- *  no props at all is what actually stops the notification. Outside the provider the query is the
- *  real source, so it keeps the default tracking.
- *
- *  `useDefaultSpareDays` says the same thing as `useGeneralSettings(false)`, which takes both off
- *  one flag; this pair stays here because `["profile"]` has no shared hook. */
+ *  make it inert inside the provider. `enabled` stops the fetch, `notifyOnChangeProps: []` stops
+ *  the re-render; `useGeneralSettings` carries the same pair off one flag and says why there.
+ *  This helper stays because `["profile"]` has no shared hook to carry it. */
 function silentInsideProvider(shared: QueueSettings | null): { notifyOnChangeProps?: [] } {
   return shared === null ? {} : { notifyOnChangeProps: [] };
 }

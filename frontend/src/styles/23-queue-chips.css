@@ -33,14 +33,14 @@
 }
 /* THE FOUR HAND-DECISION TONES, and the three families that wear them: the score badge
    (.score-*, based in 11-queue-chrome.css), the card chip (.chip-*) and the status pill
-   (.status-*). One `handFate` picks the tone (components/reviewFate.ts, rule 49) and the three
-   families must never disagree about what it looks like, so each tone is one rule with three
-   selectors rather than the same declarations written out three times.
+   (.status-*). `handFate` picks the tone (components/reviewFate.ts, rule 49) and all three
+   families render it, so each tone is one rule with three selectors. Written out three times it
+   was three places to change one color.
 
    Hand decisions wear SOLID: outlined means Reaper's verdict, filled means yours.
 
-   The two DASHED tones are the ones that are not settled yet, and neither may go solid. A reap
-   the engine can't honor yet is dashed red: still the reap you chose, but hollow so it never
+   The two DASHED tones are the decisions nothing has acted on yet, and neither may go solid. A
+   reap the engine can't honor yet is dashed red: still the reap you chose, but hollow so it never
    reads as a done removal, and no longer the amber that means "left for you to decide". Its
    keep-direction twin is a hand spare whose clock has PASSED. Not the solid spare (that means
    "you chose this and it holds") and not a scan verdict either, because only a scan realizes a

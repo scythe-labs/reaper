@@ -11,7 +11,7 @@
 
 /** What a running scan is called, wherever one is announced or named for a screen reader: this
  *  line, the scan bar's own track and its start announcement, and the wizard's first-run track.
- *  It was written out at three of those four (rule 144). */
+ *  The scan bar's two shared a constant; this line and the wizard each wrote it out (rule 144). */
 export const SCANNING_LABEL = "Scanning your library";
 
 /** A thin accent line pinned to the very top of the window while a scan runs in the

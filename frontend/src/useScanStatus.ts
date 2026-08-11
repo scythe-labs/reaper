@@ -2,8 +2,8 @@
 //
 // The one declaration of the background scan's status read.
 //
-// Four components asked for `["scanStatus"]` by hand and three of them spelled the same polling
-// policy, so the interval was a number a fourth author would have picked again. It is declared
+// Five components asked for `["scanStatus"]` by hand, three of them spelling the same polling
+// policy, so the interval was a number a sixth author would have picked again. It is declared
 // once here instead.
 
 import { useQuery } from "@tanstack/react-query";

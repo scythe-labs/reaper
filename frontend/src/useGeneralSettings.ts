@@ -15,8 +15,9 @@ import { api, type GeneralSettings } from "./api";
  *
  *  `subscribed: false` for a caller that already has the values from somewhere else: the query
  *  then neither fetches nor re-renders its component when the cache is written. `enabled` alone
- *  stops only the fetch, leaving every holder subscribed to every write, which is the fan-out the
- *  queue's settings provider exists to remove. */
+ *  stops only the fetch, leaving every holder subscribed to every write. That is the
+ *  thousand-observer fan-out `components/queueSettings.tsx`'s provider exists to remove, and
+ *  `useDefaultSpareDays` is the one caller passing false. */
 export function useGeneralSettings(subscribed = true): UseQueryResult<GeneralSettings> {
   return useQuery({
     queryKey: ["general-settings"],

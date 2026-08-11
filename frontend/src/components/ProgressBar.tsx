@@ -3,9 +3,8 @@
 // The `.bar` progress track, in one place.
 //
 // A bare div with an inline width is a picture of a number and nothing else, so each of these
-// carries the role and the value. Three components wrote the same eight lines, two of them under
-// a comment pointing at the other copies (#177, rule 72), which is a sweep that has to be
-// remembered rather than a component that has to be imported.
+// carries the role and the value. Three components wrote the same ten lines, two of them under a
+// comment pointing at the other copies (#177, rule 72).
 
 /** The scan-style progress track: a labeled `progressbar` filling to `percent`.
  *

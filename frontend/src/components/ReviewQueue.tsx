@@ -1443,7 +1443,9 @@ export function ReviewQueue({
   const dragRef = useRef<{ mode: "add" | "remove" } | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
 
-  // Debounce the search box so we do not fire a request per keystroke.
+  // Debounce the search box so we do not fire a request per keystroke. Its own 250, not the
+  // policy editor's `SETTLE_MS`: how long a typed search waits is a separate call from how long a
+  // dragged slider does, and one constant would move both whenever either is tuned.
   useEffect(() => {
     const id = setTimeout(() => setSearch(searchInput.trim()), 250);
     return () => clearTimeout(id);
