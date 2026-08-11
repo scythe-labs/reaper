@@ -44,7 +44,7 @@ from urllib.parse import urlencode
 import httpx2
 import structlog
 
-from reaper.clients.base import BaseClient, IntegrationError
+from reaper.clients.base import BaseClient, IntegrationError, unexpected_body
 from reaper.config import RuntimeSafety
 
 log = structlog.get_logger(__name__)
@@ -217,10 +217,7 @@ class PlexTvClient(BaseClient):
         try:
             return response.json()
         except ValueError as exc:
-            raise IntegrationError(
-                self.service,
-                f"expected JSON from {path}, got {response.headers.get('content-type')}",
-            ) from exc
+            raise unexpected_body(self.service, response, path) from exc
 
     async def create_pin(self) -> PlexPin:
         data = await self._post("/api/v2/pins", params={"strong": "true"})
