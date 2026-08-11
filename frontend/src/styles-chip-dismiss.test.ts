@@ -3,11 +3,11 @@
 //
 // The chip ✕ renders the same shape it did before its declarations were shared.
 //
-// Five controls across four stylesheets draw one bare, pill-shaped remove button. Four of them
-// now read `04-buttons.css`'s shared rule instead of carrying their own copy, and moving a
-// declaration to a file that loads EARLIER is a cascade change: anything of equal specificity
-// in between now wins where it used to lose. That is invisible in a diff and invisible in a
-// green suite, so the shape is read back off the cascade rather than argued.
+// Six controls draw this shape. Five are a chip's ✕ and four of those now read
+// `04-buttons.css`'s shared rule instead of carrying their own copy. Moving a declaration to a
+// file that loads EARLIER is a cascade change: anything of equal specificity in between now
+// wins where it used to lose. That is invisible in a diff and invisible in a green suite, so
+// the shape is read back off the cascade rather than argued.
 //
 // The values below were captured from the tree before the shared rule existed. They are a
 // baseline, not a specification: a change here is a change to what the operator sees, so
@@ -23,9 +23,10 @@
 //     agree on screen. `border-style` is pinned instead: with no style there is no border to
 //     paint, whatever the width says.
 //
-// `.nudge-x` is in the table and in no shared rule. It is the same bare glyph at a glance and
-// the sixth candidate the measurement pass looked at, so it is pinned as the control that was
-// deliberately left out (rule 145: a member that drops out of a walk has to be visible).
+// The two controls outside the shared rule are in the table too, so an exclusion is a row a
+// reader can check rather than a claim (rule 145: a member that drops out of a walk has to be
+// visible). `.bar-x` is a chip ✕ that keeps its own border, hover and padding; `.nudge-x`
+// dismisses a notice and was the sixth candidate the measurement pass looked at.
 
 import { describe, expect, it } from "vitest";
 
@@ -191,16 +192,22 @@ describe("the chip dismiss button", () => {
   }
 
   it("declares the shared shape once, ahead of every file that overrides it", () => {
-    // The four members read the rule from 04-buttons.css and each keeps a smaller rule later
-    // in the cascade. Declared after any of them, the shared rule would win at equal
-    // specificity and flatten the differences the table above pins.
-    // `.tag-chip button,` with the comma is the shared group's third selector and appears
-    // nowhere else; 34-lists.css is left with `:hover` alone.
+    // Two of the four keep a smaller rule later in the cascade, the two the loop below reads.
+    // Declared after either, the shared rule would win at equal specificity and flatten the
+    // differences the table above pins.
+    //
+    // Each override is searched for PAST the shared block's closing brace. `.inst-chip
+    // .chip-x {` matches the shared group's own last selector first, so a search from zero
+    // compares the block against itself and holds even with 29-setup's override deleted.
     const shared = CSS.indexOf(".tag-chip button,");
     expect(shared).toBeGreaterThan(-1);
+    // `.tag-chip button,` with the comma is the shared group's third selector and appears
+    // nowhere else; 34-lists.css is left with `:hover` alone.
     expect(CSS.indexOf(".tag-chip button,", shared + 1)).toBe(-1);
+    const afterShared = CSS.indexOf("}", shared);
+    expect(afterShared).toBeGreaterThan(shared);
     for (const later of [".fchip-x {", ".inst-chip .chip-x {"]) {
-      expect(CSS.indexOf(later)).toBeGreaterThan(shared);
+      expect(CSS.indexOf(later, afterShared)).toBeGreaterThan(afterShared);
     }
   });
 });

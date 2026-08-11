@@ -249,9 +249,9 @@
      24x24 CSS px. The spacing exception that lets a smaller target pass needs 24px of
      clearance around it, and a removable chip has none -- its x sits flush against the
      body that EDITS the same filter, so an undersized pair means a touch meaning "change
-     this" lands on "remove it". Every chip ✕ takes it through the one shared rule in
-     04-buttons.css, so the standard moves in one place (U-6, agent rule 19). `.bar-x` reads
-     the token directly, being the one control of that shape outside the shared rule. */
+     this" lands on "remove it". Four chip ✕ take it from the one shared rule in 04-buttons.css,
+     so the standard moves in one place (U-6, agent rule 19). `.bar-x` and `.nudge-x` are the
+     two controls of that shape outside that rule and read the token directly. */
   --tap-min: 24px;
 }
 

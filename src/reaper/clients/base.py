@@ -236,14 +236,20 @@ class IntegrationError(RuntimeError):
         return self.status in (401, 403)
 
 
-# The three ways a client call fails, each worded once.
+# Three transport and status failures, each worded once.
 #
-# Every client read and every mutation ends in one of these, and each sentence used to be
-# written at the site that raised it: two in ``_send``, the same two again in ``_mutate``,
-# and two of them a third time in ``PublicClient``. Rule 144 is what that costs. The wording
-# is what an operator reads when a service stops answering, and rewording one copy leaves the
-# others saying something else about the same failure -- which is how ``public.py`` came to
-# spell one of them with a hardcoded ``GET`` where ``base.py`` names the method.
+# Each sentence used to be written at the site that raised it: four in ``_send``, the same four
+# in ``_mutate``, and three of them again in ``PublicClient``, so four sentences stood as eleven
+# copies. Rule 144 is what that costs. The wording is what an operator reads when a service
+# stops answering, and rewording one copy leaves the others saying something else about the
+# same failure -- which is how ``public.py`` came to spell one of them with a hardcoded ``GET``
+# where ``base.py`` names the method.
+#
+# ``too many redirects`` is one more failure this layer raises and is NOT fenced here. It is
+# written once per file rather than twice, and the two spellings differ the same way: ``GET``
+# hardcoded in ``public.py``, which only ever issues one, against ``{method}`` here.
+# ``test_every_client_failure_sentence_is_worded_in_exactly_one_place`` fences the four below
+# and names this one as out.
 #
 # ``refuse_mutation`` above is the same move for the guard's refusal, for the same reason.
 
@@ -252,9 +258,9 @@ def transport_failure(service: str, exc: httpx2.TransportError) -> IntegrationEr
     """The request never got an answer: it timed out, or the host was not reachable.
 
     Name the actual timeout kind. A ConnectTimeout (5s), WriteTimeout (10s) or PoolTimeout
-    (5s) is not the read timeout, so reporting a fixed "30s" sends an operator looking in the
-    wrong place, and for a mutation especially "could not connect" and "the server was slow to
-    answer" call for different next steps (rule 10).
+    (5s) is not the read timeout, so a fixed "30s" sends an operator to the wrong place. For a
+    mutation, "could not connect" and "the server was slow to answer" call for different next
+    steps (rule 10).
 
     ``TimeoutException`` is itself a ``TransportError``, so callers catch the one type and the
     split happens here, in the order the two ``except`` arms used to sit in.
@@ -281,14 +287,29 @@ def http_failure(
     """The service answered with a 4xx or 5xx, carrying its own Retry-After if it sent one.
 
     Reading the header here is what makes it uniform: the streamed public download raised
-    this sentence without it, so a mirror asking Reaper to slow down said so to two of the
-    three callers and not the third.
+    this sentence without it, so a Retry-After from a mirror reached two of the three raise
+    sites.
     """
     return IntegrationError(
         service,
         f"HTTP {response.status_code} for {method} {path}",
         status=response.status_code,
         retry_after=_retry_after_seconds(response),
+    )
+
+
+def unexpected_body(service: str, response: httpx2.Response, path: str) -> IntegrationError:
+    """A 200 whose body would not parse as JSON, named by the content type that came back.
+
+    Naming the type is what makes it diagnosable: an auth proxy's HTML login page and a
+    gateway's text error read the same as "it did not work" without it.
+
+    Raised by ``get_json`` and by ``plextv._post``, which normalizes its own POST for the
+    reason its docstring gives (rule 72).
+    """
+    return IntegrationError(
+        service,
+        f"expected JSON from {path}, got {response.headers.get('content-type')}",
     )
 
 
@@ -510,10 +531,7 @@ class BaseClient:
         try:
             return response.json()
         except ValueError as exc:
-            raise IntegrationError(
-                self.service,
-                f"expected JSON from {path}, got {response.headers.get('content-type')}",
-            ) from exc
+            raise unexpected_body(self.service, response, path) from exc
 
     async def get_list(
         self,

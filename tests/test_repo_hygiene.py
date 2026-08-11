@@ -6550,17 +6550,18 @@ def test_the_lane_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> Non
 # The client failure sentences are worded in one place (rule 144)
 # ---------------------------------------------------------------------------
 
-#: The four sentences every client call fails with, as templates: literal text with `{}`
-#: standing in for each interpolation. Each is produced by one factory in
-#: `clients/base.py`, and each used to be written at two or three of the sites that raise it.
-#: Rewording one copy leaves the others describing the same failure differently, which is what
-#: rule 144 is about, and it had already happened: `public.py` spelled one of them with a
-#: hardcoded `GET` where `base.py` names the method.
+#: The sentences a failed client call is reported with, as templates: literal text with `{}`
+#: standing in for each interpolation, mapped to the factory in `clients/base.py` that words
+#: each. Every one was written at two or three of the sites that raise it. Rewording one copy
+#: leaves the others describing the same failure differently, which is what rule 144 is about,
+#: and it had already happened: `public.py` spelled one of them with a hardcoded `GET` where
+#: `base.py` names the method.
 _CLIENT_FAILURE_SENTENCES = {
     "timed out ({})": "transport_failure",
     "unreachable ({})": "transport_failure",
     "refused redirect (HTTP {}) for {} {}": "refused_redirect",
     "HTTP {} for {} {}": "http_failure",
+    "expected JSON from {}, got {}": "unexpected_body",
 }
 
 #: Where all four are allowed to be spelled.
@@ -6592,11 +6593,17 @@ def _message_template(node: ast.expr) -> str | None:
 
 
 def _integration_error_messages(root: Path) -> tuple[dict[str, list[str]], list[str]]:
-    """Every ``IntegrationError(service, message)`` under ``root``, by message template.
+    """Every ``IntegrationError`` construction under ``root``, by message template.
 
     Returns the readable ones keyed by template, and the sites whose message the walk could
-    not read at all. Both halves are asserted on: the second is the population a fifth copy
+    not read at all. Both halves are asserted on: the second is the population another copy
     would hide in.
+
+    ``message`` is positional-or-keyword, so both spellings are collected. A call with no
+    message at all is not a construction this fence is about and is skipped; one whose message
+    is there but unreadable is counted, which is the distinction the earlier draft of this walk
+    got wrong by testing ``len(node.args) < 2`` alone and dropping every keyword call into
+    neither half (rule 147).
     """
     by_template: dict[str, list[str]] = {}
     unreadable: list[str] = []
@@ -6607,10 +6614,14 @@ def _integration_error_messages(root: Path) -> tuple[dict[str, list[str]], list[
                 continue
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-            if name != "IntegrationError" or len(node.args) < 2:
+            if name != "IntegrationError":
+                continue
+            keyword = next((k.value for k in node.keywords if k.arg == "message"), None)
+            message = node.args[1] if len(node.args) >= 2 else keyword
+            if message is None:
                 continue
             site = f"{path.relative_to(REPO).as_posix()}:{node.lineno}"
-            template = _message_template(node.args[1])
+            template = _message_template(message)
             if template is None:
                 unreadable.append(site)
             else:
@@ -6619,11 +6630,17 @@ def _integration_error_messages(root: Path) -> tuple[dict[str, list[str]], list[
 
 
 def test_every_client_failure_sentence_is_worded_in_exactly_one_place() -> None:
-    """Rule 144, for the four sentences a failed integration call is reported with.
+    """Rule 144, for the sentences a failed integration call is reported with.
 
-    ``_send``, ``_mutate`` and ``PublicClient`` all end a failed call in one of these, and
-    each carried its own copy. The factories in ``clients/base.py`` are the only place they
-    are spelled now; this is what stops a fourth copy arriving beside the next client.
+    ``_send``, ``_mutate``, ``PublicClient``, ``get_json`` and ``plextv._post`` each carried
+    their own copy, thirteen in all. The factories in ``clients/base.py`` are the only place
+    these five are spelled now, and this is what stops the next client writing its own.
+
+    **It fences these and not every sentence this layer raises.** ``too many redirects`` stays
+    out: it is written once per file, and ``public.py``'s copy already spells the method
+    ``GET`` where ``base.py`` interpolates it, so adding it here fails rather than fences. The
+    comment above the factories in ``clients/base.py`` says the same. Every other
+    ``IntegrationError`` sentence under ``src/`` is written once, which the walk itself shows.
     """
     by_template, _ = _integration_error_messages(SRC)
     strays = {
@@ -6636,10 +6653,16 @@ def test_every_client_failure_sentence_is_worded_in_exactly_one_place() -> None:
     }
     assert not strays, (
         f"a client failure sentence is written outside {_FAILURE_SENTENCE_HOME}: {strays}. "
-        "Call the factory that already words it (transport_failure, refused_redirect or "
-        "http_failure) rather than repeating the sentence, or the copies drift the next "
-        "time either one is reworded (rule 144)."
+        "Call the factory that already words each one -- "
+        f"{', '.join(sorted(set(_CLIENT_FAILURE_SENTENCES.values())))} -- rather than "
+        "repeating the sentence, or the copies drift the next time one is reworded (rule 144)."
     )
+    for template, factory in _CLIENT_FAILURE_SENTENCES.items():
+        assert factory in (SRC / "clients" / "base.py").read_text(encoding="utf-8"), (
+            f"_CLIENT_FAILURE_SENTENCES maps {template!r} to {factory}, which no longer "
+            "exists in clients/base.py. Point it at whatever words the sentence now, or the "
+            "message above sends the next author to a function that is gone."
+        )
     missing = [t for t in _CLIENT_FAILURE_SENTENCES if not by_template.get(t)]
     assert not missing, (
         f"these sentences are no longer written anywhere under src/reaper: {missing}. If a "
@@ -6665,7 +6688,13 @@ def test_the_failure_sentence_walk_reads_every_message_the_tree_writes() -> None
 
 
 def test_the_failure_sentence_matcher_reads_the_forms_it_claims_to(tmp_path: Path) -> None:
-    """The template reader, against each form separately: literal, f-string, and neither."""
+    """The template reader, against each form separately: literal, f-string, and neither.
+
+    The keyword forms are here because they were the walk's blind spot and read as no blind
+    spot: ``message`` is positional-or-keyword, so an argument count alone dropped them out of
+    the readable half AND out of the unreadable half at once, which is a fence reporting
+    itself complete over sentences it never saw (rule 147).
+    """
     scratch = tmp_path / "src" / "reaper"
     scratch.mkdir(parents=True)
     (scratch / "m.py").write_text(
@@ -6674,7 +6703,9 @@ def test_the_failure_sentence_matcher_reads_the_forms_it_claims_to(tmp_path: Pat
         'raise IntegrationError(svc, f"HTTP {code} for GET {path}")\n'
         "raise base.IntegrationError(svc, f'unreachable ({exc})')\n"
         "raise IntegrationError(svc, message)\n"
-        "raise IntegrationError(svc)\n",
+        "raise IntegrationError(svc)\n"
+        'raise IntegrationError(svc, message=f"timed out ({kind})")\n'
+        "raise IntegrationError(service=svc, message=held)\n",
         encoding="utf-8",
     )
     global REPO
@@ -6690,11 +6721,15 @@ def test_the_failure_sentence_matcher_reads_the_forms_it_claims_to(tmp_path: Pat
         "HTTP {} for GET {}",
         "HTTP {} for {} {}",
         "plain",
+        "timed out ({})",
         "unreachable ({})",
     ]
-    # A qualified call is a call site; a one-argument call is not one at all.
+    # A qualified call is a call site, and a keyword message is read like a positional one.
     assert by_template["unreachable ({})"] == ["src/reaper/m.py:4"]
-    assert unreadable == ["src/reaper/m.py:5"]
+    assert by_template["timed out ({})"] == ["src/reaper/m.py:7"]
+    # A message that is there but unreadable is counted; a call carrying none is not a
+    # construction this fence is about and is skipped rather than reported as a blind spot.
+    assert unreadable == ["src/reaper/m.py:5", "src/reaper/m.py:8"]
 
 
 # --- every Display field the source record carries reaches its lane's pack ----------------

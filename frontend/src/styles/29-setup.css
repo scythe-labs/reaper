@@ -260,9 +260,11 @@
   cursor: pointer;
   overflow-wrap: anywhere;
 }
-/* The two departures from the shared shape: a bold muted glyph rather than an inherited-color
-   one, at the chip's own text size rather than --text-lg. An instance name is typed by the
-   operator, so the pair wraps rather than painting through the chip (rule 139). */
+/* Three departures from the shared shape: a bold muted glyph rather than an inherited-color
+   one, at the chip's own text size rather than --text-lg. The `overflow-wrap` carries over from
+   the block this rule was split out of, where it is `.chip-edit` that needs it for an
+   operator-typed instance name (rule 139); it changes nothing on a one-glyph button and is kept
+   so the split moved no computed value. */
 .inst-chip .chip-x {
   color: var(--muted);
   font-size: inherit;

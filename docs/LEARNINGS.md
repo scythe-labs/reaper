@@ -3310,8 +3310,8 @@ filtered two-column select to an unfiltered three-column one.
 A finding said six navigation callbacks were drilled three to four levels through the React tree
 over a destination type that is already one value. Re-derived from `App.tsx`: **nine distinct
 prop names over ten hand-offs, seven consumed by `App`'s own child and three going exactly one
-level further.** Nothing reaches depth 2 and nothing passes it. The six was the `onGoTo*`-prefixed
-subset, and the three cross-page jumps named `onOpen*` are the same thing counted by nobody.
+level further.** Nothing goes past depth 2. The six was the `onGoTo*`-prefixed subset, and the
+plan leaves out the three cross-page jumps named `onOpen*`.
 
 **Depth is what the finding rested on, and it decides the answer.** A prop that stops being
 forwarded is a TypeScript error at the intermediary and again at the leaf, so the hand-off has no
@@ -3326,10 +3326,10 @@ roughly right and neither wrote down the depth, which is the only figure the row
 
 ## The cascade moves when a declaration moves to an earlier file (2026-08-10)
 
-Five controls draw one bare, pill-shaped ✕, each stylesheet carrying its own copy of the same
-thirteen declarations. Sharing them means moving the declarations to a file that loads **earlier**,
-and that is a cascade change, not a refactor: any rule of equal specificity in between now wins
-where it used to lose. Nothing in the diff shows it and no existing test reads it.
+Five controls draw one bare, pill-shaped ✕, and three of them carried the same thirteen
+declarations in three stylesheets. Sharing them means moving the declarations to a file that loads
+**earlier**, which is a cascade change: any rule of equal specificity in between now wins where it
+used to lose. Nothing in the diff shows it and no existing test reads it.
 
 **Read the shape back off the cascade rather than arguing it.** jsdom parses the concatenated
 stylesheet and does the cascade, so `getComputedStyle` on each control, rendered in the ancestry
@@ -3339,7 +3339,7 @@ left unresolved, which is what a test like this wants because it is asking which
 rather than what pixels it became; and `border-width` is reported from the keyword rather than
 from `border-style: none`, so `border: none` and `border: 0` disagree there and agree on screen.
 
-**Doing it found a control that was not the shape it claimed.** One member sizes itself
+**Doing it found a control that was not the shape it claimed.** One of the five sizes itself
 `width: var(--tap-min)` and never resets the global `button` padding, so under `box-sizing:
 border-box` its used width is 29.2px against the 24px token it names. The `width` declaration does
 nothing. It was left as it renders and the shared rule excludes it, since folding it in would have
