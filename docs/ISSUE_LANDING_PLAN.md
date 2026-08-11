@@ -75,7 +75,7 @@ one question and only one: which tree does this fix get written against.
 | 748 | Low | on branch | the block is `_write_desktop_values` on the branch, not inline |
 | 710 | Low | on branch | the delete the fix removes is in `start_link`, which the branch deleted |
 | 726 | Low | on branch | `PolicyRuleEditors.test.tsx:463` asserts the old string, branch-only |
-| 736 | Low | on branch | `styles-chip-dismiss.test.ts:131` pins `.bar-x`, branch-only |
+| 736 | Low | on branch | the `.bar-x` padding reset is branch-only |
 | 740 | Low | on branch | the shared hover the fix folds into is branch-only |
 | 657 | Medium | after | no `dev` spelling survives the merge; see below |
 | 549 | Low | on branch | PR #560's 45 lines sit inside a 1,601-line branch deletion |
@@ -301,9 +301,9 @@ suffix, so a word takes a space and punctuation does not, and both callers use i
 only non-word suffix in `engine/fields.py` today and nothing stops a second.
 
 **13. #736 and 14. #740 are one sweep, and land together. Landed.** Both are chip dismiss controls and both
-turn on declarations that exist on one tree only. #736's `.bar-x` padding is pinned at
-`styles-chip-dismiss.test.ts:131`, a branch-only file, so a `dev`-side `padding: 0` turns that pin
-red at merge even though `14-policy-editor.css` is byte-identical. #740's `.fchip-x:hover` is
+turn on declarations that exist on one tree only. #736's `.bar-x` padding reset lands in
+`14-policy-editor.css:376`, and it cancels a shared `button` rule that only the branch has, so a
+`dev`-side `padding: 0` is not the same fix. #740's `.fchip-x:hover` is
 byte-identical too, but its second repair folds the tint into the shared chip-dismiss rule at
 `04-buttons.css:88`, which the branch created and `dev` does not have. Rule 72: they are siblings
 of one control, so both were decided against the same cascade rather than one at a time.
