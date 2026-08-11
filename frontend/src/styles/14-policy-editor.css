@@ -373,6 +373,13 @@
 .bar-x {
   width: var(--tap-min);
   height: var(--tap-min);
+  /* Without this the width declaration above does nothing (#736). `04-buttons.css`'s
+     `button { padding: 0.42rem 0.85rem }` applies here, and under the global
+     `box-sizing: border-box` a specified width smaller than padding plus border floors at
+     padding plus border: 29.2px against the 24px it names. Height was already under the
+     floor, so only the width was wrong, which is why it read as a pill rather than the
+     circle every other chip dismiss draws. */
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

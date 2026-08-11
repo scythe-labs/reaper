@@ -122,7 +122,15 @@
 .fchip-x {
   opacity: 0.75;
 }
-.fchip-x:hover {
+/* Qualified by `.fchip`, which is what makes the tint paint at all (#740). Bare, this was
+   (0,2,0) against `04-buttons.css`'s `button:hover:not(:disabled)` at (0,2,1), so the generic
+   gray won on specificity whatever the load order and the accent line was dead. The two chips
+   beside it, `.filter-chip button:hover` above and `.tag-chip button:hover` in 34-lists, tie
+   the generic at (0,2,1) and win on order alone; this one wins on specificity, which is what
+   `.inst-chip .chip-x:hover` already does. Each chip's tint is its own tone -- accent here,
+   protect on the tag chip, condemn on the instance chip -- so there is no shared hover to fold
+   them into (rule 72: all four were read before this one moved). */
+.fchip .fchip-x:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }

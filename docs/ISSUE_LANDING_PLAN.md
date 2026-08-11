@@ -296,13 +296,23 @@ and red after. The fix and its expectation landed in one change, which was only 
 suffix, so a word takes a space and punctuation does not, and both callers use it. `/10` is the
 only non-word suffix in `engine/fields.py` today and nothing stops a second.
 
-**13. #736 and 14. #740 are one sweep, and land together.** Both are chip dismiss controls and both
+**13. #736 and 14. #740 are one sweep, and land together. Landed.** Both are chip dismiss controls and both
 turn on declarations that exist on one tree only. #736's `.bar-x` padding is pinned at
 `styles-chip-dismiss.test.ts:131`, a branch-only file, so a `dev`-side `padding: 0` turns that pin
 red at merge even though `14-policy-editor.css` is byte-identical. #740's `.fchip-x:hover` is
 byte-identical too, but its second repair folds the tint into the shared chip-dismiss rule at
 `04-buttons.css:88`, which the branch created and `dev` does not have. Rule 72: they are siblings
-of one control, so decide both against the same cascade rather than one at a time.
+of one control, so both were decided against the same cascade rather than one at a time.
+
+**Reading all four hovers is what decided #740's repair, and it is not the fold.** Each chip
+paints its own tone, accent on the two filter chips, protect on the tag chip, condemn on the
+instance chip, so there is no shared hover to fold them into. `.fchip-x:hover` is qualified to
+`.fchip .fchip-x:hover` instead, which wins on specificity the way `.inst-chip .chip-x:hover`
+already does; the other two only tie the generic and win on order.
+
+**Both were measured in a browser, before and after.** `.bar-x` is 29.19x24 without the fix and
+24x24 with it, the floor the issue predicted to the pixel. The filter chip's dismiss hovers
+`rgb(240, 242, 246)` without it and the accent at 18% with it.
 
 **15. #704, the suite's undefined-read gate.** Same shape as #622, one lane over. `setup.ts` is
 byte-identical on both trees, so the three-line gate merges, and it would then be measuring a tree
