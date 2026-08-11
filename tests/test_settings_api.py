@@ -25,6 +25,7 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
 from reaper.api.plex import PlexUpdateIn, update_plex_settings
+from reaper.api.settings import _BAD_CRON
 from reaper.auth.ratelimit import argon2_gate
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
@@ -1309,6 +1310,24 @@ class TestSchedule:
     def test_an_unknown_job_schedule_is_a_404(self, client: TestClient) -> None:
         resp = client.put("/api/settings/jobs/not_a_job/schedule", json={"cron": "0 6 * * *"})
         assert resp.status_code == 404
+
+    def test_both_job_families_refuse_a_bad_cron_in_the_one_declared_sentence(
+        self, client: TestClient
+    ) -> None:
+        """The scan arm and the upkeep arm answer a cron the scheduler will not take with the
+        same words, and those words are ``_BAD_CRON``. The two arms used to spell the sentence
+        out separately with nothing asserting either, so a reword of one shipped an operator
+        two explanations of one refusal (rule 144). Matched on the declaration's own halves
+        rather than on a copy of it, since restating the sentence here would be a third copy.
+        """
+        prefix, suffix = _BAD_CRON.split("{reason}")
+        for job_id in ("scheduled_scan", "refresh_ratings"):
+            resp = client.put(f"/api/settings/jobs/{job_id}/schedule", json={"cron": "nope"})
+            assert resp.status_code == 422, job_id
+            detail = resp.json()["detail"]
+            assert detail.startswith(prefix), (job_id, detail)
+            assert detail.endswith(suffix), (job_id, detail)
+            assert len(detail) > len(prefix) + len(suffix), (job_id, detail)
 
     def test_saving_one_upkeep_job_leaves_the_others_untouched(self, client: TestClient) -> None:
         """Each job's schedule is its own stored row, so saving one never drops another. The

@@ -286,6 +286,12 @@ class JobScheduleIn(BaseModel):
     cron: str | None = None
 
 
+#: What both arms of :func:`set_job_schedule` answer with when the scheduler will not take a
+#: cron. One declaration, so the two cannot drift into two sentences (rule 144); ``reason``
+#: is the parser's own words.
+_BAD_CRON = "That is not a valid schedule: {reason}. Use cron form, e.g. '30 4 * * *'."
+
+
 class SafetyOut(BaseModel):
     destructive_enabled: bool
     """Whether Reaper may delete right now."""
@@ -781,9 +787,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 timezone=job_tz,
             )
         except ValueError as exc:
-            raise HTTPException(
-                422, f"That is not a valid schedule: {exc}. Use cron form, e.g. '30 4 * * *'."
-            ) from exc
+            raise HTTPException(422, _BAD_CRON.format(reason=exc)) from exc
         async with session_factory(request)() as session:
             await app_settings.set_scan_schedule(session, cron)
             await session.commit()
@@ -801,9 +805,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 timezone=job_tz,
             )
         except ValueError as exc:
-            raise HTTPException(
-                422, f"That is not a valid schedule: {exc}. Use cron form, e.g. '30 4 * * *'."
-            ) from exc
+            raise HTTPException(422, _BAD_CRON.format(reason=exc)) from exc
         async with session_factory(request)() as session:
             await app_settings.set_maintenance_schedule(session, job_id, cron)
             await session.commit()
