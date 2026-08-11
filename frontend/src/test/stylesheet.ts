@@ -65,11 +65,11 @@ export interface Block {
 
 /** Every rule block in the stylesheet, in load order, comments stripped.
  *
- *  The match is innermost-first, so a rule inside `@media (...) { … }` is returned as itself and
- *  the at-rule around it is not: `[^{}]*` cannot span a nested brace. At-rule heads are dropped,
- *  since a block-opening at-rule declares nothing of its own. Both `styles-scales.test.ts` and
- *  `styles-control-standard.test.ts` read the stylesheet through here, so a parse fixed for one
- *  is fixed for the other. */
+ *  The match is innermost-first. A `@media` head never matches, since `[^{}]*` cannot span the
+ *  nested brace, so a rule inside one is returned as itself. A flat at-rule like `@font-face`
+ *  does match, and the `@` check drops it. Keyframe steps (`from`, `0%`) are returned as ordinary
+ *  blocks. Both `styles-scales.test.ts` and `styles-control-standard.test.ts` read the stylesheet
+ *  through here, so a parse fixed for one is fixed for the other. */
 export function blocksOf(): Block[] {
   // Blanked rather than deleted, so every offset still resolves to its real line (`siteOf`).
   const code = CSS.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));

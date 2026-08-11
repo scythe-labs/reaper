@@ -325,10 +325,9 @@
   background: var(--bg);
   color: var(--text);
   /* `font: inherit` first, then the size. The size alone leaves an <input>'s FAMILY on the
-     browser's own form font, which is not the app's: every box in this column rendered in
-     Arial beside a system-ui label, and it read as a size difference rather than a wrong
-     typeface, which is why it survived. The shorthand resets the size too, so the step below
-     has to come after it. */
+     browser's default form font, so every box in this column rendered in a different typeface
+     from the label beside it. The shorthand resets the size, so the step below comes after
+     it. */
   font: inherit;
   font-size: var(--text-md);
   /* A long value (a plex.direct hostname, say) must not squeeze the label column

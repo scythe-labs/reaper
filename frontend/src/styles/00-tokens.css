@@ -214,15 +214,14 @@
      5rem, unit selects ~5.25rem, wide text fields 15-22rem -- but the chrome above never
      does. Reuse it; don't fork it.
 
-     Ten blocks carry it, and `styles-control-standard.test.ts` is what holds them to it,
-     rather than a list here: the list this comment used to carry named `.pw-form`, which has
-     no chrome of its own (it renders `.field-sm` boxes), and missed `.manual-row`,
-     `.settings-picker` and `.bar-foot`, so it was wrong in both directions (rule 144). The
-     test names the blocks it found in its own failure, which is where a reader wants them.
+     `styles-control-standard.test.ts` holds the blocks to it, rather than a list here. The
+     list this comment used to carry named `.pw-form`, which has no chrome of its own (it
+     renders `.field-sm` boxes), and missed `.manual-row`, `.settings-picker` and `.bar-foot`
+     (rule 144). The test's failure names the blocks it found.
 
-     `.qty` is the one shape that cannot be one block: the border and fill sit on the wrapper
-     so the number and its unit read as a single box, and the children clear their own
-     (31-qty.css).
+     `.qty`, `.hex-join` and `.tag-chips` cannot be one block. The border and fill sit on the
+     wrapper so its parts read as a single box, and the children carry their own padding
+     (`31-qty.css`, `27-settings-rows.css`, `34-lists.css`).
 
      The padding is a token rather than prose because it was written out as the literal
      `0.42rem 0.6rem` at twelve sites, which is rule 67's argument applied inside the

@@ -80,9 +80,9 @@
   flex: 1 1 18rem;
   min-width: 12rem;
   padding: var(--control-pad);
-  /* The standard's `font: inherit`, then the size, in that order: the shorthand resets the
-     size, and a size on its own leaves the box on the browser's form font (`.set-row
-     .set-control input` in 27-settings-rows.css was the same miss). */
+  /* The standard's `font: inherit`, then the size. The shorthand resets the size, and a size
+     on its own leaves the box on the browser's default form font (`.set-row .set-control
+     input` in 27-settings-rows.css was the same miss). */
   font: inherit;
   font-size: var(--text-base);
   border-radius: var(--radius-sm);

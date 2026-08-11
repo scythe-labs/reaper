@@ -26,10 +26,9 @@
   color: var(--faint);
   pointer-events: none;
 }
-/* The one control chrome; only the left padding is this box's own, to clear the glyph. That
-   is a `padding-left` step after the token rather than the pair spelled out with a fourth
-   value: writing `0.42rem 0.6rem 0.42rem 2rem` re-states `--control-pad` in a literal, which
-   is the drift the token exists to stop, and it was the last copy of it in the stylesheet. */
+/* The one control chrome; only the left padding is this box's own, to clear the glyph. It is a
+   `padding-left` step after the token. A four-value padding would re-type `0.42rem 0.6rem`, and
+   this was the last site in the stylesheet still doing that. */
 .search-input {
   width: 100%;
   padding: var(--control-pad);
