@@ -3743,7 +3743,53 @@ class TestAnOverrideChangedMidRun:
         assert radarr.delete_calls == [1]
         kept = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
         assert kept.state is StepState.SKIPPED
-        assert "hand reap on this was removed" in kept.detail
+        # Verbatim, because the run-start-set skip below is the arm this sentence used to
+        # cover as well (issue #691). Both are kept, so only the wording tells them apart
+        # (rule 118), and rewording either without the other puts the two facts back under
+        # one sentence.
+        assert kept.detail == "the hand reap on this was removed, so it is kept"
+        assert kept.checks[0].label == "No longer marked to reap by hand. Kept."
+
+    async def test_a_spare_withdrawn_mid_run_does_not_name_a_hand_reap(
+        self, session: AsyncSession
+    ) -> None:
+        """The run-start set is what keeps this item, and it is not a hand reap.
+
+        The item is scan-condemned, so it never had a hand reap to remove. It is spared
+        before the run is claimed, which drops it from ``_effective_keys``, and the spare is
+        withdrawn while the run walks, so the freshly re-read decisions condemn it again.
+        The first half of the guard fires alone and the second does not. It is kept either
+        way, so only the wording can tell the two halves apart (rule 118).
+        """
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        # Spared before the claim, so the run's ceiling is item one alone.
+        await whitelist.set_override(
+            session, media_key="radarr:1:2", title="Worthless 1", decision="spare", note=None
+        )
+        await session.flush()
+
+        async def unspare_it() -> None:
+            await self._decide_elsewhere(session, media_key="radarr:1:2", decision=None)
+
+        radarr = FakeRadarr()
+        report = await _real(
+            session,
+            run,
+            _gateway(radarr={1: radarr}),
+            armed_recheck=self._on_second_item(unspare_it),
+        )
+
+        assert radarr.delete_calls == [1]  # still only what the operator confirmed
+        kept = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
+        assert kept.state is StepState.SKIPPED
+        assert kept.detail == "this was not part of the run you confirmed, so it is kept"
+        assert kept.checks[0].label == "Not part of the run you confirmed. Kept."
+        # The sentence that belongs to the other half, pinned verbatim in
+        # ``test_withdrawing_a_hand_reap_mid_run_keeps_the_file`` (rule 144).
+        assert "hand reap" not in kept.detail
 
     async def test_a_reap_added_mid_run_cannot_smuggle_an_item_in(
         self, session: AsyncSession
@@ -3772,7 +3818,7 @@ class TestAnOverrideChangedMidRun:
             await self._decide_elsewhere(session, media_key="radarr:1:2", decision="reap")
 
         radarr = FakeRadarr()
-        await _real(
+        report = await _real(
             session,
             run,
             _gateway(radarr={1: radarr}),
@@ -3780,6 +3826,10 @@ class TestAnOverrideChangedMidRun:
         )
 
         assert radarr.delete_calls == [1]  # still only the item the operator confirmed
+        # And it does not tell them their reap was removed at the moment they added one
+        # back, which is the other population of the run-start-set skip (issue #691).
+        kept = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
+        assert kept.detail == "this was not part of the run you confirmed, so it is kept"
 
     async def test_an_unreadable_override_read_stops_the_run(self, session: AsyncSession) -> None:
         """Fail-closed. If the decisions cannot be re-read we cannot prove the next file is

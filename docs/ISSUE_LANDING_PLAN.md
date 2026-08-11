@@ -140,12 +140,18 @@ fix edits; the branch carries a test or rule absent on `dev` that the `dev` fix 
 value and the tree needs another. How open the issue's question is, what its `Priority/` says, and
 how many items this list already holds are all beside the point.
 
-**1. #691, using #692's rig.** It is `Status/Need More Info`, and the fix site is `_send_for_real`
-at `executor.py:1778`, roughly 600 lines from #692's `_send_season`. The reason it belongs here is
-the rig, not the diff: #692 landed on 2026-08-10 and stands up an armed executor against a stub
-Sonarr, which is what settles this. Plan an item, spare it, claim the run, remove the spare
-mid-run, read `outcome.detail`. Confirmed means one copy fix. Unreachable means close it
-`Reviewed/Invalid` and write the refutation into `references/refuted.md`.
+**1. #691, using #692's rig. Landed, confirmed.** It was `Status/Need More Info`, and the fix site
+is `_send_for_real` at `executor.py:1778`, roughly 600 lines from #692's `_send_season`. The reason
+it belonged here is the rig, not the diff: #692 landed on 2026-08-10 and stands up an armed
+executor against a stub Sonarr, which is what settles this.
+
+**The step that settled it was cheaper than the plan expected**: `TestAnOverrideChangedMidRun`
+already drives the whole shape, and one of its tests was already reaching the arm and never read
+the message. `test_a_reap_added_mid_run_cannot_smuggle_an_item_in` re-adds a reap mid-run and was
+told the reap had been removed. So the arm is reachable twice over, and the second population is
+the one the issue described: an item spared before the claim, un-spared mid-run, which was never
+hand-reaped at all. Both now read the sentence. The guard is two `if`s, each with its own copy;
+the run-start-set arm says `this was not part of the run you confirmed, so it is kept`.
 
 **2. #624, the shelf status line.** The strongest collision of the sixteen. The branch's hunk
 `@@ -505,11 +489,36` replaces the whole `lsStatus` closure, five lines becoming thirty, and
