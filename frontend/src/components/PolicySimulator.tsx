@@ -14,6 +14,7 @@ import { useSuccessorFocus } from "../focus";
 import { bytes, count, totalBytes } from "../format";
 import { GATE_META, UNNAMED_GATE_LABEL } from "./policyMeta";
 import { Notice } from "./Notice";
+import { ProgressBar } from "./ProgressBar";
 
 /** The histogram, with the threshold drawn across it.
  *
@@ -143,19 +144,7 @@ export function StaleNotice({
           <p className="muted">
             {detail || "Working"}, {percent}%
           </p>
-          {/* Same sweep as ScanBar's and the deletion path's (#177, rule 72). The visible
-              detail line above already says the phase and the percent, so `aria-valuetext`
-              would only repeat it. */}
-          <div
-            className="bar"
-            role="progressbar"
-            aria-label={RESCAN_HEADING}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={percent}
-          >
-            <div className="bar-fill" style={{ width: `${percent}%` }} />
-          </div>
+          <ProgressBar label={RESCAN_HEADING} percent={percent} />
         </>
       ) : (
         <>

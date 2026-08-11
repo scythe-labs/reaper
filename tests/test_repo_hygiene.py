@@ -3564,7 +3564,20 @@ _READ_HOOKS = {
     # half is not unclassified by omission: ``PlexPanel`` renders ``sync.error`` through the
     # action slot it already shared with ``saveLibraries``.
     "usePlexLibraries",
+    # Wraps the general-settings query and returns the whole result, so `GeneralPanel` still
+    # branches on `general.isError` and the number does not move.
+    "useGeneralSettings",
 }
+
+# The hooks that hand back PAYLOAD and no failure handle at all, so a member of their result
+# named ``error`` is the SERVER's word rather than a read that failed.
+#
+# ``ScanStatus.error`` is the case: the scan bar and the wizard both render "The scan hit a
+# problem: {status.error}", which is a finished scan reporting what went wrong. The walk already
+# refused to count that through ``_QUERY_PRIMITIVES``, while the query was declared inline and
+# destructured; hoisting it into ``useScanStatus`` moved the same expression onto an unknown hook
+# bound whole. Filing it as a read adds two handles for branches that do not exist (rule 141).
+_PAYLOAD_HOOKS = {"useScanStatus"}
 
 # The hooks whose failure is an action's, not a read's. Listed rather than assumed, so the walk
 # fails on a hook it has never seen instead of quietly filing it here.
@@ -3616,6 +3629,11 @@ def _query_failure_handles() -> tuple[dict[str, int], set[str]]:
         found = 0
         for match in _OBJECT_BINDING.finditer(text):
             binding, hook = match.group(1), match.group(2)
+            # A payload hook's ``.error`` is the server's message on the value, so it is neither
+            # counted nor left unclassified. Same exclusion the member branch below applies to
+            # React Query's own hooks, for the same reason.
+            if hook in _PAYLOAD_HOOKS:
+                continue
             reads = [
                 a
                 for a in ("isError", "error")
@@ -3646,7 +3664,7 @@ def _query_failure_handles() -> tuple[dict[str, int], set[str]]:
                 # lines rename it (``const { data: status } = useQuery``) and then read
                 # ``status.error`` -- the SERVER's error message on the payload, not a handle.
                 # Counting those would have moved the number for a read that does not exist.
-                if hook in _QUERY_PRIMITIVES:
+                if hook in _QUERY_PRIMITIVES or hook in _PAYLOAD_HOOKS:
                     continue
                 reads = [
                     a
@@ -3679,12 +3697,13 @@ def test_every_query_failure_branch_is_counted() -> None:
     itself while disagreeing with the tree (rule 145).
     """
     per_file, hooks = _query_failure_handles()
-    unknown = sorted(hooks - _READ_HOOKS - _ACTION_HOOKS)
+    unknown = sorted(hooks - _READ_HOOKS - _ACTION_HOOKS - _PAYLOAD_HOOKS)
     assert not unknown, (
         "these hooks hand back an `error`/`isError` the walk has never seen, so it cannot say\n"
         "whether they are reads or actions and will not guess:\n  " + "\n  ".join(unknown) + "\n"
-        "Add each to _READ_HOOKS (a read, whose failure leaves the last good value in hand) or\n"
-        "to _ACTION_HOOKS (a mutation, whose failure is an action's)."
+        "Add each to _READ_HOOKS (a read, whose failure leaves the last good value in hand),\n"
+        "to _ACTION_HOOKS (a mutation, whose failure is an action's), or to _PAYLOAD_HOOKS (it\n"
+        "returns the value alone, so `.error` on it is the server's message and not a handle)."
     )
     assert per_file == _QUERY_FAILURE_HANDLES, (
         "the query-failure population moved.\n"
@@ -5251,7 +5270,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 209
+_EXPECTED_FRONTEND_MODULES = 214
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
