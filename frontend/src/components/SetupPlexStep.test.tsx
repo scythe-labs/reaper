@@ -11,10 +11,11 @@
 // the symptom cannot be reproduced without pinning a fixture as hard as the component (rule 118).
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SetupStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
+import { DEFAULT_PLEX_STATUS } from "../test/apiFixtures";
 import { OF_THE_LINKED_SERVER } from "../plexServerQueries";
 import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -25,6 +26,16 @@ const { apiMock } = await vi.hoisted(async () => ({
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
+
+// Answered file-wide, because every mount here renders the linked step and reads both. Left
+// unanswered they resolved to `undefined`, which React Query files as a failed read, so six of
+// the suite's twenty undefined-reads came from this file and every assertion below was made
+// against the step's could-not-read branch (#704). A describe that varies either one sets its
+// own value after the reset, the way `plexResources` already does.
+beforeEach(() => {
+  apiMock.plexStatus.mockResolvedValue(DEFAULT_PLEX_STATUS);
+  apiMock.plexLibraries.mockResolvedValue([]);
+});
 
 function setup(overrides: Partial<SetupStatus> = {}): SetupStatus {
   return {

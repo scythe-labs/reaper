@@ -83,12 +83,20 @@ if (hasDom) {
 // on -- the same "warning nobody reads" this file exists to delete, now with the gate's own
 // blessing. Nothing here warns: it fails, or it has nothing to say.
 let missingQueryFn: string[] = [];
+let undefinedData: string[] = [];
 let outsideAct: string[] = [];
 let duplicateKeys: string[] = [];
 const forwardError = console.error.bind(console);
 console.error = (...args: unknown[]) => {
   if (typeof args[0] === "string") {
     if (args[0].includes("No queryFn was passed")) missingQueryFn.push(args[0]);
+    // The same failure reached through an arrow, which is why the collector above cannot see
+    // it: `queryFn: () => api.vocabularyValues(f)` HAS a queryFn, and the mock gap is inside
+    // it. React Query files that as an ordinary rejection, the tree paints its could-not-read
+    // branch, and the test asserts against that branch believing it is the app. Twenty of
+    // these sat behind a green suite, in two files (#704). Rule 135 named this as its own
+    // blind spot and nothing enforced it.
+    if (args[0].includes("Query data cannot be undefined")) undefinedData.push(args[0]);
     // "An update to %s inside a test was not wrapped in act(...)", the component name second.
     if (args[0].includes("was not wrapped in act(")) {
       outsideAct.push(String(args[1] ?? "a component"));
@@ -106,9 +114,11 @@ console.error = (...args: unknown[]) => {
 
 afterEach(() => {
   const queries = missingQueryFn;
+  const undefineds = undefinedData;
   const unacted = outsideAct;
   const dupes = duplicateKeys;
   missingQueryFn = [];
+  undefinedData = [];
   outsideAct = [];
   duplicateKeys = [];
   if (queries.length > 0) {
@@ -118,6 +128,16 @@ afterEach(() => {
       `Ran a query with no queryFn: ${keys.join(", ")}. The mock for "../api" is missing a ` +
         `function a hook in this tree reads, so that query rendered as a failed read. Add it to ` +
         `the mock; src/test/apiFixtures.ts holds the payloads. See rule 135.`,
+    );
+  }
+  if (undefineds.length > 0) {
+    // "... Affected query key: [\"vocabulary-values\",\"genre\"]" is how the message ends.
+    const keys = [...new Set(undefineds.map((m) => m.slice(m.indexOf("Affected query key:"))))];
+    throw new Error(
+      `A query function resolved to undefined: ${keys.join(", ")}. The mock for "../api" ` +
+        `answers nothing for a read this tree makes through an arrow, so that query rendered ` +
+        `as a failed read and the assertions above ran against the could-not-read branch. ` +
+        `Answer it; src/test/apiFixtures.ts holds the payloads. See rule 135.`,
     );
   }
   if (unacted.length > 0) {

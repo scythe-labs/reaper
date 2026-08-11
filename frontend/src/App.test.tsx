@@ -9,7 +9,13 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE, DEFAULT_UPDATE, IDLE_SCAN } from "./test/apiFixtures";
+import {
+  DEFAULT_FIELD_VALUES,
+  DEFAULT_GENERAL,
+  DEFAULT_PROFILE,
+  DEFAULT_UPDATE,
+  IDLE_SCAN,
+} from "./test/apiFixtures";
 import { expectNoA11yViolations } from "./test/a11y";
 import { testQueryClient } from "./test/queryClient";
 import { renderWithProviders } from "./test/renderWithProviders";
@@ -46,6 +52,12 @@ vi.mock("./api", async (importOriginal) => ({
 // answer set their own value after their reset.
 beforeEach(() => {
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+  // ReviewQueue's two filter suggesters read this, and every shell mount here renders the
+  // queue. Unanswered, both rendered their failed-read branch and 14 of the suite's 20
+  // undefined-reads came from this file alone (#704). Its own comment above is what the gate
+  // below could not enforce: an arrow-wrapped queryFn exists, so rule 135's collector sees a
+  // queryFn and says nothing.
+  apiMock.vocabularyValues.mockResolvedValue(DEFAULT_FIELD_VALUES);
 });
 
 const snapshot: Snapshot = {
