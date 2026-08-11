@@ -206,14 +206,23 @@
      drift apart the cut floats above the rule or hangs below it. */
   --masthead-pad-b: 1rem;
 
-  /* Form control standard. Every text / number / select box shares this chrome, so the
-     app reads as one surface (see .set-control, .rule-control, .field-sm, .condition-add,
-     .search-input, .log-search, .pw-form, .local-form, .qty): padding
-     var(--control-pad); border 1px solid var(--border-strong); border-radius var(--radius-sm);
-     background var(--bg); color var(--text); font: inherit; and on :focus, outline 2px
-     solid var(--accent) with outline-offset 1px. Width is the only thing that varies by
-     context -- compact numbers 5rem, unit selects ~5.25rem, wide text fields 15-22rem --
-     but the chrome above never does. Reuse it; don't fork it.
+  /* Form control standard (rule 40). Every text / number / select box shares this chrome, so
+     the app reads as one surface: padding var(--control-pad); border 1px solid
+     var(--border-strong); border-radius var(--radius-sm); background var(--bg); color
+     var(--text); font: inherit; and on :focus, outline 2px solid var(--accent) with
+     outline-offset 1px. Width is the only thing that varies by context -- compact numbers
+     5rem, unit selects ~5.25rem, wide text fields 15-22rem -- but the chrome above never
+     does. Reuse it; don't fork it.
+
+     Ten blocks carry it, and `styles-control-standard.test.ts` is what holds them to it,
+     rather than a list here: the list this comment used to carry named `.pw-form`, which has
+     no chrome of its own (it renders `.field-sm` boxes), and missed `.manual-row`,
+     `.settings-picker` and `.bar-foot`, so it was wrong in both directions (rule 144). The
+     test names the blocks it found in its own failure, which is where a reader wants them.
+
+     `.qty` is the one shape that cannot be one block: the border and fill sit on the wrapper
+     so the number and its unit read as a single box, and the children clear their own
+     (31-qty.css).
 
      The padding is a token rather than prose because it was written out as the literal
      `0.42rem 0.6rem` at twelve sites, which is rule 67's argument applied inside the
