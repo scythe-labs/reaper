@@ -276,20 +276,26 @@ class Settings(BaseSettings):
         return f"sqlite+aiosqlite:///{self.data_dir / 'cache.db'}"
 
 
-def load_raw_env(settings: Settings) -> dict[str, str]:
-    """The full environment, as the seeder sees it.
+def configured_env() -> dict[str, str]:
+    """The full environment, as ``Settings`` sees it: the dotenv files under ``os.environ``.
 
     Variables in a ``.env`` file are read by pydantic-settings into ``Settings``;
-    they are **not** exported into ``os.environ``. Since the seed keys are dynamic
-    (``REAPER_SONARR_4K_URL`` and friends) they never become ``Settings`` fields
-    either -- so reading ``os.environ`` alone silently finds nothing, and the
-    import quietly does no work. The dotenv files must be read directly.
+    they are **not** exported into ``os.environ``. So anything reading ``os.environ``
+    directly is blind to a ``.env.local``, and reads as configured while doing nothing --
+    which is what four documented desktop keys and the launcher's own port did (#558).
+    **Every reader of an operator-settable key goes through this or through a ``Settings``
+    field**, never through ``os.environ`` alone.
 
     Precedence matches pydantic-settings: a real environment variable wins over
     the file, and a later file wins over an earlier one.
+
+    ``Settings.model_config`` rather than an instance, because the env-file tuple is
+    declared on the class. That also keeps this honest under ``tests/conftest.py``'s
+    ``_hermetic``, which clears that key so no test reads the developer's dotenv: the same
+    clearing empties this, so the two cannot drift apart.
     """
     merged: dict[str, str] = {}
-    env_files = settings.model_config.get("env_file") or ()
+    env_files = Settings.model_config.get("env_file") or ()
     if isinstance(env_files, str | Path):
         env_files = (env_files,)
 
@@ -300,6 +306,17 @@ def load_raw_env(settings: Settings) -> dict[str, str]:
 
     merged.update(os.environ)
     return merged
+
+
+def load_raw_env(settings: Settings) -> dict[str, str]:
+    """The full environment, as the seeder sees it.
+
+    The seed keys are dynamic (``REAPER_SONARR_4K_URL`` and friends) so they never become
+    ``Settings`` fields, which is why the seeder needs the merged mapping rather than the
+    model. ``settings`` is kept in the signature because the seeding call site reads as a
+    function of the install it is seeding.
+    """
+    return configured_env()
 
 
 def parse_instance_seeds(env: dict[str, str]) -> list[InstanceSeed]:
