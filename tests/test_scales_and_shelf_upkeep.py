@@ -37,6 +37,7 @@ from reaper.services.fairness import (
     roll_up,
 )
 from reaper.services.grace import GraceItem, GraceReport
+from reaper.services.leaving_soon import LeavingSoonUnlinkedError
 
 GB = 1024**3
 NOW = utcnow()
@@ -585,7 +586,7 @@ class TestADegradedScanDoesNotReachTheShelf:
         # exactly, not caught as a bare Exception: the point is WHICH gate stopped it, and a
         # test that accepts any failure would pass even if the degraded guard had fired
         # (rule 119).
-        with pytest.raises(PlexError, match="needs a linked Plex server"):
+        with pytest.raises(LeavingSoonUnlinkedError, match="needs a linked Plex server"):
             await leaving_soon.run_sync(factory, _settings(tmp_path), SecretBox("test-key"))
 
     async def test_no_snapshot_at_all_is_not_degraded(
@@ -698,14 +699,15 @@ class TestAScanThatSkippedTheShelfSaysSo:
         assert skip["result"] == "the scan didn't finish cleanly"
         assert skip["at"]
 
-    async def test_an_unreachable_plex_is_written_down(
+    async def test_no_plex_link_is_written_down(
         self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
-        """No Plex link at all, which is the shape ``_run_pass`` raises ``PlexError`` for.
+        """No Plex link at all, which ``_run_pass`` raises ``LeavingSoonUnlinkedError`` for.
 
-        A different clause from the degraded case above, and asserted as such: the two are
-        the operator's only signal for which of the two happened, so a fix that collapsed
-        them into one string would still satisfy a test that only checked a record exists.
+        A different clause from the degraded case above and from the unreachable case below,
+        and asserted as such: they are the operator's only signal for which happened, and the
+        fixes differ, so a change collapsing them would still satisfy a test that only
+        checked a record exists. All three shared two classes until #734.
         """
         async with factory() as session:
             await app_settings.set_leaving_soon_enabled(session, enabled=True)
@@ -716,6 +718,32 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None
+        assert skip["result"] == "no Plex server is linked"
+
+    async def test_a_linked_server_that_will_not_answer_is_written_down(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The arm the route now answers 502 for, and the one this file could not reach
+        before: with no link, the pass never got as far as talking to a server (#734)."""
+
+        async def _stalled(*args: object, **kwargs: object) -> object:
+            raise PlexError("movie listing for section 3 stalled at 200 of 1000")
+
+        async with factory() as session:
+            await app_settings.set_leaving_soon_enabled(session, enabled=True)
+            await session.commit()
+        await self._snapshot(factory, degraded=False)
+        monkeypatch.setattr(leaving_soon, "_plex_client", _stalled)
+
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        skip = await self._skip(factory)
+        assert skip is not None
+        # The row clause carries no client text at all: a Jobs row is scanned, and the
+        # diagnostic tail belongs on the route's response, where someone is reading it.
         assert skip["result"] == "Reaper couldn't reach Plex"
 
     async def test_the_shelf_being_off_is_not_written_down(
@@ -772,10 +800,11 @@ class TestAScanThatSkippedTheShelfSaysSo:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The unreachable-Plex path records its reason and then falls through to the
-        Discord heads-up, which sits inside the catch-all. A surprise down there must not
-        overwrite "Reaper couldn't reach Plex" with the vague clause: the specific one is
-        the only clause that tells the operator what to go and fix.
+        """The no-link path records its reason and then falls through to the Discord
+        heads-up, which sits inside the catch-all. A surprise down there must not overwrite
+        "no Plex server is linked" with the vague clause: the specific one is the only clause
+        that tells the operator what to go and fix. The unreachable arm beside it falls
+        through the same way, so this covers both (#734 split the two).
 
         A notifier is forced in because the fall-through returns before announcing without
         one, and the surprise is planted in ``announce_new`` rather than ``build_notifier``:
@@ -801,7 +830,7 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None
-        assert skip["result"] == "Reaper couldn't reach Plex"
+        assert skip["result"] == "no Plex server is linked"
 
     async def test_a_surprise_with_no_name_still_says_the_shelf_did_not_move(
         self,

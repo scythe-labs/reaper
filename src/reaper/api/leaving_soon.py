@@ -22,7 +22,11 @@ from reaper.clients.plex import PlexError
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.services import leaving_soon
-from reaper.services.leaving_soon import LeavingSoonDegradedError, LeavingSoonDisabledError
+from reaper.services.leaving_soon import (
+    LeavingSoonDegradedError,
+    LeavingSoonDisabledError,
+    LeavingSoonUnlinkedError,
+)
 
 router = APIRouter(prefix="/api", tags=[api_tags.JOBS])
 
@@ -32,13 +36,20 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
     settings: Settings = request.app.state.settings
     box: SecretBox = request.app.state.secret_box
 
-    # One refusal for the ways a pass declines: the shelf is off, the last scan could not be
-    # trusted, or Plex did not answer. The two Leaving Soon errors carry operator copy. A
-    # PlexError raised inside the client does not, and lands here as it stands (#734).
+    # The three ways a pass declines for a reason the operator can act on: the shelf is off,
+    # the last scan could not be trusted, or no server is linked. Each carries operator copy
+    # and each is a 400.
     try:
         result = await leaving_soon.run_sync(request.app.state.session_factory, settings, box)
-    except (LeavingSoonDisabledError, LeavingSoonDegradedError, PlexError) as exc:
+    except (LeavingSoonDisabledError, LeavingSoonDegradedError, LeavingSoonUnlinkedError) as exc:
         raise HTTPException(400, str(exc)) from exc
+    # A linked server that did not answer is not the operator's request being wrong, and the
+    # client's own text is written for a log ("movie listing for section 3 stalled at 200 of
+    # 1000"), not for someone deciding what to delete. 502 in Reaper's words, the way the
+    # three sibling routes answer it (rule 10, rule 21, rule 72). It used to share the 400
+    # above, because the service raised `PlexError` for the not-linked case too (#734).
+    except PlexError as exc:
+        raise HTTPException(502, f"Reaper couldn't reach Plex: {exc}") from exc
 
     # ``ok`` and ``result`` are the pass's own words, already stored on the Jobs row by the
     # same derivation (``LeavingSoonResult.summary``). This route used to add the

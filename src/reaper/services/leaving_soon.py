@@ -81,6 +81,16 @@ class LeavingSoonDegradedError(RuntimeError):
     """The last scan declared itself untrustworthy, so the shelf must not act on it."""
 
 
+class LeavingSoonUnlinkedError(RuntimeError):
+    """No Plex server is linked, so there is nowhere to put a shelf.
+
+    Its own class because the route answers it 400 and a client ``PlexError`` 502. This used
+    to raise ``PlexError`` too, so one class reached the route carrying a configuration
+    problem and an upstream failure, and the route could not tell them apart: an unreachable
+    server was reported as a bad request, in a sentence the client wrote for a log (#734).
+    """
+
+
 async def _latest_scan_degraded(session: AsyncSession) -> bool:
     """Did the most recent scan declare itself untrustworthy?
 
@@ -473,8 +483,10 @@ async def run_sync(
     """One full Leaving Soon pass: reconcile every enabled library and announce.
 
     The single implementation behind the Reap-page button and the after-scan hook, so
-    the two can never drift. Raises :class:`LeavingSoonDisabledError` when the shelf is
-    off, and :class:`PlexError` when no server is linked or none of it is reachable.
+    the two can never drift. Raises :class:`LeavingSoonDisabledError` when the shelf is off,
+    :class:`LeavingSoonUnlinkedError` when no server is linked, and :class:`PlexError` when
+    a linked server did not answer. The last two used to be one class, so the route reported
+    an unreachable server as a bad request (#734).
 
     Serialized against every other pass in this process (see :data:`_pass_lock`), because
     the announced set is read at the top and written at the bottom with minutes of network
@@ -516,7 +528,9 @@ async def _run_pass(
         plex = await _plex_client(session, box, settings)
 
     if plex is None:
-        raise PlexError("Leaving Soon needs a linked Plex server. Link one in Settings first.")
+        raise LeavingSoonUnlinkedError(
+            "Leaving Soon needs a linked Plex server. Link one in Settings first."
+        )
 
     try:
         movie_keys, season_keys, _titles = _grace_keys(report)
@@ -609,10 +623,18 @@ async def after_scan(
             log.info("leaving_soon.skipped_degraded")
             await _record_skip(session_factory, "the scan didn't finish cleanly")
             return
+        except LeavingSoonUnlinkedError:
+            # Shelf on, no server linked at all. A separate clause from the one below, and
+            # separate for the same reason the degraded clause is: they are the operator's
+            # only signal for which of the two happened, and the fixes are different (rule
+            # 21). One class carried both until #734.
+            log.info("leaving_soon.skipped_unlinked")
+            await _record_skip(session_factory, "no Plex server is linked")
+            recorded = True
         except PlexError as exc:
-            # Shelf on, but Plex is unlinked or unreachable. Fall through to the Discord
-            # heads-up below, but do not swallow it silently: an operator who enabled the
-            # shelf and sees it not updating has no other trail to this cause.
+            # Shelf on and a server linked, but it did not answer. Fall through to the
+            # Discord heads-up below, but do not swallow it silently: an operator who
+            # enabled the shelf and sees it not updating has no other trail to this cause.
             log.warning("leaving_soon.shelf_unreachable", error=str(exc))
             await _record_skip(session_factory, "Reaper couldn't reach Plex")
             recorded = True
