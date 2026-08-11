@@ -3571,6 +3571,34 @@ own runtime and is not the same defect.
 future author has to keep in step is a different question, and a kill that answers only the
 first one is not finished.
 
+## A gate's unit has to be the invariant's unit, and two gates got it wrong in opposite directions (2026-08-10)
+
+Two wave 11 kills each said "no shape rescues this, write the gate instead". Building both found
+the same mistake twice, from either side.
+
+**Counting a word cannot see the sentence around it.**
+`test_the_reload_advice_population_is_pinned_per_file` matches the bare word `reload`, case
+insensitively, per shipped `.tsx`. Its subject is the advice "Reload to try again.", which four
+panels print verbatim after a read never lands. Measured: rewriting one of the four as "Couldn't
+load your settings. Reload to try again." leaves the word count identical and the gate green.
+The word survives every rewording of the sentence it belongs to, so a copy can drift all the way
+out of the family and the population still reconciles. A per-sentence pin over the same walk
+fails on that mutation, and it also surfaced what the finding had missed: the family is **25
+distinct sentences at 32 sites**, six of them duplicated, where the finding named two.
+
+**Counting elements reads a ternary and a `.map()` backwards.** The rule behind `.field-sm` is
+runtime cardinality: a `<label>` names exactly one control, so it wraps one, and anything else is
+a `<div>`. Source text cannot answer that. Of 26 boxes, one holds a `<select>` and an `<input>` in
+the two arms of a ternary and renders **one**, and two hold a single `<select>` inside a `.map()`
+and render **many**. A gate counting control tags calls all three wrong, and each wrong answer
+points at a correct site. So the gate pins the population per file and per tag and leaves the
+cardinality to the author, with the reason for each `<div>` written beside the pin.
+
+The general shape: **a text gate can only assert over the unit its matcher collects.** Pick the
+unit the invariant is stated in, or pin the population and say plainly what the walk cannot see.
+Rule 147 says a matcher is bounded by the syntax it can parse; this is the same bound one level
+up, at what the matcher is a matcher *of*.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

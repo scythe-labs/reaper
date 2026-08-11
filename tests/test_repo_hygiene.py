@@ -3827,6 +3827,208 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     )
 
 
+# Every "couldn't load" sentence the shipped tree renders, and the file rendering each one. The
+# count above matches the WORD `reload` per file, so it is blind to two panels drifting apart on
+# the sentence they print when a read never landed, which is what W11-36 is about: "Couldn't load
+# these settings. Reload to try again." is written at four sites and "Couldn't load this page.
+# Reload to try again." at two. Three more duplications that finding did not name turned up in
+# the same walk: "Couldn't load the library list." across `PlexPanel` and `SetupPlexStep`,
+# "Couldn't load your connections." across `ServicesPanel` and `SetupConnectStep`, and
+# `PolicyRuleEditors`' rule-picker sentence twice inside one file.
+#
+# `PolicyEditor`'s "Couldn't load these settings." is the deliberate fifth copy and holds a row of
+# its own. It drops "Reload to try again." because that panel is an editor holding unsaved work
+# and a reload takes it with no ask (#195; `frontend/src` has no `beforeunload` handler). So the
+# two keys differing by exactly that clause are both correct, and a sixth panel dropping the
+# advice earns its own key here with the same reasoning written down.
+_NEVER_LOADED_COPY = {
+    "Couldn't load Scales.": ["frontend/src/components/Fairness.tsx"],
+    "Couldn't load new lines, and updates are paused.": ["frontend/src/components/LogsPanel.tsx"],
+    "Couldn't load new lines. Reaper is trying again.": ["frontend/src/components/LogsPanel.tsx"],
+    "Couldn't load the Leaving Soon settings.": ["frontend/src/components/PlexPanel.tsx"],
+    "Couldn't load the library list.": [
+        "frontend/src/components/PlexPanel.tsx",
+        "frontend/src/components/SetupPlexStep.tsx",
+    ],
+    "Couldn't load the library list. Try again.": ["frontend/src/components/SetupPlexStep.tsx"],
+    "Couldn't load the log.": ["frontend/src/components/LogsPanel.tsx"],
+    "Couldn't load the reasons for this item. Close this panel and click the item to try again.": [
+        "frontend/src/components/WhyPanelFallback.tsx"
+    ],
+    "Couldn't load the rest of the list, so nothing was selected. Your picks are as they were."
+    " Try again.": ["frontend/src/components/ReviewQueue.tsx"],
+    "Couldn't load the seasons. Collapse and expand to try again.": [
+        "frontend/src/components/ReviewQueue.tsx"
+    ],
+    "Couldn't load the shelf status. Reload to try again.": [
+        "frontend/src/components/JobsPanel.tsx"
+    ],
+    "Couldn't load the upkeep jobs. Reload to try again.": [
+        "frontend/src/components/JobsPanel.tsx"
+    ],
+    "Couldn't load the watch history record.": ["frontend/src/components/PlexPanel.tsx"],
+    "Couldn't load these settings.": ["frontend/src/components/PolicyEditor.tsx"],
+    "Couldn't load these settings. Reload to try again.": [
+        "frontend/src/components/GeneralPanel.tsx",
+        "frontend/src/components/PlexPanel.tsx",
+        "frontend/src/components/PolicyEditor.tsx",
+        "frontend/src/components/SecurityPanel.tsx",
+    ],
+    "Couldn't load this page. Reload to try again.": [
+        "frontend/src/components/AboutPanel.tsx",
+        "frontend/src/components/BackupPanel.tsx",
+    ],
+    "Couldn't load this person's requests. Close this panel and click the card to try again.": [
+        "frontend/src/components/ScalesPanel.tsx"
+    ],
+    "Couldn't load what a reap would remove. Reaper just can't show it right now."
+    " Reload to try again.": ["frontend/src/components/ReapBreakdown.tsx"],
+    "Couldn't load your connections.": [
+        "frontend/src/components/ServicesPanel.tsx",
+        "frontend/src/components/SetupConnectStep.tsx",
+    ],
+    "Couldn't load your lists, so there is no way to tell here whether they are working.": [
+        "frontend/src/components/ListsPanel.tsx"
+    ],
+    "Couldn't load your review queue.": ["frontend/src/components/ReviewQueue.tsx"],
+    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from right"
+    " now. The rules you've already added are still here.": [
+        "frontend/src/components/PolicyRuleEditors.tsx",
+        "frontend/src/components/PolicyRuleEditors.tsx",
+    ],
+    "Reaper couldn't load this plan. Reload the page to try again.": [
+        "frontend/src/components/ReapPlan.tsx"
+    ],
+    "Reaper couldn't load this reap. Close this and try View again.": ["frontend/src/App.tsx"],
+    "Reaper couldn't load your lists, so there's nothing to pick from right now.": [
+        "frontend/src/components/PolicyRuleEditors.tsx"
+    ],
+}
+
+#: Accepts, and these are the spellings the tree uses plus the ones it could reach for without
+#: anyone noticing (rule 147): ``Couldn't load``, ``Could not load``, the same with a typographic
+#: apostrophe (U+2019, which an editor substitutes on its own), each of those behind a leading
+#: ``Reaper``, in any casing. Matched against the file flattened to a single line, so a sentence
+#: that WRAPS across source lines is still one match: ``PolicyRuleEditors`` wraps two and
+#: ``ReviewQueue`` a third. Rejects, and both land as a truncated key rather than as a silent
+#: pass: a sentence interpolating a value, since the run stops at the first ``{``, and one
+#: assembled in a local, which no text match can see.
+_NEVER_LOADED = re.compile("(?i)(?:reaper )?could(?:n['\\u2019]t| not) load[^<\"`{}]*")
+
+
+def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
+    """Six of these are written at more than one site, so they drift apart one copy at a time.
+
+    Rule 144's shape on failure copy. One fact, "this panel has nothing to show you", is written
+    32 times in 25 sentences, each by someone reading a different one, and the reload-advice count
+    above cannot see it: a file keeps its ``reload`` count while the sentence around the word
+    changes.
+
+    Keyed by sentence rather than by file, because a copy moving between files is not what this
+    is about. A fifth panel picking up "Couldn't load these settings. Reload to try again." has to
+    add itself to that key's list, where the four already on it are in view.
+    """
+    found: dict[str, list[str]] = {}
+    for path in _shipped_tsx():
+        flat = " ".join(_without_comments(path.read_text(encoding="utf-8")).split())
+        for match in _NEVER_LOADED.finditer(flat):
+            found.setdefault(match.group(0).strip(), []).append(str(path.relative_to(REPO)))
+    assert {sentence: sorted(files) for sentence, files in found.items()} == _NEVER_LOADED_COPY, (
+        "the never-loaded copy moved.\n"
+        f"expected: {_NEVER_LOADED_COPY}\nfound:    {found}\n"
+        "A new sentence: check first whether one of the keys above already says it, and reuse\n"
+        "that rather than adding a 26th way to say the same thing. A new site on an existing\n"
+        "key: add the file to that key's list. Adding or dropping 'Reload to try again.' is a\n"
+        "separate decision, and _RELOAD_ADVICE above holds the reasoning behind it."
+    )
+
+
+#: Every `.field-sm` container the shipped tree writes, by file and by tag. `.field-sm` is a
+#: `<label>` wherever exactly one control renders inside it, which is what lets the box name its
+#: control with no `htmlFor`/`id` pair to keep in step, and a `<div>` wherever no single control
+#: does. The four `<div>` sites and why each one is not a label: `ListModal`'s tag editor holds a
+#: `TagsEditor` and a `Segmented`; `ServiceModal`'s library and instance pickers each render a
+#: `<select>` per row of a `.map()`; `SetupPlexStep`'s manual address holds a host box and a port
+#: box. That rule held at 26 sites across 9 files and was written down nowhere until this (W11-23).
+_FIELD_SM_CONTAINERS = {
+    "frontend/src/components/DiscordModal.tsx": {"label": 1},
+    "frontend/src/components/JobsPanel.tsx": {"label": 2},
+    "frontend/src/components/ListModal.tsx": {"div": 1, "label": 4},
+    "frontend/src/components/NotificationsPanel.tsx": {"label": 1},
+    "frontend/src/components/RestoreCard.tsx": {"label": 1},
+    "frontend/src/components/SecurityPanel.tsx": {"label": 3},
+    "frontend/src/components/ServiceModal.tsx": {"div": 2, "label": 6},
+    "frontend/src/components/SetupPasswordStep.tsx": {"label": 2},
+    "frontend/src/components/SetupPlexStep.tsx": {"div": 1, "label": 2},
+}
+
+#: One whole line: a `<label>` or `<div>` open tag whose `className` is the only attribute on it.
+#: Accepts the two spellings the tree uses, a string literal and a one-line ternary of them
+#: (`SecurityPanel`'s `viaRecovery ? "field-sm dim" : "field-sm"`). Everything it cannot read is
+#: caught by the count beside it rather than skipped, which is the half rule 147 asks for: a class
+#: list broken over several lines, a template literal, or a `field-sm` on any other tag all leave
+#: the walk while still being counted by `_FIELD_SM_WORD`, so the two figures disagree and fail.
+_FIELD_SM_OPEN = re.compile(r'^\s*<(label|div) className=(?:"[^"\n]*"|\{[^\n]*\})>\s*$')
+_FIELD_SM_WORD = re.compile(r"\bfield-sm\b")
+_FIELD_LABEL_SPAN = '<span className="field-label">'
+
+
+def test_every_field_sm_box_is_a_label_over_one_control_or_a_named_div() -> None:
+    """A `<label>` around two controls names the first one and leaves the second nameless.
+
+    26 boxes across 9 files ride this rule and nothing declared it, so the 27th was going to be
+    written by copying whichever of the 26 its author had open. The population is pinned per file
+    and per tag: a new `<div className="field-sm">` is the interesting one, since it is the choice
+    that has to be argued, and it cannot be added without editing the comment above that says why
+    each existing one is a div.
+
+    **What the walk reads and what it cannot** (rule 147). It reads the open tag and the line
+    under it. It does NOT count controls, because the two facts that decide label-versus-div are
+    invisible in source text: `ListModal`'s Plex library box holds a `<select>` and an `<input>`
+    in the two arms of a ternary, so one control renders, and `ServiceModal`'s pickers hold one
+    `<select>` inside a `.map()`, so many do. A count of tags reads those two backwards. The
+    per-file tag counts are what a wrong choice has to get past instead.
+    """
+    walked: dict[str, dict[str, int]] = {}
+    unnamed: list[str] = []
+    counted = 0
+    for path in _shipped_tsx():
+        stripped = _without_comments(path.read_text(encoding="utf-8"))
+        lines = stripped.splitlines()
+        counted += sum(1 for line in lines if _FIELD_SM_WORD.search(line))
+        for number, line in enumerate(lines):
+            match = _FIELD_SM_OPEN.match(line)
+            if not match or not _FIELD_SM_WORD.search(line):
+                continue
+            name = str(path.relative_to(REPO))
+            walked.setdefault(name, {}).setdefault(match.group(1), 0)
+            walked[name][match.group(1)] += 1
+            below = lines[number + 1].strip() if number + 1 < len(lines) else ""
+            if not below.startswith(_FIELD_LABEL_SPAN):
+                unnamed.append(f"{name}:{number + 1} -> {below[:60]}")
+    assert not unnamed, (
+        "a `.field-sm` box whose first child is not its name:\n  " + "\n  ".join(unnamed) + "\n"
+        f"Every one of them opens with {_FIELD_LABEL_SPAN}, which is what a screen reader reads\n"
+        "out for the control inside. Put the span first, or say here why this box is different."
+    )
+    assert walked == _FIELD_SM_CONTAINERS, (
+        "the `.field-sm` population moved.\n"
+        f"expected: {_FIELD_SM_CONTAINERS}\nfound:    {walked}\n"
+        'A new `<label className="field-sm">`: check exactly one control renders inside it,\n'
+        "counting a `.map()` as many and a ternary as one, then bump the count here. If more\n"
+        "than one renders, or none does, it is a `<div>` and the comment above gains a clause\n"
+        "saying which of those it is."
+    )
+    assert counted == sum(sum(tags.values()) for tags in walked.values()), (
+        f"`field-sm` is mentioned outside comments on {counted} lines but the walk read "
+        f"{sum(sum(tags.values()) for tags in walked.values())} boxes.\n"
+        "One of them is spelled in a form `_FIELD_SM_OPEN` cannot read: a class list broken over\n"
+        "several lines, a template literal, a second attribute on the open tag, or a tag other\n"
+        "than `<label>`/`<div>`. Widen the matcher rather than the count, then re-derive both.\n"
+        "Lines, not occurrences: `SecurityPanel`'s ternary writes the class twice on one line."
+    )
+
+
 #: The surfaces that hold a connection-test verdict beside the fingerprint it was computed for,
 #: so a badge can be withdrawn once it stops describing what is on screen. This is the population
 #: the ban below scans, not a second one beside it (rule 147): every shipped file spelling an
