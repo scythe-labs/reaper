@@ -264,12 +264,19 @@ def _settings_default(field: str) -> str:
     return str(Settings.model_fields[field].default)
 
 
-def _port(env: Mapping[str, str]) -> int:
+def _port(env: Mapping[str, str], *, frozen: bool) -> int:
+    """The port to bind, refusing a value that is not one.
+
+    Through ``_say``, not ``sys.stderr``: on a desktop build this value comes from
+    ``launcher.conf``, the one file that shape is configured through, and a stderr-only
+    refusal there is written to the null device (#622). ``frozen`` is required rather than
+    defaulted so a call site cannot silently take the console-only path.
+    """
     raw = env.get("REAPER_PORT", "").strip() or _settings_default("port")
     try:
         return int(raw)
     except ValueError:
-        sys.stderr.write(f"REAPER_PORT must be a port number; it is set to {raw!r}.\n")
+        _say(f"REAPER_PORT must be a port number; it is set to {raw!r}.", frozen=frozen)
         raise SystemExit(2) from None
 
 
@@ -528,7 +535,7 @@ def main() -> None:
     # same way a real environment variable wins inside `Settings`.
     settled = configured_env()
     host = _host(settled)
-    port = _port(settled)
+    port = _port(settled, frozen=frozen)
     if _loopback_occupied(port):
         move = (
             f"add a line like REAPER_PORT=8421 to {conf}"
@@ -547,7 +554,11 @@ def main() -> None:
     # and that first call must see the data dir chosen above.
     from reaper.preflight import main as preflight
 
-    code = preflight()
+    # `_say`, not preflight's own stderr write: its three fatal sentences are the ones a
+    # double-clicked build has to see, and a windowed PyInstaller build's stderr is
+    # `os.devnull` (#622). The branch's schema-gate refusal is the third of them, and it is
+    # the one a `dev`-side fix would have left invisible.
+    code = preflight(lambda message: _say(message, frozen=frozen))
     if code:
         raise SystemExit(code)
 

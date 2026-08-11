@@ -31,19 +31,40 @@ before anything is migrated.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 
 from reaper.config import DataDirError, get_settings
 from reaper.db import schema_gate
 from reaper.services import backup, restore
 
 
-def main() -> int:
+def _to_stderr(message: str) -> None:
+    sys.stderr.write(message + "\n")
+
+
+def main(refuse: Callable[[str], None] = _to_stderr) -> int:
+    """Prepare the data folder, apply a staged restore, and refuse a schema this build
+    cannot serve. Zero means go.
+
+    ``refuse`` carries **the three fatal messages only** -- an unwritable data folder, a
+    restore swap that could not complete, and the schema gate's refusal -- so a caller that
+    can reach the operator some other way gets them. That is the frozen desktop builds:
+    Windows is windowed and macOS is `LSUIElement`, PyInstaller leaves the streams `None`
+    and `packaging/pyinstaller/entry.py` rebinds them to `os.devnull`, so a stderr-only
+    refusal is written to the null device and a double-clicked Reaper that will not start
+    closes with no window and no message (#622). `launcher.main` passes `_say`.
+
+    **The housekeeping lines below stay on stderr and are not routed here**, and the
+    difference is the point: a swept temp directory or an unconfirmed restore that was
+    cleared is a note about work that succeeded, and a dialog for it on every desktop start
+    would train the operator to dismiss the one that matters.
+    """
     try:
         settings = get_settings()
         settings.ensure_data_dir()
     except DataDirError as exc:
         # Just the message -- no traceback. The operator needs the fix, not a stack.
-        sys.stderr.write(str(exc) + "\n")
+        refuse(str(exc))
         return 1
     # Clear crash-leftover backup/restore temp dirs before anything else. Nothing is in
     # flight this early, and a stale multi-GB partial snapshot only makes a full disk worse
@@ -70,14 +91,14 @@ def main() -> int:
         # A restore that cannot complete must not let the app boot on a half-swapped
         # state. The previous data is preserved in the pre-restore directory; stop the
         # container with a plain message rather than serving an uncertain database.
-        sys.stderr.write(f"reaper: the restore could not be completed: {exc}\n")
+        refuse(f"reaper: the restore could not be completed: {exc}")
         return 1
     # Last, and after the swap above rather than before it: the database the migrations are
     # about to open is the RESTORED one, and restoring a backup is one of the two ways out
     # this refusal names. Checking first would refuse the boot that was about to fix itself.
     message = schema_gate.refusal(schema_gate.stored_revision(settings.database_path))
     if message:
-        sys.stderr.write(message + "\n")
+        refuse(message)
         return 1
     return 0
 
