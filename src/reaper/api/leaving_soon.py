@@ -32,8 +32,9 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
     settings: Settings = request.app.state.settings
     box: SecretBox = request.app.state.secret_box
 
-    # One refusal for the three ways a pass declines: the shelf is off, the last scan could
-    # not be trusted, or no Plex server is linked. Each raiser writes the operator's sentence.
+    # One refusal for the ways a pass declines: the shelf is off, the last scan could not be
+    # trusted, or Plex did not answer. The two Leaving Soon errors carry operator copy. A
+    # PlexError raised inside the client does not, and lands here as it stands (#734).
     try:
         result = await leaving_soon.run_sync(request.app.state.session_factory, settings, box)
     except (LeavingSoonDisabledError, LeavingSoonDegradedError, PlexError) as exc:

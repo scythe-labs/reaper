@@ -112,10 +112,10 @@ def project_root() -> Path:
     when a packaged install names one, the repo root otherwise.
 
     The walk counting levels up to the checkout root lives here and nowhere else. Two
-    callers inlined it from two modules that happened to sit at the same depth, so moving
-    either one gave a silently wrong answer instead of an import error.
-    `db.schema_gate.alembic_dir` keeps its own shape on purpose: it tries every parent for
-    a directory that identifies itself, which answers for shapes this cannot.
+    callers inlined it from modules that happened to sit at the same depth, so moving either
+    one moved its answer silently. `db.schema_gate.alembic_dir` keeps its own shape on
+    purpose: it tries every parent for a directory that identifies itself, which answers for
+    shapes this cannot.
     """
     return install_root() or Path(__file__).resolve().parent.parent.parent
 

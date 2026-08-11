@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """index action_step.run_id
 
-Every read of a run's journal filters on ``run_id`` -- the executor's step load, its
-per-item spare refresh, and the Runs page's step listing -- and SQLite does not index a
-foreign key on its own. ``EXPLAIN QUERY PLAN`` returned ``SCAN action_step`` for all of
-them.
+Every read of a run's journal filters on ``run_id``: the executor's step load
+(``_load``), its reload after a journal rollback (``_revive``), and the Runs page's step
+listing (``api.runs._run_steps``). SQLite does not index a foreign key on its own, so
+``EXPLAIN QUERY PLAN`` returned ``SCAN action_step`` for all three.
 
 That is a scan of a table nothing removes rows from. Retention deletes snapshots and
 excludes every snapshot a run points at, so ``action_step`` and ``reap_run`` grow for the
@@ -13,9 +13,9 @@ exclusion stays as it is: ``services/retention.py`` prices the rolling delete ca
 same pinned rows and calls it a safety interlock, so narrowing it to live or recent runs
 would silently unprice the cap. The growth is paid for, the scan was not.
 
-Additive and free: ``create_index`` copies no table under ``render_as_batch``, existing
-rows are untouched, and a database that has not run this yet behaves exactly as before,
-only slower. Testers never rebuild.
+Additive and cheap: ``CREATE INDEX`` is plain DDL, building a new b-tree and never
+rebuilding ``action_step``. Existing rows are untouched, and a database that has not run
+this yet behaves exactly as before, only slower. Testers never rebuild.
 
 Revision ID: f7a8b9c0d1e2
 Revises: e6f7a8b9c0d1

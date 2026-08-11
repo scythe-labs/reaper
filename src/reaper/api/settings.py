@@ -288,8 +288,8 @@ class JobScheduleIn(BaseModel):
 
 
 #: What both arms of :func:`set_job_schedule` answer with when the scheduler will not take a
-#: cron. One declaration, so the two cannot drift into two sentences (rule 144); ``reason``
-#: is the parser's own words.
+#: cron. One declaration, so the two cannot drift into two sentences (rule 144). ``reason``
+#: is the parser's own words about what it choked on.
 _BAD_CRON = "That is not a valid schedule: {reason}. Use cron form, e.g. '30 4 * * *'."
 
 
