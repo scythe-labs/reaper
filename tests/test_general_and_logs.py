@@ -427,6 +427,63 @@ class TestDesktopSettings:
         again = client.get("/api/settings/general").json()["desktop"]
         assert again == {"platform": "macos", "tray": False, "dock_icon": True}
 
+    def test_a_failed_commit_leaves_launcher_conf_alone(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        desktop_env: None,
+    ) -> None:
+        """The route promises that a refusal changes nothing, and one write was outside the
+        transaction that delivers it (#748).
+
+        `launcher.conf` is a file and `os.environ` is process state, so neither rolls back.
+        Written before the commit, a commit that then failed left the switch on in the file
+        and echoed back by `_desktop_out` from the environment, while the five settings rows
+        saved beside it went back and the operator was told the save failed.
+
+        The commit is broken at the session rather than at the disk, because the window this
+        is about is the commit failing for any reason at all. The three things the failure
+        must leave untouched are asserted separately: the file, the environment, and the
+        rows. A test reading only the response would pass with all three still moved.
+
+        **Only the route's own commit is broken**, found by frame name. A blanket patch on
+        ``AsyncSession.commit`` takes the auth middleware's commit down first, so the
+        request dies before ``put_general`` runs at all and the test passes against the
+        broken order it was written to catch (which is how it was written first, and it
+        passed).
+        """
+        import os
+        import traceback
+
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from reaper import launcher
+
+        monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "macos")
+        before = client.get("/api/settings/general").json()
+        real_commit = AsyncSession.commit
+
+        async def _fails(session: AsyncSession) -> None:
+            if any(frame.name == "put_general" for frame in traceback.extract_stack()):
+                raise RuntimeError("the database is locked")
+            await real_commit(session)
+
+        monkeypatch.setattr(AsyncSession, "commit", _fails)
+
+        with pytest.raises(RuntimeError, match="locked"):
+            client.put(
+                "/api/settings/general",
+                json={"application_name": "Media Reaper", "tray": False, "dock_icon": True},
+            )
+
+        monkeypatch.undo()
+        monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "macos")
+        assert not (tmp_path / "launcher.conf").exists()
+        assert "REAPER_TRAY" not in os.environ
+        assert "REAPER_DOCK_ICON" not in os.environ
+        assert client.get("/api/settings/general").json() == before
+
     def test_the_dock_icon_is_refused_off_the_mac_app(
         self,
         client: TestClient,

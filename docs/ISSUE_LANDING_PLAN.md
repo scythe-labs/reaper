@@ -248,11 +248,16 @@ fix needs to sort against (`LeavingSoonDisabledError`, `LeavingSoonDegradedError
 not-linked case at `services/leaving_soon.py:519` its own error, then answer a client `PlexError`
 with 502 the way the three sibling routes do.
 
-**10. #748, the launcher write.** `dev` has `write_conf_values`, `os.environ.update` and the commit
+**10. #748, the launcher write. Landed.** `dev` has `write_conf_values`, `os.environ.update` and the commit
 inline at `api/settings.py:1993-2003`. The branch moved the first two into `_write_desktop_values`
 at `:1351`, called at `:1399`, one line before the commit at `:1400`. A `dev`-side reorder of a
-block that no longer exists is a modify/delete. Moving the call to after the commit is one line
+block that no longer exists is a modify/delete. Moving the call to after the commit was one line
 here.
+
+**The test cost more than the fix, and the first version of it was wrong.** Breaking
+`AsyncSession.commit` outright takes the auth middleware's commit down first, so the request dies
+before `put_general` runs and the test passes against the broken order it was written to catch.
+Only the route's own commit is broken now, found by frame name.
 
 **11. #710, the PIN sweeper.** Half the fix merges and half cannot. `sweep_expired_sessions` is
 untouched context (`scheduler.py:495` on `dev`, `:491` here), so folding the delete in lands either
