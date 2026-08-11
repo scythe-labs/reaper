@@ -3269,6 +3269,46 @@ pairs; the other two sit 40 and about 150 lines apart, so collapsing them reloca
 instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
 filtered two-column select to an unfiltered three-column one.
 
+## A prop hand-off is not drift if the type checker sees it (2026-08-10)
+
+A finding said six navigation callbacks were drilled three to four levels through the React tree
+over a destination type that is already one value. Re-derived from `App.tsx`: **nine distinct
+prop names over ten hand-offs, seven consumed by `App`'s own child and three going exactly one
+level further.** Nothing reaches depth 2 and nothing passes it. The six was the `onGoTo*`-prefixed
+subset, and the three cross-page jumps named `onOpen*` are the same thing counted by nobody.
+
+**Depth is what the finding rested on, and it decides the answer.** A prop that stops being
+forwarded is a TypeScript error at the intermediary and again at the leaf, so the hand-off has no
+drift surface: it fails at build time or it is correct. Bundling the three depth-2 props into one
+destination prop trades about nine lines of pass-through for a bundle type and a second
+indirection, and removes no place a future author has to remember something. The part that could
+drift had already been fixed, in `navIntent.ts`: `goTo` is one entry point over one `NavIntent`
+union, replacing four per-destination setters that each had their own idea of what to reset.
+
+**The measurement that mattered was not the count.** Two earlier passes both got the count
+roughly right and neither wrote down the depth, which is the only figure the row's argument uses.
+
+## The cascade moves when a declaration moves to an earlier file (2026-08-10)
+
+Five controls draw one bare, pill-shaped ✕, each stylesheet carrying its own copy of the same
+thirteen declarations. Sharing them means moving the declarations to a file that loads **earlier**,
+and that is a cascade change, not a refactor: any rule of equal specificity in between now wins
+where it used to lose. Nothing in the diff shows it and no existing test reads it.
+
+**Read the shape back off the cascade rather than arguing it.** jsdom parses the concatenated
+stylesheet and does the cascade, so `getComputedStyle` on each control, rendered in the ancestry
+it really has, answers which declaration won. The values were captured **before** the shared rule
+existed, so a green run is the claim that nothing moved. Two limits are worth knowing: `var()` is
+left unresolved, which is what a test like this wants because it is asking which declaration won
+rather than what pixels it became; and `border-width` is reported from the keyword rather than
+from `border-style: none`, so `border: none` and `border: 0` disagree there and agree on screen.
+
+**Doing it found a control that was not the shape it claimed.** One member sizes itself
+`width: var(--tap-min)` and never resets the global `button` padding, so under `box-sizing:
+border-box` its used width is 29.2px against the 24px token it names. The `width` declaration does
+nothing. It was left as it renders and the shared rule excludes it, since folding it in would have
+needed a `padding` declaration whose only job was to cancel a shared one.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

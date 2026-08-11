@@ -348,6 +348,7 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | W5-1, one model for the stored explanation | Built as the row asks, then measured: the collapse drops the whole match block, and three interlocks fail open with it. The read model's three `mode="before"` validators exist so an illegible stored byte degrades one field instead of blanking the panel, and on the write side that same leniency normalizes the writer's own value to `None`. One model cannot be lenient for a reader of old rows and strict for the writer, so `extra="forbid"` catches none of it. The row's premise was also unfounded: all 36 written keys already match the declarations. A pinning test lands instead | Phase 8, PR #706, measured against a C9 drive |
 | W3b-9, a `stored_or_seed` helper | The row's "7 times in 3 spellings" is seven exactly and five spellings, so a helper serves three of the seven and buys 0 to 2 lines depending on how the longest call wraps (S5). It also binds only its own callers, where the whole exposure is the eighth getter nobody has written yet. What the measurement found instead is that **three of the seven precedence sites were unpinned across the entire suite**: a stored empty proxy list reverting to the env seed (rule 1's shape, claimed by its own docstring), a stale env webhook clobbering a UI edit, and a credential under a rotated key reporting "connected". A gate over all seven lands instead, with an AST walk that fails until an eighth getter is named | Phase 8, PR #703, all seven mutations driven red |
 | W3b-11, four frontend hooks | All four extractions net positive, and two of the four counts are wrong. Non-blank lines throughout. The image-fallback ladder is **two** ladders at **four** sites: 14 lines at each of `Backdrop` and `WhyHero`, plus a five-line comment that relocates, so 33 leave and 35 come back, 29 of them a leaf module both callers can import without a cycle. The dirty-report **5** is exact and is the sub-item worth least, 20 out against 29 back, because rule 146's obligation is per-site and a hook cannot carry it. The test-result pairing is **four** sites, and it stays a kill on shape rather than on lines: one stores a union of two payload shapes and reads the held result at three places, the others store one and read it at one. The password form is **two**, 8 shared lines out, three boxes against two and three complaint branches against two. What the measurement found instead is **three of the four test surfaces computing the fingerprint at settle time**, where the boxes have already moved, so a badge vouches for an address nobody tried; plus a live complaint announced on every keystroke on the wizard's password step, and one ungenerated copy of the length floor. All fixed, with a gate over the fingerprint family | Phase 8, PR #719, the gate driven red and its own first two drafts fail-open |
+| W11-20, bundling the navigation callbacks | The depth is the whole claim and it is wrong: nine prop names over ten hand-offs from `App`, seven consumed by its own child and three going exactly one level further (`onGoToPlexSettings` and `onGoToReview` through `ReapPlan`, `onGoToPolicy` through `Settings`). The plan's six is the `onGoTo*` subset; the three `onOpen*` jumps are the same thing uncounted. Nothing is drilled past depth 2, so `~40` sizes the plumbing and about nine lines of it are pass-through. Bundling removes no place a future author has to remember something, since a prop that stops being forwarded is a type error at both ends, and `navIntent.ts` already collapsed the part that could drift | Phase 8, owner's ruling 2026-08-10, re-derived before writing the row |
 | W11-39, one read for the overrides and their expiries | Built as the row asks and measured: `whitelist.py` +14/-7 and `review.py` +2/-4, a **net +5**. The loop that splits one result set into two maps is ten lines, where each read it replaces is two statements, so the extraction is larger than what it removes (S5). **"Back to back at four call sites" is wrong**: two are adjacent pairs, `breakdown.py`'s pair sits 40 lines apart across the condemned read and `effective_condemned`, and `review.py`'s fourth sits about 150 apart, so collapsing either moves a read rather than removing one. `review.py:489` reads `spare_expiries` alone and would go from a filtered two-column select to an unfiltered three-column one. The benefit is two fewer SELECTs against a table holding one row per manual override, on two page loads, and the only version reaching the row's own figure widens the `overrides()` read the executor issues before every item of a live reap (rule 112) | Phase 8, built and measured, then reverted |
 
 ## Execution
@@ -3479,6 +3480,25 @@ destination type
 parent-Back-guard ref mirror written three times. **Landed**, as a rule 80 fix and not a dedup:
 code net 0, and `ScheduleModal` mirrored one TERM of its `canClose`.
 
+> **Killed: W11-20, and the depth was never 3 to 4.** Owner's ruling, 2026-08-10. Re-derived from
+> `App.tsx` a third time: **nine distinct navigation prop names over ten hand-offs**, and the
+> plan's six is exactly the `onGoTo*`-prefixed subset (`onGoToAbout`, `onGoToDeletion` at two
+> sites, `onGoToJobs`, `onGoToPlexSettings`, `onGoToReview`, `onGoToPolicy`). The three
+> cross-page jumps spelled `onOpen*` are the same thing and were not counted: `onOpenSeason` to
+> `ShowPanel`, `onOpenItem` and `onOpenGroup` to `ScalesPanel`, all three landing on
+> `goToItemReasons` or `goToGroupReasons`. **Seven are consumed by `App`'s own child and three go
+> exactly one level further**: `onGoToPlexSettings` and `onGoToReview` through `ReapPlan` to
+> `ReapBreakdown`, and `onGoToPolicy` through `Settings` to `ListsPanel`. Nothing is drilled past
+> depth 2, so the `~40` sizes the plumbing rather than the drift, and only about nine of those
+> lines are pass-through at all. `ReviewQueue`'s own `onOpenGroup` is a local selection callback
+> sharing the name and is not one of these.
+>
+> **The kill is not the line count.** Bundling the three depth-2 props into one destination prop
+> removes no place a future author has to remember something: a prop that stops being forwarded
+> is a TypeScript error at the intermediary and again at the leaf. `navIntent.ts` already did the
+> part that needed doing, `goTo` being one entry point over one `NavIntent` type, so what is left
+> is ordinary React composition and a bundle would only hide it behind a second indirection.
+
 **Frontend components and CSS.** **W11-23** The `.field-sm` triplet typed 21 times across 7 files,
 which is
 the modal-side sibling of wave 3's `.set-row` finding and the same rule 72 sweep (~40).
@@ -3499,6 +3519,35 @@ three near-copies, where one comment says outright it "borrows" the other's shap
 and 14
 sites calling `.toLocaleString()` where `count()` exists (~20).
 
+> **Built: W11-29, the CSS half, four of five controls.** Owner's ruling, 2026-08-10: one shared
+> class, no shared component, and a computed-style test rather than a mockup. **Six controls draw
+> this shape, not three.** Five are a chip's ✕ (`.filter-chip button` and `.fchip-x` in
+> 22-queue-filters, `.tag-chip button` in 34-lists, `.inst-chip .chip-x` in 29-setup, `.bar-x` in
+> 14-policy-editor); the sixth, `.nudge-x` in 11-queue-chrome, is a notice's dismiss and is out.
+> Three of the five carried the identical thirteen declarations. **Both "borrows" comments are in
+> the CSS and both are deleted rather than re-pointed**: 22-queue-filters said the filter chip
+> borrowed `.tag-chip`'s shape, and 29-setup's block named `.fchip-body`, `.fchip-x` and
+> `.tag-chip button` as the pill it matched. 11-queue-chrome's third cross-reference, `.nudge-x`
+> pointing at `.bar-x`, is left alone with the control it describes.
+>
+> **`.bar-x` keeps its own declaration, and measuring it is what settled that.** It is the one
+> member with a visible border and a hover that turns the border red, and it never resets
+> 04-buttons' `button { padding: 0.42rem 0.85rem }`, so under the global `box-sizing:
+> border-box` its used width is 29.2px against the 24px `--tap-min` it names. Folding it in would
+> resize it, and the only way to keep it as-is would be a `padding` declaration whose one job is
+> to cancel a shared one. Its dead `width: var(--tap-min)` is filed as a question rather than
+> changed here: it is wider than the tap floor, not under it.
+>
+> **The proof is `styles-chip-dismiss.test.ts`, and the values in it are the pre-change tree.**
+> Twenty-five computed properties read off each of the six controls in the ancestry it really
+> renders in, captured before the shared rule existed, so a green run is the claim that nothing
+> moved. Driven red twice: one token changed in the shared rule fails all four members, and
+> moving the shared rule to a file that loads later fails both the shape and the load-order
+> assertion. Two jsdom limits are stated in the file rather than worked around, `var()` left
+> unresolved (which is what the test wants, since it is asking which declaration won) and
+> `border-width` misreported under `border-style: none`, so style is pinned and width is not.
+> **Five stylesheets, +57/-58, and -13 once comments are set aside.**
+
 **Errors and messages.** **W11-31** Four `IntegrationError` sentences raised twice each in
 `clients/base.py`
 plus a third copy in `public.py`, with the explanatory comment duplicated verbatim (~20; the
@@ -3518,6 +3567,39 @@ which drops "Reload to try again", is deliberate: #195, a reload inside an edito
 edits with it). **W11-37** Three identity entries in `CHECK_COPY` that the fallback already
 produces. **W11-38** The
 `instanceof ApiError` unwrap ritual five times.
+
+> **Built: W11-31, and lines are not what decided it.** Owner's ruling, 2026-08-10: this is rule
+> 144's exact shape, so the scout's -6 and the verifier's ~0 both answer a question that was not
+> being asked. **Four sentences is right and the scout's five was the over-count**, the fifth
+> being `too many redirects`, which is written once in each file rather than twice. The four are
+> `timed out ({kind})` and `unreachable ({exc})` at three raises each, `refused redirect (HTTP
+> {status}) for {method} {path}` at two, and `HTTP {status} for {method} {path}` at three:
+> **eleven hand-written copies of four sentences**. `public.py` carries three of them, not two,
+> and only two are verbatim, its `HTTP` copy spelling the method `GET` where `base.py`
+> interpolates it. That divergence is the rule the row is about, arriving already.
+>
+> **The comment the row calls verbatim is a paraphrase**, and it says something different each
+> time: `_send`'s names the three timeout kinds with their seconds, `_mutate`'s says connect
+> versus slow-to-answer call for different operator responses. Both facts are true and each site
+> had half of them; the factory's docstring carries both.
+>
+> **Three factories in `base.py`, beside `refuse_mutation`, which is the same move for the
+> guard's refusal.** `transport_failure` takes the exception and splits on it, so the two
+> `except` arms at each of the three sites collapse to one (`TimeoutException` is a
+> `TransportError`, so the arms were already ordered). `refused_redirect` and `http_failure` take
+> the response. **One behavior moves and it is inert**: `http_failure` reads Retry-After for
+> every caller, where the streamed public download raised that sentence without it, so a mirror
+> asking Reaper to slow down told two of the three callers and not the third.
+> `IntegrationError.retry_after` has one reader, `clients/plextv.py`, which never sees a
+> `PublicClient` error, so nothing behaves differently today.
+>
+> **The gate is what makes it hold**, and rule 144 asks for it by name: an AST walk over
+> `src/reaper/` collects every `IntegrationError(service, message)` as a template, and the four
+> may only be spelled in `clients/base.py`. Driven red by writing one of them back into
+> `public.py`. A second test pins the walk's blind spot at empty, since a message assembled into
+> a local is a copy the template match cannot see (rule 147), and a third proves the reader
+> against a literal, both f-string spellings, and the two forms it rejects. **+28 lines across
+> the two client modules, most of it the docstrings that used to be half-stated at each site.**
 
 **Data model.** **W11-39** `whitelist.overrides()` and `spare_expiries()` are two full scans of one
 table
@@ -3584,7 +3666,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-17 | hand-written 6 times, ~20 | 6 sites, 4 to 5 hand-written, the rest already hooks | kill, no two of the residue do the same work |
 | W11-18 | 2 machines, deps-disable twice, ~25 | right, nets -8 to -12 | build, low priority |
 | W11-19 | caller written twice, ~15 | right, nets -8 | build |
-| W11-20 | 6 callbacks, depth 3 to 4, ~40 | 7 or 8 props, max depth 2 | unsettled, scout kills it, verifier makes it an owner call |
+| W11-20 | 6 callbacks, depth 3 to 4, ~40 | 9 prop names over 10 hand-offs, 7 at depth 1 and 3 at depth 2 | **killed** (owner, 2026-08-10): a missed prop is a type error |
 | W11-21 | 3 hand-rolled 250 ms debounces | right, one is already a hook | unsettled, scout kills on ~0 lines, verifier builds the shared timer |
 | W11-22 | mirror written 3 times | right, plus 3 child effects and a 4th copy of the guard in `ServiceModal` | **built**, code net 0; the value is `ScheduleModal`'s one-term mirror |
 | W11-23 | 21 sites across 7 files, ~40 | block above | kill |
@@ -3593,9 +3675,9 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-26 | 3 wrappers, each commented at the other two | 3 of 6 sites are that shape, 2 of the 3 carry a comment, and both point at `ScanLine` | build, 3 of 6, `ReapBar` excluded |
 | W11-27 | computed and marked up twice, ~14 | right, nets -6 | build, the shared `aria-label` is the reason |
 | W11-28 | 2 SVGs, one already exported | right, 2 of 6 duplicated paths, -10 | build, ride along |
-| W11-29 | 3 near-copies, one comment admits it | 5 controls, and the "borrows" comments are in the CSS | unsettled, both reports make it an owner split |
+| W11-29 | 3 near-copies, one comment admits it | 6 controls of that shape, 5 chip ✕ and 1 nudge ✕; the comments are in the CSS | **built**, CSS half only (owner, 2026-08-10); 4 share the rule, `.bar-x` differs |
 | W11-30 | inline 64 times, `format.ts` twice, 14 `toLocaleString` | block above | kill the helper |
-| W11-31 | 4 sentences ×2, a third copy in `public.py`, comment verbatim | 4 right, the scout's 5 was the over-count; two carry the `public.py` copy, and the comment is a paraphrase | unsettled, scout -6, verifier ~0 |
+| W11-31 | 4 sentences ×2, a third copy in `public.py`, comment verbatim | 4 right; 11 hand-written raises; 3 `public.py` copies, 2 verbatim and 1 method-fixed; comment a paraphrase | **built** (owner, 2026-08-10): rule 144, not lines. +28 with the docstrings |
 | W11-33 | dead branch at `restore.py:201`, refused 12 lines earlier, sentence ×4 | branch at 187, the gap is 11 lines, ×4 right | build, -7 |
 | W11-34 | twice in one function, pinned by nothing | right | build, -5 |
 | W11-35 | 3 arms, one 400 | right | build, -3 |

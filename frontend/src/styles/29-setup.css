@@ -244,13 +244,11 @@
   border-color: var(--protect);
 }
 /* The name EDITS this instance and the ✕ FORGETS it: two different outcomes, flush against
-   each other, so both have to reach --tap-min or a thumb aimed at one lands on the other. The
-   same rule `.fchip-body` / `.fchip-x` states for the identical pill in the queue's filter bar,
-   and `.tag-chip button` for the list modal's tag chips (34-lists.css). All the chrome lives on the chip around these,
-   so they are bare hit areas: the control standard's box would draw a second border inside the
-   pill. */
-.inst-chip .chip-edit,
-.inst-chip .chip-x {
+   each other, so both have to reach --tap-min or a thumb aimed at one lands on the other. All
+   the chrome lives on the chip around them, so they are bare hit areas: the control standard's
+   box would draw a second border inside the pill. The ✕ takes the shared chip-dismiss shape
+   (04-buttons.css), which is where that sizing now lives for every chip in the app. */
+.inst-chip .chip-edit {
   display: inline-flex;
   align-items: center;
   min-height: var(--tap-min);
@@ -262,14 +260,14 @@
   cursor: pointer;
   overflow-wrap: anywhere;
 }
+/* The two departures from the shared shape: a bold muted glyph rather than an inherited-color
+   one, at the chip's own text size rather than --text-lg. An instance name is typed by the
+   operator, so the pair wraps rather than painting through the chip (rule 139). */
 .inst-chip .chip-x {
-  justify-content: center;
-  min-width: var(--tap-min);
-  padding: 0;
-  border-radius: var(--radius-pill);
   color: var(--muted);
+  font-size: inherit;
   font-weight: var(--weight-bold);
-  line-height: 1;
+  overflow-wrap: anywhere;
 }
 /* Red on approach, so the destructive one of the chip's two controls says so before it is
    pressed. The chip's own hover stays underneath it. */

@@ -236,6 +236,62 @@ class IntegrationError(RuntimeError):
         return self.status in (401, 403)
 
 
+# The three ways a client call fails, each worded once.
+#
+# Every client read and every mutation ends in one of these, and each sentence used to be
+# written at the site that raised it: two in ``_send``, the same two again in ``_mutate``,
+# and two of them a third time in ``PublicClient``. Rule 144 is what that costs. The wording
+# is what an operator reads when a service stops answering, and rewording one copy leaves the
+# others saying something else about the same failure -- which is how ``public.py`` came to
+# spell one of them with a hardcoded ``GET`` where ``base.py`` names the method.
+#
+# ``refuse_mutation`` above is the same move for the guard's refusal, for the same reason.
+
+
+def transport_failure(service: str, exc: httpx2.TransportError) -> IntegrationError:
+    """The request never got an answer: it timed out, or the host was not reachable.
+
+    Name the actual timeout kind. A ConnectTimeout (5s), WriteTimeout (10s) or PoolTimeout
+    (5s) is not the read timeout, so reporting a fixed "30s" sends an operator looking in the
+    wrong place, and for a mutation especially "could not connect" and "the server was slow to
+    answer" call for different next steps (rule 10).
+
+    ``TimeoutException`` is itself a ``TransportError``, so callers catch the one type and the
+    split happens here, in the order the two ``except`` arms used to sit in.
+    """
+    if isinstance(exc, httpx2.TimeoutException):
+        return IntegrationError(service, f"timed out ({type(exc).__name__})")
+    return IntegrationError(service, f"unreachable ({exc})")
+
+
+def refused_redirect(
+    service: str, response: httpx2.Response, method: str, path: str
+) -> IntegrationError:
+    """A redirect Reaper will not follow. The caller decides which ones qualify."""
+    return IntegrationError(
+        service,
+        f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+        status=response.status_code,
+    )
+
+
+def http_failure(
+    service: str, response: httpx2.Response, method: str, path: str
+) -> IntegrationError:
+    """The service answered with a 4xx or 5xx, carrying its own Retry-After if it sent one.
+
+    Reading the header here is what makes it uniform: the streamed public download raised
+    this sentence without it, so a mirror asking Reaper to slow down said so to two of the
+    three callers and not the third.
+    """
+    return IntegrationError(
+        service,
+        f"HTTP {response.status_code} for {method} {path}",
+        status=response.status_code,
+        retry_after=_retry_after_seconds(response),
+    )
+
+
 class GuardedTransport(httpx2.AsyncBaseTransport):
     """Refuses mutating requests unless deletion is enabled and intended.
 
@@ -413,26 +469,15 @@ class BaseClient:
                     response = await self._request(
                         method, target, params=send_params, json=json, headers=headers
                     )
-                except httpx2.TimeoutException as exc:
-                    # Name the actual timeout kind: a ConnectTimeout (5s), WriteTimeout (10s)
-                    # or PoolTimeout (5s) is not the read timeout, and reporting a fixed
-                    # "30s" would misdirect an operator diagnosing a connectivity problem.
-                    raise IntegrationError(
-                        self.service, f"timed out ({type(exc).__name__})"
-                    ) from exc
                 except httpx2.TransportError as exc:
-                    raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+                    raise transport_failure(self.service, exc) from exc
 
                 status = response.status_code
                 if response.status_code not in _REDIRECTS:
                     break
                 location = response.headers.get("location")
                 if method.upper() not in ("GET", "HEAD") or not location:
-                    raise IntegrationError(
-                        self.service,
-                        f"refused redirect (HTTP {response.status_code}) for {method} {path}",
-                        status=response.status_code,
-                    )
+                    raise refused_redirect(self.service, response, method, path)
                 next_url = response.request.url.join(location)
                 if not self._allow_cross_origin_redirects and _origin(next_url) != _origin(
                     httpx2.URL(self.base_url)
@@ -449,12 +494,7 @@ class BaseClient:
                 raise IntegrationError(self.service, f"too many redirects for {method} {path}")
 
             if response.status_code >= 400:
-                raise IntegrationError(
-                    self.service,
-                    f"HTTP {response.status_code} for {method} {path}",
-                    status=response.status_code,
-                    retry_after=_retry_after_seconds(response),
-                )
+                raise http_failure(self.service, response, method, path)
             return response
         finally:
             self._trace(method, path, status, started)
@@ -550,31 +590,18 @@ class BaseClient:
                     json=json,
                     extensions={"reaper_mutation_approved": True},
                 )
-            except httpx2.TimeoutException as exc:
-                # Report the actual timeout kind (connect/write/pool/read), not a fixed "30s":
-                # for a mutation especially, "could not connect" and "the server was slow to
-                # answer" call for different operator responses.
-                raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
             except httpx2.TransportError as exc:
-                raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+                raise transport_failure(self.service, exc) from exc
 
             status = response.status_code
             if response.status_code in _REDIRECTS:
-                # A redirected mutation is refused, never replayed: auto-following would
+                # EVERY redirect is refused here, never replayed: auto-following would
                 # re-issue the approved call -- credential headers, mutation approval and
-                # all -- at whatever URL the (possibly compromised) upstream chose.
-                raise IntegrationError(
-                    self.service,
-                    f"refused redirect (HTTP {response.status_code}) for {method} {path}",
-                    status=response.status_code,
-                )
+                # all -- at whatever URL the (possibly compromised) upstream chose. `_send`
+                # refuses a narrower set, since a read may follow a same-origin hop.
+                raise refused_redirect(self.service, response, method, path)
             if response.status_code >= 400:
-                raise IntegrationError(
-                    self.service,
-                    f"HTTP {response.status_code} for {method} {path}",
-                    status=response.status_code,
-                    retry_after=_retry_after_seconds(response),
-                )
+                raise http_failure(self.service, response, method, path)
             return response
         finally:
             self._trace(method, path, status, started, mutation=True)

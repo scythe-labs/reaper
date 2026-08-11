@@ -5186,7 +5186,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 205
+_EXPECTED_FRONTEND_MODULES = 206
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -6539,3 +6539,154 @@ def test_the_lane_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> Non
     # A qualified call is a call site, whichever way it is qualified.
     assert found["src/reaper/m.py:24:4"] == {"keeps": "movie_keeps"}
     assert found["src/reaper/m.py:25:11"] == {"keeps": "tv_keeps"}
+
+
+# ---------------------------------------------------------------------------
+# The client failure sentences are worded in one place (rule 144)
+# ---------------------------------------------------------------------------
+
+#: The four sentences every client call fails with, as templates: literal text with `{}`
+#: standing in for each interpolation. Each is produced by one factory in
+#: `clients/base.py`, and each used to be written at two or three of the sites that raise it.
+#: Rewording one copy leaves the others describing the same failure differently, which is what
+#: rule 144 is about, and it had already happened: `public.py` spelled one of them with a
+#: hardcoded `GET` where `base.py` names the method.
+_CLIENT_FAILURE_SENTENCES = {
+    "timed out ({})": "transport_failure",
+    "unreachable ({})": "transport_failure",
+    "refused redirect (HTTP {}) for {} {}": "refused_redirect",
+    "HTTP {} for {} {}": "http_failure",
+}
+
+#: Where all four are allowed to be spelled.
+_FAILURE_SENTENCE_HOME = "src/reaper/clients/base.py"
+
+
+def _message_template(node: ast.expr) -> str | None:
+    """An ``IntegrationError`` message argument as a template, or None if it cannot be read.
+
+    A plain string is itself; an f-string becomes its literal parts with ``{}`` for every
+    interpolation, so a copy spelling the method ``GET`` where the original interpolates it
+    reads as a DIFFERENT template rather than the same one. Anything else -- a name, a ``%``
+    format, a call -- reads as None and is counted rather than passed over, because a
+    sentence the walk cannot see is a copy it cannot fence (rule 147).
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if not isinstance(node, ast.JoinedStr):
+        return None
+    parts: list[str] = []
+    for piece in node.values:
+        if isinstance(piece, ast.FormattedValue):
+            parts.append("{}")
+        elif isinstance(piece, ast.Constant) and isinstance(piece.value, str):
+            parts.append(piece.value)
+        else:  # pragma: no cover -- a JoinedStr holds only those two node kinds
+            return None
+    return "".join(parts)
+
+
+def _integration_error_messages(root: Path) -> tuple[dict[str, list[str]], list[str]]:
+    """Every ``IntegrationError(service, message)`` under ``root``, by message template.
+
+    Returns the readable ones keyed by template, and the sites whose message the walk could
+    not read at all. Both halves are asserted on: the second is the population a fifth copy
+    would hide in.
+    """
+    by_template: dict[str, list[str]] = {}
+    unreadable: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name != "IntegrationError" or len(node.args) < 2:
+                continue
+            site = f"{path.relative_to(REPO).as_posix()}:{node.lineno}"
+            template = _message_template(node.args[1])
+            if template is None:
+                unreadable.append(site)
+            else:
+                by_template.setdefault(template, []).append(site)
+    return by_template, unreadable
+
+
+def test_every_client_failure_sentence_is_worded_in_exactly_one_place() -> None:
+    """Rule 144, for the four sentences a failed integration call is reported with.
+
+    ``_send``, ``_mutate`` and ``PublicClient`` all end a failed call in one of these, and
+    each carried its own copy. The factories in ``clients/base.py`` are the only place they
+    are spelled now; this is what stops a fourth copy arriving beside the next client.
+    """
+    by_template, _ = _integration_error_messages(SRC)
+    strays = {
+        template: outside
+        for template in _CLIENT_FAILURE_SENTENCES
+        for outside in [
+            [s for s in by_template.get(template, []) if not s.startswith(_FAILURE_SENTENCE_HOME)]
+        ]
+        if outside
+    }
+    assert not strays, (
+        f"a client failure sentence is written outside {_FAILURE_SENTENCE_HOME}: {strays}. "
+        "Call the factory that already words it (transport_failure, refused_redirect or "
+        "http_failure) rather than repeating the sentence, or the copies drift the next "
+        "time either one is reworded (rule 144)."
+    )
+    missing = [t for t in _CLIENT_FAILURE_SENTENCES if not by_template.get(t)]
+    assert not missing, (
+        f"these sentences are no longer written anywhere under src/reaper: {missing}. If a "
+        "factory was renamed or its wording changed, update _CLIENT_FAILURE_SENTENCES to the "
+        "new spelling; leaving it stale makes this gate pass while fencing nothing."
+    )
+
+
+def test_the_failure_sentence_walk_reads_every_message_the_tree_writes() -> None:
+    """Rule 147: the fence is only as wide as the spellings the walk can parse.
+
+    A message built anywhere but at the ``IntegrationError(...)`` call -- assembled into a
+    local, or handed in by a caller -- is invisible to the template match above, so a copy
+    hiding there would pass. The tree writes none today, and a new one has to be looked at
+    rather than silently joining the blind spot.
+    """
+    _, unreadable = _integration_error_messages(SRC)
+    assert unreadable == [], (
+        f"these IntegrationError messages are not literals the walk can read: {unreadable}. "
+        "Spell the message at the raise, or widen _message_template to the form used and "
+        "prove it against the forms it still rejects."
+    )
+
+
+def test_the_failure_sentence_matcher_reads_the_forms_it_claims_to(tmp_path: Path) -> None:
+    """The template reader, against each form separately: literal, f-string, and neither."""
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "raise IntegrationError(svc, 'plain')\n"
+        'raise IntegrationError(svc, f"HTTP {code} for {method} {path}")\n'
+        'raise IntegrationError(svc, f"HTTP {code} for GET {path}")\n'
+        "raise base.IntegrationError(svc, f'unreachable ({exc})')\n"
+        "raise IntegrationError(svc, message)\n"
+        "raise IntegrationError(svc)\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        by_template, unreadable = _integration_error_messages(scratch)
+    finally:
+        REPO = real
+
+    # The two spellings of the HTTP sentence stay apart, which is the point: `GET` hardcoded
+    # and `{method}` interpolated are not the same sentence, and the fence has to see that.
+    assert sorted(by_template) == [
+        "HTTP {} for GET {}",
+        "HTTP {} for {} {}",
+        "plain",
+        "unreachable ({})",
+    ]
+    # A qualified call is a call site; a one-argument call is not one at all.
+    assert by_template["unreachable ({})"] == ["src/reaper/m.py:4"]
+    assert unreadable == ["src/reaper/m.py:5"]
