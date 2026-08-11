@@ -159,7 +159,12 @@ const SITES: Site[] = [
     what: "help text, app-authored except on the Plex row, which appends the server's URL",
     selectors: [".set-row .help"],
     classInTsx: "help",
-    seenIn: ["components/PlexPanel.tsx"],
+    // `SetRow` writes the class for all twenty-six settings rows now, so it is the file this
+    // site lives in. `PlexPanel.tsx` still spells `help` on a paragraph outside `.set-rows`,
+    // which is a DIFFERENT element from the one this selector styles, so listing it here would
+    // keep the entry green off a token that moved. What PlexPanel still supplies is the value:
+    // the linked row passes the server's URL in as `help`.
+    seenIn: ["components/SetRow.tsx"],
   },
   {
     what: "the About list, whose Data folder row is the server's configured path",
