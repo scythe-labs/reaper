@@ -181,12 +181,20 @@ of the gate's inputs moved on the branch**: `.claude/rules/*.md` is +74/-26 acro
 `CLAUDE.md` is +26/-5. A gate written against `dev`'s scopes would be asserting the wrong pairs the
 day it lands.
 
-**6. #558, half one.** The document first put this in "after" and that was wrong. All four fix
-sites of half one were rewritten: `update_check.py:119`, `launcher.py:325`, `:377` and `:578` are
-now `env_flag(...)` calls, and `_TRUE`/`_FALSE` were deleted from both modules. Promote the four
-flags to `Settings` on the branch, against the shape that exists there. **Half two is genuinely
-untouched** (`_port` at `:276`, `REAPER_HOST` at `:533`, `config.py:116-117`), so the port and host
-half can go either way. Doing both here keeps one issue in one place.
+**6. #558, both halves. Landed.** The document first put this in "after" and that was wrong. All
+four fix sites of half one were rewritten: `update_check.py:119`, `launcher.py:325`, `:377` and
+`:578` are now `env_flag(...)` calls, and `_TRUE`/`_FALSE` were deleted from both modules. **Half
+two is genuinely untouched** (`_port` at `:276`, `REAPER_HOST` at `:533`, `config.py:116-117`), so
+the port and host half could have gone either way. Doing both here kept one issue in one place.
+
+**The four flags are NOT promoted to `Settings`, and that is a correction to this row.** A pydantic
+bool refuses the boot on a value it cannot parse, which `env_flag`'s own docstring already records
+as deliberate and right for `destructive_actions_enabled` and wrong here: `REAPER_TRAY=ture` would
+trade "no menu-bar icon" for "will not start", on the frozen build with no stderr anyone reads.
+What changed instead is where `env_flag` reads from with no `env` argument, which is now the merged
+mapping `config.load_raw_env` was already building for the instance seeder. One merge answers both
+halves, and the launcher's second spellings of `8420` and `0.0.0.0` are read off
+`Settings.model_fields`.
 
 **7. #622, and this one has a safety consequence.** The branch **added a third fatal stderr-only
 refusal**: `preflight.main` now writes `schema_gate.refusal`'s message and returns an int, the same

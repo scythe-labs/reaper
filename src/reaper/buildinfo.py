@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Literal
 
 from reaper import __version__
+from reaper.config import configured_env
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -41,14 +42,21 @@ def env_flag(key: str, *, default: bool, env: Mapping[str, str] | None = None) -
     Quit (``LSUIElement`` hides the Dock one).
 
     ``env`` is for a caller holding a mapping rather than the process environment; the
-    launcher resolves both before it serves.
+    launcher resolves both before it serves. **With no ``env``, the source is
+    ``config.configured_env()``, not ``os.environ``**: a ``.env.local`` is read by
+    pydantic-settings into ``Settings`` and never exported to the process environment, so
+    `REAPER_TRAY`, `REAPER_DOCK_ICON`, `REAPER_LAUNCH_BROWSER` and `REAPER_UPDATE_CHECK`
+    were documented in `.env.example` and did nothing when set there (#558).
 
     The pydantic ``Settings`` booleans deliberately do NOT read through this. An
     unrecognized value there raises and refuses the boot, which for
     ``destructive_actions_enabled`` and ``recovery`` is the strongest answer available.
-    ``scan_runner``'s three-state token pair is likewise its own, and says why in place.
+    That tolerance is why these four stay here rather than becoming fields: promoting them
+    would turn ``REAPER_TRAY=ture`` from a default into a refused boot, on the build with
+    no stderr anyone reads. ``scan_runner``'s three-state token pair is likewise its own,
+    and says why in place.
     """
-    raw = (os.environ if env is None else env).get(key, "").strip().lower()
+    raw = (configured_env() if env is None else env).get(key, "").strip().lower()
     if raw in _TRUE:
         return True
     if raw in _FALSE:
