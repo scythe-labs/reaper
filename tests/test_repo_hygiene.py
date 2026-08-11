@@ -13,6 +13,7 @@ running the gate, and ``git`` is run to list the files ``_repo_text_files`` walk
 from __future__ import annotations
 
 import ast
+import dataclasses
 import hashlib
 import json
 import os
@@ -40,6 +41,8 @@ from reaper.engine.gates import (
 from reaper.engine.observation import Absent, Known
 from reaper.services import plex_link
 from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
+from reaper.services.season_scan import SeasonJudgment
+from reaper.services.snapshot import Display, RawItem
 
 REPO = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
@@ -4111,7 +4114,9 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # they share. It audits that head with every link set, the state neither panel's own suite drives.
 # +1 for `AppFocus.test.tsx`, which is exempt rather than audited: it mounts the shell to ask
 # which view is holding a jump's aim, and the two routes it drives to are stubs printing a prop.
-_EXPECTED_RENDERING_TEST_FILES = 57
+# +1 for `artFallback.test.tsx`, which mounts `WhyHero` to drive the art-then-poster ladder the
+# hook now declares once. It audits the banner on both rungs, the fallback included.
+_EXPECTED_RENDERING_TEST_FILES = 58
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5186,7 +5191,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 205
+_EXPECTED_FRONTEND_MODULES = 207
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -6539,3 +6544,144 @@ def test_the_lane_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> Non
     # A qualified call is a call site, whichever way it is qualified.
     assert found["src/reaper/m.py:24:4"] == {"keeps": "movie_keeps"}
     assert found["src/reaper/m.py:25:11"] == {"keeps": "tv_keeps"}
+
+
+# --- every Display field the source record carries reaches its lane's pack ----------------
+
+#: The record each hand-written ``Display(...)`` pack unpacks, which is also its lane: the
+#: movie loop reads a ``RawItem`` and the season loop a ``SeasonJudgment``. Taken off the
+#: call's own value expressions rather than off the enclosing function, so a third pack in
+#: another function is read by the same walk.
+_DISPLAY_PACK_SOURCES: dict[str, type] = {"item": RawItem, "judgment": SeasonJudgment}
+
+#: The fields one pack leaves at the ``None`` default, and why. Hand-written, and the first
+#: draft of this gate derived it instead: a pack was allowed to skip any field its source
+#: record did not declare BY NAME, which read the movie pack's missing ``ratings_json`` as
+#: permitted, because the movie lane builds that value out of ``item.plex_ratings`` and the
+#: dataset rather than copying a same-named field. Deleting it was green while deleting the
+#: season's went red, and it blanks the ratings row for the whole movie lane
+#: (``api/review.py``'s ``_ratings_out``). A derivation that reads a NAME cannot see a value
+#: assembled from other fields, so the classification is written out (rule 103), and adding a
+#: member here is an author saying in the diff why one lane cannot answer.
+_DISPLAY_LANE_EXCEPTIONS: dict[str, str] = {
+    "group_key": "a movie is not part of a show, so it joins no group",
+    "group_title": "same, and the queue draws a movie under its own title",
+    "title_slug": "Sonarr's series slug; Radarr's deep link keys on the tmdb id",
+    "video_resolution": "a season spans episodes, so it has no single resolution",
+}
+
+#: Reconciled by hand against the tree (rule 145). Three ``Display(...)`` calls under
+#: ``src/``: the two packs, plus the ``_NO_DISPLAY`` singleton, which sets nothing and is the
+#: "no display fields" default.
+_EXPECTED_DISPLAY_CALLS = 3
+
+
+def _display_pack_sites(root: Path) -> dict[str, tuple[frozenset[str], frozenset[str]]]:
+    """Every ``Display(...)`` call under ``src/``: the fields it sets, and the source records
+    its values read off.
+
+    Reads the call node rather than the text after the paren, because the two packs wrap
+    across 24 and 16 lines (rule 147). The source base comes from every ``Name`` anywhere
+    inside a keyword's value, not just a bare ``item.year``: the movie pack reaches ``item``
+    through ``item.imdb_id or item.plex_imdb_id`` and through the arguments of
+    ``build_ratings_json(...)``, and a base-of-the-attribute matcher would read neither.
+    A keyword whose value names no source at all (``tvdb_id=None``) contributes no base and
+    is still counted as set: an explicit ``None`` is an author saying the field does not
+    apply.
+
+    **Two spellings this cannot see**, written down rather than guessed at (rule 147): a pack
+    built by ``dataclasses.replace(_NO_DISPLAY, …)``, and one calling ``Display`` through an
+    aliased import. Neither is in the tree, and the count below cannot cover either, because a
+    site that never entered the walk was never in the number. A positional argument and a
+    ``**splat`` ARE covered, both by leaving the field out of ``keywords``.
+    """
+    found: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            called = node.func
+            name = called.id if isinstance(called, ast.Name) else getattr(called, "attr", "")
+            if name != "Display":
+                continue
+            keywords = frozenset(kw.arg for kw in node.keywords if kw.arg is not None)
+            bases = frozenset(
+                inner.id
+                for kw in node.keywords
+                for inner in ast.walk(kw.value)
+                if isinstance(inner, ast.Name) and inner.id in _DISPLAY_PACK_SOURCES
+            )
+            rel = path.relative_to(REPO).as_posix()
+            found[f"{rel}:{node.lineno}:{node.col_offset}"] = (keywords, bases)
+    return found
+
+
+def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None:
+    """A field added to ``Display`` and packed on one lane only is silent today.
+
+    All fifteen default to ``None``, so an omission raises nothing and mypy sees nothing: the
+    movie pack and the season pack are two hand-written mirrors of one dataclass (rule 103).
+    Four of the fifteen do more than draw a queue row -- ``tmdb_id``, ``imdb_id`` and
+    ``tvdb_id`` are what ``services/fairness.py`` joins a request to its candidate on, and
+    ``title_slug`` builds the Sonarr link -- so a sixteenth of that kind, forgotten on one
+    lane, drops that join for that lane rather than blanking a column (rules 29/106).
+
+    Every field is set at both packs unless ``_DISPLAY_LANE_EXCEPTIONS`` names it, which is
+    four today. That list is hand-written on purpose: see the constant for the derivation
+    that replaced it and the movie-lane omission it read as permitted.
+
+    ``docs/SIMPLIFICATION_PLAN.md``'s W5-2 row carries the measurement, including why the
+    collapse this replaces was killed: ``_judge_item`` already takes ``Display`` whole, so
+    merging the packs removes no parameter and no line. What it would have removed is this
+    hazard, and the gate removes it from ``tests/``.
+    """
+    declared = frozenset(f.name for f in dataclasses.fields(Display))
+    stale = sorted(set(_DISPLAY_LANE_EXCEPTIONS) - declared)
+    assert not stale, (
+        f"_DISPLAY_LANE_EXCEPTIONS names {stale}, which `Display` no longer declares. An "
+        "exception outliving its field excuses nothing and reads as a live classification."
+    )
+
+    sites = _display_pack_sites(SRC)
+    assert len(sites) == _EXPECTED_DISPLAY_CALLS, (
+        f"expected {_EXPECTED_DISPLAY_CALLS} `Display(...)` calls under src/, walked "
+        f"{len(sites)}: {sorted(sites)}. A new pack is fine and must set every field not in "
+        "_DISPLAY_LANE_EXCEPTIONS; bump the number here."
+    )
+
+    empty = sorted(site for site, (keywords, _) in sites.items() if not keywords)
+    assert len(empty) == 1, (
+        f"expected exactly one `Display()` setting nothing, the `_NO_DISPLAY` singleton, "
+        f"found {empty}. A pack that lost all its keywords would otherwise read as that "
+        "singleton and leave this gate green."
+    )
+
+    packs = {site: value for site, value in sites.items() if value[0]}
+    for site, (keywords, bases) in sorted(packs.items()):
+        assert len(bases) == 1, (
+            f"{site} packs a Display off {sorted(bases) or 'no known record'}; expected "
+            f"exactly one of {sorted(_DISPLAY_PACK_SOURCES)}. Which record a pack unpacks is "
+            "its lane, and a pack reading two of them, or none, has no lane to check."
+        )
+        forgotten = declared - keywords - set(_DISPLAY_LANE_EXCEPTIONS)
+        assert not forgotten, (
+            f"{site} leaves {sorted(forgotten)} at the None default. Every field defaults to "
+            "None, so the other lane's pack setting it is the only sign anything is missing. "
+            "Set it, or add it to _DISPLAY_LANE_EXCEPTIONS with the reason its lane cannot."
+        )
+
+    unused = sorted(
+        field
+        for field in _DISPLAY_LANE_EXCEPTIONS
+        if all(field in keywords for keywords, _ in packs.values())
+    )
+    assert not unused, (
+        f"_DISPLAY_LANE_EXCEPTIONS excuses {unused}, which both packs now set. An excuse no "
+        "pack uses is the next lane-specific field's free pass."
+    )
+
+    assert {next(iter(bases)) for _, bases in packs.values()} == set(_DISPLAY_PACK_SOURCES), (
+        f"the Display packs do not cover both lanes: {sorted(packs)}. One packs a movie and "
+        "the other a season, so pointing them at one record silences the check above."
+    )
