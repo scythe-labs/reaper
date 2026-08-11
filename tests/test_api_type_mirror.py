@@ -17,15 +17,21 @@ field that stopped at one of them.
 the guard is green on arrival and fails the moment someone drops a field again, rather than
 proving anything about today.
 
-**It compares field NAMES only, and that is a deliberate bound.** Types and optionality are not
-checked: ``status`` is ``str | None`` on the server and a closed union of four literals in TS,
-and several fields are marked ``?`` in TS while the server always sends them, because no
-component reads them and the fixtures are not made to carry them. Those are intentional
-everywhere they occur, so comparing them would flag eight pairs on day one and train the next
-author to silence the guard. Names are apples-to-apples across the whole corpus, and a name is
-what #260 lost. **Nested inline objects are compared at their top level only**: TS spells
-``LeavingSoonSettings.last`` as an inline object where the server declares a whole
-``LeavingSoonLastOut``, so ``last`` is compared and its members are not.
+**It compares field names and field types. Optionality it does not compare, and that is now a
+measurement rather than a bound.** The server's ``required`` list describes what a REQUEST may
+leave out; every model here is a response, and a response model with a default still serializes
+its field, so 210 members read "optional" on the server while the route sends every one. The
+browser's ``?`` is a third fact again: several fields carry it because no component reads them
+and the fixtures are not made to carry them. Nothing true is on both sides of that comparison,
+so the ``?`` is dropped on both and the type beside it is what gets checked.
+
+Names alone was the bound until W4.2, on the argument that comparing types would flag eight
+pairs on day one and train the next author to silence the guard. Measured, it flags 42 across
+749 members in four classes, three of which are deliberate and named in ``NARROWED`` and
+``WIDENED`` below, and one of which was a live inaccuracy: three members typed non-null against
+a server that sends ``null``. **Nested inline objects are still compared at their top level
+only**: TS spells ``LeavingSoonSettings.last`` as an inline object where the server declares a
+whole ``LeavingSoonLastOut``, so ``last`` is compared and its members are not.
 
 **The last class in this file checks the hop before that one**, service record to wire model,
 for the routes that build the model off the record instead of naming every field. It is here
@@ -37,11 +43,17 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import datetime
+import decimal
+import enum
 import importlib
 import pkgutil
 import re
+import types
+import uuid
+from collections.abc import Mapping
 from pathlib import Path
-from typing import get_args
+from typing import Any, Literal, Union, get_args, get_origin
 
 import pytest
 from pydantic import BaseModel
@@ -148,15 +160,28 @@ EXPECTED_PAIRS = 92
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
 _INTERFACE = re.compile(r"^export interface (\w+)(?:\s+extends\s+([\w,\s]+?))?\s*\{", re.MULTILINE)
-_MEMBER = re.compile(r"^\s*(\w+)\s*\??\s*:")
+_MEMBER = re.compile(r"^\s*(\w+)\s*\??\s*:\s*(.*)$", re.DOTALL)
+_ALIAS_HEAD = re.compile(r"^export type (\w+)\s*=\s*", re.MULTILINE)
 
 #: Everything from here down is the client, not the wire types: inline object literals that
 #: are request shapes, generics, and URL strings that would defeat the comment stripper.
 CLIENT_MARKER = "\nexport const api"
 
 
-def _declarations(source: str) -> dict[str, tuple[list[str], list[str]]]:
-    """Every ``export interface`` in ``source`` as ``name -> (own fields, base names)``.
+def _strip_comments(source: str) -> str:
+    """The wire types with the client and every comment gone."""
+    cut = source.find(CLIENT_MARKER)
+    text = source if cut == -1 else source[:cut]
+    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
+
+
+def _declarations(source: str) -> dict[str, tuple[dict[str, str], list[str]]]:
+    """Every ``export interface`` in ``source`` as ``name -> (own members, base names)``.
+
+    A member maps to the text of its type, whitespace collapsed, so the same walk answers both
+    the name comparison and the type one. The ``?`` is dropped rather than recorded: what it
+    means here is not what it means on the server, so nothing below compares optionality, and
+    ``TestTheTwoCopiesAgreeOnTypes`` says why.
 
     Brace-depth aware on purpose (rule 147). Anchoring on the delimiter that one spelling
     happens to put there -- a two-space indent, a quote after ``:`` -- reads the plain
@@ -165,11 +190,9 @@ def _declarations(source: str) -> dict[str, tuple[list[str], list[str]]]:
     field, and doc comments between every pair of fields. A member ends at the first ``;`` at
     depth zero, so a nested object contributes its own name and none of its members.
     """
-    cut = source.find(CLIENT_MARKER)
-    text = source if cut == -1 else source[:cut]
-    text = _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
+    text = _strip_comments(source)
 
-    found: dict[str, tuple[list[str], list[str]]] = {}
+    found: dict[str, tuple[dict[str, str], list[str]]] = {}
     for head in _INTERFACE.finditer(text):
         bases = [b.strip() for b in (head.group(2) or "").split(",") if b.strip()]
         depth, cursor = 1, head.end()
@@ -179,7 +202,7 @@ def _declarations(source: str) -> dict[str, tuple[list[str], list[str]]]:
             elif text[cursor] == "}":
                 depth -= 1
             cursor += 1
-        fields: list[str] = []
+        fields: dict[str, str] = {}
         buffer, inner = "", 0
         for char in text[head.end() : cursor - 1]:
             if char == "{":
@@ -189,7 +212,7 @@ def _declarations(source: str) -> dict[str, tuple[list[str], list[str]]]:
             if char == ";" and inner == 0:
                 member = _MEMBER.match(buffer)
                 if member:
-                    fields.append(member.group(1))
+                    fields[member.group(1)] = " ".join(member.group(2).split())
                 buffer = ""
             else:
                 buffer += char
@@ -197,7 +220,33 @@ def _declarations(source: str) -> dict[str, tuple[list[str], list[str]]]:
     return found
 
 
-def _with_inherited(name: str, declarations: dict[str, tuple[list[str], list[str]]]) -> set[str]:
+def _type_aliases(source: str) -> dict[str, str]:
+    """Every ``export type NAME = ...;`` in ``source``, as its right-hand side.
+
+    The 17 of them are the browser's enums, and the interface walk above is blind to all of
+    them -- they are not interfaces, and a member typed ``Verdict`` reads as one opaque word.
+    Expanding them is what lets a member's type be compared against the server's literals
+    rather than against a name the server never heard.
+
+    Depth-aware for the same reason the interface walk is (rule 147): two of the seventeen are
+    object literals whose own members end in ``;``, so an alias read to its first semicolon
+    stops in the middle of ``ListConfigBody`` and of ``CustomCondemn``'s first arm and reports
+    a truncated type as the whole one.
+    """
+    text = _strip_comments(source)
+    found: dict[str, str] = {}
+    for head in _ALIAS_HEAD.finditer(text):
+        cursor, depth = head.end(), 0
+        while cursor < len(text) and not (text[cursor] == ";" and depth == 0):
+            depth += (text[cursor] == "{") - (text[cursor] == "}")
+            cursor += 1
+        found[head.group(1)] = " ".join(text[head.end() : cursor].split())
+    return found
+
+
+def _with_inherited(
+    name: str, declarations: dict[str, tuple[dict[str, str], list[str]]]
+) -> set[str]:
     """One interface's fields including everything it extends.
 
     ``CandidateDetail extends Candidate`` and ``InstanceProbe extends InstanceTest`` are the
@@ -213,15 +262,101 @@ def _with_inherited(name: str, declarations: dict[str, tuple[list[str], list[str
     return resolved
 
 
-def _server_models() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+def _member_types(
+    name: str, declarations: dict[str, tuple[dict[str, str], list[str]]]
+) -> dict[str, str]:
+    """``_with_inherited`` carrying each member's type text. A subclass wins over its base."""
+    fields, bases = declarations[name]
+    resolved: dict[str, str] = {}
+    for base in bases:
+        if base in declarations:
+            resolved.update(_member_types(base, declarations))
+    resolved.update(fields)
+    return resolved
+
+
+#: Python annotations that render as one TypeScript word. ``datetime`` is a string on the wire
+#: because that is what Pydantic serializes it as, and the browser types those members
+#: ``string``; comparing the annotation itself would flag every timestamp in the tree.
+_PRIMITIVES: dict[object, str] = {
+    str: "string",
+    int: "number",
+    float: "number",
+    bool: "boolean",
+    bytes: "string",
+    type(None): "null",
+    datetime.datetime: "string",
+    datetime.date: "string",
+    datetime.timedelta: "string",
+    decimal.Decimal: "number",
+    uuid.UUID: "string",
+    Any: "unknown",
+    object: "unknown",
+}
+
+
+def _as_typescript(annotation: object, depth: int = 0) -> str:
+    """One Pydantic annotation as the TypeScript the browser would have to write for it.
+
+    Rendered from ``model_fields`` rather than from the OpenAPI document, which is the source
+    the name comparison above already reads. The document was measured against this and loses
+    two things the comparison needs: ``dict[str, int]`` erases to a bare ``object`` there, and
+    a field with a default drops out of ``required`` even though the route always sends it, so
+    six members would compare as unrelated and 210 as optional-versus-required against a
+    document that is describing request validation rather than what a response carries.
+
+    Bounded (rule 147) to the constructs ``reaper.api.*`` and the two engine modules actually
+    annotate with. Anything past ``depth`` or outside the table renders ``unknown``, which
+    compares as "the server declares nothing here" rather than as a mismatch.
+    """
+    if depth > 6:
+        return "unknown"
+    try:
+        if annotation in _PRIMITIVES:
+            return _PRIMITIVES[annotation]
+    except TypeError:  # an unhashable annotation, which nothing here uses today
+        return "unknown"
+    origin, args = get_origin(annotation), get_args(annotation)
+    if origin is Literal:
+        return " | ".join(_as_literal(arg) for arg in args)
+    if origin in (Union, types.UnionType):
+        return " | ".join(dict.fromkeys(_as_typescript(arg, depth + 1) for arg in args))
+    if origin in (list, set, frozenset, tuple):
+        inner = _as_typescript(args[0], depth + 1) if args else "unknown"
+        return f"({inner})[]" if "|" in inner else f"{inner}[]"
+    if origin is dict:
+        key = _as_typescript(args[0], depth + 1) if args else "string"
+        value = _as_typescript(args[1], depth + 1) if args else "unknown"
+        return f"Record<{key}, {value}>"
+    if isinstance(annotation, type):
+        if issubclass(annotation, BaseModel):
+            return annotation.__name__
+        if issubclass(annotation, enum.Enum):
+            return " | ".join(_as_literal(member.value) for member in annotation)
+    return "unknown"
+
+
+def _as_literal(value: object) -> str:
+    if value is None:
+        return "null"
+    if value is True or value is False:
+        return "true" if value else "false"
+    return f'"{value}"' if isinstance(value, str) else str(value)
+
+
+def _server_models() -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
     """The wire models and the two engine modules the browser also mirrors, kept apart.
+
+    Each maps a field to the TypeScript its annotation renders as, so one walk answers both
+    the name comparison and the type one. ``_as_typescript`` says why the annotations are read
+    rather than the served document.
 
     ``model_fields`` rather than the OpenAPI document: it already includes inherited fields,
     and it covers models no route publishes -- ``PolicyIn`` is nested inside ``PolicyOut``
     rather than returned, and the browser mirrors it as its own type.
     """
-    wire: dict[str, set[str]] = {}
-    inner: dict[str, set[str]] = {}
+    wire: dict[str, dict[str, str]] = {}
+    inner: dict[str, dict[str, str]] = {}
     homes: dict[tuple[str, str], type[BaseModel]] = {}
     collisions: list[str] = []
     names = [f"{WIRE_PACKAGE}{m.name}" for m in pkgutil.iter_modules(reaper.api.__path__)]
@@ -244,7 +379,10 @@ def _server_models() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 if prior is not None and prior is not value:
                     collisions.append(f"{value.__name__}: {prior.__module__} and {module_name}")
                 homes[(seen, value.__name__)] = value
-                bucket[value.__name__] = set(value.model_fields)
+                bucket[value.__name__] = {
+                    field: _as_typescript(info.annotation)
+                    for field, info in value.model_fields.items()
+                }
     assert len(wire) + len(inner) == _EXPECTED_SERVER_MODELS, (
         f"expected {_EXPECTED_SERVER_MODELS} models under {WIRE_PACKAGE}* plus "
         f"{', '.join(INNER_MODULES)}, walked {len(wire)} + {len(inner)}. A flag-shaped "
@@ -265,8 +403,11 @@ def _server_models() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     return wire, inner
 
 
-def _pair(name: str, wire: dict[str, set[str]], inner: dict[str, set[str]]) -> str | None:
-    """The server model a browser type mirrors, or ``None`` if it mirrors nothing."""
+def _pair(name: str, wire: Mapping[str, object], inner: Mapping[str, object]) -> str | None:
+    """The server model a browser type mirrors, or ``None`` if it mirrors nothing.
+
+    Takes either shape the walk is read in, since only the keys decide a pairing.
+    """
     for table in (wire, inner):
         for candidate in (ALIAS.get(name), f"{name}Out", name, f"{name}IO", f"{name}In"):
             if candidate and candidate in table:
@@ -281,8 +422,26 @@ def browser_types() -> dict[str, set[str]]:
 
 
 @pytest.fixture(scope="module")
-def server_tables() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+def browser_member_types() -> dict[str, dict[str, str]]:
+    declarations = _declarations(API_TS.read_text(encoding="utf-8"))
+    return {name: _member_types(name, declarations) for name in declarations}
+
+
+@pytest.fixture(scope="module")
+def server_member_types() -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
     return _server_models()
+
+
+@pytest.fixture(scope="module")
+def server_tables(
+    server_member_types: tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]],
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """The same walk as field-name sets, which is all the name comparison needs."""
+    wire, inner = server_member_types
+    return (
+        {name: set(fields) for name, fields in wire.items()},
+        {name: set(fields) for name, fields in inner.items()},
+    )
 
 
 class TestTheParserReadsEveryFormThisTreeUses:
@@ -347,8 +506,8 @@ export interface AfterTheClient {
             "an `export type` alias is not an interface and is not collected; nothing below "
             "`export const api` is either"
         )
-        assert found["Plain"][0] == ["id", "title"]
-        assert found["Fancy"][0] == [
+        assert list(found["Plain"][0]) == ["id", "title"]
+        assert list(found["Fancy"][0]) == [
             "status",
             "optional_thing",
             "state",
@@ -358,6 +517,30 @@ export interface AfterTheClient {
             "wrapped",
         ], "a nested object's own members must not be read as the outer type's"
         assert found["Fancy"][1] == ["Plain"]
+
+    def test_it_reads_each_member_type_whole(self) -> None:
+        """The type comparison is only as good as the text collected here, and every one of
+        these spellings is in ``api.ts``. A wrapped union read at its first line, or an inline
+        object read to its first ``;``, compares as a different type than the file declares."""
+        members = _declarations(self.SAMPLE)["Fancy"][0]
+
+        assert members["status"] == '"matched" | "unmatched" | null'
+        assert members["optional_thing"] == "string | null", "the `?` is dropped, not the type"
+        assert members["state"] == "string", "a trailing line comment is not part of the type"
+        assert members["counts"] == "Record<string, number>"
+        assert members["rows"] == "Plain[]"
+        assert members["nested"] == "{ inner_one: string; inner_two: number; } | null", (
+            "an inline object is collected whole, up to the `;` that ends the OUTER member"
+        )
+        assert members["wrapped"] == '| "a" | "b"', "a union wrapped over three lines is one type"
+
+    def test_it_collects_every_type_alias(self) -> None:
+        """The 17 aliases are the browser's enums, and a member typed with one reads as a
+        single word until it is expanded."""
+        assert _type_aliases(self.SAMPLE) == {
+            "Verdict": '"condemn" | "protect" | "abstain"',
+            "Union": '| { kind: "boolean"; weight: number; } | { kind: "graded"; floor: number; }',
+        }
 
     def test_inheritance_is_resolved(self) -> None:
         found = _declarations(self.SAMPLE)
@@ -378,7 +561,7 @@ export interface AfterTheClient {
         found = _declarations(
             "export interface X {\n  /** talks about phantom: string; here */\n  real: number;\n}"
         )
-        assert found["X"][0] == ["real"]
+        assert list(found["X"][0]) == ["real"]
 
 
 class TestTheWalkCoversThePopulationItClaims:
@@ -434,6 +617,322 @@ class TestEveryBrowserTypeIsPairedOrClassified:
         wire, inner = server_tables
         paired = [n for n in browser_types if _pair(n, wire, inner) is not None]
         assert len(paired) == EXPECTED_PAIRS
+
+
+#: A ``|`` inside any of these brackets belongs to an inner type, not to the union being split.
+_BRACKETS = {"{": "}", "<": ">", "(": ")", "[": "]"}
+
+
+def _union_members(text: str) -> frozenset[str]:
+    """One TypeScript type as its top-level union members.
+
+    ``Record<string, A | B>`` and ``{ a: X | null }`` are one member each, so the split counts
+    depth rather than splitting on every ``|`` (rule 147). A leading ``|`` is the wrapped
+    spelling and contributes nothing.
+
+    A member that is itself a parenthesized union is flattened into this one, because
+    ``("spare" | "reap") | null`` names three things and not two. ``_expanded`` adds that pair
+    when an alias standing for a union lands in an array position, where it is load-bearing.
+    """
+    parts, buffer, depth = [], "", 0
+    for char in text:
+        if char in _BRACKETS:
+            depth += 1
+        elif char in _BRACKETS.values():
+            depth -= 1
+        if char == "|" and depth == 0:
+            parts.append(buffer)
+            buffer = ""
+        else:
+            buffer += char
+    parts.append(buffer)
+
+    members: set[str] = set()
+    for part in (p.strip() for p in parts):
+        if _is_wrapped(part):
+            members |= _union_members(part[1:-1])
+        elif part:
+            members.add(part)
+    return frozenset(members)
+
+
+def _is_wrapped(text: str) -> bool:
+    """Whether one pair of parentheses encloses the whole of ``text``."""
+    if not (text.startswith("(") and text.endswith(")")):
+        return False
+    depth = 0
+    for position, char in enumerate(text):
+        depth += (char == "(") - (char == ")")
+        if depth == 0:
+            return position == len(text) - 1
+    return False
+
+
+def _expanded(text: str, aliases: dict[str, str], depth: int = 0) -> str:
+    """One TypeScript type with every alias name replaced by what it stands for.
+
+    Without this, a member typed ``Verdict`` is one opaque word and the comparison below can
+    only say it is not spelled ``string``. Bounded at four hops, which is three more than this
+    file needs today.
+    """
+    if depth > 3:
+        return text
+
+    def one(hit: re.Match[str]) -> str:
+        body = aliases.get(hit.group(1))
+        if body is None:
+            return hit.group(1)
+        # Parenthesized when it is a union, because `PolicyRepair[]` expanded bare would bind
+        # the `[]` to the union's last member and read as four types rather than one array.
+        return f"({body})" if len(_union_members(body)) > 1 else body
+
+    grown = re.sub(r"\b(\w+)\b", one, text)
+    return grown if grown == text else _expanded(grown, aliases, depth + 1)
+
+
+def _server_name_to_browser(text: str, browser_types: dict[str, dict[str, str]]) -> str:
+    """``MatchOut`` reads as ``Match`` here, so a rename is not counted as a disagreement."""
+    reverse = {server: browser for browser, server in ALIAS.items()}
+
+    def one(hit: re.Match[str]) -> str:
+        word = hit.group(1)
+        if word in reverse:
+            return reverse[word]
+        for suffix in ("Out", "IO", "In"):
+            if word.endswith(suffix) and word[: -len(suffix)] in browser_types:
+                return word[: -len(suffix)]
+        return word
+
+    return re.sub(r"\b(\w+)\b", one, text)
+
+
+def _element(text: str) -> str:
+    """``("a" | "b")[]`` and ``X[]`` as what they hold."""
+    inner = text[:-2]
+    return inner[1:-1] if _is_wrapped(inner) else inner
+
+
+def _covers(declared: str, narrower: str) -> bool:
+    """Whether the server's ``declared`` member admits the browser's ``narrower`` one.
+
+    ``str`` admits any string literal, and that is the whole of the narrowing class below: the
+    wire models type ``verdict`` as a bare ``str`` on purpose, so the browser's three-literal
+    union is a subset of what the server may send rather than a contradiction of it.
+    """
+    if declared == narrower:
+        return True
+    # `Any` and `dict[str, Any]` are the absence of a declaration, so nothing about them can
+    # disagree with the browser. Two members reach this: PolicyBody.custom_condemn and
+    # ListConfig.config, both of which the browser types and the model leaves open.
+    if declared == "unknown" or (declared.startswith("Record<") and declared.endswith("unknown>")):
+        return True
+    if declared.endswith("[]") and narrower.endswith("[]"):
+        return _within(_union_members(_element(narrower)), _union_members(_element(declared)))
+    if declared == "string":
+        return narrower.startswith('"') and narrower.endswith('"')
+    if declared == "number":
+        return narrower.replace(".", "", 1).lstrip("-").isdigit()
+    if declared == "boolean":
+        return narrower in ("true", "false")
+    # A member the browser spells as an inline object pairs with the model the server named
+    # for it, and neither side is read past its top level -- so this holds in both directions
+    # rather than reading as a narrowing. LeavingSoonSettings.last and .last_skip are the two
+    # cases; the file docstring carries the bound.
+    return (declared.isidentifier() and narrower.startswith("{")) or (
+        narrower.isidentifier() and declared.startswith("{")
+    )
+
+
+def _within(inner: frozenset[str], outer: frozenset[str]) -> bool:
+    return all(any(_covers(one, member) for one in outer) for member in inner)
+
+
+#: Members where the browser's type is a strict subset of the server's, which is safe in the
+#: direction that matters: the browser refuses a value the server could send rather than
+#: passing one the server would reject. Every entry today is one shape -- the wire model types
+#: the field as a bare ``str`` and the browser closes it to the literals it dispatches on.
+#:
+#: **The bare ``str`` is deliberate on the server and stays.** ``verdict`` and ``override``
+#: are ``Literal`` types in ``engine.verdict``, but the wire models validate rows read back
+#: out of the database, where nothing constrains the column -- no CHECK, and no migration ever
+#: wrote an out-of-set value. Narrowing the wire model turns a legacy value from "renders
+#: oddly" into a 500 on the review queue, which fails in the operator's face rather than
+#: toward keeping the file.
+#:
+#: A member listed here is not a bug. A member NOT listed here is, which is why this is a set
+#: and not a count (rule 145): swapping one narrowing for another keeps a count whole.
+NARROWED: set[str] = {
+    "Candidate.override",
+    "Candidate.override_own",
+    "Candidate.show_override",
+    "Candidate.show_status",
+    "Candidate.verdict",
+    "CandidateDetail.override",
+    "CandidateDetail.override_own",
+    "CandidateDetail.show_override",
+    "CandidateDetail.show_status",
+    "CandidateDetail.verdict",
+    "Group.show_override",
+    "Group.show_status",
+    "GroupSeasonMark.override",
+    "GroupSeasonMark.verdict",
+    "Instance.kind",
+    "ListConfig.config",
+    "Match.status",
+    "PersonTitle.verdict",
+    "PlexLibrary.kind",
+    "PlexLinkPoll.status",
+    "PlexPoll.status",
+    "PlexResources.source",
+    "RatingRule.source",
+    "SeerrService.kind",
+    "WhitelistEntry.decision",
+}
+
+#: Members where the browser's type is a strict superset of the server's: the server declares
+#: a ``Literal`` or an enum and the browser types the field ``string``. Nothing crashes on one
+#: -- the browser accepts everything the server can send -- but the compiler stops helping.
+#:
+#: ``Policy.repairs`` is the deliberate one, and ``api.ts`` says why beside it: the union ends
+#: in ``(string & {})`` so an id this build has never heard of is a value TypeScript admits
+#: exists rather than a cast, which is what lets ``PolicyEditor``'s fallback handle it. The
+#: other six carry no such argument. They are the plain ``string`` the field was first written
+#: as, and each is one place ``docs/SIMPLIFICATION_PLAN.md``'s 4.3 has left to do -- ``GateId``
+#: already exists as a union in ``components/policyMeta.ts``, so ``GateSetting.gate`` is the
+#: cheapest of them.
+WIDENED: set[str] = {
+    "Condition.op",
+    "GateSetting.gate",
+    "Policy.repairs",
+    "SignalProbe.signal",
+    "SignalSetting.signal",
+    "VocabField.ops",
+    "Vocabulary.lane",
+}
+
+
+class TestTheTwoCopiesAgreeOnTypes:
+    """The second half of the guard: the two copies agree about what is IN each field.
+
+    Names were all this file compared until now, and the reason given was that comparing types
+    would flag eight pairs on day one. Measured, it flags 42 across 749 members, and they sort
+    into four classes rather than one, three of which are worth naming and one of which was a
+    live inaccuracy. The two sets above hold the deliberate ones by name.
+
+    **Optionality is still not compared, and that is now a measurement rather than a bound.**
+    The server's ``required`` list describes what a REQUEST may omit; every model here is a
+    response, and a response model with a default still serializes the field, so 210 members
+    read "optional" on the server while the route sends every one of them. The browser's ``?``
+    is a different fact again -- several fields carry it because no component reads them and
+    the fixtures are not made to carry them. There is no true reference to compare against, so
+    the ``?`` is dropped on both sides and the type beside it is what is checked.
+
+    **Dropping a ``null`` is the one narrowing that is never allowed**, and it has its own
+    test. A component reading ``x.foo`` on a value the server sends as ``null`` throws where a
+    component switching on an unexpected string takes a fall-through arm.
+    """
+
+    def _diff(
+        self,
+        browser_member_types: dict[str, dict[str, str]],
+        server_member_types: tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]],
+    ) -> dict[str, tuple[str, str, frozenset[str], frozenset[str]]]:
+        """Every member whose two declarations do not render as the same type."""
+        wire, inner = server_member_types
+        out: dict[str, tuple[str, str, frozenset[str], frozenset[str]]] = {}
+        aliases = _type_aliases(API_TS.read_text(encoding="utf-8"))
+        for name in sorted(browser_member_types):
+            counterpart = _pair(name, wire, inner)
+            if counterpart is None:
+                continue
+            declared = wire.get(counterpart) or inner.get(counterpart) or {}
+            for field, written in sorted(browser_member_types[name].items()):
+                if field not in declared:
+                    continue  # a name difference, which the class above already reports
+                mine = _union_members(_expanded(written, aliases))
+                theirs = _union_members(
+                    _server_name_to_browser(declared[field], browser_member_types)
+                )
+                if not (_within(mine, theirs) and _within(theirs, mine)):
+                    out[f"{name}.{field}"] = (written, declared[field], mine, theirs)
+        return out
+
+    def test_no_paired_member_disagrees_in_a_way_nobody_declared(
+        self,
+        browser_member_types: dict[str, dict[str, str]],
+        server_member_types: tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]],
+    ) -> None:
+        """The guard itself. Rule 144: the message names the file to edit."""
+        unrelated: list[str] = []
+        for member, (written, declared, mine, theirs) in self._diff(
+            browser_member_types, server_member_types
+        ).items():
+            if _within(mine, theirs) or _within(theirs, mine):
+                continue
+            unrelated.append(f"{member}: the browser says `{written}`, the server `{declared}`")
+
+        assert unrelated == [], (
+            "frontend/src/api.ts and the response models disagree about what a field holds, "
+            "and not in either direction anyone declared. Neither type admits the other, so "
+            "one of them is describing data that is not sent. Edit frontend/src/api.ts to "
+            "match the model, or the model to match what the route really returns:\n  "
+            + "\n  ".join(unrelated)
+        )
+
+    def test_the_browser_never_drops_a_null_the_server_declares(
+        self,
+        browser_member_types: dict[str, dict[str, str]],
+        server_member_types: tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]],
+    ) -> None:
+        """The narrowing that crashes rather than degrades, so it has no allowed set.
+
+        ``Explanation.match`` was typed ``Match`` against a server ``MatchOut | None``, and
+        ``base_score``/``keep_discount`` were ``number`` against ``float | None``. All three
+        read as non-null to the compiler while the server really sends ``null``, and all three
+        were already guarded at every call site -- the code knew, the declaration did not, so
+        the next reader of one was the one who would find out.
+        """
+        dropped: list[str] = []
+        for member, (written, declared, mine, theirs) in self._diff(
+            browser_member_types, server_member_types
+        ).items():
+            if "null" in theirs and "null" not in mine:
+                dropped.append(f"{member}: the browser says `{written}`, the server `{declared}`")
+
+        assert dropped == [], (
+            "the server can send null for these and frontend/src/api.ts does not say so, so "
+            "every component reading one is one unguarded property access from a blank panel. "
+            "Add `| null` in frontend/src/api.ts and follow the compiler:\n  "
+            + "\n  ".join(dropped)
+        )
+
+    def test_every_deliberate_difference_is_the_one_that_was_declared(
+        self,
+        browser_member_types: dict[str, dict[str, str]],
+        server_member_types: tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]],
+    ) -> None:
+        """Rule 103's last sentence, at the member level: a difference the guard tolerates is
+        written down, not silenced. This is also the walk's population statement (rule 145) --
+        a swap that keeps the total would pass a count and fails here."""
+        narrowed, widened = set(), set()
+        for member, (_written, _declared, mine, theirs) in self._diff(
+            browser_member_types, server_member_types
+        ).items():
+            if _within(mine, theirs):
+                narrowed.add(member)
+            elif _within(theirs, mine):
+                widened.add(member)
+
+        assert narrowed == NARROWED, (
+            "the set of members where the browser types a field more tightly than the server "
+            "declares it has changed. Add or remove the entry in NARROWED in this file:\n  "
+            + "\n  ".join(sorted(narrowed ^ NARROWED))
+        )
+        assert widened == WIDENED, (
+            "the set of members where the server declares a closed set and the browser types "
+            "it `string` has changed. Add or remove the entry in WIDENED in this file:\n  "
+            + "\n  ".join(sorted(widened ^ WIDENED))
+        )
 
 
 class TestTheTwoCopiesAgree:

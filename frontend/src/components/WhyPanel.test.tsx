@@ -1115,6 +1115,22 @@ describe("the merged-listing count", () => {
     show(withMatch({ merged_rating_keys: [900] }));
     expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
   });
+
+  it("renders a row whose whole match block is null", () => {
+    // The third shape, and the one no fixture in this file carried: `ExplanationOut.match`
+    // defaults to `None` and nothing sets `exclude_none`, so a row that was never matched
+    // arrives with an explicit `null` rather than with the key missing. `api.ts` typed it
+    // `Match | undefined` until W4.2, so the compiler would have accepted a reader dropping
+    // the guard here, and the panel this feeds is the one an operator reads while deciding
+    // what to delete.
+    show(
+      detail(WORKED_ROWS, {
+        explanation: { ...detail(WORKED_ROWS).explanation, match: null },
+      }),
+    );
+    expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/couldn't find it in your Plex/i)).not.toBeInTheDocument();
+  });
 });
 
 // The per-title escape from a hold nothing else on this screen can lift (#275). Reaper keeps the
