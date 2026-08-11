@@ -269,11 +269,23 @@ here.
 before `put_general` runs and the test passes against the broken order it was written to catch.
 Only the route's own commit is broken now, found by frame name.
 
-**11. #710, the PIN sweeper.** Half the fix merges and half cannot. `sweep_expired_sessions` is
+**11. #710, the PIN sweeper. Landed.** Half the fix merges and half cannot. `sweep_expired_sessions` is
 untouched context (`scheduler.py:495` on `dev`, `:491` here), so folding the delete in lands either
 way. The half that does not is the opportunistic delete the fix retires: `dev` carries it in
 `start_link` at `plex_link.py:413` and in `login.py`'s `start_plex_login`, and the branch replaced
 both with one `start_pin` at `plex_link.py:150`. Two modify/deletes on `dev`, none here.
+
+**Answered as the asymmetry rather than as unbounded growth**, which is the issue's own second
+option. Nobody constructed a sequence where rows accumulate faster than starts clear them, and
+nothing here claims one exists: `plex_link.sweep_expired_pins` is the twin of
+`sessions.sweep_expired`, both are swept by the one firing, and `start_pin` stops carrying
+housekeeping that has nothing to do with starting a PIN.
+
+**Answered as the asymmetry rather than as unbounded growth**, which is the issue's own second
+option. Nobody constructed a sequence where rows accumulate faster than starts clear them, and
+nothing here claims one exists: `plex_link.sweep_expired_pins` is the twin of
+`sessions.sweep_expired`, both are swept by the one firing, and `start_pin` stops carrying
+housekeeping that has nothing to do with starting a PIN.
 
 **12. #726, the rating unit's space.** The source line merges. `PolicyRuleEditors.test.tsx:463`
 does not: it asserts `reads: "7.5 /10"`, it is the expectation the fix has to move, and the file
