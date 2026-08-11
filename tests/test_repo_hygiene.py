@@ -4108,7 +4108,9 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # they share. It audits that head with every link set, the state neither panel's own suite drives.
 # +1 for `AppFocus.test.tsx`, which is exempt rather than audited: it mounts the shell to ask
 # which view is holding a jump's aim, and the two routes it drives to are stubs printing a prop.
-_EXPECTED_RENDERING_TEST_FILES = 57
+# +1 for `artFallback.test.tsx`, which mounts `WhyHero` to drive the art-then-poster ladder the
+# hook now declares once. It audits the banner on both rungs, the fallback included.
+_EXPECTED_RENDERING_TEST_FILES = 58
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5183,7 +5185,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 205
+_EXPECTED_FRONTEND_MODULES = 207
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")

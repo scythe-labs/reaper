@@ -49,6 +49,7 @@ import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
+import { useArtFallback } from "./artFallback";
 import { CardOpen } from "./CardOpen";
 import { FilterMenu } from "./FilterMenu";
 import { PosterFallback } from "./PosterFallback";
@@ -211,13 +212,7 @@ function FilterChip({
 /** The dimmed backdrop behind a card. Tries the wide Plex art first and falls back to the
  *  poster when a title has no separate backdrop; a paired scrim keeps the text readable. */
 function Backdrop({ posterUrl }: { posterUrl: string | null }) {
-  const [src, setSrc] = useState(posterUrl ? `${posterUrl}?kind=art` : null);
-  const fellBack = useRef(false);
-
-  useEffect(() => {
-    fellBack.current = false;
-    setSrc(posterUrl ? `${posterUrl}?kind=art` : null);
-  }, [posterUrl]);
+  const { src, onError } = useArtFallback(posterUrl);
 
   if (!src) return null;
   return (
@@ -228,14 +223,7 @@ function Backdrop({ posterUrl }: { posterUrl: string | null }) {
         alt=""
         aria-hidden="true"
         loading="lazy"
-        onError={() => {
-          if (!fellBack.current && posterUrl) {
-            fellBack.current = true;
-            setSrc(posterUrl);
-          } else {
-            setSrc(null);
-          }
-        }}
+        onError={onError}
       />
       <div className="card-scrim" aria-hidden="true" />
     </>

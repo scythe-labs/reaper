@@ -24,7 +24,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ReactNode,
   type RefObject,
-  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -44,6 +43,7 @@ import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
 import { coverage, itemBytes, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
+import { useArtFallback } from "./artFallback";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { useHoldsBackUnmeasured } from "./queueSettings";
 import { reapIsNoop } from "./reviewFate";
@@ -341,35 +341,12 @@ export function Synopsis({ text }: { text: string }) {
  *  a title has no separate art, and to nothing at all when it has neither. Shared with the
  *  show panel. */
 export function WhyHero({ posterUrl }: { posterUrl: string }) {
-  const [src, setSrc] = useState(`${posterUrl}?kind=art`);
-  const fellBack = useRef(false);
-
-  // When the selected item changes without an unmount in between (the new item's detail was
-  // already cached, so `detail` goes A -> B directly), this component is reused rather than
-  // remounted. Reset the art to the new item's, or the hero keeps showing the previous
-  // item's backdrop under the new title/score -- exactly the kind of mismatch this panel
-  // exists to avoid. Mirrors ReviewQueue's Backdrop.
-  useEffect(() => {
-    fellBack.current = false;
-    setSrc(`${posterUrl}?kind=art`);
-  }, [posterUrl]);
+  const { src, onError } = useArtFallback(posterUrl);
 
   if (!src) return null;
   return (
     <div className="why-hero">
-      <img
-        src={src}
-        alt=""
-        aria-hidden="true"
-        onError={() => {
-          if (!fellBack.current) {
-            fellBack.current = true;
-            setSrc(posterUrl); // no wide art -> the poster still fills the banner
-          } else {
-            setSrc(""); // neither -> drop the banner
-          }
-        }}
-      />
+      <img src={src} alt="" aria-hidden="true" onError={onError} />
       <div className="why-hero-fade" aria-hidden="true" />
     </div>
   );
