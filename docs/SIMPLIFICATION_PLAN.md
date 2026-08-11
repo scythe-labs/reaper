@@ -3569,7 +3569,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-2 | 3 to 5 re-parses, ~12 | count right, size is +2 | defer, carrier for #709 only |
 | W11-3 | 6 dispatch places, no test pins the conversions | block above; 30 sites over two spellings | **built**, test and type; table killed, 4 unlike dispatches |
 | W11-4 | 12 arms, 6 bare, the test is already that table | block above | kill |
-| W11-5 | `scan.py`'s condemned counter | right, in `services/snapshot.py` | build, -3 |
+| W11-5 | `scan.py`'s condemned counter | right, in `services/snapshot.py` | **built**, -2 |
 | W11-6 | triple ×4 plus 3 parallel dicts | 1 triple, 4 pairs, 1 dict | kill, the file has no such shape |
 | W11-7 | 2 class names, ~14 | 2 class pairs plus 3 local names, nets -2 | kill, #655 shipped the AST gate instead |
 | W11-8 | 4 slug sets, 4 sweeps, ~10 | right, and `_retire` is already the helper | kill, nets 0 |
@@ -3596,18 +3596,62 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-29 | 3 near-copies, one comment admits it | 5 controls, and the "borrows" comments are in the CSS | unsettled, both reports make it an owner split |
 | W11-30 | inline 64 times, `format.ts` twice, 14 `toLocaleString` | block above | kill the helper |
 | W11-31 | 4 sentences ×2, a third copy in `public.py`, comment verbatim | 4 right, the scout's 5 was the over-count; two carry the `public.py` copy, and the comment is a paraphrase | unsettled, scout -6, verifier ~0 |
-| W11-33 | dead branch at `restore.py:201`, refused 12 lines earlier, sentence ×4 | branch at 187, the gap is 11 lines, ×4 right | build, -7 |
-| W11-34 | twice in one function, pinned by nothing | right | build, -5 |
-| W11-35 | 3 arms, one 400 | right | build, -3 |
+| W11-33 | dead branch at `restore.py:201`, refused 12 lines earlier, sentence ×4 | branch at 187, the gap is 11 lines; the ×4 half closed at #720 | **built**, -2, the branch alone |
+| W11-34 | twice in one function, pinned by nothing | right; the `-5` is not, the declaration costs more than the arms | **built**, +2, for the pin |
+| W11-35 | 3 arms, one 400 | right, all three identical; `PlexError` carries two causes | **built**, -1 |
 | W11-36 | 4 copies plus a deliberate 5th | right, plus an unnamed pair in `BackupPanel` and `AboutPanel` | kill as a dedup, write the hygiene gate instead |
 | W11-37 | 3 identity entries | right | build, -3, never its own PR |
 | W11-38 | the ritual 5 times | 9 sites in 2 rituals, 5 status and 4 message | kill, a helper is a rename |
 | W11-39 | 4 call sites, ~15 | 4 sites, only 2 adjacent; built at **+5** | **killed**, S5 |
-| W11-40 | unindexed, never swept, grows for the life of the install | 3 tree claims right, framing wrong, block above | build the index only |
+| W11-40 | unindexed, never swept, grows for the life of the install | 3 tree claims right, framing wrong, block above | **built**, the index only |
 | W11-41 | 13 models | 15 models | kill, byte-identical DDL is why nothing is gained |
 | W11-42 | ~85 lines, all `ci` | populations right, ~16 removable, provenance pair unresolved | build the macOS probe, defer the composite actions |
-| W11-43 | spelled 3 times | right, and `schema_gate.py` is a 4th deliberately different shape | build at +2, or write the gate |
+| W11-43 | spelled 3 times | right, and `schema_gate.py` is a 4th deliberately different shape | **built**, +7 not +2; no gate, one site would be left to scan |
 | W11-44 | written 3 times, ~23 | count right, 3 runtimes rather than 3 copies | kill, sharing costs +10 on the boot path |
+
+> **Built: the six backend rows W11-5, W11-33, W11-34, W11-35, W11-40 and W11-43. Every symbol
+> the six name is where the table says, and four of the six savings are not.** Code net, comments
+> counted and tests excluded: **-2, -2, +2, -1, +4 plus a 42-line revision, and +7.** The table's
+> figures were -3, -7, -5, -3, index-only and +2. The direction is one-way: five of the six cost
+> more than stated and none cost less, because a saving is counted off the statements deleted
+> while the declaration or docstring that replaces them is not counted at all. **A line estimate
+> in this wave is a locator, not a budget.**
+>
+> **W11-33's second half was already built.** Its "prepare-failure sentence written verbatim four
+> times" is `restore._PREPARE_FAILED`, landed at #720 with the four raise sites and four
+> assertions on it. Only the dead branch was left, and it is at `_check_schema`'s `if revision is
+> None`: `_summarize` refuses `None` eleven lines before it calls in, and needs the revision for
+> its manifest cross-check, so it cannot stop asking. The parameter is `str` now, which puts the
+> refusal in mypy's hands rather than in a second runtime copy of one operator sentence. That
+> sentence had nothing asserting it either; the surviving copy is pinned now.
+>
+> **W11-34's `-5` is wrong and the item was still worth building.** Two arms of one function spell
+> one refusal, and collapsing them to `_BAD_CRON` saves four lines and spends six on the
+> declaration and its comment. The row's own words say what the value is: *pinned by nothing*. Two
+> tests drove a bad cron down both arms and asserted only the 422, so either arm could be reworded
+> alone. The new test matches both details against the declaration's halves rather than restating
+> the sentence, which would have been a third copy of it.
+>
+> **W11-35's three arms are byte-identical and the collapse changes nothing, but one of them
+> carries two causes.** `PlexError` reaches that arm both from the service, which raises it for
+> "no linked Plex server" (a 400, and a test pins it), and from the client, for a server that is
+> linked and unreachable. `api/plex.py:599` answers the second kind 502 and wraps the client's
+> words. Telling the two apart needs a second exception type in the service, which is a behavior
+> change this dedup is not; filed as a question instead.
+>
+> **W11-40 is the index and nothing else.** `EXPLAIN QUERY PLAN` for the executor's own filter
+> returned `SCAN action_step` before and `SEARCH ... USING INDEX ix_action_step_run_id` after,
+> asserted on the plan rather than on the index existing, so an index that is present and not
+> chosen still fails. The revision is `f7a8b9c0d1e2`, one `create_index`, which copies no table
+> under `render_as_batch`. `services/retention.py`'s exclusion is untouched, per the block above.
+>
+> **W11-43 costs +7, and the gate is the worse of the two answers here.** After the consolidation
+> `src/` holds exactly one multi-parent walk, inside `buildinfo.project_root`, so a ban on the
+> spelling would guard a population of one. A gate would also have to run *after* this change or
+> exempt the two sites it exists to catch, which is the exclusion-list shape. The drift it removes
+> is real and silent: `main.py` counted three parents from its own file to reach the directory it
+> serves the SPA out of, matching `launcher.py`'s count by coincidence of depth, so moving either
+> file serves an operator a stale UI rather than failing an import.
 
 ## Wave 12: the test suite's wall clock
 
