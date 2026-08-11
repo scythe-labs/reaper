@@ -22,8 +22,11 @@ import hashlib
 import os
 import re
 import secrets
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from ipaddress import ip_network
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 from urllib.parse import SplitResult, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -1190,6 +1193,170 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
     )
 
 
+@dataclass(frozen=True)
+class _GeneralField:
+    """One field of ``GeneralSettingsIn`` that is stored as an app setting.
+
+    ``clean`` validates the value that arrived and returns the one to store, raising
+    ``HTTPException`` on a refusal; a field with nothing to check leaves it unset and
+    stores what arrived. ``write`` is the setter, wrapped where its own signature is
+    keyword-only.
+    """
+
+    name: str
+    write: Callable[[AsyncSession, Any], Awaitable[None]]
+    clean: Callable[[Any], Any] | None = None
+
+
+def _clean_application_url(value: str) -> str:
+    _require_web_url(
+        value,
+        refusal="The application URL must be a full web address, like https://reaper.example.com",
+    )
+    return value
+
+
+def _clean_timezone(value: str) -> str:
+    """The one validator here that also refuses an empty string. An empty accent means
+    "put the built-in one back"; there is no such thing as an empty zone, and storing one
+    would leave every timed job on whatever the host happens to be set to."""
+    stripped = value.strip()
+    if not stripped or not app_settings.is_valid_timezone(stripped):
+        raise HTTPException(422, "That is not a known time zone. Pick one from the list.")
+    return stripped
+
+
+def _clean_accent_color(value: str) -> str:
+    """Empty passes: it is how the Reset link says "back to the built-in accent", and
+    ``set_accent_color`` turns it into the default. The stored value is the one that
+    arrived, not the stripped copy checked here, because the setter folds case and
+    whitespace itself."""
+    stripped = value.strip()
+    if stripped and not _HEX_COLOR.match(stripped):
+        raise HTTPException(422, "The accent color must be a hex code like #25c3ff.")
+    return value
+
+
+def _clean_trusted_proxies(value: list[str]) -> list[str]:
+    for entry in value:
+        cleaned_entry = entry.strip()
+        if not cleaned_entry:
+            continue
+        try:
+            ip_network(cleaned_entry, strict=False)
+        except ValueError:
+            raise HTTPException(
+                422,
+                f'"{cleaned_entry}" is not an address or a range. Use entries '
+                "like 172.16.0.1 or 172.16.0.0/12.",
+            ) from None
+    return value
+
+
+async def _write_expand_seasons_mode(session: AsyncSession, value: Any) -> None:
+    await app_settings.set_expand_seasons_mode(session, mode=value)
+
+
+async def _write_default_spare_days(session: AsyncSession, value: Any) -> None:
+    await app_settings.set_default_spare_days(session, days=value)
+
+
+async def _write_proxy_trust_enabled(session: AsyncSession, value: Any) -> None:
+    await app_settings.set_proxy_trust_enabled(session, enabled=value)
+
+
+#: Every ``GeneralSettingsIn`` field that is an app-settings row, in the order the model
+#: declares them. ``put_general`` walks this twice, so adding a General setting is a row
+#: here rather than a check in one loop and a write in another that can disagree.
+#:
+#: Order decides only which refusal an operator sees when two fields are both wrong, and
+#: nothing pins that: the promise is that a refusal writes nothing, whichever field earned
+#: it.
+_GENERAL_FIELDS: tuple[_GeneralField, ...] = (
+    _GeneralField("application_name", app_settings.set_application_name),
+    _GeneralField("application_url", app_settings.set_application_url, _clean_application_url),
+    _GeneralField("timezone", app_settings.set_timezone, _clean_timezone),
+    _GeneralField("accent_color", app_settings.set_accent_color, _clean_accent_color),
+    _GeneralField("expand_seasons_mode", _write_expand_seasons_mode),
+    _GeneralField("default_spare_days", _write_default_spare_days),
+    _GeneralField("proxy_trust_enabled", _write_proxy_trust_enabled),
+    _GeneralField("trusted_proxies", app_settings.set_trusted_proxies, _clean_trusted_proxies),
+)
+
+#: The fields of the same model that are deliberately NOT rows, each with the reason it
+#: cannot be one. Declared rather than left as anonymous lines in the route, so the pair
+#: with ``_GENERAL_FIELDS`` covers the model exactly and
+#: ``test_every_general_field_is_a_row_or_a_declared_exception`` fails on a field that is
+#: neither (rule 103).
+_GENERAL_FIELD_EXCEPTIONS: Mapping[str, str] = {
+    "tray": (
+        "Not a settings row: it is a launcher.conf line plus an os.environ mirror, on the "
+        "desktop builds only. See _validated_desktop_values."
+    ),
+    "dock_icon": (
+        "Not a settings row, and narrower still than tray: macOS alone. Same launcher.conf "
+        "and os.environ pair."
+    ),
+}
+
+
+def _cleaned_general_values(payload: GeneralSettingsIn) -> dict[str, Any]:
+    """Pass one: check every field that arrived, and return what each should store.
+
+    Nothing here touches the session, which is the point -- a refusal raises before the
+    first write rather than partway through it.
+    """
+    cleaned: dict[str, Any] = {}
+    for field in _GENERAL_FIELDS:
+        value = getattr(payload, field.name)
+        if value is None:
+            continue
+        cleaned[field.name] = field.clean(value) if field.clean else value
+    return cleaned
+
+
+def _validated_desktop_values(payload: GeneralSettingsIn) -> dict[str, str]:
+    """The desktop pair's half of pass one: refuse it where the platform cannot honor it,
+    and return the launcher.conf lines to write. Empty when neither field was sent.
+
+    These two checks used to sit below the writes, where they were covered only by the
+    commit at the end of the route rolling the session back. They are checks, so they
+    belong with the other checks; the operator sees the same two refusals either way.
+    """
+    if payload.tray is None and payload.dock_icon is None:
+        return {}
+    platform = launcher.desktop_platform()
+    if platform is None:
+        raise HTTPException(422, "These settings exist only on the Windows and macOS apps.")
+    # Refused where it is inert: accepting it would write a launcher.conf line
+    # nothing on Windows reads, and every later read would echo a switch the
+    # platform cannot honor.
+    if payload.dock_icon is not None and platform != "macos":
+        raise HTTPException(422, "The Dock icon setting exists only on the macOS app.")
+    values: dict[str, str] = {}
+    if payload.tray is not None:
+        values[launcher.DESKTOP_TRAY_KEY] = "true" if payload.tray else "false"
+    if payload.dock_icon is not None:
+        values[launcher.DESKTOP_DOCK_KEY] = "true" if payload.dock_icon else "false"
+    return values
+
+
+def _write_desktop_values(data_dir: Path, values: dict[str, str]) -> None:
+    """Pass two for the desktop pair. Not a settings row and not in the transaction: this
+    writes a file and then the process environment."""
+    try:
+        launcher.write_conf_values(data_dir, values)
+    except OSError:
+        raise HTTPException(
+            500, "Reaper couldn't save this to launcher.conf in its data folder."
+        ) from None
+    # The environment is the boot-resolved record _desktop_out reads (the
+    # launcher seeded the file into it), so mirror the write there too:
+    # the response and every later read then show the value the next start
+    # will use, instead of snapping the switch back.
+    os.environ.update(values)
+
+
 @router.get("/general", tags=[api_tags.GENERAL])
 async def get_general(request: Request) -> GeneralSettingsOut:
     async with session_factory(request)() as session:
@@ -1204,91 +1371,29 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
     every trusted-proxy entry must parse as an address or a range -- refused with a
     plain message otherwise, and nothing is changed.
     """
+    # Two passes, and the loops are what make that structural rather than conventional:
+    # every field is checked before any field is written, so a body carrying five good
+    # values and one bad one leaves the stored settings exactly as they were. That is what
+    # the docstring above promises the operator and what
+    # `test_one_bad_field_writes_none_of_the_others` pins. A single pass that validated and
+    # wrote each field in turn would half-apply the save while telling them it failed.
+    #
+    # The commit at the end is a second, independent layer: an `HTTPException` escaping
+    # this block closes the session unwritten, so even the launcher branch's refusals --
+    # which fire after the loop below -- roll the rows back. Neither layer is trusted alone.
+    cleaned = _cleaned_general_values(payload)
+    desktop_values = _validated_desktop_values(payload)
     async with session_factory(request)() as session:
-        if payload.application_url is not None:
-            _require_web_url(
-                payload.application_url,
-                refusal=(
-                    "The application URL must be a full web address, like "
-                    "https://reaper.example.com"
-                ),
-            )
-        if payload.trusted_proxies is not None:
-            for entry in payload.trusted_proxies:
-                cleaned_entry = entry.strip()
-                if not cleaned_entry:
-                    continue
-                try:
-                    ip_network(cleaned_entry, strict=False)
-                except ValueError:
-                    raise HTTPException(
-                        422,
-                        f'"{cleaned_entry}" is not an address or a range. Use entries '
-                        "like 172.16.0.1 or 172.16.0.0/12.",
-                    ) from None
-
-        if payload.accent_color is not None:
-            cleaned_color = payload.accent_color.strip()
-            if cleaned_color and not _HEX_COLOR.match(cleaned_color):
-                raise HTTPException(
-                    422,
-                    "The accent color must be a hex code like #25c3ff.",
-                )
-
-        cleaned_timezone: str | None = None
-        if payload.timezone is not None:
-            cleaned_timezone = payload.timezone.strip()
-            if not cleaned_timezone or not app_settings.is_valid_timezone(cleaned_timezone):
-                raise HTTPException(
-                    422,
-                    "That is not a known time zone. Pick one from the list.",
-                )
-
-        if payload.application_name is not None:
-            await app_settings.set_application_name(session, payload.application_name)
-        if payload.application_url is not None:
-            await app_settings.set_application_url(session, payload.application_url)
-        if cleaned_timezone is not None:
-            await app_settings.set_timezone(session, cleaned_timezone)
-        if payload.accent_color is not None:
-            await app_settings.set_accent_color(session, payload.accent_color)
-        if payload.expand_seasons_mode is not None:
-            await app_settings.set_expand_seasons_mode(session, mode=payload.expand_seasons_mode)
-        if payload.default_spare_days is not None:
-            await app_settings.set_default_spare_days(session, days=payload.default_spare_days)
-        if payload.proxy_trust_enabled is not None:
-            await app_settings.set_proxy_trust_enabled(session, enabled=payload.proxy_trust_enabled)
-        if payload.trusted_proxies is not None:
-            await app_settings.set_trusted_proxies(session, payload.trusted_proxies)
-        if payload.tray is not None or payload.dock_icon is not None:
-            platform = launcher.desktop_platform()
-            if platform is None:
-                raise HTTPException(422, "These settings exist only on the Windows and macOS apps.")
-            # Refused where it is inert: accepting it would write a launcher.conf line
-            # nothing on Windows reads, and every later read would echo a switch the
-            # platform cannot honor.
-            if payload.dock_icon is not None and platform != "macos":
-                raise HTTPException(422, "The Dock icon setting exists only on the macOS app.")
-            desktop_values: dict[str, str] = {}
-            if payload.tray is not None:
-                desktop_values[launcher.DESKTOP_TRAY_KEY] = "true" if payload.tray else "false"
-            if payload.dock_icon is not None:
-                desktop_values[launcher.DESKTOP_DOCK_KEY] = "true" if payload.dock_icon else "false"
-            try:
-                launcher.write_conf_values(runtime_settings(request).data_dir, desktop_values)
-            except OSError:
-                raise HTTPException(
-                    500, "Reaper couldn't save this to launcher.conf in its data folder."
-                ) from None
-            # The environment is the boot-resolved record _desktop_out reads (the
-            # launcher seeded the file into it), so mirror the write there too:
-            # the response and every later read then show the value the next start
-            # will use, instead of snapping the switch back.
-            os.environ.update(desktop_values)
+        for field in _GENERAL_FIELDS:
+            if field.name in cleaned:
+                await field.write(session, cleaned[field.name])
+        if desktop_values:
+            _write_desktop_values(runtime_settings(request).data_dir, desktop_values)
         await session.commit()
         await _refresh_proxy_state(request, session)
-        if cleaned_timezone is not None:
-            await _apply_timezone_to_scheduler(request, cleaned_timezone)
+        stored_timezone = cleaned.get("timezone")
+        if isinstance(stored_timezone, str):
+            await _apply_timezone_to_scheduler(request, stored_timezone)
         result = await _general_out(session, runtime_settings(request), secret_box(request))
     log.info("settings.general_saved")
     return result
