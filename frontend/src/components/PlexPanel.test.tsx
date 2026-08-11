@@ -1240,6 +1240,30 @@ describe("the shelf status line", () => {
     expect(await statusLine({})).toMatch(LINE("4 added, 1 cleared\\. "));
   });
 
+  it("says nothing at all while the shelf is switched off", async () => {
+    // The line promised "next update after the next scan" for a scan coded to skip the
+    // shelf, and named counts a switch-off cleanup had already cleared from Plex (#624). The
+    // switch is asserted alongside, because the fix is a line that disappears and the whole
+    // group disappearing would look the same from a query for the text (rule 118).
+    apiMock.leavingSoonSettings.mockResolvedValue({
+      enabled: false,
+      allow_unarmed: false,
+      last: PASS,
+      last_skip: null,
+    });
+    const { container } = renderPanel();
+
+    const shelf = await screen.findByRole("switch", { name: 'Show "Leaving Soon" in Plex' });
+    expect(shelf).not.toBeChecked();
+    // The watch-history record has a `.set-status` row of its own on this panel, so the
+    // predicate is `statusLine`'s: the shelf line is the one naming the shelves.
+    const shelfLine = [...container.querySelectorAll(".set-status")].find((n) =>
+      n.textContent?.includes("on the shelves"),
+    );
+    expect(shelfLine).toBeUndefined();
+    expect(screen.queryByText(/next update after the next scan/)).toBeNull();
+  });
+
   it("says a later scan skipped the shelves, and past-tenses the counts it left behind", async () => {
     // Without this the panel answered with the completed pass alone: a green, confident
     // verdict about a shelf that has stopped updating, on the screen an operator comes to

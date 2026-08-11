@@ -489,6 +489,12 @@ export function PlexPanel({
 
   const lsStatus = (() => {
     if (!leavingSoon.data) return null;
+    // Nothing to say while the shelf is off, and the line was saying plenty: it ended "next
+    // update after the next scan" for a scan coded to skip the shelf, and named counts that a
+    // switch-off cleanup pass had already removed from Plex where writes were allowed (#624).
+    // The Jobs row draws "Off." because its switch is on another screen; here the switch is
+    // two rows up and says it, so this renders nothing rather than restating it (rule 53).
+    if (!leavingSoon.data.enabled) return null;
     const last = leavingSoon.data.last;
     // A scan that skipped the shelf writes no pass, so reading `last` alone reported a shelf
     // that had stopped updating as a current verdict -- here, of all screens (rule 72: the
