@@ -11,10 +11,12 @@ Names and titles here are placeholders -- the aggregation does not care what the
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
 from typing import get_args
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select, text
@@ -1025,6 +1027,100 @@ class TestEnrichAccounts:
         good = FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
         out = await fairness._enrich_accounts([good], {None})
         assert out == {}
+
+
+class TestEnrichTitles:
+    async def test_the_lookups_are_bounded_rather_than_all_starting_at_once(self) -> None:
+        """One Scales load must not open a socket per not-in-scan title. The per-report cap is
+        80 and httpx2's pool allows 100, so nothing below the semaphore bounds the burst.
+
+        Driven with more targets than the bound and a portal that counts what is in flight, so
+        an unbounded fan-out peaks at the target count instead. `targets` is a multiple of the
+        constant rather than a literal, so raising the constant cannot shrink the test into one
+        wave and make it vacuous."""
+        targets = fairness._TITLE_LOOKUP_CONCURRENCY * 3
+        in_flight = 0
+        peak = 0
+
+        class _WatchingSeerr(FakeSeerr):
+            async def title(self, *, tmdb_id: int, media_type: str) -> TitleInfo:
+                nonlocal in_flight, peak
+                in_flight += 1
+                peak = max(peak, in_flight)
+                # One yield is a full pass through the ready queue: every task that is not
+                # held at the semaphore reaches this point before the first one resumes.
+                await asyncio.sleep(0)
+                in_flight -= 1
+                return TitleInfo(title=f"Title {tmdb_id}", year=2020)
+
+        unmatched = [
+            fairness.UnmatchedTitle(
+                title=None,
+                year=None,
+                media_type="movie",
+                is_4k=False,
+                requested_at=None,
+                available_at=None,
+                reason=UNMATCHED_AFTER_SCAN,
+                requested_by=[],
+                request_count=1,
+                tmdb_id=i,
+                portal_key="p1",
+            )
+            for i in range(targets)
+        ]
+
+        await fairness._enrich_titles([_WatchingSeerr([], instance_key="p1")], unmatched)
+
+        assert peak <= fairness._TITLE_LOOKUP_CONCURRENCY
+        # Every row still gets its name: the bound throttles, it never drops a lookup.
+        assert [u.title for u in unmatched] == [f"Title {i}" for i in range(targets)]
+
+    async def test_a_portal_that_stops_answering_cannot_hold_the_page_open(self) -> None:
+        """The bound is what makes the deadline necessary. A portal that accepts connections
+        and never answers costs one read timeout per wave, so bounding the burst turns one
+        stalled wave into ten and the page has no deadline of its own.
+
+        The deadline is monkeypatched rather than waited out, and the portal hangs forever.
+        The outer guard is what turns "no deadline" into a failure instead of a hung job: it
+        is two orders of magnitude above the patched deadline, so it can only fire when
+        nothing under it bounds the wait. The rows the deadline cuts off keep ``title=None``,
+        which is what a failed lookup already leaves and what the generic label renders
+        from."""
+        started = 0
+
+        class _HangingSeerr(FakeSeerr):
+            async def title(self, *, tmdb_id: int, media_type: str) -> TitleInfo:
+                nonlocal started
+                started += 1
+                await asyncio.Event().wait()  # never set
+                raise AssertionError("unreachable")
+
+        unmatched = [
+            fairness.UnmatchedTitle(
+                title=None,
+                year=None,
+                media_type="movie",
+                is_4k=False,
+                requested_at=None,
+                available_at=None,
+                reason=UNMATCHED_AFTER_SCAN,
+                requested_by=[],
+                request_count=1,
+                tmdb_id=i,
+                portal_key="p1",
+            )
+            for i in range(fairness._TITLE_LOOKUP_CONCURRENCY * 2)
+        ]
+
+        async with asyncio.timeout(5):
+            with patch.object(fairness, "_TITLE_LOOKUP_DEADLINE_S", 0.05):
+                await fairness._enrich_titles([_HangingSeerr([], instance_key="p1")], unmatched)
+
+        # Returned rather than hung, with every row on its generic label.
+        assert [u.title for u in unmatched] == [None] * len(unmatched)
+        # The bound held while it hung: only the first wave ever reached the portal.
+        assert started == fairness._TITLE_LOOKUP_CONCURRENCY
 
 
 class TestBuildReportReadsNoAccounts:

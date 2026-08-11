@@ -3170,6 +3170,73 @@ two name the branches their report survives, two say they have no early return a
 has three returns that all sit below. **A hook cannot carry an obligation whose subject is the
 call site**, so the shared four lines are the part with no leverage in them.
 
+## A cap on the work is not a bound on the burst (2026-08-10)
+
+`fairness._enrich_titles` looks bounded and is not. `_TITLE_LOOKUP_CAP = 80` caps how many
+not-in-scan titles get a live name lookup per Scales load, and the docstring said the calls were
+therefore bounded. They were bounded in total and unbounded in parallel: nothing bounded the
+burst. httpx2's default connection pool holds 100, which sits above the cap, so one page load
+could open 80 sockets to one portal.
+
+**The cap reads as the safeguard, which is why nobody looked.** A cap answers "how much". A
+semaphore answers "how much at once". A comment saying "bounded" without saying which one is
+what let this sit. Measured with a portal that counts what is in flight: 24 targets peaked at
+24 concurrent, and at 8 under `asyncio.Semaphore(8)`.
+
+**Bounding the burst lengthens the tail, and that needed fixing in the same change.** A portal
+that accepts connections and never answers costs one read timeout per wave. Unbounded that was
+one wave; at 8 it is ten, so the bound multiplied a stalled page load by ten. The enrichment had
+no deadline of its own because one wave never needed one. **A concurrency bound is a latency
+change, so the wave count is part of the fix.**
+
+**The load-shedder was the wrong tool, twice over.** The finding proposed reusing
+`auth/ratelimit.ConcurrencyGate` and called it unused. It has three production callers, and its
+`acquire` returns 0 when full so the caller sheds load rather than waiting, which for a page
+enriching titles would drop names instead of pacing the reads.
+
+## Removing a redundant parameter removes what its test could distinguish (2026-08-10)
+
+Five scheduler functions took `data_dir` beside the `settings` it came from, and every production
+call site passed `settings.data_dir`. Deleting the parameter is -14 lines for the parameter and
+-10 landed, and it leaves one source for the folder. It also costs a test its distinguishing
+power, and that is the part worth writing down.
+
+`test_the_snapshot_sweep_is_handed_the_folder_the_database_is_in` handed `build_scheduler` a
+folder that was *not* the engine's, on purpose, because the compaction opens
+`data_dir / "reaper.db"` with a raw sqlite3 connection: a wrong folder creates an empty second
+database and vacuums that while the real one is never compacted. Its docstring named rule 141
+outright, saying that pinning the engine's own path "would hold just as well if the job derived
+its own". Removing the parameter is exactly the change that makes the job derive its own, so the
+divergent value the test relied on stops existing.
+
+**The test's question was retired, not answered.** With one source the two cannot diverge. What
+is left to pin is what the old assertion took on trust: that the folder the sweep vacuums is the
+folder the engine opened. It is read back off the engine's own URL rather than recomputed from
+`settings`, which would only restate the derivation under test.
+
+**A test that pins a value's provenance is worth reading as an argument about the design.** The
+intermediate option here kept the parameter on `build_scheduler` alone, at -13 lines, and
+preserved the test verbatim. It was the worst of the three. It leaves the ratings download
+reading `settings.data_dir` while the sweep reads the argument: two sources for one folder, with
+a test proving only that one of them arrives.
+
+## An extraction can be larger than the duplication it removes (2026-08-10)
+
+`whitelist.overrides()` and `spare_expiries()` are two scans of one table, and a third function
+in the same file already reads all three columns in one statement, so folding the pair into one
+read looks like free subtraction. Built and measured: `whitelist.py` +14/-7, `review.py` +2/-4, a
+**net +5**.
+
+**The arithmetic is structural.** Each read being replaced is two statements, a `select` and a
+`dict()`. What replaces them is a loop that splits one result set into two maps, which is ten
+lines. Any extraction whose replacement must reshape data pays that. Collapsing N cheap reads
+into one richer read adds the projection code the cheap reads did not need.
+
+Two further figures in the finding were wrong. Only two of its four call sites are adjacent
+pairs; the other two sit 40 and about 150 lines apart, so collapsing them relocates a read
+instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
+filtered two-column select to an unfiltered three-column one.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
