@@ -287,10 +287,14 @@ nothing here claims one exists: `plex_link.sweep_expired_pins` is the twin of
 `sessions.sweep_expired`, both are swept by the one firing, and `start_pin` stops carrying
 housekeeping that has nothing to do with starting a PIN.
 
-**12. #726, the rating unit's space.** The source line merges. `PolicyRuleEditors.test.tsx:463`
-does not: it asserts `reads: "7.5 /10"`, it is the expectation the fix has to move, and the file
-does not exist on `dev`. A `dev` fix is green until #552 lands and red after. Land the fix and its
-expectation in one change, which is only possible here.
+**12. #726, the rating unit's space. Landed.** The source line merges.
+`PolicyRuleEditors.test.tsx:463` does not: it asserts `reads: "7.5 /10"`, it is the expectation
+the fix has to move, and the file does not exist on `dev`. A `dev` fix is green until #552 lands
+and red after. The fix and its expectation landed in one change, which was only possible here.
+
+**Fixed as the class, not the character.** A `withUnit` helper decides the separator from the
+suffix, so a word takes a space and punctuation does not, and both callers use it. `/10` is the
+only non-word suffix in `engine/fields.py` today and nothing stops a second.
 
 **13. #736 and 14. #740 are one sweep, and land together.** Both are chip dismiss controls and both
 turn on declarations that exist on one tree only. #736's `.bar-x` padding is pinned at

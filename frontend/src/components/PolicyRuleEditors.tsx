@@ -105,8 +105,21 @@ function rampValue(field: VocabField | undefined, value: number): string {
   if (field?.type === "bytes") return `${Math.round(value / 1e9)} GB`;
   if (field?.type === "days") return humanDays(value);
   if (field?.type === "rating_tenths") return (value / 10).toFixed(1);
-  const suffix = field?.unit_suffix ? ` ${field.unit_suffix}` : "";
-  return `${value.toLocaleString()}${suffix}`;
+  return withUnit(value.toLocaleString(), field?.unit_suffix);
+}
+
+/**
+ * A value and its unit, in a sentence.
+ *
+ * A unit that is a word takes a space ("30 days", "2 GB"); one that is punctuation does not
+ * ("7.5/10"). Both callers joined with an unconditional space, so a saved rating keep rule
+ * read back as "at least 7.5 /10" (#726). Deciding it from the suffix rather than per branch
+ * is what keeps the next punctuation unit from arriving with the same space: `/10` is the
+ * only one in `engine/fields.py` today, and nothing stops a second.
+ */
+function withUnit(value: string, suffix: string | null | undefined): string {
+  if (!suffix) return value;
+  return /^[A-Za-z]/.test(suffix) ? `${value} ${suffix}` : `${value}${suffix}`;
 }
 
 /** Coerce a text input into the value the wire expects, in the field's own units. */
@@ -151,7 +164,8 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
   const label = f?.label ?? c.field;
   const op = OP_LABELS[c.op] ?? c.op;
   let value: string;
-  let unit = f?.unit_suffix ? ` ${f.unit_suffix}` : "";
+  // Cleared by the branches that have already said their unit inside `value`.
+  let unit = f?.unit_suffix;
   if (f?.type === "rating_tenths" && typeof c.value === "number") value = (c.value / 10).toFixed(1);
   else if (f?.type === "bytes" && typeof c.value === "number") {
     value = `${Math.round(c.value / 1e9)} GB`;
@@ -161,7 +175,7 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
     unit = "";
   } else if (typeof c.value === "number") value = c.value.toLocaleString();
   else value = String(c.value);
-  return `Keep it when ${label} ${op} ${value}${unit}`;
+  return `Keep it when ${label} ${op} ${withUnit(value, unit)}`;
 }
 
 function describeCondemn(rule: CustomCondemn, fields: VocabField[]): string {

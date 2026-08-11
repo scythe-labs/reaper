@@ -457,10 +457,15 @@ const DORMANCY: VocabField = {
 
 /** Typed, stored, read back. `reads` is what the composed sentence must say: the number the
  *  operator typed, with its unit. A stored value rendering as anything else means one of the
- *  two directions is wrong, and only one of them writes the policy. */
+ *  two directions is wrong, and only one of them writes the policy.
+ *
+ *  The rating reads `7.5/10`, no space. It said `7.5 /10` until #726, and this expectation is
+ *  where that was seen: the string had to be written with the space for the test to pass. Every
+ *  other unit in the vocabulary is a word and keeps its space; `/10` is the one that is
+ *  punctuation, and the three rows here are what hold both halves of that rule at once. */
 const CONVERSIONS = [
   { field: SIZE, typed: "50", stored: 50_000_000_000, reads: "50 GB" },
-  { field: RATING, typed: "7.5", stored: 75, reads: "7.5 /10" },
+  { field: RATING, typed: "7.5", stored: 75, reads: "7.5/10" },
   { field: DORMANCY, typed: "180", stored: 180, reads: "180 days" },
 ];
 
