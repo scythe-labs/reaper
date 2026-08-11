@@ -300,16 +300,22 @@ byte-identical too, but its second repair folds the tint into the shared chip-di
 `04-buttons.css:88`, which the branch created and `dev` does not have. Rule 72: they are siblings
 of one control, so decide both against the same cascade rather than one at a time.
 
-**15. #704, the suite's undefined-read gate.** Same shape as #622, one lane over. `setup.ts` is
+**15. #704, the suite's undefined-read gate. Landed.** Same shape as #622, one lane over. `setup.ts` is
 byte-identical on both trees, so the three-line gate merges, and it would then be measuring a tree
 that has six more failures than the one it was written against: `SetupPlexStep.test.tsx` carries 6
 of the 20 and exists only here. The `App.test.tsx` half is a collision outright, the branch having
 replaced `dev`'s hand-listed `apiMock` literal with `makeApiMock()` from `test/apiMock.ts`, which
 is where the missing `vocabularyValues` answer now goes. Second to last because the count is
 measured rather than reasoned and the tree it measures has to stop moving first: #726, #736 and
-#740 are all frontend items above it. It still reads 20 here (`npx vitest run
---disableConsoleIntercept`, 2026-08-11, exit 0). Fix both files first, then add the gate, or it
-lands red.
+#740 are all frontend items above it. It still read 20 at the tip #726 left
+(`npx vitest run --disableConsoleIntercept`, 2026-08-11, exit 0), which is the same figure the
+issue measured, so the three frontend items above it moved none of them. Both files were fixed
+first and the gate went in after; it reads 0 now.
+
+**Two fixtures were added rather than one.** `DEFAULT_FIELD_VALUES` is the empty suggestion list
+the route really returns for an unknown field or a missing scan. `DEFAULT_PLEX_STATUS` is a linked
+server with an empty library list, empty because a library row is what several of those tests are
+about and a fixture painting rows would answer a read a test means to make itself.
 
 **16. #549, PR #560 ported.** The work is written and reviewed; only its target is wrong. #560 adds
 45 lines at `engine/policy.py:1395`, inside the branch's `@@ -996,1601 +994,26` deletion, and

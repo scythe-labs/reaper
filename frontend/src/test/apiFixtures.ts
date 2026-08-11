@@ -15,7 +15,9 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type {
   AuthUser,
+  FieldValues,
   GeneralSettings,
+  PlexStatus,
   ProfileSettings,
   ScanStatus,
   SetupStatus,
@@ -71,6 +73,37 @@ export const DEFAULT_UPDATE: Update = {
   checked_at: null,
   changes: [],
 };
+
+/** A linked server with nothing else said about it, and an empty library list.
+ *
+ *  Both exist for #704's reason rather than for convenience: an unanswered `api.plexStatus`
+ *  and `api.plexLibraries` render the same could-not-read branch a real failure does, and the
+ *  test then asserts against that branch believing it is the app. `linked: true` is the state
+ *  the wizard's Plex step is about; a file whose subject is the UNLINKED step sets its own.
+ *
+ *  The library list is empty rather than populated because a library row is what several of
+ *  these tests are about, and a fixture that painted rows would answer a read a test means to
+ *  make itself (rule 135). */
+export const DEFAULT_PLEX_STATUS: PlexStatus = {
+  linked: true,
+  name: "Example Server",
+  connection_uri: "http://plex.example:32400",
+  last_ok_at: null,
+  verify_tls: true,
+  web_url: "https://app.plex.tv",
+};
+
+/** No suggestions, which is what a fresh scan with nothing distinct to offer really returns:
+ *  the route's own docstring says an unknown field or a missing scan is an empty list, and
+ *  typing an unlisted value stays valid either way. So a tree rendered against this is the
+ *  tree an operator can genuinely see, and a filter suggester falls back to free text rather
+ *  than to its failed-read branch.
+ *
+ *  It exists because a mock that answers nothing renders the SAME failed-read branch, and
+ *  nothing said so: `queryFn: () => api.vocabularyValues(f)` is an arrow, so the queryFn is
+ *  present and throws inside it, which React Query files as an ordinary rejection (#704,
+ *  rule 135's stated blind spot). */
+export const DEFAULT_FIELD_VALUES: FieldValues = { field: "", values: [] };
 
 /** Nothing running -- the shape `api.scanStatus` returns between scans. */
 export const IDLE_SCAN: ScanStatus = {
