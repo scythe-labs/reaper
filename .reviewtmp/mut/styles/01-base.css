@@ -1,0 +1,135 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Base elements and the global utility classes. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* WebKit scales text by a factor it derives from the BLOCK's width, not the page's ("text
+   autosizing" / font boosting), so it fires unevenly and only where blocks are wide -- which
+   is why turning the phone landscape put one notice in two sizes ("when you're ready." large,
+   the sentence it finishes small) and grew "589 items - 6.0 TiB would be freed" past the
+   heading above it. This file sizes its own type deliberately; nothing here wants a second
+   opinion scaled off a container width. `100%` rather than `none`: `none` would also take
+   away the reader's own text-size setting and pinch zoom, which are theirs to keep. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    15px/1.55 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* iOS Safari zooms the page whenever a focused field's font-size is under 16px, and that
+   zoom shrinks the visual viewport below the layout width, which unlocks the fixed app
+   shell so it pans ("free floating"). Every control inherits the 15px body font above (the
+   control standard is font: inherit), so hold the text-entry controls at the 16px no-zoom
+   floor on touch devices only; the desktop 15px standard is untouched, and pinch-zoom stays
+   enabled (viewport meta unchanged). The #root id lifts these over the control classes
+   without !important and covers future inputs; the Spare menu's custom-length field is the
+   one input portaled to <body>, outside #root, so it is named alongside. */
+@media (pointer: coarse) {
+  #root input:not([type="checkbox"]):not([type="radio"]),
+  #root select,
+  #root textarea,
+  .dur-menu input:not([type="checkbox"]):not([type="radio"]) {
+    font-size: 16px;
+  }
+}
+
+h1,
+h2,
+h3 {
+  font-weight: var(--weight-semi);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+h1 {
+  font-size: var(--text-xl);
+  margin: 0;
+}
+h2 {
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-xs);
+}
+h3 {
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 1.5rem 0 0.4rem;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+
+a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+.muted {
+  color: var(--muted);
+  font-weight: var(--weight-normal);
+}
+
+/* Text for a screen reader only: in the layout, out of sight. For the places where meaning is
+ * carried by something a reader cannot voice -- a spinner with no words, a bare glyph -- and a
+ * visible label would say twice what a sighted operator already sees.
+ *
+ * NOT `display: none` or `visibility: hidden`, which take it out of the accessibility tree with
+ * everything else; the clip idiom is the one that leaves it readable. Same declarations as
+ * `.view-label` (the bottom-bar tab names at a narrow width), which predates this and is the
+ * same technique inline; that one stays where it is because it applies only inside its media
+ * query. Anything new uses this. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* An explanatory line under a heading. Reaper explains itself constantly; this is the
+ * voice it does it in. */
+.blurb {
+  color: var(--muted);
+  font-size: var(--text-md);
+  margin: 0.15rem 0 0.75rem;
+  max-width: 62ch;
+}
+
+/* Every <table> in the app sits in one of these. A table's columns cannot shrink below
+ * their content, so a wide one scrolls itself here rather than dragging the whole page
+ * sideways on a phone. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.app {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: var(--space-4xl);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

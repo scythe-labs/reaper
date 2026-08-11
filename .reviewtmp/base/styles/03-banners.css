@@ -1,0 +1,118 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The top-of-page safety banners. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- banners ------------------------------------------------------------- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  margin: var(--space-3xl) 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  font-size: var(--text-md);
+  border: 1px solid transparent;
+}
+.banner-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent);
+}
+/* Soft-surface tones shared by the top-of-page banner and the Settings safety panel, so a
+   color tweak lands in both instead of silently diverging. The banner sets its own text
+   color; the safety panel inherits. */
+.banner-safe,
+.safety-state.safe {
+  background: var(--protect-soft);
+  border-color: color-mix(in srgb, var(--protect) 40%, transparent);
+}
+.banner-safe .banner-dot,
+.safety-state.safe .banner-dot {
+  background: var(--protect);
+  color: var(--protect);
+}
+.banner-armed,
+.safety-state.armed {
+  background: var(--condemn-soft);
+  border-color: color-mix(in srgb, var(--condemn) 45%, transparent);
+}
+.banner-armed .banner-dot,
+.safety-state.armed .banner-dot {
+  background: var(--condemn);
+  color: var(--condemn);
+}
+.banner-safe,
+.banner-armed,
+.banner-recovery,
+.banner-unknown {
+  color: var(--text);
+}
+/* Recovery mode: deletion is held off, and the operator cannot clear it from the UI. The
+   shared amber, not a fourth tone -- `--unknown` is this stylesheet's one "attention, and
+   not the normal state" ink (rule 18), and the sentence carries the difference between not
+   being able to look and having deliberately opened a door. Green would be wrong for the
+   same reason it is wrong on `.banner-unknown`: this is a state to leave, not to rest in. */
+.banner-recovery {
+  background: var(--unknown-soft);
+  border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
+}
+.banner-recovery .banner-dot {
+  background: var(--unknown);
+  color: var(--unknown);
+}
+/* The fallback tone when the safety regime can't be read at all (the health fetch failed).
+   Amber, like every other "we could not look" state -- it must never read as "safe". */
+.banner-unknown {
+  background: var(--unknown-soft);
+  border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
+}
+.banner-unknown .banner-dot {
+  background: var(--unknown);
+  color: var(--unknown);
+}
+
+/* The "kept to be safe" match notice: the shared amber tone, with the lead in the amber ink
+   so the outcome reads first. */
+.kept-notice {
+  line-height: 1.5;
+}
+.kept-notice strong {
+  color: var(--unknown);
+}
+
+/* The Plex rows an abstain could not choose between, under a hairline inside that notice.
+   Its own row rather than trailing the sentence: these are actions, and a pill wrapped into
+   running text reads as emphasis. The rule is the amber at low alpha so it separates without
+   introducing a second border color inside a bordered box. */
+.match-candidates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+  margin-top: 0.55rem;
+  padding-top: var(--space-md);
+  border-top: 1px solid color-mix(in srgb, var(--unknown) 32%, transparent);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+/* Each row's two pills stay together when the row wraps -- "Plex 2" and "Tautulli 2" name
+   the same Plex entry, and splitting them across lines pairs each with the wrong number. */
+.candidate-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.error {
+  color: var(--condemn);
+  font-size: var(--text-md);
+  margin: var(--space-md) 0;
+}
+
+.empty {
+  color: var(--muted);
+  padding: var(--space-6xl) 0;
+}

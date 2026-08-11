@@ -1,0 +1,176 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The masthead and its section rail. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- masthead ------------------------------------------------------------ */
+
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3xl);
+  /* The brand and the user menu keep this gap above the border; .views alone gives it back with
+     a negative margin, so only the rail touches the rule its cut is drawn on (.views, below). */
+  padding: 0.35rem 0 var(--masthead-pad-b);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+/* The mark's figure is the page's own text color and its EYES are the raw --accent, drawn by
+   BrandMark itself. Two consequences worth stating: the figure needs no contrast exception
+   because it is --text, and the eyes keep the raw --accent rather than --accent-text because a
+   logotype is the one graphic WCAG exempts from a contrast ratio. Everything a person READS in
+   the accent uses --accent-text (see the token). */
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  color: var(--text);
+}
+.brand-mark.sm {
+  width: 30px;
+  height: 30px;
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  min-width: 0;
+}
+.brand-word {
+  font-weight: var(--weight-bold);
+  font-size: var(--text-xl);
+  letter-spacing: -0.02em;
+}
+.brand-sub {
+  font-size: var(--text-xs);
+}
+
+/* One pill segmented-control track, shared by the review queue's list switcher (.tabs) and the
+   policy media toggle (.segmented). Consolidated so a radius or surface change lands on both
+   instead of drifting apart.
+
+   The masthead section nav (.views) rode this too and deliberately no longer does. The track
+   says one thing in this app -- pick a view of the same set -- and moving to another part of the
+   app is not that verb. Sharing it put two <nav>s in identical chrome one above the other on the
+   review screen, where the top one leaves the page and the bottom one filters the list. .views
+   is the rail below instead. */
+.tabs,
+.segmented {
+  display: flex;
+  gap: var(--space-2xs);
+  padding: 0.2rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+}
+
+/* The section rail. `align-self: stretch` + `align-items: flex-end` put every button's bottom edge
+   on the rail's own bottom edge, and the negative bottom margin cancels the masthead's padding so
+   that edge IS the 1px border -- making the active cut a segment OF that rule rather than a second
+   line floating above it. The masthead keeps its padding, so the brand and the user menu still sit
+   clear of the border; the rail is the one child that reaches it. The phone bar takes .views out of
+   the masthead entirely and resets this margin. */
+.views {
+  display: flex;
+  align-items: flex-end;
+  align-self: stretch;
+  gap: var(--space-2xs);
+  margin: 0 auto calc(-1 * var(--masthead-pad-b));
+}
+
+.view-tab {
+  position: relative;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--muted);
+  padding: 0.5rem 0.75rem 0.85rem;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+.view-tab:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+.view-tab.active {
+  color: var(--text);
+  font-weight: var(--weight-semi);
+}
+/* The cut: the active section's segment of the masthead border, drawn over it. Scaled rather
+   than width-animated so it grows from the middle of its own label and never reflows. */
+.view-tab::before {
+  content: "";
+  position: absolute;
+  left: 0.4rem;
+  right: 0.4rem;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  transform: scaleX(0);
+  transition: transform 0.18s var(--ease);
+}
+.view-tab.active::before {
+  transform: scaleX(1);
+}
+/* Reduced motion stops the slide; the cut still lands, it just arrives rather than travels.
+   Opacity fades in these files are deliberately left alone -- the preference is about motion,
+   and a fade moves nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .view-tab::before {
+    transition: none;
+  }
+}
+/* Reserve the active (600) width at every weight, so marking a section never widens it and
+   shoves its neighbors sideways -- the same strut, and the same reason, as `.tab[data-label]`
+   in `04-buttons.css`, whose comment enumerates every control carrying one. Byte-identical to
+   it on purpose, so keep the two in step. The phone bar drops it along with the labels
+   (`10-layout.css`). */
+.view-tab[data-label]::after {
+  content: attr(data-label);
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: var(--weight-semi);
+}
+
+/* The box the safety dot hangs off: whichever of the icon and the label is showing at this
+   width. Sized by its content in both, so the dot lands on the same corner either way. */
+.view-mark {
+  position: relative;
+  display: inline-block;
+}
+/* Sized here for all five icons at once, so the bar's icon size is one declaration (rule 67).
+   Hidden on a wide screen, where the rail reads as words. 24px is where both iOS and Material
+   draw a tab icon, and it is what the taller bar has room for; the glyphs are drawn on a 16-unit
+   grid, so they scale to it cleanly. */
+.view-ico {
+  display: none;
+  width: 24px;
+  height: 24px;
+}
+/* Deletion armed, said as a mark on the one section that does it. `SafetyBanner` states the
+   same fact in words on every view, which is why this is aria-hidden in SectionNav.tsx. Amber is the
+   app's "we could not look" tone (--unknown), so a failed read never reads as disarmed. */
+.view-armed {
+  position: absolute;
+  top: -1px;
+  right: -11px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 20%, transparent);
+}
+.view-armed-armed {
+  background: var(--condemn);
+  color: var(--condemn);
+}
+.view-armed-unknown {
+  background: var(--unknown);
+  color: var(--unknown);
+}

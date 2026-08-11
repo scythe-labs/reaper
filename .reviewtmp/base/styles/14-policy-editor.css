@@ -1,0 +1,568 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The policy editor. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- policy editor ------------------------------------------------------- */
+
+.editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 440px);
+  gap: var(--space-6xl);
+  align-items: start;
+  margin-top: var(--space-4xl);
+}
+/* `minmax(0, ...)`, not a bare `1fr`: `1fr` means `minmax(auto, 1fr)`, and that `auto` floors
+   the column at its widest child's min-content. One un-shrinkable control inside (the preset
+   picker's pill track, the pace matrix's max-content columns) then set the whole column to
+   362px on a 344px phone and STRETCHED every sibling to match -- the context band, the section
+   rail, every card -- carrying the entire page off the right edge. Letting the column shrink
+   keeps a too-wide child's problem to that child. */
+@media (max-width: 900px) {
+  .editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The policy context band: which media type you're tuning, colored by the arr that runs
+   it -- Radarr gold for movies, Sonarr blue for TV (the same brand tokens the Settings
+   kind badges wear). The two policies must never blur together, and the color doubles as
+   a pointer at the tool Reaper deletes through. The Movies/TV switch and the one-line
+   blurb both live inside, so the switch's context is never in doubt. */
+.policy-context {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3xl);
+  flex-wrap: wrap;
+  padding: 0.8rem 1rem 0.85rem 1.05rem;
+  border: 1px solid var(--pc-edge);
+  border-left: 4px solid var(--pc-brand);
+  border-radius: var(--radius);
+  background: var(--pc-tint);
+  margin-bottom: 1.1rem;
+}
+/* Movies -> Radarr, TV -> Sonarr. The wash stays light (13%) so a gold band never reads
+   as the amber "we could not look" warning; the badge and left edge carry the brand at
+   full strength. */
+.policy-context.movie {
+  --pc-brand: var(--radarr);
+  --pc-tint: color-mix(in srgb, var(--radarr) 13%, var(--surface));
+  --pc-edge: color-mix(in srgb, var(--radarr) 50%, transparent);
+}
+.policy-context.tv {
+  --pc-brand: var(--sonarr);
+  --pc-tint: color-mix(in srgb, var(--sonarr) 13%, var(--surface));
+  --pc-edge: color-mix(in srgb, var(--sonarr) 50%, transparent);
+}
+.pc-left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+.pc-title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+.policy-context h2 {
+  font-size: var(--text-xl);
+  margin: 0;
+}
+/* The blurb, moved under the title inside the band: only top spacing, no big trailing
+   margin the standalone .blurb carries. */
+.pc-sub {
+  margin: var(--space-xs) 0 0;
+}
+
+.field {
+  display: block;
+  margin-bottom: 1.1rem;
+}
+/* One shared label look for every labeled input -- the policy sliders (with a value on the
+   right), the login fields, the service forms, and the pace matrix's row + extra-setting
+   labels -- so a label reads the same on every screen: small, medium-weight, muted but
+   readable. Applied via .field-label wherever the label span is ours to class; the pace
+   labels have no dedicated field-label class, so they pick up the same look through the
+   grouped selector. */
+.field-label,
+.pace-matrix .row-h,
+.pace-extra .ex-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--muted);
+}
+.field-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-xs);
+}
+/* The value read-out a policy slider parks on the right stays at full strength, so the number
+   the owner is dragging reads louder than its muted caption. */
+.field-label strong {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.field input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.help {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  margin-top: 0.2rem;
+  max-width: 58ch;
+}
+
+/* Human-readable policy rows: a protection or a signal, with plain-English label + help and
+   its control (a value+unit picker, a rating box, or a weight slider). */
+.rule-list {
+  list-style: none;
+  margin: var(--space-md) 0 var(--space-4xl);
+  padding: 0;
+}
+.rule-row {
+  padding: var(--space-xl) 0;
+  border-bottom: 1px solid var(--border);
+}
+.rule-row:last-child {
+  border-bottom: none;
+}
+.rule-toggle {
+  font-weight: var(--weight-semi);
+}
+.rule-name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semi);
+  color: var(--text);
+}
+.rule-name-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+.rule-strength {
+  font-size: var(--text-sm);
+  font-variant: small-caps;
+  letter-spacing: 0.02em;
+}
+.rule-help {
+  margin: var(--space-xs) 0 0;
+}
+.rule-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: var(--space-md);
+  font-size: var(--text-md);
+  color: var(--muted);
+}
+/* Rule-row controls sit on the same standard as every other box in the app. */
+.rule-control input[type="number"] {
+  width: 5rem;
+  padding: var(--control-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.rule-control select,
+.bar-foot select {
+  padding: var(--control-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.rule-control :is(input, select):focus,
+.bar-foot select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.rule-row input[type="range"] {
+  width: 100%;
+  margin-top: var(--space-md);
+  accent-color: var(--accent);
+}
+
+/* Where a signal starts earning and where it earns in full. Two labeled boxes on the
+   shared control chrome, wrapping to one column on a phone rather than shrinking the boxes
+   below the standard (rule 40 -- width is the only thing that may vary, and not below what
+   a number needs). */
+.rule-ramp {
+  gap: var(--space-lg);
+}
+/* `align-items` is load-bearing, not tidiness. A column flex container stretches its
+   children by default, and `.qty` is a flex box with no width of its own, so each box came
+   out exactly as wide as the caption above it: "Pays nothing at or above" gave a 147px box
+   and "Full points at" a 101px one, for the same 3.6rem input. Two boxes side by side then
+   disagreed on width for a reason that had nothing to do with what they hold, and neither
+   fitted its own contents (rule 40 -- width is the only thing that may vary, and it varies
+   with the VALUE, never with the label). */
+.ramp-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+.ramp-field > span {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+/* The box holds exactly what its own field can show, and no more. A single fixed width was
+   wrong in both directions: `narrow` clipped a four-digit dormancy end to "182", and the
+   standard width left a three-character rating floating in a box built for four. `1ch` is
+   one figure of the tabular face the box already uses, and the addend is the control
+   standard's own padding plus room for the browser's spinner. `--ramp-chars` comes from
+   `PolicyEditor`'s `rampBoxWidth`, which is the one place the count is declared (rule 67). */
+.ramp-field .qty input[type="number"] {
+  width: calc(var(--ramp-chars, 4) * 1ch + 2.4rem);
+}
+
+/* The range, drawn. Reaper's own track-and-fill mark, the one the explanation panel gives a
+   signal row, so a bar means the same thing on both screens: one hue for how hard it charges,
+   a neutral track for what it leaves alone.
+
+   `aria-hidden`, and it may be: the boxes above state both bounds and the worked example
+   below states what they do to a real title, so nothing here is the only place a fact lives.
+   Drawing it is what makes the DIRECTION legible, which is a thing eyes do and prose does
+   badly -- a rating charges leftward and dormancy rightward. */
+.ramp-strip {
+  margin-top: 0;
+}
+/* The track is the "left alone" half of the picture, so it has to differ from whatever it
+   sits on. It sat on the page and read as `--surface-2`; inside the preview panel that IS
+   `--surface-2`, and the unfilled stretch vanished -- the one region meaning "Reaper does
+   not charge for this" became invisible. The page ground reads as the inset here. */
+.ramp-strip-track {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.ramp-strip-fill {
+  position: absolute;
+  inset-block: 0;
+}
+/* The bar a title has to clear. Sits proud of the track so it reads as a boundary rather
+   than as another band of fill. */
+.ramp-strip-bar {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--text);
+  border-radius: 1px;
+}
+.ramp-strip-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-xs);
+  font-size: var(--text-sm);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One key for the whole section, at its foot, never one per signal: the same arrangement the
+   explanation panel's legend uses, and the reason three strips down a column do not read as
+   three separate diagrams. */
+.ramp-key {
+  display: flex;
+  gap: var(--space-3xl);
+  flex-wrap: wrap;
+  margin: var(--space-lg) 0 0;
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.ramp-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+.ramp-key i {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 2px;
+  display: inline-block;
+}
+.ramp-key .earns {
+  background: var(--condemn);
+}
+/* Outside the panel, on the page ground, so the swatch matches the track it names and needs
+   its outline to be visible at all against the same color. */
+.ramp-key .alone {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+}
+
+/* The way back to Reaper's own bounds. A quiet text button rather than a bordered one: it
+   undoes an edit and should not compete with the boxes that made it. Hidden until the value
+   has actually moved, so it reads as an undo and not as a permanent control. */
+.ramp-restore {
+  margin: var(--space-md) 0 0;
+}
+
+/* Everything the setting DOES, in one panel: the strip that draws the range and the sentence
+   that says what a title earns under it. Nothing inside is a control, and that is the whole
+   reason it is grouped and tinted -- the card reads settings first and consequences second,
+   rather than as six alternating rows where a picture, a link and a number all look like
+   things to press.
+
+   The same fill the explanation panel gives a signal row's own reasoning, so a preview looks
+   the same on both screens. */
+.ramp-shows {
+  margin-top: var(--space-lg);
+  padding: var(--space-lg);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+.ramp-shows > :first-child {
+  margin-top: 0;
+}
+
+/* Inside the panel the sentence keeps its bold numbers and loses its own fill: a gray box on
+   a gray box only draws a border nobody asked for. */
+.ramp-said {
+  margin: var(--space-lg) 0 0;
+  font-size: var(--text-md);
+  color: var(--text);
+}
+.ramp-said b {
+  font-weight: var(--weight-semi);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keep well-rated titles: the per-source bars as rows of ONE aligned table. The source
+   names share a column sized by the longest, so every "at least" lines up whatever the
+   name's length -- the bars read as a set without each needing its own box. */
+.bar-table {
+  display: grid;
+  grid-template-columns: max-content 1fr auto;
+  column-gap: 0.8rem;
+  row-gap: 0.55rem;
+  align-items: center;
+  margin-top: var(--space-lg);
+}
+.bar-line {
+  display: contents;
+}
+.bar-src {
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
+  white-space: nowrap;
+}
+.bar-set {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  font-size: var(--text-md);
+  color: var(--muted);
+}
+.bar-x {
+  width: var(--tap-min);
+  height: var(--tap-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+}
+.bar-x:hover {
+  color: var(--condemn);
+  border-color: var(--condemn);
+}
+.bar-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.bar-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+}
+/* 640px, on the file's 1100/900/640/560 grid. The column this table sits in is already
+   single-column below 900px, so the extra width the old one-off 700px query bought was
+   never the thing that made the row fit; at 640 the source name takes its own line just
+   as it did, and the app keeps one set of breakpoints. */
+@media (max-width: 640px) {
+  /* Narrow columns: the source name takes its own line and the controls keep aligning. */
+  .bar-table {
+    grid-template-columns: 1fr auto;
+  }
+  .bar-src {
+    grid-column: 1 / -1;
+  }
+}
+
+/* The add row for one of the owner's own rules: field + operator + value. The stored rules
+   themselves render in the shared .rules-table above, not in a list of their own. */
+.condition-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: var(--space-md);
+}
+.condition-add select,
+.condition-add input {
+  padding: var(--control-pad);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+}
+.condition-add :is(select, input):focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.condition-add input {
+  width: 7rem;
+}
+
+/* Custom-rules editor: a Radarr-style table where each rule declares its EFFECT, color-coded
+   in the same verdict language as the review queue (remove = red, keep = green).
+
+   THE settings-bearing card, wherever one appears on the policy tab: the custom-rules
+   editor and the TV season-protection group (.season-card) are one definition, so the
+   two can never drift apart. */
+.rules-card,
+.season-card {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-3xl) var(--space-4xl) var(--space-4xl);
+  margin-top: var(--space-4xl);
+}
+.rules-card > h3,
+.season-card > h3 {
+  margin-top: 0;
+}
+/* A protection that carries settings is a card whose header IS the protection's switch
+   and name -- the same row grammar as the plain rules, just promoted to a card. */
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+}
+.rules-table {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin: 0.75rem 0 1rem;
+}
+.rules-row {
+  display: grid;
+  grid-template-columns: 1fr auto 3.5rem auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.55rem 0.85rem;
+  font-size: var(--text-md);
+}
+.rules-row + .rules-row {
+  border-top: 1px solid var(--border);
+}
+.rules-rule {
+  color: var(--text);
+}
+.rules-weight-remove {
+  color: var(--condemn);
+  font-weight: var(--weight-medium);
+}
+.rules-weight-keep {
+  color: var(--protect);
+  font-weight: var(--weight-medium);
+}
+.rules-add {
+  margin-top: var(--space-md);
+}
+.rules-add .segmented {
+  margin-bottom: var(--space-lg);
+}
+/* Sentence rows: rule as a sentence, its effect, and a remove button. No pill column --
+   the card's lane already says which way the rule points. */
+.rules-row-simple {
+  grid-template-columns: 1fr auto auto;
+}
+/* One height for every control in a rule form. Without this, Safari's native select,
+   text and number-stepper chrome each pick their own intrinsic height and the row
+   staggers; with it, every engine renders the same row. */
+.condition-add :is(select, input) {
+  height: 2.1rem;
+}
+/* Free-entry value input with library suggestions. An ordinary popover, NOT a native
+   <datalist>: Safari only reveals a datalist once typed text prefix-matches (an empty
+   click shows nothing), and embedded panes can draw the native popup at the wrong
+   position entirely. This one is plain DOM and behaves the same everywhere. */
+.suggest {
+  position: relative;
+  display: inline-flex;
+}
+.suggest > input {
+  min-width: 9rem;
+}
+/* Slid back on screen by --pop-shift, the same way the queue's filter menus are (rule 138,
+   popoverFit.ts): this box grows to its widest option, so a long library or collection name pushed
+   it off the right edge of a phone from an input already near that edge. The max-width caps how
+   wide one name may make it, and .suggest-opt trims what is left over. */
+.suggest-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: var(--pop-shift, 0px);
+  z-index: var(--z-nav);
+  min-width: 100%;
+  max-width: min(20rem, calc(100vw - 1.5rem));
+  max-height: 14rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-xs);
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+.suggest-opt {
+  padding: 0.3rem 0.55rem;
+  border-radius: 5px;
+  font-size: var(--text-md);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.suggest-opt.active {
+  background: var(--hover);
+}
+.rule-kind {
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* The from/to pair a ramp rule swaps in for the single value box. */
+.ramp-bounds {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}

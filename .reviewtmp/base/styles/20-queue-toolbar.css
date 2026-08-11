@@ -1,0 +1,121 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The queue's toolbar: search, and the filter and sort pills. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ==========================================================================
+   Review queue — cards, posters, grouped shows, filters
+   ========================================================================== */
+
+.queue-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0 1rem;
+}
+.search-wrap {
+  position: relative;
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+.search-icon {
+  position: absolute;
+  left: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--faint);
+  pointer-events: none;
+}
+/* The one control chrome; only the left padding is this box's own, to clear the glyph. */
+.search-input {
+  width: 100%;
+  padding: 0.42rem 0.6rem 0.42rem 2rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.search-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* .segmented (container) and .seg (pill) are defined alongside .tabs and .tab near the top of
+   the file -- one shared segmented-control so the two never diverge. */
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: var(--text-md);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.check input {
+  accent-color: var(--accent);
+}
+
+/* Filter + sort pills: a leading icon and a dropdown, in one rounded control. All three
+   (media type, requested, sort) share the shape, and they stack with the search box. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  height: 2.15rem;
+  padding: 0 var(--space-md) 0 var(--space-lg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+}
+.pill:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.pill-icon {
+  display: inline-flex;
+  color: var(--muted);
+}
+.pill select {
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  padding: 0.2rem 0.15rem;
+  cursor: pointer;
+  outline: none;
+}
+.sort-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.sort-dir {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--muted);
+}
+.sort-dir:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.sort-dir svg {
+  transition: transform 0.18s var(--ease);
+}
+.sort-dir svg.asc {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sort-dir svg {
+    transition: none;
+  }
+}

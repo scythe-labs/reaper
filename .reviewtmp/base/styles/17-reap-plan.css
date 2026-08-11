@@ -1,0 +1,250 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The reap plan. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- reap plan ----------------------------------------------------------- */
+
+.reap {
+  margin-top: var(--space-4xl);
+}
+.reap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3xl);
+}
+
+.plan-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3xl);
+  flex-wrap: wrap;
+  margin: var(--space-3xl) 0;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+/* A notice inside the summary takes its own row, so it reads as a warning about the whole
+   plan rather than as another chip beside the counts. Matches `.savebar .notice`. */
+.plan-summary .notice {
+  flex-basis: 100%;
+}
+.confirm-phrase {
+  font-family: var(--mono);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-lg);
+  letter-spacing: 0.03em;
+}
+/* The one-line reason Execute is disabled, with the shortest path to the switch. Takes
+   the full row under the plan summary's controls. */
+.exec-note {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: var(--text-md);
+}
+
+.plan-steps {
+  margin-top: var(--space-3xl);
+}
+.plan-steps code {
+  display: inline-block;
+  background: var(--surface-2);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  /* An API path and a JSON body have no spaces to break on, so without this the Request
+     cell keeps its full width even inside .table-scroll. */
+  overflow-wrap: anywhere;
+}
+.step-body {
+  margin-left: 0.4rem;
+  color: var(--muted);
+}
+/* Why a step failed or was skipped, under the state it explains. A block so it takes its own
+   line rather than running on from the state word, and capped in `ch` because the State column
+   is the narrowest in the table: left to the column it would set the table's width from one
+   long sentence and push the whole thing sideways. `overflow-wrap` because the sentence can
+   carry a title or a path the operator did not choose (rule 139). */
+.step-why {
+  display: block;
+  margin-top: var(--space-xs);
+  max-width: 34ch;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.canary-tag {
+  margin-left: 0.4rem;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-text);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0 var(--space-xs);
+}
+
+/* Reap breakdown: what a reap would remove, and why. The context above the plan. */
+.reap-breakdown {
+  margin: 0.9rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: 0.85rem 1rem 0.9rem;
+}
+.rb-headline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3xl);
+  flex-wrap: wrap;
+}
+.rb-head {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semi);
+}
+.rb-meta {
+  font-size: var(--text-md);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.rb-meta strong {
+  color: var(--text);
+  font-weight: var(--weight-semi);
+}
+.rb-sub {
+  color: var(--muted);
+  font-size: var(--text-md);
+  margin: 0.1rem 0 0.8rem;
+  max-width: 72ch;
+}
+.rb-empty {
+  color: var(--muted);
+  font-size: var(--text-md);
+  margin: 0.2rem 0 0.6rem;
+}
+
+/* The ledger: policy verdict, hand changes, the net -- three aligned columns. */
+.rb-ledger {
+  margin: 0.1rem 0 0.4rem;
+}
+.rb-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.8rem 1.4rem;
+  align-items: baseline;
+  padding: 0.3rem 0;
+  font-size: var(--text-base);
+}
+.rb-lab {
+  color: var(--text);
+}
+.rb-n {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 5rem;
+}
+.rb-sz {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 4.5rem;
+  color: var(--muted);
+}
+/* A hand spare keeps a file (green); a hand reap adds one to the deletion set (red). */
+.rb-spare .rb-lab,
+.rb-spare .rb-n {
+  color: var(--protect);
+}
+.rb-add .rb-lab,
+.rb-add .rb-n {
+  color: var(--condemn);
+}
+.rb-rule {
+  height: 1px;
+  background: var(--border-strong);
+  margin: var(--space-sm) 0;
+}
+.rb-total {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semi);
+  padding: 0.45rem 0 0.15rem;
+}
+.rb-total .rb-n {
+  color: var(--condemn);
+  font-size: var(--text-xl);
+}
+.rb-total .rb-sz {
+  color: var(--text);
+}
+.rb-split {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin-top: 0.1rem;
+}
+
+/* Why the policy condemned them: one participation bar per signal, overlapping. */
+.rb-reasons {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2xl);
+  padding-top: 0.8rem;
+}
+.rb-reasons-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.55rem;
+}
+.rb-reasons-head h3 {
+  margin: 0;
+}
+.rb-of {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.rb-bar {
+  display: grid;
+  grid-template-columns: 12.5rem 1fr auto;
+  gap: var(--space-xl);
+  align-items: center;
+  margin: 0.3rem 0;
+  font-size: var(--text-md);
+}
+.rb-rlab {
+  color: var(--muted);
+}
+.rb-track {
+  height: 12px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rb-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--condemn) 62%, transparent);
+}
+.rb-rn {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  min-width: 2.5rem;
+  text-align: right;
+}
+.rb-note {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  margin: 0.5rem 0 0.2rem;
+  max-width: 72ch;
+}
+
+/* The pointers under the ledger: held-back, Leaving Soon, the queue. */
+.rb-line {
+  border-top: 1px solid var(--border);
+  padding: var(--space-lg) 0 0;
+  margin-top: var(--space-lg);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}

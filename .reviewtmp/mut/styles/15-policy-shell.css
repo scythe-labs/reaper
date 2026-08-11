@@ -1,0 +1,226 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The policy workspace shell. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- the policy workspace shell ------------------------------------------ */
+
+/* The section rail: the Settings tab-bar look, kept stuck to the top of the viewport
+   while the (long) pipeline scrolls under it. */
+.policy-rail {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-rail);
+  background: var(--bg);
+  padding-top: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+/* Jump targets land below the stuck rail, not under it. This one number is also the line
+   the rail treats as "you are reading this section now" -- PolicyEditor's scroll effect
+   reads it straight back off this element with getComputedStyle, rather than keeping its
+   own copy, so a jump and the rail's highlight can never disagree (rule 67, U-18). */
+.policy-section {
+  scroll-margin-top: 3.4rem;
+}
+/* On a phone the rail wraps to two lines, roughly doubling its height, and 3.4rem would
+   park the heading underneath it -- on the rail's own clicks and on a jump in from another
+   page. */
+@media (max-width: 640px) {
+  .policy-section {
+    scroll-margin-top: 6rem;
+  }
+}
+/* Narrower still and the four labels stop pairing two to a line at all, so the rail takes a
+   THIRD and 6rem no longer clears it. Measured in WebKit against the real labels: the rail is
+   137.8px through 328px and 93px from 329px, and at 96px of margin all four headings landed
+   42px INSIDE the rail -- the section you asked for, with nothing on screen naming it. This
+   breakpoint is the width where the labels stop pairing, not a round number: re-measure it if
+   a section is ever renamed. */
+@media (max-width: 328px) {
+  .policy-section {
+    scroll-margin-top: 9rem;
+  }
+}
+.policy-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 1.6rem 0;
+}
+
+/* The intent band: the whole policy in one sentence, and three starting points. */
+.intent-band {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 0.9rem 1rem;
+  margin: 0.2rem 0 1.5rem;
+}
+/* The preset picker in here floors at its own labels (see the pill-track note), and 1rem a
+   side leaves it less content box than that floor on a narrow phone: at 320px the track ran
+   20px past the padding and its rounded end crossed the card's border, so the control hung
+   out of the panel holding it. The card's padding is the cheaper give of the two -- padding
+   is decoration and the control is not. */
+@media (max-width: 400px) {
+  .intent-band {
+    padding-left: var(--space-lg);
+    padding-right: var(--space-lg);
+  }
+}
+.intent-summary {
+  margin: 0 0 0.75rem;
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+.intent-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.intent-label {
+  font-size: var(--text-sm);
+}
+.intent-band .help {
+  margin-top: var(--space-md);
+}
+/* The caps on/off toggle leads the pace section; its help sits directly beneath it, then
+   the caps matrix (or the off warning) below that. */
+.pace-approval {
+  margin: 0 0 var(--space-sm);
+}
+/* Aligned under the toggle's label (past the 40px switch + its gap), so the help reads as
+   bound to the switch, not to the matrix that follows. */
+.pace-approval-help {
+  margin: 0 0 1rem 2.9rem;
+}
+/* The bordered card grouping the TV season-protection controls is .rules-card's twin, and
+   is declared with it above so the two settings-bearing cards stay one thing. */
+.inline-weight {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.inline-weight input {
+  width: 3.5rem;
+}
+.help-warn {
+  color: var(--condemn);
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  font-size: var(--text-md);
+}
+/* Stacked toggles need vertical air between them: without a help line between two
+   toggles their switches sit flush and read as overlapping. Matches the section's
+   control-to-control rhythm. */
+.toggle + .toggle {
+  margin-top: 0.9rem;
+}
+
+.hash {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  margin: 0.2rem 0 0.8rem;
+}
+
+/* THE save bar: pinned to the viewport bottom while any draft is unsaved. It names what
+   changed, says when each part takes effect, and one button saves it all -- so a preset
+   (which stages the policy AND the pace) is applied with one click, not two saves in two
+   places. Rendered only while there is something to save. */
+.savebar {
+  position: sticky;
+  bottom: 0.6rem;
+  z-index: var(--z-rail);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xl);
+  flex-wrap: wrap;
+  margin-top: 1.2rem;
+  padding: var(--space-xl) var(--space-3xl);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+/* Clear the phone's section bar, same as .bulk-bar and .scan-toast, and placed after the base
+   rule for the same source-order reason. This one is the sharpest of the three: the save bar is
+   the ONLY save affordance on the page (rule 43), so a Save tap landing on a nav icon instead
+   changes view, unmounts the editor, and drops the whole draft with nothing said. */
+@media (max-width: 900px) {
+  .savebar {
+    bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 0.6rem);
+  }
+}
+.savebar-what {
+  flex: 1 1 16rem;
+  font-size: var(--text-md);
+  color: var(--muted);
+}
+.savebar-what strong {
+  color: var(--text);
+}
+/* Why Save is off, under the list of what is unsaved -- the slot `.budget` uses, so it reads
+   as the rest of the bar's sentence rather than becoming a second notice beside it. The field
+   it names carries its own error too (rule 42); this one exists because the bar can be at the
+   foot of a long panel, well away from the box it is waiting on. */
+.savebar-blocked {
+  display: block;
+  margin-top: var(--space-sm);
+  color: var(--condemn);
+}
+
+/* The 100-point removal budget (PointsBudget in PolicyEditor). Lives inside .savebar-what
+   so it sits under the "unsaved changes" line rather than becoming a second save UI. */
+.budget {
+  display: block;
+  margin-top: var(--space-md);
+}
+.budget-meter {
+  display: flex;
+  height: 7px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.budget-meter i {
+  display: block;
+}
+.budget-built {
+  background: var(--accent);
+}
+.budget-yours {
+  background: color-mix(in srgb, var(--accent) 55%, var(--surface));
+}
+.budget-over {
+  background: var(--condemn);
+}
+/* Dashed, not solid: unspent points are absent rather than allocated to something. */
+.budget-free {
+  background: repeating-linear-gradient(90deg, var(--border-strong) 0 3px, transparent 3px 7px);
+}
+.budget-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3xl);
+  margin-top: var(--space-sm);
+  font-size: var(--text-sm);
+}
+.budget-line strong {
+  font-variant-numeric: tabular-nums;
+}
+.budget-over-text {
+  color: var(--condemn);
+}
+.budget-notice {
+  display: block;
+  margin-top: var(--space-md);
+}
+.savebar .notice {
+  flex-basis: 100%;
+  margin: 0;
+}

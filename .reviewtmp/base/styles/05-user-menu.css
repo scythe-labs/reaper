@@ -1,0 +1,95 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The account chip and its dropdown. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- user menu ----------------------------------------------------------- */
+
+.user-menu {
+  position: relative;
+  flex: none;
+}
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 0.28rem 0.5rem 0.28rem 0.32rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.user-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+}
+.user-avatar-fallback {
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+}
+.user-name {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semi);
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-chip .chevron {
+  color: var(--faint);
+}
+.user-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  min-width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-sm);
+  z-index: var(--z-nav);
+}
+.user-dropdown-head {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.3rem;
+}
+.user-provider {
+  font-size: var(--text-xs);
+}
+.user-dropdown-item {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.6rem;
+  font-size: var(--text-md);
+}
+.user-dropdown-item:hover {
+  background: var(--hover);
+}
+
+/* The update status light: on the chip while a newer build exists, echoed on the
+   dropdown's item. Decoration only, and aria-hidden at both sites: the chip's
+   accessible name carries the words, so the fact is spoken, never the dot. */
+.update-light {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px 1px var(--accent-ring);
+  flex: none;
+}
+.user-dropdown-update {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}

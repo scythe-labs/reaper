@@ -1,0 +1,425 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The paired Spare / Reap toggle. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* --- hand overrides: the paired Spare / Reap toggle ---------------------------------------- */
+.override-controls {
+  display: inline-flex;
+  gap: var(--ov-btn-gap);
+}
+/* In the season list the control sits in a fixed-width button track (--btns): pin it to the
+   track's left so a lone Spare lands in the same column as the Spare of a row that also shows
+   Reap, and Reap always one button to its right -- both read as straight columns (rule 51). */
+.season-row .override-controls {
+  justify-self: start;
+}
+/* The row buttons stay hidden until you hover that row (or Tab to it): a calm list at rest,
+   the actions a pointer-move away. Kept in flow (visibility, not display) so the column
+   reserves their width and the card never reflows as they appear. */
+.card-side .override-controls,
+.season-row .override-controls {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.14s var(--ease);
+}
+.card:hover > .card-side .override-controls,
+.card:focus-within > .card-side .override-controls,
+.card-head:hover > .card-side .override-controls,
+.card-head:focus-within > .card-side .override-controls,
+.season-row:hover .override-controls,
+.season-row:focus-within .override-controls {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* A card you've decided on rests as a small icon of that decision (∞ spared, scythe reaped),
+   bottom-right in the buttons' slot; the same hover that reveals the buttons fades it out, so
+   the two never show at once. Purely a status marker (aria-hidden): the decision is also named
+   by the card's override chip and the buttons. */
+.override-mark {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.16rem;
+  min-width: 2rem;
+  height: 1.9rem;
+  pointer-events: none;
+  transition: opacity 0.14s var(--ease);
+}
+.override-mark.spare {
+  color: var(--protect);
+}
+.override-mark.reap {
+  color: var(--condemn);
+}
+.override-mark .mk-inf {
+  font-weight: var(--weight-bold);
+  font-size: var(--text-xl);
+  line-height: 1;
+}
+/* A timed spare rests as the clock plus its days left ("27d") -- the forever spare's ∞ made
+   finite. Same protect green: still "kept", just for now. */
+.override-mark .mk-count {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.override-mark .scythe {
+  width: 16px;
+  height: 16px;
+}
+.card:hover > .card-side .override-mark,
+.card:focus-within > .card-side .override-mark,
+.card-head:hover > .card-side .override-mark,
+.card-head:focus-within > .card-side .override-mark {
+  opacity: 0;
+}
+/* Opening the length menu portals it to the body, so the pointer leaves the card and the card
+   is no longer :hover -- the resting mark would fade back in on top of the buttons, which
+   `.menu-open` holds visible. Keep the mark hidden while the menu is open so the mark and the
+   buttons never show at once (the overlap that put the clock count over the Reap button). */
+.card-side:has(> .override-controls.menu-open) .override-mark {
+  opacity: 0;
+}
+/* Touch has no hover, so the reveal-on-hover grammar (rule 46) has no trigger: the Spare/Reap
+   buttons must be present at rest, and the resting decision mark -- which shares their bottom-right
+   corner -- must step aside, or it lands on top of the Reap button (it did, on phones). Show the
+   controls, drop the mark; the decision still reads from the card's override chip and its panel.
+   Scoped to (hover: none) so a desktop with a mouse keeps the hover reveal untouched. */
+@media (hover: none) {
+  .card-side .override-controls,
+  .season-row .override-controls {
+    opacity: 1;
+    visibility: visible;
+  }
+  .card-side .override-mark {
+    display: none;
+  }
+}
+.ov-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0.28rem 0.55rem;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.14s var(--ease),
+    border-color 0.14s var(--ease),
+    color 0.14s var(--ease);
+}
+.ov-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+.ov-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* A fixed footprint so the label toggle (Spare<->Spared, Reap<->Reaping) never resizes the
+   button. Tidier and jitter-free, and it fixes a Safari repaint bug: when the active button
+   shrank back, Safari left the vacated solid-red region unpainted, a red sliver at the row's
+   right edge. No size change, no vacated region, nothing to mis-paint. Scoped to the toggling
+   OverrideControls buttons; the bulk bar's static Spare/Reap keep their natural width. */
+.override-controls .ov-btn {
+  min-width: var(--ov-btn-w);
+  justify-content: center;
+}
+/* A spared button's label carries its countdown, so it is the one label here that varies in
+   length ("Spared 87d" in a panel footer, "87d" on a card). The tracks above are fixed and must
+   stay fixed (rule 51), so the label clips rather than pushing the button out of its column on
+   a very narrow phone. `min-width: 0` is what lets a flex item shrink below its text at all. */
+.ov-btn .ov-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* Keep-first: the safe action (Spare) invites in green; the destructive one (Reap) stays the
+   quiet gray of the base button and only reddens as you reach for it. Reuses the app's
+   green-spare and quiet-danger conventions, so a delete stays a deliberate move. */
+.ov-spare {
+  background: color-mix(in srgb, var(--protect) 15%, var(--surface));
+  border-color: color-mix(in srgb, var(--protect) 55%, transparent);
+  color: var(--protect);
+  font-weight: var(--weight-semi);
+}
+.ov-spare:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--protect) 24%, var(--surface));
+  border-color: var(--protect);
+}
+.ov-reap:hover:not(:disabled) {
+  border-color: var(--condemn);
+  color: var(--condemn);
+  background: var(--condemn-soft);
+}
+/* A spare whose clock has passed. Green because the file is genuinely kept (only a scan
+   realizes the expiry); dashed and hollow because the decision keeping it has run out -- the
+   same thing the held reap's dashed red says in the other direction.
+
+   It has to beat `.ov-spare.active`, which the button still carries: the item IS still spared,
+   `aria-pressed` is still true, and clicking still clears it. It wins on SPECIFICITY, not
+   source order -- `.ov-spare.active.expired` is three classes to that rule's two, and the hover
+   pair below is five to its four -- so these may sit either side of it and still hold. The bare
+   `.ov-spare.expired` is the belt for a future caller that sets `expired` without `active`. */
+.ov-spare.expired,
+.ov-spare.active.expired {
+  background: var(--protect-soft);
+  border-color: var(--protect);
+  border-style: dashed;
+  color: var(--protect);
+}
+.ov-spare.active.expired:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--protect) 18%, var(--surface));
+  border-color: var(--protect);
+}
+/* The split's seam: the caret's divider goes dashed with the rest, so the pair reads as one
+   expired control rather than a dashed half joined to a solid one. */
+.ov-split .split-caret.expired {
+  border-left-style: dashed;
+  border-left-color: color-mix(in srgb, var(--protect) 55%, transparent);
+}
+/* A made decision reads at a glance: the solid hand-decision chip, green for spare, red for
+   reap -- the same solid-means-yours language the override chips use. */
+.ov-spare.active {
+  background: var(--protect);
+  border-color: var(--protect);
+  color: var(--protect-soft);
+}
+.ov-reap.active {
+  background: var(--condemn);
+  border-color: var(--condemn);
+  color: var(--condemn-soft);
+}
+/* Hovering a chosen button keeps its solid fill: the plain :hover rules outrank .active (the
+   :not() adds a class's weight), so without these an active button drops back to the outline
+   hover style the moment the pointer is over it. */
+.ov-spare.active:hover:not(:disabled) {
+  background: var(--protect);
+  border-color: var(--protect);
+  color: var(--protect-soft);
+}
+.ov-reap.active:hover:not(:disabled) {
+  background: var(--condemn);
+  border-color: var(--condemn);
+  color: var(--condemn-soft);
+}
+
+/* Spare is a split button: the main action, plus a chevron that opens the length menu. The
+   pair occupies exactly one --ov-btn-w so the season-list columns (rule 51) never drift; the
+   caret is a fixed sliver to the main button's right, divided by a hairline in the spare green.
+   The per-button min-width from `.override-controls .ov-btn` is undone here so the two share the
+   one slot instead of each claiming a full width. */
+.ov-split {
+  display: inline-flex;
+  position: relative;
+}
+.override-controls .ov-split {
+  width: var(--ov-btn-w);
+}
+.override-controls .ov-split .ov-btn {
+  min-width: 0;
+}
+.ov-split .split-main {
+  flex: 1 1 auto;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right-width: 0;
+  padding-left: 0.4rem;
+  padding-right: 0.3rem;
+}
+.ov-split .split-caret {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  padding: 0.28rem 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid color-mix(in srgb, var(--protect) 40%, transparent);
+}
+.ov-split .split-caret.active {
+  border-left-color: color-mix(in srgb, var(--protect-soft) 45%, transparent);
+}
+.ov-split .split-caret svg {
+  display: block;
+}
+/* While the length menu is open the controls stay revealed even if the pointer has left the
+   row -- otherwise the menu's own anchor would vanish under it. Beats the at-rest hide
+   (`.card-side .override-controls`, same two-class weight) by adding the .menu-open class. */
+.card-side .override-controls.menu-open,
+.season-row .override-controls.menu-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* In the why-panel footer the Spare / Reap pair IS the screen's purpose, not a card's
+   hover-revealed afterthought, so it gets the room the card cannot spare: the full footer
+   width, a height that clears a 44px touch target, and the two halves split the row evenly:
+   both take a `calc(50% - var(--ov-btn-gap) / 2)` basis with `min-width: 0`, so Spare (its
+   main button plus the length caret) and Reap each hold half the footer whatever their labels
+   say, and neither grows when the other's text shortens (Reap -> Reaping). A lone Spare, with
+   Reap hidden on an already-condemned item (rule 48), still grows to fill the row.
+   The basis is half the row, NOT 0, and the difference is not cosmetic: these boxes are
+   `border-box`, where a flex-basis of 0 is floored at the item's own padding + border. Reap is
+   a <button> carrying 0.9rem of side padding and a 1px border (30.8px); Spare's `.ov-split`
+   is a bare <span> carrying none, so an equal share of the leftover still left Reap 30.8px
+   wider than Spare -- measured, not assumed. Half the row clears that floor at any width this
+   footer reaches. The gap comes OUT of the basis (the same `--ov-btn-gap` the container
+   spaces them by, halved each, rule 67) rather than being shrunk back out afterwards:
+   shrinking is scaled by each item's content basis, which these two do not share, so it left
+   a sub-pixel lean toward Reap. Subtracting it up front leaves nothing to shrink, and the two
+   land exactly even. ONLY the size changes -- the split button's joined seam
+   (square where main meets caret, no gap), its 6px corners, and the keep-first colors are the
+   shared ones, untouched. Scoped to the footer, so the card and season-list controls, with
+   their fixed column tracks (rule 51/67), never move. The three-class selectors outrank the
+   base `.override-controls .ov-btn`/`.ov-split` pair; the split-main/caret specifics come
+   after the general `.ov-btn` rule so the source-order tie resolves their way. */
+.why-actions-row {
+  flex-wrap: wrap; /* a save error drops below the full-width buttons instead of squeezing them */
+}
+.why-actions .override-controls {
+  display: flex;
+  flex: 1 1 100%;
+  gap: var(--ov-btn-gap);
+}
+.why-actions .override-controls .ov-split {
+  width: auto;
+  flex: 1 1 calc(50% - var(--ov-btn-gap) / 2);
+  min-width: 0;
+}
+.why-actions .override-controls .ov-btn {
+  min-width: 0;
+  height: 2.75rem;
+  padding: 0 0.9rem;
+  font-size: var(--text-base);
+}
+.why-actions .override-controls .split-caret {
+  width: 2.4rem;
+  padding: 0;
+}
+.why-actions .override-controls .ov-reap {
+  flex: 1 1 calc(50% - var(--ov-btn-gap) / 2);
+  min-width: 0;
+}
+
+/* The length menu behind the Spare chevron. position:fixed (set inline) so the card's
+   overflow:hidden cannot clip it; styled on the filter-menu pattern so it reads as one of the
+   app's own popovers. */
+.dur-menu {
+  z-index: var(--z-menu);
+  width: 224px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 0.3rem;
+  font-size: var(--text-md);
+}
+.dur-head {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0.4rem 0.55rem 0.3rem;
+}
+.dur-mi {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  padding: 0.44rem 0.55rem;
+  border-radius: var(--radius-sm);
+}
+.dur-mi:hover {
+  background: var(--hover);
+}
+.dur-mi:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.dur-mi .mi-glyph {
+  display: inline-flex;
+  justify-content: center;
+  width: 15px;
+  color: var(--protect);
+}
+.dur-mi .mi-glyph .infinity {
+  font-size: var(--text-base);
+}
+.dur-mi .mi-pen {
+  color: var(--muted);
+}
+.dur-mi .mi-label {
+  flex: 1 1 auto;
+}
+.dur-mi .mi-tag {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  border-radius: var(--radius-pill);
+  padding: 0.05rem 0.4rem;
+}
+.dur-div {
+  height: 1px;
+  background: var(--border);
+  margin: 0.3rem 0.2rem;
+}
+/* Clearing the spare, under the lengths and set apart from them: every row above KEEPS the
+   item, this one stops keeping it, so it must not read as one more length. Quiet by default --
+   it is the rarely-wanted action, not the destructive one (a clear only lets Reaper judge the
+   item again; nothing is removed without a staged run) -- and it takes the same hover as its
+   siblings. It is the only way to clear a SPENT spare, whose main button now offers a fresh
+   one instead of an undo. */
+.dur-clear {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-xs);
+  padding-top: var(--space-md);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  color: var(--muted);
+}
+.dur-custom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 0.35rem 0.55rem 0.45rem;
+}
+.dur-spare-go {
+  border: 1px solid var(--protect);
+  background: var(--protect);
+  color: var(--protect-soft);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  padding: 0.34rem 0.7rem;
+  cursor: pointer;
+}
+.dur-spare-go:hover {
+  background: color-mix(in srgb, var(--protect), #000 8%);
+}
+
+/* A card the owner marked for reaping: a red-tinted border, the mirror of card-spared's dim. */
+.card-reaped {
+  border-color: color-mix(in srgb, var(--condemn) 45%, var(--border));
+}
+.season-row.card-reaped {
+  background: color-mix(in srgb, var(--condemn) 8%, transparent);
+}

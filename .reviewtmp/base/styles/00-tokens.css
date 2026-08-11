@@ -1,0 +1,439 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * :root, the three theme blocks, and the box-sizing reset. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+:root {
+  color-scheme: light dark;
+
+  /* Neutrals — a page slightly off-white so elevated white surfaces read as raised. */
+  --bg: #f4f5f8;
+  /* --surface is accent.ts's LIGHT_SURFACE: the ground its AA contrast search measures
+   * accent-colored text against. Change one, change both (rule 67). */
+  --surface: #ffffff;
+  --surface-2: #eef0f4; /* inset fills: code chips, abstain, quiet wells */
+  --hover: #f0f2f6;
+  --border: #e4e6ec;
+  --border-strong: #d3d6df;
+  --text: #16181d;
+  --muted: #666b78;
+  /* Decorative only -- chevrons, icon glyphs, the empty-poster mark, a disabled number,
+   * an unticked setup step. It clears no WCAG AA text ratio on any surface in either
+   * theme (light is 2.3-2.6:1, dark 3.2-3.9:1), so anything a person actually reads uses
+   * --muted, which clears 4.5:1 everywhere. Never put text on --faint. Every remaining
+   * use of it is one of the glyphs named above; a new one that carries a word is a
+   * regression, and the last review found eighteen of them (U-2, agent rule 17). */
+  --faint: #9aa0ad;
+
+  /* Semantic verdict language. */
+  --condemn: #c62630;
+  --condemn-soft: #fdecec;
+  --protect: #167c4d;
+  --protect-soft: #e6f6ec;
+  --abstain: #666b78;
+  --unknown: #9a6212;
+  --unknown-soft: #fcf3e1;
+
+  /* The accent is operator-configurable (Settings -> General): one color re-tints the
+   * whole UI, so everything below derives from --accent rather than being hand-set.
+   * --accent and --accent-ink are applied at runtime from the saved value (App applies it;
+   * index.html pre-paints it from a localStorage cache to avoid a flash). The values here
+   * are the built-in default -- a sky blue -- and the fallback when nothing is stored. */
+  --accent: #25c3ff;
+  --accent-hover: color-mix(in srgb, var(--accent), #000 14%);
+  --accent-soft: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  --accent-ring: color-mix(in srgb, var(--accent) 42%, transparent);
+  /* The ink that rides on a solid --accent fill. Dark by default because the sky-blue
+   * accent is bright (white would fail WCAG AA on it); App recomputes it for a custom
+   * color, picking dark or light by the accent's luminance so contrast always clears. */
+  --accent-ink: #06202c;
+  /* Accent-colored TEXT -- the reverse direction, which --accent-ink never checked. The
+   * accent is a fill and a border color, not an ink: at the default sky it reads 2.03:1 on
+   * --surface and 1.72:1 on the docs index's active fill, so every link, chip and tag
+   * wearing it failed WCAG AA in light mode. Darkening 42% clears 4.5:1 on every ground it
+   * lands on (5.50 --surface, 5.04 --bg, 4.90 --accent-soft, 4.66 that tightest fill).
+   * Dark mode needs no correction -- the same sky reads 8.47:1 on --surface there -- so the
+   * dark blocks keep --accent unchanged. A CUSTOM accent is not covered by a fixed darken
+   * (a pale yellow still lands at 3.56:1), so accent.ts measures each theme's ink and writes
+   * it to --accent-text-light / --accent-text-dark; the fallback here is what the built-in
+   * accent needs, and what stands until that runs. Fills and borders keep --accent. */
+  --accent-text: var(--accent-text-light, color-mix(in srgb, var(--accent), #000 42%));
+
+  /* Plex brand gold, for the sign-in button. */
+  --plex: #e5a00d;
+  --plex-hover: #f2ad1f;
+  --plex-ink: #241a02;
+
+  /* The Movie chip's teal. Deliberately its own pair: every other hue here carries a
+   * verdict or a warning, and a media-type tag must not read as one. TV keeps accent. */
+  --media-movie: #0b6b63;
+  --media-movie-soft: #dcf3f0;
+
+  /* IMDb brand yellow, for the ratings chip -- same precedent as --plex. */
+  --imdb: #f5c518;
+  --imdb-ink: #241d02;
+
+  /* The service brand marks the Settings kind badges wear, one fill/ink pair each on the
+     --plex precedent. Radarr keeps its own gold rather than borrowing --imdb: a service
+     badge must not read as a rating chip. Every ink clears WCAG AA on its own fill at the
+     badge's small bold size (radarr 9.85:1, sonarr 6.31:1, seerr 6.46:1); Tautulli has no
+     pair of its own because it is Plex gold, so it reuses --plex / --plex-ink (7.66:1). */
+  --radarr: #ffc230;
+  --radarr-ink: #2b2103;
+  --sonarr: #3a9bdb;
+  --sonarr-ink: #041018;
+  --seerr: #8f95f7;
+  --seerr-ink: #14153f;
+  /* Discord's blurple. Its ink is white rather than a dark tone: the fill is dark enough that
+     white clears WCAG AA on it at the badge's small bold size (4.61:1), where a dark ink would
+     not. Discord joined the pairs above when its settings got the service-editor layout, so
+     its badge reads as one of the connections. */
+  --discord: #5865f2;
+  --discord-ink: #ffffff;
+
+  /* The dim behind a modal or a sheet. Deliberately theme-independent -- an overlay's job
+     is to push the page back, and it does that the same way on a light page as a dark one
+     -- so no forced-theme block below restates it. */
+  --scrim: rgba(8, 9, 12, 0.55);
+
+  /* THE TYPE SCALE. Nine steps, and every `font-size` in these files is one of them.
+
+     They are written in `rem`, whose root is 16px, while `body` is 15px (01-base.css). So
+     `1rem` names a size the app never uses, and before these tokens existed the only way to
+     ask for "the same size as body text" was to guess at the ratio: six values landed inside
+     1.3px of each other, and 0.8rem and 0.82rem -- 0.32px apart -- were each written 36 times
+     as two authors' word for "small". `--text-base` is that size, spelled once.
+
+     Steps are anchored on the values already carrying the most weight rather than on a ratio,
+     so adopting them moved 79% of declarations less than half a pixel. Sizing something new:
+     pick the step, never a number between two of them. A size that genuinely has no step is a
+     case for changing the scale, in its own commit, not for a literal. */
+  --text-2xs: 0.625rem; /* 10.0px  tiny tags, diagram labels */
+  --text-xs: 0.72rem; /*   11.5px  chips, badges, legends */
+  --text-sm: 0.8rem; /*    12.8px  meta lines, section headings */
+  --text-md: 0.86rem; /*   13.8px  secondary text, help, notices */
+  --text-base: 0.9375rem; /* 15px  body -- matches the `body` rule in 01-base.css (rule 67) */
+  --text-lg: 1.05rem; /*   16.8px  panel headings */
+  --text-xl: 1.15rem; /*   18.4px  page titles */
+  --text-2xl: 1.5rem; /*     24px  setup, big stats */
+  --text-3xl: 1.7rem; /*   27.2px  hero numbers */
+
+  /* THE WEIGHT SCALE. Four steps, and every `font-weight` is one of them.
+
+     There were twelve, seven of which (450, 520, 550, 560, 620, 640, 650) render as authored
+     only where the platform's UI font is variable -- SF on Apple, Segoe UI Variable on Win11.
+     On a static face (Segoe UI on Win10, older Roboto) CSS font matching snaps them, so 550
+     and 600 came out identical and 650 came out bold: the distinctions were real on the
+     machine they were written on and invisible on most of the machines running Reaper. Four
+     steps render the same everywhere. */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semi: 600;
+  --weight-bold: 700;
+
+  /* THE SPACE SCALE, and the one scale that is only partly adopted -- deliberately, so read
+     this before "finishing" it.
+
+     Spacing here is a continuum: 0.3 / 0.35 / 0.4 / 0.45 / 0.5 / 0.55 / 0.6rem are all heavily
+     used and 0.8px apart, and no set of steps collapses them without moving pixels on every
+     screen at once. So these eleven steps were adopted ONLY where a declaration already sat
+     exactly on one -- about half of them, at zero visual change. The rest are still literals,
+     which is the honest state: a literal here means "nobody has judged this one yet", not
+     "this is deliberate".
+
+     `styles-scales.test.ts` ratchets the off-scale count so it can only fall. Snapping a
+     literal to its nearest step is a visual change and wants an eye on it, a file at a time.
+     Anything NEW uses a step. */
+  --space-2xs: 0.15rem; /*  2.4px */
+  --space-xs: 0.25rem; /*   4.0px */
+  --space-sm: 0.35rem; /*   5.6px */
+  --space-md: 0.5rem; /*    8.0px */
+  --space-lg: 0.6rem; /*    9.6px */
+  --space-xl: 0.7rem; /*   11.2px */
+  --space-2xl: 0.85rem; /* 13.6px */
+  --space-3xl: 1rem; /*    16.0px */
+  --space-4xl: 1.25rem; /*  20.0px */
+  --space-5xl: 1.5rem; /*   24.0px */
+  --space-6xl: 2rem; /*     32.0px */
+
+  --radius-sm: 7px;
+  --radius: 11px;
+  --radius-lg: 18px;
+  /* Every pill in the app -- chips, tabs, tags, the segmented control. Was written out as the
+     literal `999px` at 37 sites across 16 files, which made it the most-used unnamed value in
+     the stylesheet. */
+  --radius-pill: 999px;
+
+  /* THE STACKING ORDER of the app's own surfaces, named at the values they already had.
+
+     Twenty-two `z-index` uses across twelve unnamed values, with nothing recording which
+     surface was meant to sit over which. The top of the ladder is where that costs something:
+     the why panel (50), the scan line (55) and the modal (60) can all be on screen at once and
+     sat five apart for no stated reason.
+
+     These are the surfaces that stack against EACH OTHER, across the app. The low values
+     (0,1,2,3) are deliberately NOT here: they layer a background, a scrim and its content
+     inside one component's own stacking context -- `.card-bg` under `.card-scrim` under the
+     card's children -- and giving them ladder names would claim a card's scrim and a dropdown
+     are comparable when they are in different stacking contexts entirely. They stay literal.
+
+     Naming changed no value. Reordering any of these is a separate change needing a browser
+     pass, because what it breaks is invisible until two of them are open together. */
+  --z-rail: 5; /*       policy rail, save bar */
+  --z-sticky: 20; /*    scan nudge, bulk-action bar */
+  --z-nav: 30; /*       phone section bar, user menu, suggest and filter popovers */
+  --z-overlay: 40; /*   sheet scrim, and the why panel as a right-hand sheet */
+  --z-panel: 50; /*     the why panel once it covers the screen, so it clears the nav above */
+  --z-scanline: 55;
+  --z-modal: 60; /*     modal scrim, scan toast */
+  --z-menu: 100; /*     the spare-length menu, portaled to <body> */
+
+  /* The phone section bar's height, excluding the safe-area inset it adds underneath. Declared
+     once because four other rules have to clear it (rule 67): the app's bottom padding, in the
+     900px block that draws the bar; and the three surfaces that also anchor to the foot of the
+     screen -- the bulk-action bar, the scan toast and the policy save bar -- each in a 900px
+     block sitting immediately BELOW its own base rule. That placement is load-bearing: a media
+     query adds no specificity, so an override written beside the bar instead loses to the base
+     rule on source order and silently does nothing. It is only used under that breakpoint.
+
+     The number is a touch target, not a look. Each tab stretches the full height of the bar, so
+     this value IS the target's short side, and 2.7rem (43.2px) sat under every floor there is:
+     44px for WCAG 2.2 SC 2.5.5 and Apple's HIG, 48px for Material. 3.5rem clears all three with
+     room. Raising it is free for the surfaces above, which read it rather than restating it. */
+  --navbar-h: 3.5rem;
+
+  /* The masthead's bottom gap. Declared once because .views cancels exactly this much with a
+     negative margin to reach the border its active cut is drawn on (rule 67): if the two ever
+     drift apart the cut floats above the rule or hangs below it. */
+  --masthead-pad-b: 1rem;
+
+  /* Form control standard. Every text / number / select box shares this chrome, so the
+     app reads as one surface (see .set-control, .rule-control, .field-sm, .condition-add,
+     .search-input, .log-search, .pw-form, .local-form, .qty): padding
+     var(--control-pad); border 1px solid var(--border-strong); border-radius var(--radius-sm);
+     background var(--bg); color var(--text); font: inherit; and on :focus, outline 2px
+     solid var(--accent) with outline-offset 1px. Width is the only thing that varies by
+     context -- compact numbers 5rem, unit selects ~5.25rem, wide text fields 15-22rem --
+     but the chrome above never does. Reuse it; don't fork it.
+
+     The padding is a token rather than prose because it was written out as the literal
+     `0.42rem 0.6rem` at twelve sites, which is rule 67's argument applied inside the
+     stylesheet: a standard restated twelve times is twelve places to disagree. It is NOT a
+     step of the space scale above -- it is one pair, and a control that wants different
+     padding is not on the standard. */
+  --control-pad: 0.42rem 0.6rem;
+
+  /* The width of a settings row's control track, and so of every box that fills it. Declared
+     once (rule 67): `.set-row` sizes its second grid column from it and the control standard's
+     `max-width` caps against it, so the two can never drift and leave a box wider than the
+     column holding it. It lives on :root rather than on `.set-rows` because an undefined
+     custom property inside `minmax()` invalidates the whole `grid-template-columns`
+     declaration -- a row outside that wrapper would silently collapse to one column instead
+     of failing visibly. */
+  --set-control-w: 22rem;
+
+  --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06), 0 1px 3px rgba(16, 18, 27, 0.05);
+  --shadow-md: 0 2px 6px rgba(16, 18, 27, 0.07), 0 8px 24px rgba(16, 18, 27, 0.07);
+  --shadow-lg: 0 12px 40px rgba(16, 18, 27, 0.16), 0 4px 12px rgba(16, 18, 27, 0.1);
+
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* One Spare/Reap button's width and the gap between the pair. Every site that must agree on
+     the button track derives from these two: the button min-width, the season list's --btns
+     track (set in ReviewQueue.tsx), and its grid fallback. Change the width here alone, never
+     the derived literals (H-1, rule 16). */
+  --ov-btn-w: 6.25rem;
+  --ov-btn-gap: 0.3rem;
+
+  /* The smallest a control a finger lands on is allowed to be: WCAG 2.2 SC 2.5.8 asks for
+     24x24 CSS px. The spacing exception that lets a smaller target pass needs 24px of
+     clearance around it, and a removable chip has none -- its x sits flush against the
+     body that EDITS the same filter, so an undersized pair means a touch meaning "change
+     this" lands on "remove it". .bar-x was already sized to this by hand; every chip x
+     derives from here so the standard moves in one place (U-6, agent rule 19). */
+  --tap-min: 24px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e0f13;
+    /* accent.ts's DARK_SURFACE -- the ground its AA contrast search measures against.
+     * Change one, change both (rule 67). */
+    --surface: #191b21;
+    --surface-2: #22242c;
+    --hover: #23252d;
+    --border: #2b2e37;
+    --border-strong: #3a3e49;
+    --text: #edeef1;
+    --muted: #9ba1af;
+    --faint: #6b7180;
+
+    --condemn: #ff8086;
+    --condemn-soft: #2c1618;
+    --protect: #5fce97;
+    --protect-soft: #12241b;
+    --abstain: #9ba1af;
+    --unknown: #e0a33f;
+    --unknown-soft: #2a2013;
+
+    /* Same operator color as light mode; only the derivations differ, so the accent pops
+     * on the dark ground: hover brightens (mix white) instead of darkening, and the soft
+     * tint carries more of the accent over the darker surface. */
+    --accent: #25c3ff;
+    --accent-hover: color-mix(in srgb, var(--accent), #fff 16%);
+    /* 22% is accent.ts's TINT: the tightest ground its AA search clears accent-colored text
+     * against. Retune this and retune TINT with it, or the guarantee lapses silently. */
+    --accent-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
+    --accent-ring: color-mix(in srgb, var(--accent) 45%, transparent);
+    --accent-ink: #06202c;
+    /* The accent clears AA as text on this ground already, so it is its own ink here. */
+    --accent-text: var(--accent-text-dark, var(--accent));
+
+    --plex: #e5a00d;
+    --plex-hover: #f2ad1f;
+    --plex-ink: #241a02;
+
+    --media-movie: #4fd0c0;
+    --media-movie-soft: #10312c;
+
+    --imdb: #f5c518;
+    --imdb-ink: #241d02;
+
+    --radarr: #ffc230;
+    --radarr-ink: #2b2103;
+    --sonarr: #3a9bdb;
+    --sonarr-ink: #041018;
+    --seerr: #8f95f7;
+    --seerr-ink: #14153f;
+    --discord: #5865f2;
+    --discord-ink: #ffffff;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* Forced themes: the Settings → General choice, stamped on <html> as data-theme by
+   index.html before first paint. Each block must mirror its token set above EXACTLY --
+   the attribute selector outranks the media query in both directions, which is what
+   lets "Light" win on a dark device and "Dark" win on a light one. "Match my device"
+   stores nothing, so the media query above decides as always. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0e0f13;
+  /* accent.ts's DARK_SURFACE, as above (rule 67). */
+  --surface: #191b21;
+  --surface-2: #22242c;
+  --hover: #23252d;
+  --border: #2b2e37;
+  --border-strong: #3a3e49;
+  --text: #edeef1;
+  --muted: #9ba1af;
+  --faint: #6b7180;
+
+  --condemn: #ff8086;
+  --condemn-soft: #2c1618;
+  --protect: #5fce97;
+  --protect-soft: #12241b;
+  --abstain: #9ba1af;
+  --unknown: #e0a33f;
+  --unknown-soft: #2a2013;
+
+  --accent: #25c3ff;
+  --accent-hover: color-mix(in srgb, var(--accent), #fff 16%);
+  /* 22% is accent.ts's TINT, as above (rule 67). */
+  --accent-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  --accent-ring: color-mix(in srgb, var(--accent) 45%, transparent);
+  --accent-ink: #06202c;
+  --accent-text: var(--accent-text-dark, var(--accent));
+
+  --plex: #e5a00d;
+  --plex-hover: #f2ad1f;
+  --plex-ink: #241a02;
+
+  --media-movie: #4fd0c0;
+  --media-movie-soft: #10312c;
+
+  --imdb: #f5c518;
+  --imdb-ink: #241d02;
+
+  --radarr: #ffc230;
+  --radarr-ink: #2b2103;
+  --sonarr: #3a9bdb;
+  --sonarr-ink: #041018;
+  --seerr: #8f95f7;
+  --seerr-ink: #14153f;
+  /* Discord's blurple. Its ink is white rather than a dark tone: the fill is dark enough that
+     white clears WCAG AA on it at the badge's small bold size (4.61:1), where a dark ink would
+     not. Discord joined the pairs above when its settings got the service-editor layout, so
+     its badge reads as one of the connections. */
+  --discord: #5865f2;
+  --discord-ink: #ffffff;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f4f5f8;
+  /* accent.ts's LIGHT_SURFACE, as above (rule 67). */
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --hover: #f0f2f6;
+  --border: #e4e6ec;
+  --border-strong: #d3d6df;
+  --text: #16181d;
+  --muted: #666b78;
+  --faint: #9aa0ad;
+
+  --condemn: #c62630;
+  --condemn-soft: #fdecec;
+  --protect: #167c4d;
+  --protect-soft: #e6f6ec;
+  --abstain: #666b78;
+  --unknown: #9a6212;
+  --unknown-soft: #fcf3e1;
+
+  --accent: #25c3ff;
+  --accent-hover: color-mix(in srgb, var(--accent), #000 14%);
+  --accent-soft: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  --accent-ring: color-mix(in srgb, var(--accent) 42%, transparent);
+  --accent-ink: #06202c;
+  --accent-text: var(--accent-text-light, color-mix(in srgb, var(--accent), #000 42%));
+
+  --plex: #e5a00d;
+  --plex-hover: #f2ad1f;
+  --plex-ink: #241a02;
+
+  --media-movie: #0b6b63;
+  --media-movie-soft: #dcf3f0;
+
+  --imdb: #f5c518;
+  --imdb-ink: #241d02;
+
+  --radarr: #ffc230;
+  --radarr-ink: #2b2103;
+  --sonarr: #3a9bdb;
+  --sonarr-ink: #041018;
+  --seerr: #8f95f7;
+  --seerr-ink: #14153f;
+  /* Discord's blurple. Its ink is white rather than a dark tone: the fill is dark enough that
+     white clears WCAG AA on it at the badge's small bold size (4.61:1), where a dark ink would
+     not. Discord joined the pairs above when its settings got the service-editor layout, so
+     its badge reads as one of the connections. */
+  --discord: #5865f2;
+  --discord-ink: #ffffff;
+
+  --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06), 0 1px 3px rgba(16, 18, 27, 0.05);
+  --shadow-md: 0 2px 6px rgba(16, 18, 27, 0.07), 0 8px 24px rgba(16, 18, 27, 0.07);
+  --shadow-lg: 0 12px 40px rgba(16, 18, 27, 0.16), 0 4px 12px rgba(16, 18, 27, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+}

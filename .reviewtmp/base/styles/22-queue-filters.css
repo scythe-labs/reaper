@@ -1,0 +1,222 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The active-filter chips, the filter bar, and the two popovers they open. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* Active review-queue filters, one removable chip each -- the .tag-chip shape (34-lists.css) in
+   the accent tone, so a stacked combination reads at a glance above the list. */
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border-radius: var(--radius-pill);
+  padding: 0.12rem 0.2rem 0.12rem 0.6rem;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+}
+/* Same --tap-min sizing as .tag-chip (34-lists.css), the shape this one borrows. */
+.filter-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-lg);
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--radius-pill);
+}
+.filter-chip button:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* The unified filter bar: one ＋ Filter control adds any dimension, and each active filter is
+   an editable, removable chip. A new filter is a registry entry (ReviewQueue.tsx), never a new
+   toolbar control -- so the toolbar shape never grows. */
+
+/* Positions a menu directly under its chip or the ＋ Filter button: the wrapper is the
+   containing block, so the menu follows the control on scroll instead of floating off (a
+   viewport-anchored popover's failure). Also the outside-click boundary -- a click inside any
+   .filter-anchor is "inside". */
+.filter-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+/* The ＋ Filter button: dashed until hovered or open, to read as "add", set apart from the
+   solid pills it sits beside. Height matches the search box and sort pill so the row is even. */
+.add-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2.15rem;
+  padding: 0 var(--space-2xl) 0 var(--space-xl);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+}
+.add-filter:hover,
+.add-filter.open {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--text);
+}
+.add-filter:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* An editable filter chip: the value is a button that opens the value picker; the × clears the
+   filter. Same accent-soft family as the search chip beside it. The field name rides the
+   button's title (and the picker's heading), so the chip stays as compact as the old ones. */
+.fchip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--radius-pill);
+  /* Trimmed to hold the chip's overall size steady now that both children carry their own
+     --tap-min hit area: the inset the padding used to supply comes from the buttons. */
+  padding: 0.06rem 0.1rem 0.06rem 0.35rem;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+}
+.fchip.open {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+/* The body EDITS the filter and the x CLEARS it: two different outcomes, flush against each
+   other, so both have to reach --tap-min or a thumb aimed at one lands on the other. */
+.fchip-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: var(--tap-min);
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-weight: var(--weight-semi);
+  cursor: pointer;
+  padding: 0.06rem 0.25rem;
+  border-radius: var(--radius-pill);
+}
+.fchip-ic {
+  display: inline-flex;
+}
+.fchip-ic svg {
+  width: 12px;
+  height: 12px;
+}
+.fchip-caret {
+  opacity: 0.6;
+}
+.fchip-body:focus-visible,
+.fchip-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.fchip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-lg);
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--radius-pill);
+  opacity: 0.75;
+}
+.fchip-x:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* The add-filter and value popovers: one look for both. Absolutely placed under the anchor.
+   --pop-shift is how far `usePopoverShift` (popoverFit.ts) had to pull the menu left to keep it on
+   a narrow screen; 0 whenever it already fits, which is every desktop width. The max-width is the
+   same promise made in CSS alone: the menu is never wider than the screen it has to fit on. Both
+   halves are rule 138. */
+.filter-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: var(--pop-shift, 0px);
+  z-index: var(--z-nav);
+  min-width: 190px;
+  max-width: min(260px, calc(100vw - 1.5rem));
+  max-height: 18rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+.filter-menu-head {
+  padding: 0.35rem 0.55rem 0.25rem;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.filter-mi {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  padding: 0.42rem 0.55rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.filter-mi:hover {
+  background: var(--hover);
+}
+.filter-mi.sel {
+  color: var(--accent-text);
+  font-weight: var(--weight-semi);
+}
+.filter-mi-ic {
+  display: inline-flex;
+  color: var(--muted);
+}
+.filter-mi-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filter-mi-tick {
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--accent-text);
+}
