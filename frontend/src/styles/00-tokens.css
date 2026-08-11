@@ -206,14 +206,22 @@
      drift apart the cut floats above the rule or hangs below it. */
   --masthead-pad-b: 1rem;
 
-  /* Form control standard. Every text / number / select box shares this chrome, so the
-     app reads as one surface (see .set-control, .rule-control, .field-sm, .condition-add,
-     .search-input, .log-search, .pw-form, .local-form, .qty): padding
-     var(--control-pad); border 1px solid var(--border-strong); border-radius var(--radius-sm);
-     background var(--bg); color var(--text); font: inherit; and on :focus, outline 2px
-     solid var(--accent) with outline-offset 1px. Width is the only thing that varies by
-     context -- compact numbers 5rem, unit selects ~5.25rem, wide text fields 15-22rem --
-     but the chrome above never does. Reuse it; don't fork it.
+  /* Form control standard (rule 40). Every text / number / select box shares this chrome, so
+     the app reads as one surface: padding var(--control-pad); border 1px solid
+     var(--border-strong); border-radius var(--radius-sm); background var(--bg); color
+     var(--text); font: inherit; and on :focus, outline 2px solid var(--accent) with
+     outline-offset 1px. Width is the only thing that varies by context -- compact numbers
+     5rem, unit selects ~5.25rem, wide text fields 15-22rem -- but the chrome above never
+     does. Reuse it; don't fork it.
+
+     `styles-control-standard.test.ts` holds the blocks to it, rather than a list here. The
+     list this comment used to carry named `.pw-form`, which has no chrome of its own (it
+     renders `.field-sm` boxes), and missed `.manual-row`, `.settings-picker` and `.bar-foot`
+     (rule 144). The test's failure names the blocks it found.
+
+     `.qty`, `.hex-join` and `.tag-chips` cannot be one block. The border and fill sit on the
+     wrapper so its parts read as a single box, and the children carry their own padding
+     (`31-qty.css`, `27-settings-rows.css`, `34-lists.css`).
 
      The padding is a token rather than prose because it was written out as the literal
      `0.42rem 0.6rem` at twelve sites, which is rule 67's argument applied inside the
@@ -249,8 +257,9 @@
      24x24 CSS px. The spacing exception that lets a smaller target pass needs 24px of
      clearance around it, and a removable chip has none -- its x sits flush against the
      body that EDITS the same filter, so an undersized pair means a touch meaning "change
-     this" lands on "remove it". .bar-x was already sized to this by hand; every chip x
-     derives from here so the standard moves in one place (U-6, agent rule 19). */
+     this" lands on "remove it". Four chip ✕ take it from the one shared rule in 04-buttons.css,
+     so the standard moves in one place (U-6, agent rule 19). `.bar-x` and `.nudge-x` are the
+     two controls of that shape outside that rule and read the token directly. */
   --tap-min: 24px;
 }
 

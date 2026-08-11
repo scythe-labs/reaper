@@ -3305,6 +3305,55 @@ pairs; the other two sit 40 and about 150 lines apart, so collapsing them reloca
 instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
 filtered two-column select to an unfiltered three-column one.
 
+## A form control does not inherit its font, so five of six fields right looks right (2026-08-10)
+
+Rule 40's control standard is six declarations, and ten CSS blocks type them out. Two blocks set
+`font-size` and no `font: inherit`. A browser gives `<input>` and `<select>` their own
+font-family in its UA stylesheet, and that beats inheritance, so those boxes rendered in the
+browser's form font while every label beside them rendered in the app's. Measured in Chromium:
+15px Arial at the Logs search box, 13.76px Arial at every box and dropdown in the Settings
+control column, against system-ui everywhere else. On `dev` too.
+
+**The shape is what makes it survive review.** The block declares five of the six fields
+correctly, so a reader checking it against the standard finds four matches and a fifth line that
+mentions the right property. And the symptom is a typeface, which reads at a glance as a size
+difference and gets attributed to the `font-size` that IS there. Neither the diff nor the screen
+says the word "family".
+
+**The other five fields would have failed loudly, which is why only this one drifted.** A missing
+border, radius, fill or padding is visible in one look. A missing focus ring falls back to
+`01-base.css`'s `:focus-visible`, which draws a slightly different ring rather than none. The
+font is the only field in the standard whose absence is silent, and it is the one that drifted at
+two of ten sites.
+
+**The extraction the finding asked for was killed on measurement.** Hoisting the six declarations
+into one grouped base rule in `01-base.css` nets about -56 lines of 10,614, and it moves
+`.set-row .set-control input` (specificity 0,2,1) from file 27 to file 1, which inverts its tie
+with `.swatch-wrap input[type="color"]` at 27-settings-rows.css:218. That tie is decided by
+source order today and the later rule wins; the evidence is `:271`, a third rule written to
+re-override the pair inside `.hex-join`. Reachable only through one DOM shape at this tip, so
+latent. A gate landed instead, and it caught the drift the extraction was supposed to prevent.
+
+**Putting the standard back costs more than the family, because `font` is a shorthand.** A
+CSS-wide keyword sets every longhand it owns, so `font: inherit` also took the inherited 1.55
+line height, where those controls had the UA's `normal`. The boxes grew about 6px. That one is
+the standard arriving rather than a side effect: in a cluster row the box had been sitting
+8.25px shorter than the button beside it, and it now sits 1.92px off. The other two were
+regressions, and both were controls whose own rule declared one font detail at (0,1,0) under a
+(0,2,1) `font: inherit`: the API key's monospace and the accent hex field's tabular figures. A
+revealed API key came out in the app's sans, against a comment on its own rule saying monospace
+is there so the key reads unambiguously.
+
+**A block declaring only `font-size` hides that hazard, which is why the repair is the risky
+half.** The old block set no family, so nothing it could outrank was at stake, and the two
+lower-specificity rules had been correct for as long as the drift existed. The fix is what put
+them under a shorthand. So the sweep after adding a CSS-wide keyword is not "what did this
+element look like before", it is **"what other rule declares any longhand this keyword owns, at
+lower specificity, on anything this selector matches"**. That is `font-family`,
+`font-variant-numeric`, `font-weight`, `font-style`, `font-stretch` and `line-height`, and a
+computed-style dump over the real markup is the only way to see it: the diff shows one added
+line and the failure is two files away.
+
 ## Two counts of one diff, and only one of them belongs in the table (2026-08-10)
 
 Six wave 11 backend rows, built and measured twice. **Total lines: -2, -2, +2, -1, +4 with a
@@ -3356,6 +3405,46 @@ were needed to cover one three-line change: reword an arm, re-inline an arm verb
 `.format()`. No single assertion catches more than one of them. **When a test's expectation is
 derived from the declaration it is testing, ask what the declaration and the code under test can
 be wrong about together** — a derived expectation moves with the thing it should be pinning.
+
+## A prop hand-off is not drift if the type checker sees it (2026-08-10)
+
+A finding said six navigation callbacks were drilled three to four levels through the React tree
+over a destination type that is already one value. Re-derived from `App.tsx`: **nine distinct
+prop names over ten hand-offs, seven consumed by `App`'s own child and three going exactly one
+level further.** Nothing goes past depth 2. The six was the `onGoTo*`-prefixed subset, and the
+plan leaves out the three cross-page jumps named `onOpen*`.
+
+**Depth is what the finding rested on, and it decides the answer.** A prop that stops being
+forwarded is a TypeScript error at the intermediary and again at the leaf, so the hand-off has no
+drift surface: it fails at build time or it is correct. Bundling the three depth-2 props into one
+destination prop trades about nine lines of pass-through for a bundle type and a second
+indirection, and removes no place a future author has to remember something. The part that could
+drift had already been fixed, in `navIntent.ts`: `goTo` is one entry point over one `NavIntent`
+union, replacing four per-destination setters that each had their own idea of what to reset.
+
+**The measurement that mattered was not the count.** Two earlier passes both got the count
+roughly right and neither wrote down the depth, which is the only figure the row's argument uses.
+
+## The cascade moves when a declaration moves to an earlier file (2026-08-10)
+
+Five controls draw one bare, pill-shaped ✕, and three of them carried the same thirteen
+declarations in three stylesheets. Sharing them means moving the declarations to a file that loads
+**earlier**, which is a cascade change: any rule of equal specificity in between now wins where it
+used to lose. Nothing in the diff shows it and no existing test reads it.
+
+**Read the shape back off the cascade rather than arguing it.** jsdom parses the concatenated
+stylesheet and does the cascade, so `getComputedStyle` on each control, rendered in the ancestry
+it really has, answers which declaration won. The values were captured **before** the shared rule
+existed, so a green run is the claim that nothing moved. Two limits are worth knowing: `var()` is
+left unresolved, which is what a test like this wants because it is asking which declaration won
+rather than what pixels it became; and `border-width` is reported from the keyword rather than
+from `border-style: none`, so `border: none` and `border: 0` disagree there and agree on screen.
+
+**Doing it found a control that was not the shape it claimed.** One of the five sizes itself
+`width: var(--tap-min)` and never resets the global `button` padding, so under `box-sizing:
+border-box` its used width is 29.2px against the 24px token it names. The `width` declaration does
+nothing. It was left as it renders and the shared rule excludes it, since folding it in would have
+needed a `padding` declaration whose only job was to cancel a shared one.
 
 ## A shell gate can be green because the page is small (2026-08-10)
 

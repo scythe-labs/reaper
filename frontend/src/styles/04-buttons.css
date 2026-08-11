@@ -63,6 +63,46 @@ button.link:hover:not(:disabled) {
   padding: var(--space-lg) var(--space-3xl);
 }
 
+/* The ✕ that removes a chip: one shape, four controls, declared once. The queue's two filter
+   pills (22-queue-filters), the list modal's tag chips (34-lists) and the setup wizard's
+   instance chips (29-setup) all draw the same bare, pill-shaped hit area. Three of them carried
+   these thirteen declarations verbatim, two of those under a comment naming another.
+
+   It is chrome-free on purpose: the chip around it owns the border and the fill, so the control
+   standard's box (rule 40) would draw a second border inside the pill. A --tap-min square for
+   the 24px touch floor. On `.fchip-x` and `.inst-chip .chip-x` it does a second job, keeping a
+   touch meaning "change this" off the ✕ sitting flush against the control that edits the same
+   thing (00-tokens.css's own note on --tap-min).
+
+   Declared here, before every file that uses it, so the two rules that stay behind override at
+   equal specificity on load order: `.fchip-x` fades to 0.75 at rest, and `.inst-chip .chip-x`
+   is a bold muted glyph at the chip's own text size rather than an inherited-color one at
+   --text-lg. The other two keep only a `:hover`, which outranks this rule anyway.
+
+   Six controls draw this shape and two are deliberately out. `.bar-x` (14-policy-editor) is a
+   chip ✕ like these four, but it carries a visible border and a hover that turns it red, and it
+   never resets this file's `button` padding, so it renders wider than --tap-min: folding it in
+   would resize it. `.nudge-x` (11-queue-chrome) dismisses a notice rather than a chip and draws
+   a square corner around an SVG. Both read --tap-min directly. */
+.filter-chip button,
+.fchip-x,
+.tag-chip button,
+.inst-chip .chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-lg);
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--radius-pill);
+}
+
 /* The pill inside the segmented track: the queue's lane tab (.tab) and the policy toggle
    button (.seg) are the same control, so they share one definition. The masthead's section nav
    used to be a third member and is now the .views rail instead. */

@@ -53,8 +53,9 @@ Last verified against the code: 2026-08-02.
    declared by `index.css` and load-bearing. Type (9 steps), weight (4) and the constants
    (`--control-pad`, `--radius-pill`, a `--z-*` ladder) are adopted everywhere; space is 11 steps
    adopted only where nothing moved, with a ratchet on the 294 literals left. Gates hold the file
-   cap, the theme blocks and the iOS zoom floor. Left: `.notice` still lives in the simulator
-   section, and a dead-CSS pass that must stay manual, because 96 sites compute their class name.
+   cap, the theme blocks, the iOS zoom floor, and rule 40's control standard at all ten of its
+   boxes. Left: `.notice` still lives in the simulator section, and a dead-CSS pass that must
+   stay manual, because 96 sites compute their class name.
 4. **The manual is one source, two renderers** (`frontend/src/docs/toMdx.ts`). Five pages are
    generated into `manual/` from the app's typed blocks, eight hand-written beside them, all
    thirteen served by `website/` on Docusaurus. `manual.gen.test.ts` fails on drift. Pages
