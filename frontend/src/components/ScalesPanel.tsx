@@ -26,6 +26,10 @@ function initial(name: string): string {
 /** The title's poster, proxied from Plex through /api/poster, with the film-strip mark as a
  *  fallback when there is no poster key or the image cannot load. */
 function Poster({ url }: { url: string | null }) {
+  // No reset effect, unlike the queue's poster and the two backdrops (`useArtFallback`). The
+  // row key this sits under carries the title's own id, so a different title is a different
+  // component and the flag starts false. Change that key and the flag latches: one failed
+  // load would leave the film strip on every title the row is reused for (rule 19).
   const [failed, setFailed] = useState(false);
   return (
     <span className="scales-poster" aria-hidden="true">

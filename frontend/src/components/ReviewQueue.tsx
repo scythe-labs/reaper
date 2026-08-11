@@ -234,9 +234,10 @@ function Backdrop({ posterUrl }: { posterUrl: string | null }) {
 export function Poster({ url, alt }: { url: string | null; alt: string }) {
   const [broken, setBroken] = useState(false);
 
-  // Reset on a new url, exactly as Backdrop does. Without this the flag latches: one
-  // failed image (a dropped session, a slow Plex) leaves the placeholder in place for
-  // every later item this row is reused for, so the art never comes back until remount.
+  // Reset on a new url, as `useArtFallback` does for the two backdrops. Without this the
+  // flag latches: one failed image (a dropped session, a slow Plex) leaves the placeholder
+  // in place for every later item this row is reused for, so the art never comes back until
+  // remount. Not the hook: that one climbs art then poster, this one has a single rung.
   useEffect(() => setBroken(false), [url]);
 
   if (!url || broken) {

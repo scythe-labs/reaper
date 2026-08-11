@@ -1281,8 +1281,17 @@ async def scan(
 
 @dataclass(frozen=True, slots=True)
 class Display:
-    """The presentation fields carried onto a candidate. None of them decide anything --
-    they are what the review queue draws around the verdict."""
+    """The presentation fields carried onto a candidate. None of them feed the verdict.
+
+    Four are load-bearing off that path, and the sentence above used to read "none of them
+    decide anything", which invites reading an omission here as cosmetic. ``tmdb_id``,
+    ``imdb_id`` and ``tvdb_id`` go onto the stored row and are what ``services/fairness.py``
+    joins a request to its candidate on (rules 29/106); ``title_slug`` builds the Sonarr link
+    (``services/deep_links.py``). Every field defaults to ``None`` and ``scan`` packs one of
+    these per lane by hand, so a field set in the movie pack and forgotten in the season pack
+    drops that join for TV with nothing raising. Today's four omissions are each a field the
+    source record does not carry: the movie pack has no ``group_key``, ``group_title`` or
+    ``title_slug``, and ``SeasonJudgment`` has no ``video_resolution``."""
 
     year: int | None = None
     summary: str | None = None

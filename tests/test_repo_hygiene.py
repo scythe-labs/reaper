@@ -13,6 +13,7 @@ running the gate, and ``git`` is run to list the files ``_repo_text_files`` walk
 from __future__ import annotations
 
 import ast
+import dataclasses
 import hashlib
 import json
 import os
@@ -40,6 +41,8 @@ from reaper.engine.gates import (
 from reaper.engine.observation import Absent, Known
 from reaper.services import plex_link
 from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
+from reaper.services.season_scan import SeasonJudgment
+from reaper.services.snapshot import Display, RawItem
 
 REPO = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
@@ -6538,3 +6541,109 @@ def test_the_lane_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> Non
     # A qualified call is a call site, whichever way it is qualified.
     assert found["src/reaper/m.py:24:4"] == {"keeps": "movie_keeps"}
     assert found["src/reaper/m.py:25:11"] == {"keeps": "tv_keeps"}
+
+
+# --- every Display field the source record carries reaches its lane's pack ----------------
+
+#: The record each hand-written ``Display(...)`` pack unpacks, which is also its lane: the
+#: movie loop reads a ``RawItem`` and the season loop a ``SeasonJudgment``. Taken off the
+#: call's own value expressions rather than off the enclosing function, so a third pack
+#: written somewhere else is read by the same walk.
+_DISPLAY_PACK_SOURCES: dict[str, type] = {"item": RawItem, "judgment": SeasonJudgment}
+
+#: Reconciled by hand against the tree (rule 145). Three ``Display(...)`` calls under
+#: ``src/``: the two packs, plus the ``_NO_DISPLAY`` singleton, which sets nothing and is the
+#: "no display fields" default.
+_EXPECTED_DISPLAY_CALLS = 3
+
+
+def _display_pack_sites(root: Path) -> dict[str, tuple[frozenset[str], frozenset[str]]]:
+    """Every ``Display(...)`` call under ``src/``: the fields it sets, and the source records
+    its values read off.
+
+    Reads the call node rather than the text after the paren, because the two packs wrap
+    across 25 and 15 lines (rule 147). The source base comes from every ``Name`` anywhere
+    inside a keyword's value, not just a bare ``item.year``: the movie pack reaches ``item``
+    through ``item.imdb_id or item.plex_imdb_id`` and through the arguments of
+    ``build_ratings_json(...)``, and a base-of-the-attribute matcher would read neither.
+    A keyword whose value names no source at all (``tvdb_id=None``) contributes no base and
+    is still counted as set, which is the point: an explicit ``None`` is an author saying the
+    field does not apply, and that is what this gate asks for.
+    """
+    found: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            called = node.func
+            name = called.id if isinstance(called, ast.Name) else getattr(called, "attr", "")
+            if name != "Display":
+                continue
+            keywords = frozenset(kw.arg for kw in node.keywords if kw.arg is not None)
+            bases = frozenset(
+                inner.id
+                for kw in node.keywords
+                for inner in ast.walk(kw.value)
+                if isinstance(inner, ast.Name) and inner.id in _DISPLAY_PACK_SOURCES
+            )
+            rel = path.relative_to(REPO).as_posix()
+            found[f"{rel}:{node.lineno}:{node.col_offset}"] = (keywords, bases)
+    return found
+
+
+def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None:
+    """A field added to ``Display`` and packed on one lane only is silent today.
+
+    All fifteen default to ``None``, so an omission raises nothing and mypy sees nothing: the
+    movie pack and the season pack are two hand-written mirrors of one dataclass (rule 103).
+    Four of the fifteen do more than draw a queue row -- ``tmdb_id``, ``imdb_id`` and
+    ``tvdb_id`` are what ``services/fairness.py`` joins a request to its candidate on, and
+    ``title_slug`` builds the Sonarr link -- so a sixteenth of that kind, forgotten on one
+    lane, drops that join for that lane rather than blanking a column (rules 29/106).
+
+    The permitted omissions are DERIVED, never listed here: a pack may leave a field at its
+    default exactly when its own source record does not declare it. That covers all four
+    omissions on this tree, and it means a new field needs no edit here.
+
+    ``docs/SIMPLIFICATION_PLAN.md``'s W5-2 row carries the measurement, including why the
+    collapse this replaces was killed: ``_judge_item`` already takes ``Display`` whole, so
+    merging the packs removes no parameter and no line. What it would have removed is this
+    hazard, and the gate removes it from ``tests/``.
+    """
+    declared = frozenset(f.name for f in dataclasses.fields(Display))
+    sites = _display_pack_sites(SRC)
+    assert len(sites) == _EXPECTED_DISPLAY_CALLS, (
+        f"expected {_EXPECTED_DISPLAY_CALLS} `Display(...)` calls under src/, walked "
+        f"{len(sites)}: {sorted(sites)}. A new pack is fine and must set every field its "
+        "source record carries; bump the number here."
+    )
+
+    empty = sorted(site for site, (keywords, _) in sites.items() if not keywords)
+    assert len(empty) == 1, (
+        f"expected exactly one `Display()` setting nothing, the `_NO_DISPLAY` singleton, "
+        f"found {empty}. A pack that lost all its keywords would otherwise read as that "
+        "singleton and leave this gate green."
+    )
+
+    packs = {site: value for site, value in sites.items() if value[0]}
+    for site, (keywords, bases) in sorted(packs.items()):
+        assert len(bases) == 1, (
+            f"{site} packs a Display off {sorted(bases) or 'no known record'}; expected "
+            f"exactly one of {sorted(_DISPLAY_PACK_SOURCES)}. The record it unpacks is what "
+            "says which fields it can supply, so a pack reading two of them, or none, cannot "
+            "be checked at all."
+        )
+        source = _DISPLAY_PACK_SOURCES[next(iter(bases))]
+        supplied = frozenset(f.name for f in dataclasses.fields(source))
+        forgotten = (declared - keywords) & supplied
+        assert not forgotten, (
+            f"{site} leaves {sorted(forgotten)} at the None default while {source.__name__} "
+            "carries the value. Every field defaults to None, so the other lane's pack "
+            "setting it is the only sign anything is missing."
+        )
+
+    assert {next(iter(bases)) for _, bases in packs.values()} == set(_DISPLAY_PACK_SOURCES), (
+        f"the Display packs do not cover both lanes: {sorted(packs)}. One packs a movie and "
+        "the other a season, so pointing them at one record silences the check above."
+    )
