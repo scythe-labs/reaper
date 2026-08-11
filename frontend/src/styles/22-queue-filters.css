@@ -22,22 +22,7 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-semi);
 }
-/* Same --tap-min sizing as .tag-chip (34-lists.css), the shape this one borrows. */
-.filter-chip button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--tap-min);
-  min-height: var(--tap-min);
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: var(--text-lg);
-  line-height: 1;
-  padding: 0;
-  border-radius: var(--radius-pill);
-}
+/* The ✕ itself is the shared chip-dismiss shape in 04-buttons.css; only its hover is local. */
 .filter-chip button:hover {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
@@ -132,20 +117,9 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+/* The shared chip-dismiss shape (04-buttons.css), faded at rest: this chip's body is the
+   control the eye should land on, and the ✕ comes up to full on hover. */
 .fchip-x {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--tap-min);
-  min-height: var(--tap-min);
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: var(--text-lg);
-  line-height: 1;
-  padding: 0;
-  border-radius: var(--radius-pill);
   opacity: 0.75;
 }
 .fchip-x:hover {

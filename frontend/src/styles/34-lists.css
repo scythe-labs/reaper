@@ -362,23 +362,9 @@ button.link.policy-configure::after {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* Sized to --tap-min, which is why the chip's right padding is trimmed above: the button's
-   own hit area now supplies the inset the padding used to. */
-.tag-chip button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--tap-min);
-  min-height: var(--tap-min);
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: var(--text-lg);
-  line-height: 1;
-  padding: 0;
-  border-radius: var(--radius-pill);
-}
+/* The ✕ is the shared chip-dismiss shape (04-buttons.css), a --tap-min square, which is why
+   the chip's right padding is trimmed above: the button's own hit area supplies the inset the
+   padding used to. Only the hover tint is local, in this chip's own protect tone. */
 .tag-chip button:hover {
   background: color-mix(in srgb, var(--protect) 18%, transparent);
 }
