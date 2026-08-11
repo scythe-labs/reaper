@@ -942,6 +942,12 @@ export interface ListConfig {
   config: ListConfigBody;
   /** How the policies use this list right now: one entry per keep rule naming it. */
   policy_use: ListPolicyUse[];
+  /** The media types a keep rule on this list can be authored for: the set the Policy picker
+   *  offers it on (`policy_migrations.authorable_media_scope`, #549). A Plex collection takes its library's
+   *  kind and a watchlist both, known before any sync; a tag or IMDb list is known only once a
+   *  sync has read it. Empty means offer on neither: the type is unknown, so a rule could keep
+   *  nothing. */
+  authorable_media: ("movie" | "tv")[];
 }
 
 /** What one "Check now" did. Each failed list's own error is on its row, which the screen

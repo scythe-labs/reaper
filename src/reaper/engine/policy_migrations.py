@@ -416,6 +416,51 @@ def own_list_media_scope(
     return {key: frozenset(media) for key, media in scope.items()}
 
 
+def authorable_media_scope(
+    source: str,
+    config_json: str | None,
+    observed: frozenset[str],
+    synced: bool,
+    library_types: Mapping[str, frozenset[str]],
+) -> frozenset[str]:
+    """The media types a keep rule on this list can be AUTHORED for, the set the Policy editor's
+    list picker offers it on. An empty set means offer on neither: the list's type is not known,
+    so a rule on it could match nothing while reading as a protection (rule 38, #549).
+
+    This decides whether to OFFER a NEW rule and never gates a deletion, so it fails CLOSED: a
+    list whose type it cannot establish is withheld, not offered on a type it may not hold. That
+    is the opposite of ``own_list_media_scope``, its twin (rule 72), which scopes a legacy
+    protection being converted and must never drop a live rule, so an unreadable lookup there
+    keeps BOTH. Where the type IS known the two agree; they part only on the unknown.
+
+    Layered by how the type is known:
+    - ``plex_watchlist`` spans the account, so both, sync or not.
+    - ``imdb`` is stamped movie by every sync (``services.lists``), so movies, sync or not.
+    - ``plex_collection`` lives in one library, whose kind gives the type without a sync
+      (``library_types``). A library that is unknown, renamed, or two-typed leaves the kind
+      unsettled, so it falls through to what a sync observed.
+    - ``arr_tag`` (and the fallen-through collection) is known only from synced content: the
+      types its members span, or -- verified but empty -- both, so a list the operator means to
+      fill is protectable now. Never synced, so never read: withheld until a check runs."""
+    if source == "plex_watchlist":
+        return BOTH_MEDIA_TYPES
+    if source == "imdb":
+        return frozenset({"movie"})
+    if source == "plex_collection":
+        library = _config_value(config_json, "library")
+        held = (
+            library_types.get(fold(str(library)))
+            if isinstance(library, str) and library.strip()
+            else None
+        )
+        if held is not None and len(held) == 1:
+            return held
+        # Library unknown, renamed, or two-typed: what a sync saw is all that is left to go on.
+    if synced:
+        return observed or BOTH_MEDIA_TYPES
+    return frozenset()
+
+
 def has_legacy_list_protections(raw: object) -> bool:
     """Whether ``convert_list_protections`` would fire on this body. Exposed so callers can
     decide whether resolving the target list names (a database read) is worth it, against
