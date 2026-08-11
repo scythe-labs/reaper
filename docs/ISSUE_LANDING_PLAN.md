@@ -4,8 +4,11 @@ Which of the 44 open issues belong on `audit/simplification-plan` before PR #552
 which wait for `dev` afterwards. Measured twice. The first 32 rows on 2026-08-10 against
 `audit/simplification-plan` at `9fda787`, the twelve issues filed since on 2026-08-11 against
 the branch at `b03b0b2`. `origin/dev` was `4bd2c02` both times. The older rows were not
-re-measured, apart from five claims the second pass found stale and corrected in place: #682's
-lane, #691's and #557's evidence, #550's file count, and the `test_repo_hygiene.py` example below.
+re-measured wholesale. What the second pass did revisit, and corrected in place: #682's lane, now
+that #692 has landed; #691's, #557's and #550's evidence; the `test_repo_hygiene.py` example below;
+and every `after` row on both passes against the branch-only-gate test, which the first pass did
+not apply. That last check moved three of the twelve and no older row, though #657 and #623 each
+gained the stated reason they were missing.
 
 This file dies when #552 merges. Its rows either close with the branch or move to the tracker.
 
@@ -24,7 +27,8 @@ into seven files; `engine/backtest.py` and `engine/calibration.py` are deleted. 
 nobody can review twice.
 
 **Measure the collision at the fix site, never at the file.** This is the rule that moved five rows
-between lanes on review, in both directions. `src/reaper/engine/gates.py` shows 46/45 and
+between lanes on the first review and seven more on the second, in both directions.
+`src/reaper/engine/gates.py` shows 46/45 and
 `describe_bar` is byte-identical on both trees. A file the branch touched is not a collision. A
 file whose fix site the branch replaced, moved or deleted is. `git diff origin/dev...HEAD --
 <path>` and read the hunk headers against the line the fix needs.
@@ -36,10 +40,14 @@ and is not true now.
 
 **A change to what the engine decides waits for `dev`.** A change to how a decision is worded may
 ride the branch, since the branch already re-captures Tier B per PR. That is why #657 waits and
-#682 does not: one changes what a stored rule matches, the other changes a sentence.
+#682 did not: one changes what a stored rule matches, the other changed a sentence.
 
-Everything else lands after. The default is *after*: the branch is at phase 8 of 9, and every added
-row is a phase that does not close.
+**Everything else lands after, and *after* is the default for one reason: most fixes survive the
+merge.** It is not a budget. How near the branch is to closing, how many rows this document has
+already put on it, and how open an issue's own question still is are none of them inputs. A
+`Status/Need More Info` issue whose fix site the branch deleted is on the branch, because whoever
+eventually writes that fix pays a hand-resolved conflict for writing it on `dev`. The lane answers
+one question and only one: which tree does this fix get written against.
 
 ## Verdict
 
@@ -61,12 +69,19 @@ row is a phase that does not close.
 | 685 | Medium | on branch | both of the gate's inputs moved on the branch |
 | 558 | Medium | on branch | four of half one's four fix sites were rewritten |
 | 622 | Medium | on branch | the branch added a third invisible refusal the dev fix misses |
+| 729 | Medium | on branch | `_decrypted_or_absent` replaced the fix site in both functions |
 | 704 | Medium | on branch | `App.test.tsx`'s mock literal is gone; 6 of the 20 are branch-only |
-| 657 | Medium | after | changes what a stored rule matches; port the fold, see below |
+| 734 | Low | on branch | the `except PlexError` arm is a three-class tuple on the branch |
+| 748 | Low | on branch | the block is `_write_desktop_values` on the branch, not inline |
+| 710 | Low | on branch | the delete the fix removes is in `start_link`, which the branch deleted |
+| 726 | Low | on branch | `PolicyRuleEditors.test.tsx:463` asserts the old string, branch-only |
+| 736 | Low | on branch | `styles-chip-dismiss.test.ts:131` pins `.bar-x`, branch-only |
+| 740 | Low | on branch | the shared hover the fix folds into is branch-only |
+| 657 | Medium | after | no `dev` spelling survives the merge; see below |
 | 549 | Low | after | PR #560 is open on `dev`; the port is real work, see below |
 | 566 | High | after | builds on #565, which has not landed yet |
 | 550 | Medium | after | `services/planner.py` is not among the 368 |
-| 623 | Medium | after | `describe_bar` is byte-identical on both trees |
+| 623 | Medium | after | `describe_bar` is byte-identical; its gate appends, see below |
 | 629 | Low | after | the docstring is byte-identical on both trees |
 | 661 | Low | after | phase 8 killed the parameter objects; the signature will not move |
 | 557 | Low | after | both `create_task` sites are untouched context |
@@ -77,16 +92,9 @@ row is a phase that does not close.
 | 651 | Low | after | merges, but the measurement needs redoing after #552 |
 | 606 | Low | after | phase 6 dropped the row on purpose |
 | 607 | Low | after | phase 6 dropped the row on purpose |
-| 709 | High | after | changes what a protection lookup matches; eleven sites, all untouched context |
+| 709 | High | after | eleven sites, all untouched context, and no branch gate reads them |
 | 700 | Medium | after | `logbuffer.py` and the Unraid template are untouched on the branch |
-| 729 | Medium | after | `_decrypted_or_absent` replaced both fix sites; port, see below |
-| 718 | Low | after | both sites untouched; `_EXPECTED_STANDING` already moved, see below |
-| 726 | Low | after | `PolicyRuleEditors.test.tsx:463` pins the wrong string, branch-only |
-| 734 | Low | after | the `except` arm is a three-class tuple on the branch; port, see below |
-| 736 | Low | after | `14-policy-editor.css` is byte-identical; the pin is branch-only |
-| 740 | Low | after | the rule is untouched; the shared hover it folds into is branch-only |
-| 748 | Low | after | the block is `_write_desktop_values` on the branch; port, see below |
-| 710 | Low | after | `sweep_expired_sessions` is untouched; the `start_pin` half is branch-only |
+| 718 | Low | after | the repair that does not move `_EXPECTED_STANDING`; see below |
 | 553 | Medium | after | feature |
 | 554 | Low | after | feature |
 
@@ -122,8 +130,15 @@ string.
 
 ## On the branch, in this order
 
-Eight issues. Each is a sub-PR cut from `audit/simplification-plan` and squash-merged into it, the
-same way every phase item arrives. Every row here was checked at its fix site.
+Fifteen issues. Each is a sub-PR cut from `audit/simplification-plan` and squash-merged into it,
+the same way every phase item arrives. Every row here was checked at its fix site.
+
+**A row is here when a `dev`-side fix would not survive the merge as written.** Three ways that
+happens, and nothing else is an input: the branch replaced, moved or deleted the source line the
+fix edits; the branch carries a test or rule absent on `dev` that the `dev` fix would fail the day
+#552 lands; or the `dev` fix moves a constant the branch already moved, so the merge keeps one
+value and the tree needs another. How open the issue's question is, what its `Priority/` says, and
+how many items this list already holds are all beside the point.
 
 **1. #691, using #692's rig.** It is `Status/Need More Info`, and the fix site is `_send_for_real`
 at `executor.py:1778`, roughly 600 lines from #692's `_send_season`. The reason it belongs here is
@@ -132,7 +147,7 @@ Sonarr, which is what settles this. Plan an item, spare it, claim the run, remov
 mid-run, read `outcome.detail`. Confirmed means one copy fix. Unreachable means close it
 `Reviewed/Invalid` and write the refutation into `references/refuted.md`.
 
-**2. #624, the shelf status line.** The strongest collision of the eight. The branch's hunk
+**2. #624, the shelf status line.** The strongest collision of the fifteen. The branch's hunk
 `@@ -505,11 +489,36` replaces the whole `lsStatus` closure, five lines becoming thirty, and
 `LeavingSoonRow` moved into the new `JobsPanel.tsx`. The issue's "Where" section names lines that
 no longer exist. The defect survives the rewrite: the new closure still never reads
@@ -171,15 +186,60 @@ invisible on a frozen desktop build, which is the exact fail-open class the issu
 branch also inserted four comment lines immediately after `raise SystemExit(code)`, the second fix
 site verbatim. Write it here, against three refusals.
 
-**8. #704, the suite's undefined-read gate.** Same shape as #622, one lane over. `setup.ts` is
+**8 through 11 are backend one-liners, and their order among themselves does not matter.** Each is
+here for the first reason above: the branch replaced the line the fix edits, so a `dev`-side fix is
+a modify/delete or a hand merge. None touches another's file.
+
+**8. #729, the empty webhook.** Hunks `@@ -561,10 +583,7` and `@@ -603,11 +622,7` deleted the
+`try` / `except ValueError` block from both `get_discord_webhook` and `has_discord_webhook`, which
+is the fix site twice over. The branch's replacement is `_decrypted_or_absent` at
+`app_settings.py:185`, and it answers a decrypt failure rather than an empty string, so the issue's
+shape is still here. Put the clause at the two call sites, `:586` and `:625`, not in the helper:
+`get_api_key` reads the same helper at `:410` and the issue measured nothing about API keys.
+`tests/test_app_settings_precedence.py:143` is the neighboring test and is also branch-only.
+
+**9. #734, the unreachable Plex server.** `dev`'s `except PlexError as exc:` is now the three-class
+tuple at `api/leaving_soon.py:40`, and the comment three lines above it names #734 and says the
+client's `PlexError` "lands here as it stands". The branch also added the two service errors the
+fix needs to sort against (`LeavingSoonDisabledError`, `LeavingSoonDegradedError`). Give the
+not-linked case at `services/leaving_soon.py:519` its own error, then answer a client `PlexError`
+with 502 the way the three sibling routes do.
+
+**10. #748, the launcher write.** `dev` has `write_conf_values`, `os.environ.update` and the commit
+inline at `api/settings.py:1993-2003`. The branch moved the first two into `_write_desktop_values`
+at `:1351`, called at `:1399`, one line before the commit at `:1400`. A `dev`-side reorder of a
+block that no longer exists is a modify/delete. Moving the call to after the commit is one line
+here.
+
+**11. #710, the PIN sweeper.** Half the fix merges and half cannot. `sweep_expired_sessions` is
+untouched context (`scheduler.py:495` on `dev`, `:491` here), so folding the delete in lands either
+way. The half that does not is the opportunistic delete the fix retires: `dev` carries it in
+`start_link` at `plex_link.py:413` and in `login.py`'s `start_plex_login`, and the branch replaced
+both with one `start_pin` at `plex_link.py:150`. Two modify/deletes on `dev`, none here.
+
+**12. #726, the rating unit's space.** The source line merges. `PolicyRuleEditors.test.tsx:463`
+does not: it asserts `reads: "7.5 /10"`, it is the expectation the fix has to move, and the file
+does not exist on `dev`. A `dev` fix is green until #552 lands and red after. Land the fix and its
+expectation in one change, which is only possible here.
+
+**13. #736 and 14. #740 are one sweep, and land together.** Both are chip dismiss controls and both
+turn on declarations that exist on one tree only. #736's `.bar-x` padding is pinned at
+`styles-chip-dismiss.test.ts:131`, a branch-only file, so a `dev`-side `padding: 0` turns that pin
+red at merge even though `14-policy-editor.css` is byte-identical. #740's `.fchip-x:hover` is
+byte-identical too, but its second repair folds the tint into the shared chip-dismiss rule at
+`04-buttons.css:88`, which the branch created and `dev` does not have. Rule 72: they are siblings
+of one control, so decide both against the same cascade rather than one at a time.
+
+**15. #704, the suite's undefined-read gate.** Same shape as #622, one lane over. `setup.ts` is
 byte-identical on both trees, so the three-line gate merges, and it would then be measuring a tree
 that has six more failures than the one it was written against: `SetupPlexStep.test.tsx` carries 6
 of the 20 and exists only here. The `App.test.tsx` half is a collision outright, the branch having
 replaced `dev`'s hand-listed `apiMock` literal with `makeApiMock()` from `test/apiMock.ts`, which
-is where the missing `vocabularyValues` answer now goes. Last of the eight because the count is
-measured rather than reasoned and should be re-read against the settled tree. It still reads 20 on
-the branch (`npx vitest run --disableConsoleIntercept`, 2026-08-11, exit 0). Fix both files first,
-then add the gate, or it lands red.
+is where the missing `vocabularyValues` answer now goes. Last of the fifteen because the count is
+measured rather than reasoned and the tree it measures has to stop moving first: #726, #736 and
+#740 are all frontend items above it. It still reads 20 here (`npx vitest run
+--disableConsoleIntercept`, 2026-08-11, exit 0). Fix both files first, then add the gate, or it
+lands red.
 
 ### Three issue bodies the branch invalidates
 
@@ -200,14 +260,21 @@ not be there.
 
 ## After the branch lands
 
-Twenty-seven issues. All but five carry a caution that is not obvious from the issue text.
+Twenty issues. All but five carry a caution that is not obvious from the issue text.
 
-**#657 must not ride along, and it still needs a port.** The issue says so itself, and the branch's
-verification rests on every decision being byte-identical. But the branch rewrote both sibling arms
-of the same `match`: `Op.EQ` and `Op.IN` now fold through `fold(...)`, and the defective
-`Op.CONTAINS` line is two lines of trailing context away. A fix spelled `.strip().casefold()` on
-`dev` merges textually and leaves one arm on an idiom the branch retired. Write it as `fold(...)`
-so the port is a no-op.
+**A row is here because a `dev` fix survives the merge, or because no `dev` fix can be written at
+all.** Those are different reasons and the row says which. Everything that does collide is on the
+list above, whatever its priority and whatever is still open about it.
+
+**#657 has no `dev` spelling that survives, so nothing can be written there before #552.** The
+issue says it must not ride along, and the branch's verification rests on every decision being
+byte-identical, which is still the reason it is not on the list above. The measurement underneath
+that: the branch rewrote both sibling arms of the same `match`, `Op.EQ` and `Op.IN` now fold
+through `fold(...)`, and the defective `Op.CONTAINS` line is two lines of trailing context away. So
+a `dev` author copies the sibling idiom, `.strip().casefold()`, and
+`test_repo_hygiene.py:538` bans that literal anywhere under `src/`. The alternative spelling is not
+available either: `src/reaper/text.py` does not exist on `dev` (`git show origin/dev:` exits 128).
+Written as `fold(...)` after the merge it is a one-line change.
 
 **#549's port is real work, not a merge.** PR #560 adds 45 lines to `engine/policy.py:1395`, which
 sits inside the branch's `@@ -996,1601 +994,26` deletion, and `own_list_media_scope` now lives at
@@ -241,6 +308,9 @@ byte-identical on the two trees. The branch rewrote `_miss_phrase`, which is `de
 caller, and edited the docstring of the enum member *preceding* `GateId.CUSTOM`. Neither is a
 collision. #623 still needs its own PR for its own reason: it reverses a deliberate rule 104
 consolidation, and its test must fail with a message naming `PolicyEditor.tsx`'s `describeBar`.
+**That test is the part to watch.** It appends to `tests/test_repo_hygiene.py`, and so does the
+branch, 2,329 lines at the same anchor. The fix itself merges; a gate appended beside it on `dev`
+before #552 does not.
 
 **#550's fifth comment is one edit with no rebase cost.** `services/planner.py` is not among the
 368. Landing it on `dev` reaches operators sooner, and the issue closes whenever the fifth site
@@ -260,39 +330,23 @@ the `reaper-artifact` skill and get the help text approved as a rendered artifac
 because neither is pure motion. They are the natural first frontend work after #552, and each wants
 rule 146 driven through every child's loading and failed-read branch, not just the happy path.
 
-**#709 is the new `Priority/High`, and the engine rule holds it back.** All eleven sites the issue
-names are untouched context on the branch (`snapshot.py:438`, `lists.py:278`, `season_scan.py:1230`,
-`seerr.py:217` and `identity.py:207`, `dev` lines), so nothing about the merge argues for moving
-it. Cleaning the id changes what the protection-list lookup matches, which is a decision and not a
-wording, and the issue is `Status/Need More Info` besides: nobody has captured a source emitting
-the sentinel, and the unit test that settles it runs on either tree. One branch item rides with it.
-`docs/SIMPLIFICATION_PLAN.md:193` records W11-2 as deferred rather than killed, because it is the
-carrier for this issue's raw `imdbId` writes and nothing else wants it.
+**#709 is the new `Priority/High`, and it is here on a measurement, not on its priority.** All
+eleven sites the issue names are untouched context on the branch: `snapshot.py:438`,
+`lists.py:278`, `season_scan.py:1230`, `seerr.py:217` and `identity.py:207`, `dev` lines. No
+branch-only gate reads them either. The one that mentions the shape,
+`test_repo_hygiene.py`'s `_display_pack_sites`, walks `Display(...)` calls for `ast.Name` bases and
+still finds `item` whichever way the id is cleaned; the issue's preferred repair is at the write
+sites, which leaves that call untouched. So a `dev` fix survives the merge, and the engine rule
+decides the rest: cleaning the id changes what a protection-list lookup matches. One branch item
+rides with it. `docs/SIMPLIFICATION_PLAN.md:193` records W11-2 as deferred rather than killed,
+because it is the carrier for this issue's raw `imdbId` writes and nothing else wants it.
 
-**#729, #734 and #748 merge textually into a shape that is gone. Port them, do not merge them.**
-#729's fix site is the `try` / `except ValueError` block in both `get_discord_webhook` and
-`has_discord_webhook`; the branch replaced both with `_decrypted_or_absent` at
-`app_settings.py:185`, which also serves `get_api_key`, so one clause there reaches further than
-the issue measured. #734's `except PlexError` arm is now the three-class tuple at
-`api/leaving_soon.py:40`, and the comment above it names the issue. #748's launcher write moved
-into `_write_desktop_values` at `api/settings.py:1351`, called one line before the commit at
-`:1399`, so a `dev`-side reorder of the old inline block is a modify/delete.
-
-**#726 and #736 are pinned by tests that arrive with the branch.** #726's expected string is
-written `"7.5 /10"` at `PolicyRuleEditors.test.tsx:463`, and #736's `.bar-x` padding is pinned at
-`styles-chip-dismiss.test.ts:131`. Neither file exists on `dev`, so a fix landing there is green
-until #552 merges and red after. Land the fix and its expectation together, on whichever tree.
-
-**#718's counter merges to the wrong number.** Both fix sites are untouched context, but the branch
-has already moved `_EXPECTED_STANDING` from 35 to 36. Taking the "pass `standing`" repair moves the
-same constant to the same value on `dev`, the merge keeps one 36, and the true count on the merged
-tree is 37. Narrowing the comment at `PolicyEditor.tsx:1833` on `dev` instead moves nothing.
-
-**#710 and #740 each have a half that exists on one tree only.** #710's sweeper belongs in
-`sweep_expired_sessions` (`scheduler.py:495` on `dev`, untouched), but the opportunistic delete it
-replaces sits in `start_link`, which the branch rewrote as `start_pin` at `plex_link.py:150`.
-#740's first repair, qualifying the selector, merges; its second, folding the tint into the shared
-chip-dismiss rule, has no shared rule to fold into on `dev` (`04-buttons.css:88` is branch-only).
+**#718 has two repairs and only one of them is safe here.** Both fix sites are untouched context.
+But the branch has already moved `_EXPECTED_STANDING` from 35 to 36, so the "pass `standing`"
+repair moves the same constant to the same value on `dev`, the merge keeps one 36, and the true
+count on the merged tree is 37. That repair belongs on the branch if it is the one wanted. The
+other, narrowing the comment at `PolicyEditor.tsx:1833` on `dev` to name what makes the savebar
+half a reaction, moves no constant and is why this row is not on the list above.
 
 The rest are independent and small: **#557** (two `add_done_callback` lines, both sites untouched
 context), **#658** (fold `slot` the way its two siblings are folded), **#700** (`logbuffer.py` and
