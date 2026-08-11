@@ -51,6 +51,7 @@ from reaper.api.middleware import (
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import client_ip, parse_proxy_networks
 from reaper.config import Settings, parse_trusted_proxies
+from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import AppSetting
 from reaper.main import create_app
@@ -489,6 +490,23 @@ class TestTheApiKeyLane:
         assert bare.get("/api/settings/general", headers={"X-Api-Key": key}).status_code == 401
         assert client.get("/api/settings/general/api-key").status_code == 404
         assert client.get("/api/settings/general").json()["api_key_set"] is False
+
+    def test_a_key_under_a_rotated_secret_reads_as_not_set(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """The flag answers for a key this install can use, not for a row.
+
+        A key encrypted under a secret that has since rotated cannot be decrypted, so nothing
+        can authenticate with it and the reveal route 404s. Reading the row instead left the
+        General panel offering Show and Delete over a credential the operator's scripts were
+        already being refused on, and no screen said why. Rule 76: the flag resolves the way
+        the runtime does.
+        """
+        rotated_away = SecretBox("a-secret-key-this-install-no-longer-holds")
+        _store_raw(tmp_path, app_settings.API_KEY_KEY, rotated_away.encrypt("unreadable"))
+
+        assert client.get("/api/settings/general").json()["api_key_set"] is False
+        assert client.get("/api/settings/general/api-key").status_code == 404
 
     def test_removing_a_key_that_is_not_there_is_not_an_error(self, client: TestClient) -> None:
         assert client.delete("/api/settings/general/api-key").status_code == 200
