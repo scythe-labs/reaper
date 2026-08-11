@@ -190,7 +190,7 @@ row moving is indistinguishable from one that never started.
 | 5 | Deletions | **done** | 4 landed, 1 killed | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical. C5 settled retrospectively on 2026-08-10, both drives passing against a real M-1 backup; C4 stays owed |
 | 6 | Structural motion | **done** | 6 of 8, 2 dropped | The by-design ceiling. Exit task finished: every `path:NNN` in this document resolves against the tree. **The two dropped are re-asked after phase 8 closes** (owner, 2026-08-10), under the same question phase 8's kills are being re-asked under: not whether the proposed shape works, but what shape would |
 | 7 | Wire contract | **done** | 8 of 8 | C7, C11 and C8 all settled. Eight items, not ~5: W8-3 measures 20 unread fields and W8-4's anonymous payloads are 11 routes over 4 shapes. W8-1 took two PRs, the route's shape then the rollup |
-| 8 | Dedup and carriers | **in progress** | 48 findings landed, 16 killed, 0 open, W11 17 unstarted | **The count is findings, and it was PRs until a completeness audit measured it.** 42 sub-PRs closed 48 findings: five closed none (#659 pins what #676 then built, #678 corrects prose, #686 follows up an already-killed row, #683 and #687 land the surviving halves of rows they kill), two closed one each and were never counted (#616, #618, rows written at the audit), and four closed two each (#653, #681, #698, which kills W3b-2 and lands W11-32, and #705, which builds W3b-12 and W9-4). #699 kills W9-5 and W9-6 together, #706 kills W5-1 while landing the pinning test that kill argues for, #703 kills W3b-9 the same way, and #719 kills all four of W3b-11's sub-items, three of which stay killed after #728 un-killed the art ladder and built it as a hook, while landing the three drifts the extraction would have removed. **Which of these re-derive and which are carried by hand.** *Killed while executing* carries one row per finding, 20 of them. **Four do not count toward this phase's killed figure, and the row says why in each case**: phase 5's W1.1-l, whose *Found by* column carries the phase; W3b-9's kill that #725 reversed by measuring a different helper shape; W11-10's job-block half, whose four getters built; and W3b-11's art ladder, un-killed at #728 and built as `useArtFallback`. The last two are the same shape and are now counted the same way, in *Landed*. The phase's killed figure is sixteen. *Landed* carries a `Phase` column, so **the sub-PR figure re-derives by counting rows** and 42 is that count. The findings figure does not re-derive: a `Finding IDs` cell holds zero, one or several, it mixes landed with killed, and #616 and #618 sit under phase 6 and 7 while this phase's scope line claims them. Splitting `Finding IDs` into landed and killed is what would close it. **Open, by ID**: none. **W6-1 was the last of them and closed at #730**, so what remains in this phase is wave 11's 24 and nothing else. **No open item carries `safety-path` any more**: W5-1 and W5-3 were the last two, and each was driven under C9 before it closed. **The list used to carry W3b-4 while the count beside it already excluded that item**, #696 having moved it to phase 9, so the two disagreed by one from the day that PR landed. **W11 is in this phase's scope and is 26 of 43 done**: it is **44 items over seven lanes**, enumerated `W11-1` to `W11-44` on 2026-08-10 because it had no IDs and the phase could not name what was left. **24 remain**: W11-32 closed at #698, out of the same function W3b-2 was measured in, then W11-15 and W11-12 built and W11-39 killed at #717, W11-3, W11-22 and W11-24 at #723, W11-42, W11-19, W11-18 and W11-10's getters at #733, W11-5, W11-33, W11-34, W11-35, W11-40 and W11-43 at #735, and W11-29, W11-31 and W11-20's kill at #737. The original `~25` denominator never contained it. Two of the 44 are defects rather than duplications, W11-15 and W11-40. **What subset lets the wave read `done` is an open scoping call for the owner.** **C14 is settled.** W9 took three PRs, all landed: 9 cycles to 2, and neither counter S7 named moved. W3's `api/deps.py` took two, both landed (#670, #681). **W3b-4 is no longer counted here: it folds into phase 9's W4.1** (owner, 2026-08-10). 22 of its 40 `.set-row` sites are in `GeneralPanel.tsx`, which W4.1 rewrites, and `<SetRow>` and `FIELDS` describe the same rows, so whichever landed second would be written against the other. One PR does both. `:495` stated the collision and never ordered it; there is no order to settle now |
+| 8 | Dedup and carriers | **done** | 48 findings landed, 32 killed, 0 open, W11 0 unstarted | **The count is findings, and it was PRs until a completeness audit measured it.** 44 sub-PRs closed 48 findings: seven closed none (#659 pins what #676 then built, #678 corrects prose, #686 follows up an already-killed row, #683 and #687 land the surviving halves of rows they kill, #743 corrects #735, and #744 strikes the wave's last sixteen kills and builds the two gates their rows promised), two closed one each and were never counted (#616, #618, rows written at the audit), and four closed two each (#653, #681, #698, which kills W3b-2 and lands W11-32, and #705, which builds W3b-12 and W9-4). #699 kills W9-5 and W9-6 together, #706 kills W5-1 while landing the pinning test that kill argues for, #703 kills W3b-9 the same way, and #719 kills all four of W3b-11's sub-items, three of which stay killed after #728 un-killed the art ladder and built it as a hook, while landing the three drifts the extraction would have removed. **Which of these re-derive and which are carried by hand.** *Killed while executing* carries one row per finding, 36 of them. **Four do not count toward this phase's killed figure, and the row says why in each case**: phase 5's W1.1-l, whose *Found by* column carries the phase; W3b-9's kill that #725 reversed by measuring a different helper shape; W11-10's job-block half, whose four getters built; and W3b-11's art ladder, un-killed at #728 and built as `useArtFallback`. The last two are the same shape and are now counted the same way, in *Landed*. The phase's killed figure is thirty-two, which is 36 rows less those four. *Landed* carries a `Phase` column, so **the sub-PR figure re-derives by counting rows** and 44 is that count. The findings figure does not re-derive: a `Finding IDs` cell holds zero, one or several, it mixes landed with killed, and #616 and #618 sit under phase 6 and 7 while this phase's scope line claims them. Splitting `Finding IDs` into landed and killed is what would close it. **Open, by ID**: none. **W6-1 was the last of them and closed at #730**, and wave 11 closed behind it at #744. **No open item carries `safety-path` any more**: W5-1 and W5-3 were the last two, and each was driven under C9 before it closed. **The list used to carry W3b-4 while the count beside it already excluded that item**, #696 having moved it to phase 9, so the two disagreed by one from the day that PR landed. **W11 is in this phase's scope and is 43 of 44 settled**, the denominator being the wave's own 44 rather than the 43 rows of the measurement table, which omits the already-closed W11-32: it is **44 items over seven lanes**, enumerated `W11-1` to `W11-44` on 2026-08-10 because it had no IDs and the phase could not name what was left. **None is unstarted**: W11-32 closed at #698, out of the same function W3b-2 was measured in, then W11-15 and W11-12 built and W11-39 killed at #717, W11-3, W11-22 and W11-24 at #723, W11-42, W11-19, W11-18 and W11-10's getters at #733, W11-5, W11-33, W11-34, W11-35, W11-40 and W11-43 at #735, W11-16, W11-25, W11-26, W11-27, W11-28, W11-37 and W11-21's constant at #732, W11-29, W11-31 and W11-20's kill at #737, and the last sixteen killed at #744. The original `~25` denominator never contained it. Two of the 44 are defects rather than duplications, W11-15 and W11-40. **The wave is closed but for W11-2, which is deferred rather than killed**: it is the carrier for #709's raw `imdbId` sentinel and nothing else wants it, so it lands when that issue does. That is why the row reads `done` with an item still open against it, the same way phase 6 reads `done` at 6 of 8. **C14 is settled.** W9 took three PRs, all landed: 9 cycles to 2, and neither counter S7 named moved. W3's `api/deps.py` took two, both landed (#670, #681). **W3b-4 is no longer counted here: it folds into phase 9's W4.1** (owner, 2026-08-10). 22 of its 40 `.set-row` sites are in `GeneralPanel.tsx`, which W4.1 rewrites, and `<SetRow>` and `FIELDS` describe the same rows, so whichever landed second would be written against the other. One PR does both. `:495` stated the collision and never ordered it; there is no order to settle now |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding. W4.1 absorbed phase 8's W3b-4, so its one PR closes both |
 | 10 | Issues that land here | not started | 1 of 8 | #682 landed at #692. `ISSUE_LANDING_PLAN.md` holds the per-issue reasoning and dies when #552 merges |
 
@@ -337,6 +337,7 @@ nobody can tell a missing row from a PR that closed no finding.
 | #735 | 8 | W11-5, W11-33, W11-34, W11-35, W11-40, W11-43 | `ix_action_step_run_id`, `f7a8b9c0d1e2`, `buildinfo.project_root`, `settings._BAD_CRON`, `restore._check_schema`, `snapshot.condemned_keys`, `test_a_runs_journal_read_searches_an_index_rather_than_scanning`, `test_both_job_families_refuse_a_bad_cron_in_the_one_declared_sentence`, `TestProjectRoot` | **yes, `f7a8b9c0d1e2`**, one `create_index`, additive | **W11-40 is the only defect in the batch and the only one whose value is not lines.** `SCAN action_step` to `SEARCH ... USING INDEX`, on a table retention never sweeps; `services/retention.py`'s exclusion untouched. **Code net, non-comment and non-blank: -3, -5, -3, -3, +4 with an 11-line revision, and -2**, against stated -3, -7, -5, -3, index-only and +2. Two exact, two short in the same direction, and W11-43 beating its estimate. This row first carried the same diff counted as total lines (-2, -2, +2, -1, +7), which is not the basis the rest of the table uses and reversed the reading; corrected at #743. W11-33's second half was already built at #720. W11-43 chose the consolidation over the gate: after it `src/` holds one multi-parent walk, so a ban would scan a population of one. W11-35's `PlexError` arm carries two causes and is #734 |
 | #743 | 8 | none new; corrects #735 | `test_both_job_families_refuse_a_bad_cron_in_the_one_declared_sentence`, `f7a8b9c0d1e2`'s docstring, `ActionStep.run_id`, `api.leaving_soon.sync_leaving_soon` | no | **#735's own review lanes reported after it merged, and both found defects in its new work.** **The cron test could not fail for the duplication it exists to prevent**: the copies it replaced rendered identically, so asserting over the two responses stays green when an arm re-inlines the sentence (rule 144). A source count derived from the declaration's own prefix closes it. **It was fail-open a second way the lane did not reach**, found by driving it: raising `_BAD_CRON` unformatted passes every check, because the raw template starts and ends with the halves being compared and `{reason}` satisfies the length bound, shipping the placeholder to the operator (rule 21). Two assertions, driven red separately. **Three rule 7/24 claims corrected**: the revision named `_refresh_overrides` as a second `action_step` reader when it reads `WhitelistEntry` (it is `_revive`), credited `render_as_batch` for an index that never goes through `batch_alter_table`, and `leaving_soon`'s comment said the third arm was the unlinked case when a client `PlexError` lands there carrying its own log text (#734). **The column and test docstrings each restated the revision's reasoning in full** and are pointers now (rule 144). **Every figure #735 published was on the wrong basis**: it counted total lines into a table that is code-net throughout, which read as five of six costing more than stated. Code net: -3, -5, -3, -3, +4, -2, so two are exact and W11-43 beats its +2 estimate at -2. Same slip as #733's getters row one PR earlier, opposite direction. No behavior change, so `STATUS.md` is untouched |
 | #737 | 8 | W11-29 (CSS half), W11-31; W11-20 (killed) | `.filter-chip button` / `.fchip-x` / `.tag-chip button` / `.inst-chip .chip-x`, `styles-chip-dismiss.test.ts`, `base.transport_failure` / `refused_redirect` / `http_failure`, `test_every_client_failure_sentence_is_worded_in_exactly_one_place` | no | **Two builds and a kill, and none of the three is decided by lines.** **W11-29 is six controls of that shape, not three**: five are a chip ✕ and the sixth (`.nudge-x`) dismisses a notice, and **both "borrows" comments are in the CSS**, deleted rather than re-pointed: 22-queue-filters said the filter chip borrowed `.tag-chip`'s shape, 29-setup named `.fchip-body`, `.fchip-x` and `.tag-chip button` as the pill it matched. Four take one grouped rule in 04-buttons.css and keep their own differences; **`.bar-x` is the fifth and stays out**, having a visible border, a hover that turns it red, and no reset of that file's `button` padding, so under the global `box-sizing: border-box` its used width is 29.2px against the 24px `--tap-min` it declares. Folding it in would need a `padding` declaration whose one job is to cancel a shared one. Its dead `width` is filed as #736, a question rather than a defect: it is over the tap floor, not under it. **The proof is computed styles, since the mockup rule does not reach a change that must move nothing**: 25 properties off each of the six controls, in the ancestry each renders in, against values captured before the shared rule existed. Moving declarations to a file that loads EARLIER is a cascade change no diff shows. Driven red twice, one token in the shared rule failing all four members and the rule relocated after them failing the shape and the load-order assertion. Two jsdom limits bound what it can read and are written into the test itself. Five stylesheets, +57/-60, -29 without comments. **W11-31 is rule 144's exact shape and the line figures answer a different question**: four sentences at **eleven hand-written raise sites**, and a fifth rule 72 pulled in (`expected JSON from`, at `get_json` and `plextv._post`), so four factories in `base.py` beside `refuse_mutation`, which is the same move for the guard's refusal. The plan's four is right and the scout's five over-counted `too many redirects`, written once per file. **`public.py` carries three copies, not two, and one of them had already drifted**, spelling the method `GET` where `base.py` interpolates it, which is the failure the row exists to stop. **The comment the row calls verbatim is a paraphrase** and each copy held half the fact, `_send`'s naming the three timeout kinds and their seconds, `_mutate`'s naming connect versus slow-to-answer; the factory carries both. `TimeoutException` being a `TransportError`, the two `except` arms at each of the three sites collapse to one. **One behavior moves and it is inert**: `http_failure` reads Retry-After for every caller, where the streamed public download raised that sentence without it, and `IntegrationError.retry_after`'s one reader (`clients/plextv.py`) never sees a `PublicClient` error. The gate is an AST walk reading every `IntegrationError(service, message)` as a template, driven red by writing one sentence back into `public.py`, with a second test pinning the blind spot at empty (a message assembled into a local is a copy the template cannot see, rule 147) and a third proving the reader against a literal, both f-string spellings and the two forms it rejects. +28 lines, most of it the docstrings that used to be half-stated at each site. **W11-20's kill is on the finding body and in *Killed while executing*.** `STATUS.md` untouched: nothing an operator can observe moved, and the computed-style test is what says so |
+| #744 | 8 | none new; W11-1, W11-4, W11-6, W11-7, W11-8, W11-9, W11-11, W11-13, W11-14, W11-17, W11-23, W11-30, W11-36, W11-38, W11-41, W11-44 (all killed) | `test_the_never_loaded_sentences_are_pinned_per_sentence`, `test_every_field_sm_box_is_a_label_over_one_control_or_a_named_div` | no | **The wave's last sixteen kills are recorded, and the two gates those rows named are built.** Each kill carries a `> Killed:` block on its finding body, seven blocks over seven lanes, each leading with the kill. **W11-36's gate was already there and counted the wrong thing**, so the new one is the measurement rather than the sentence: the reasoning is on the finding body. **W11-23's gate declares a rule 26 boxes rode and nothing stated**, and the finding body says what it deliberately cannot read. **Thirteen mutations driven red plus an empty walk against each**, and the old word count was run against the drift the new one catches and stayed green. **Five of the thirteen came from this branch's own correctness review, and both gates were fail-open until it ran.** Three holes were one hole: a class name or a sentence declared in a shipped `.ts` module leaves the matcher AND the count at once, and both walks read `.tsx` alone, so the count was never an independent half (rule 145). Both now use `_shipped_frontend_source`, which already existed, and so does `test_the_reload_advice_population_is_pinned_per_file` beside them (rule 72). The fourth: `_NEVER_LOADED` matched forward from `could`, so a clause added at the FRONT of one copy left the key byte-identical; the key is the whole run between two text delimiters now. The fifth: `_without_line_comments` split on a bare `//`, which truncated any line holding a URL and took the rest of it out of every walk in this file. The gate's own name was wrong too, and rule 118 is why it changed: it cannot see a label over two controls, because a ternary and a `.map()` read backwards in source text. No `src/` change, so no counter moves and `STATUS.md` is untouched |
 
 ### Killed while executing
 
@@ -371,6 +372,22 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | W11-20, bundling the navigation callbacks | The depth is the whole claim and it is wrong: nine prop names over ten hand-offs from `App`, seven consumed by its own child and three going exactly one level further (`onGoToPlexSettings` and `onGoToReview` through `ReapPlan`, `onGoToPolicy` through `Settings`). The plan's six is the `onGoTo*` subset; the three `onOpen*` jumps are the same thing uncounted. Nothing is drilled past depth 2, so `~40` sizes the plumbing and about nine lines of it are pass-through. Bundling removes no place a future author has to remember something, since a prop that stops being forwarded is a type error at both ends, and `navIntent.ts` already collapsed the part that could drift | Phase 8, owner's ruling 2026-08-10, re-derived before writing the row |
 | W11-39, one read for the overrides and their expiries | Built as the row asks and measured: `whitelist.py` +14/-7 and `review.py` +2/-4, a **net +5**. The loop that splits one result set into two maps is ten lines, where each read it replaces is two statements, so the extraction is larger than what it removes (S5). **"Back to back at four call sites" is wrong**: two are adjacent pairs, `breakdown.py`'s pair sits 40 lines apart across the condemned read and `effective_condemned`, and `review.py`'s fourth sits about 150 apart, so collapsing either moves a read rather than removing one. `review.py:489` reads `spare_expiries` alone and would go from a filtered two-column select to an unfiltered three-column one. The benefit is two fewer SELECTs against a table holding one row per manual override, on two page loads, and the only version reaching the row's own figure widens the `overrides()` read the executor issues before every item of a live reap (rule 112) | Phase 8, built and measured, then reverted |
 | W3b-11, four frontend hooks | All four extractions net positive, and two of the four counts are wrong. Non-blank lines throughout. The image-fallback ladder is **two** ladders at **four** sites: 14 lines at each of `Backdrop` and `WhyHero`, plus a five-line comment that relocates, so 33 leave and 35 come back, 29 of them a leaf module both callers can import without a cycle. The dirty-report **5** is exact and is the sub-item worth least, 20 out against 29 back, because rule 146's obligation is per-site and a hook cannot carry it. The test-result pairing is **four** sites, and it stays a kill on shape rather than on lines: one stores a union of two payload shapes and reads the held result at three places, the others store one and read it at one. The password form is **two**, 8 shared lines out, three boxes against two and three complaint branches against two. What the measurement found instead is **three of the four test surfaces computing the fingerprint at settle time**, where the boxes have already moved, so a badge vouches for an address nobody tried; plus a live complaint announced on every keystroke on the wizard's password step, and one ungenerated copy of the length floor. All fixed, with a gate over the fingerprint family. **One of the four is un-killed: the art ladder lands as a HOOK.** The kill measured a shared component, whose chrome the two sites do not share; `useArtFallback` shares the ladder alone, nets about zero and retires two comments cross-referencing each other. The other three stand | Phase 8, PR #719, the gate driven red and its own first two drafts fail-open; the ladder rebuilt at #728 |
+| W11-1 | The rewrite has to fabricate a `rating_key`, and one fallback is the Tautulli spine rather than the dataclass default. The value-returning helper is on the finding body, not built | Phase 8, the wave 11 measurement |
+| W11-4 | The dead arm is kept so stored explanations still decode, and four cross-references say so. About -1 line | Phase 8, the wave 11 measurement |
+| W11-6 | The shape the row names is not in `services/breakdown.py` | Phase 8, the wave 11 measurement |
+| W11-7 | #655's AST gate already pins what a shared constructor would | Phase 8, the wave 11 measurement |
+| W11-8 | `_retire` is already the helper, and a predicate table would detach three safety comments. `safety-path` | Phase 8, the wave 11 measurement |
+| W11-9 | `_exclusion_landed` gates the canary abort, so no indirection there for tidiness | Phase 8, the wave 11 measurement |
+| W11-11 | A helper costs +7. The residue is a gate over `time.time()`, not built | Phase 8, the wave 11 measurement |
+| W11-13 | Unifying on the base clamp is a live behavior change, `notify/discord.py` having a second reader | Phase 8, the wave 11 measurement |
+| W11-14 | Two numbers on purpose. A shared constant would fuse two unrelated knobs | Phase 8, the wave 11 measurement |
+| W11-17 | The shared part is the ref protocol rather than the body, so `useEdge(flag, {onFall})` is the shape. Not built | Phase 8, the wave 11 measurement |
+| W11-23 | Killed as a component at about -7 lines (S5). The gate declaring the rule those 26 boxes rode is built instead | Phase 8, this PR, driven red on four mutations and on an empty walk |
+| W11-30 | The 66 sites do not agree, so a one-form helper is a rule 21 regression. Two operator sentences survive it, not built | Phase 8, the wave 11 measurement |
+| W11-36 | Killed as a dedup. The gate that existed counts the WORD `reload`, so a per-sentence pin lands instead of a component | Phase 8, this PR, the drift shown green past the old count |
+| W11-38 | The status half is the rename the kill describes. The message half is a fence, not built | Phase 8, the wave 11 measurement |
+| W11-41 | Byte-identical DDL over 15 models, so an `IntPk` alias is a rename | Phase 8, the wave 11 measurement |
+| W11-44 | Nothing can be shared, and sharing costs +10 on the boot path. The gate is not built | Phase 8, the wave 11 measurement |
 
 ## Execution
 
@@ -3607,6 +3624,38 @@ names (~14).
 **W11-8** `sync_protection_lists`' four parallel slug sets and four hand-written sweep calls (~10,
 `safety-path`: rule 115's `when=` predicates survive verbatim).
 
+> **Killed: W11-1, W11-4, W11-6, W11-7 and W11-8.** None is built. W11-1 is the only one a
+> different shape rescues.
+>
+> **W11-1** is 17 tests and 20 reads over 3 modules, not 22 sites, and one fallback is
+> `row.get(_SPINE_LIBRARY)` rather than the dataclass default. The rewrite the row asks for
+> fabricates a `rating_key`: a sentinel `PlexItem` has to invent one, and `identity.py`'s field has
+> no default. **The shape that would write the rule once is one pure helper returning the seven
+> display values off an optional `PlexItem`**, called from `library_index.py`, `snapshot.py` and
+> `season_scan.py`. Neither objection touches a helper that returns values instead of an object.
+> Nobody has costed it.
+>
+> **W11-4** The `others_watching` arm cannot fire: `_kept_phrase`
+> runs only over `protections_fired`, which is written from `r.fired` alone, and the historical
+> gate's PROTECT branch was unreachable and never shipped in a release. The arm is kept so stored
+> explanations still decode, and `api/review.py`, `engine/gates.py`, `WhyPanel.tsx` and
+> `policyMeta.ts` each say so, which rule 72 would pull into the change. Worth about -1 line. No
+> table either: `min_dormancy` and `season_progression` return computed phrases, and the arm ORDER
+> is the rule.
+>
+> **W11-6** `services/breakdown.py` holds one count/bytes/unknown triple, four pairs of differing
+> arity and one dict. The three parallel re-zipped dicts are not in the file.
+>
+> **W11-7** Superseded by the shape this row wanted. `test_repo_hygiene.py`'s
+> `_client_construction_sites` walk pins all six *arr constructions and their argument set (#655),
+> and `test_every_arr_client_is_built_with_the_same_arguments` says in its own docstring that a
+> shared constructor "would only bind the sites that call it".
+>
+> **W11-8** `_retire` is already the helper and rule 115's four conditions live inside it. The four
+> call lines are four different `when=` predicates over four different slug sets, and moving them
+> into a table would detach three safety comments from the case each explains. `safety-path`, so
+> the prime directive settles it whatever the arithmetic says.
+
 **Concurrency and caching.** **W11-9** Two identical bounded poll loops in the executor (~10).
 **W11-10** A lazy
 `app.state` getter written four times, and two detached-background-job blocks that share their
@@ -3622,6 +3671,27 @@ Concurrency bounds written per
 caller, with `services/fairness.py`'s `_enrich_titles` fanning out up to 80 live Seerr calls unbounded while
 `auth/ratelimit.py:200` ships an unused `ConcurrencyGate` (~20, `behavior`: adding the bound is a
 fix, so ship it separately).
+
+> **Killed: W11-9, W11-11, W11-13 and W11-14.** None is built.
+>
+> **W11-9** The two loops run opposite polarity and return different things. The no-trailing-sleep
+> guard really is byte-identical at both, and `_exclusion_landed` gates the canary abort, where the
+> prime directive does not allow indirection for tidiness. No shape at an acceptable price.
+>
+> **W11-11** 12 sites, not 11, and the 7 are in `_run_scan_locked` rather than `run_scan`. A helper
+> costs +7. **The shape is a gate, not a helper.** The rule at the 12 sites is "monotonic, rounded
+> to integer milliseconds", and nothing in the tree states it. An assert under `src/` that no
+> duration is derived from `time.time()` would.
+>
+> **W11-13** Correct for a reason the row does not give. `IntegrationError.retry_after`'s sole
+> reader treats `0.0` and `None` alike, and `notify/discord.py` has a second reader of its OWN
+> parser that does not: `None` skips the retry where `0.0` retries at once. Unifying on the base
+> clamp is a live behavior change, so the kill is firmer than the row.
+>
+> **W11-14** Two numbers on purpose. 500 is a debounced simulator replay; 100 is the stride the
+> scan's own `emit(Progress(...))` uses, so it is progress granularity rather than a yield budget.
+> A shared constant would fuse two unrelated knobs. The only residue is naming `snapshot.py`'s bare
+> `100`, two sites and one line.
 
 > **Killed: W11-10's two detached-background-job blocks. Its four getters are built.**
 > **W11-10 splits, and both halves of the disagreement were right about a different half.**
@@ -3700,6 +3770,13 @@ half was
 already extracted (~15). **W11-20** Six navigation callbacks drilled 3 to 4 levels over a
 destination type
 `navIntent.ts` says is already one value (~40). **W11-21** Three hand-rolled 250 ms debounces.
+
+> **Killed: W11-17, and the residue is a protocol rather than a body.** Not built. Six sites draw
+> that shape, 4 to 5 of them hand-written and the rest already hooks, and no two of the residue do
+> the same work, which is what the row's `~20` was counting. What they share is the ref protocol,
+> and three of them carry the same prose about it. **The shape that would write it once is
+> `useEdge(flag, {onFall})` holding the callback in a ref**, which also makes the bug unwritable:
+> the mirror belongs after the `if`, not inside it.
 
 > **Killed as a hook, landed as the constant. The three agree on 250 ms and on nothing else.**
 > `usePolicyProbe` sets one value off a SERIALIZED key, because the request is a fresh object every
@@ -3794,6 +3871,32 @@ three near-copies, where one comment says outright it "borrows" the other's shap
 and 14
 sites calling `.toLocaleString()` where `count()` exists (~20).
 
+> **Killed: W11-23 as a component, and W11-30's plural helper.** W11-23's replacement gate is
+> built here. W11-30's two sentences are not.
+>
+> **W11-23** is 26 containers across 9 files, not 21 across 7, in 8 distinct shapes, and the
+> extraction nets about -7 lines (S5). **The rule holding across all 26 is the finding, and it was
+> declared nowhere**: `.field-sm` is a `<label>` wherever exactly one control renders inside it, so
+> the box names its control with no `htmlFor`/`id` pair to keep in step, and a `<div>` wherever no
+> single control does. A `<label>` around two controls names the first and leaves the second
+> nameless. `test_every_field_sm_box_is_a_label_over_one_control_or_a_named_div` pins the
+> population per file and per tag, requires `span.field-label` as the first child of each box, and
+> reconciles the boxes it read against every line mentioning the class, so a spelling the matcher
+> cannot parse fails rather than drops out (rule 147). **What it deliberately does not do is count
+> controls.** The two facts that decide label-versus-div are invisible in source text: `ListModal`
+> holds a `<select>` and an `<input>` in the arms of a ternary, so one renders, and `ServiceModal`
+> holds one `<select>` inside a `.map()`, so many do. A tag count reads both backwards. Driven red
+> on four mutations and on an empty walk. `grep -c "field-sm" GeneralPanel.tsx` is zero, so nothing
+> here waits on phase 9's W4.1.
+>
+> **W11-30** The 66 sites do not agree. Four are irregular and ten more need verb or pronoun
+> agreement, so a one-form `plural(n, "person")` prints "persons" and "librarys", a rule 21
+> regression, and a safe two-form helper saves nothing. **What the kill takes with it is two
+> operator sentences written verbatim more than once**: "N size(s) unknown" at three sites
+> including `format.ts`'s own, and the held-back-unmeasured sentence at two. Rule 144's exact case,
+> on deletion copy. `format.ts` pluralizes four times itself, so the file to centralize into is
+> part of the problem. Two named sentence helpers there are the shape, and they are not built.
+
 > **Built: W11-29, the CSS half, four of five controls.** Owner's ruling, 2026-08-10: one shared
 > class, no shared component, and a computed-style test rather than a mockup. **Six controls draw
 > this shape, not three.** Five are a chip's ✕ (`.filter-chip button` and `.fchip-x` in
@@ -3841,6 +3944,29 @@ which drops "Reload to try again", is deliberate: #195, a reload inside an edito
 edits with it). **W11-37** Three identity entries in `CHECK_COPY` that the fallback already
 produces. **W11-38** The
 `instanceof ApiError` unwrap ritual five times.
+
+> **Killed: W11-36 as a dedup, and W11-38's status half.** W11-36's replacement gate is built here.
+> W11-38's message half is not.
+>
+> **W11-36** Four verbatim copies is right, plus an unnamed `AboutPanel`/`BackupPanel` pair the
+> measurement found. **The gate that already existed cannot see the drift the row is about**:
+> `test_the_reload_advice_population_is_pinned_per_file` matches the WORD `reload` per file, so a
+> panel can reword the sentence around the word and stay green. Rewriting one of the four "these
+> settings" copies as "your settings" leaves that count untouched and passing.
+> `test_the_never_loaded_sentences_are_pinned_per_sentence` pins the distinct sentences instead,
+> keyed by sentence, so a fifth panel picking one up has to add itself to a list where the four
+> already on it are in view. **The population is wider than the row knew**: 25 sentences at 32
+> sites, five of them duplicated, with three of those five named by nobody, the library list across
+> `PlexPanel` and `SetupPlexStep`, the connections line across `ServicesPanel` and
+> `SetupConnectStep`, and `PolicyRuleEditors`' rule-picker sentence twice in one file. **The
+> deliberate fifth copy is a key of its own with its reason beside it**: `PolicyEditor` drops
+> "Reload to try again." because that panel holds unsaved edits and a reload takes them (#195).
+> Driven red on four mutations and on an empty walk.
+>
+> **W11-38** Nine sites in two rituals, five status and four message. A status helper would be the
+> rename the kill describes. **A message helper is not a rename**: it would hold "an error that is
+> not an `ApiError` never shows the operator its raw text", which four call sites can leak past
+> today, and `api.ts` already explains why a `TypeError` falls past every branch. Not built.
 
 > **Built: W11-31, and lines are not what decided it.** Owner's ruling, 2026-08-10: this is rule
 > 144's exact shape, so the scout's -6 and the verifier's ~0 both measure lines, which is not
@@ -3897,6 +4023,9 @@ life of the install (one additive `create_index` revision). **W11-41** An `IntPk
 the
 existing `UtcTimestamp` idiom renders byte-identical DDL for 13 models.
 
+> **Killed: W11-41.** 15 models, not 13. Byte-identical DDL means there is no invariant that can
+> drift, so an `IntPk` alias would be a rename.
+
 > **Killed: W11-39 builds to +5 lines, and only two of its four sites are adjacent.** Built as the
 > row asks, with `overrides_and_expiries` doing the three-column read and `spare_expiries` and
 > `overrides_effective_at` deriving from it, then measured: `whitelist.py` +14/-7 and `review.py`
@@ -3923,6 +4052,11 @@ times, with
 to sit at the same depth, so moving either file breaks one of them silently. **W11-44** `preflight → migrate
 → serve` written three times where only `serve` is genuinely per-environment (~23, `behavior`, and
 it is a deletion tool's boot path, so rank it last).
+
+> **Killed: W11-44. Sharing costs +10 on the boot path.** Not built. The three differ in process
+> model, alembic addressing and failure handling, so nothing can be shared. **The shape is a gate
+> over the three boot paths, not shared code**: the invariant is that none of the three serves a
+> schema it did not just bring to head, and `launcher.py` is the only place that says so.
 
 > **W11-42: the macOS probe is built at code -8, and the provenance pair is settled as
 > deliberate.** The five populations all hold. What was built is the last of them, the boot probe
@@ -3985,7 +4119,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-20 | 6 callbacks, depth 3 to 4, ~40 | 9 prop names over 10 hand-offs, 7 at depth 1 and 3 at depth 2 | **killed** (owner, 2026-08-10): a missed prop is a type error |
 | W11-21 | 3 hand-rolled 250 ms debounces | 3 right; they agree on the number and on nothing else | **settled: the timer is killed, the number is shared.** Not on lines, on the linter |
 | W11-22 | mirror written 3 times | right, plus 3 child effects and a 4th copy of the guard in `ServiceModal` | **built**, code net 0; the value is `ScheduleModal`'s one-term mirror |
-| W11-23 | 21 sites across 7 files, ~40 | block above | kill |
+| W11-23 | 21 sites across 7 files, ~40 | block above | **killed**, and the gate that replaces it is built |
 | W11-24 | same component twice, ~28 | right on the copies; **-23 is wrong, code net +2** | **built**, for the copy divergence, not the lines |
 | W11-25 | 12 blocks, 4 sets, ~28 | right; the 12 are the score/chip/status families, and the strip's 4 are a fifth set the count excludes | **built**, into `23-queue-chips.css`, with the cascade test |
 | W11-26 | 3 wrappers, each commented at the other two | 3 of 6 that shape, 2 commented; they point at `ScanLine` and at `ScanBar`, not both at `ScanLine` | **built**, 3 of 6, `ReapBar` and `ReapConfirm` excluded |
@@ -3997,7 +4131,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-33 | dead branch at `restore.py:201`, refused 12 lines earlier, sentence ×4 | branch at 187, the gap is 11 lines; the ×4 half closed at #720 | **built**, code -5, the branch alone |
 | W11-34 | twice in one function, pinned by nothing | right; **-3 code, not -5** | **built**, code -3, and the pin is the value |
 | W11-35 | 3 arms, one 400 | right, all three identical and **-3 is exact**; `PlexError` carries two causes | **built**, code -3 |
-| W11-36 | 4 copies plus a deliberate 5th | right, plus an unnamed pair in `BackupPanel` and `AboutPanel` | kill as a dedup, write the hygiene gate instead |
+| W11-36 | 4 copies plus a deliberate 5th | right, plus an unnamed pair in `BackupPanel` and `AboutPanel`; the family is 25 sentences at 32 sites | **killed** as a dedup, and the hygiene gate is built |
 | W11-37 | 3 identity entries | right | **built**, -3, rode along |
 | W11-38 | the ritual 5 times | 9 sites in 2 rituals, 5 status and 4 message | kill, a helper is a rename |
 | W11-39 | 4 call sites, ~15 | 4 sites, only 2 adjacent; built at **+5** | **killed**, S5 |
@@ -4160,8 +4294,12 @@ to roughly zero; nobody asked what else would write the rule once. Each bullet b
   of the three serves a schema it did not just bring to head, and `launcher.py` is the only place
   that says so. Same answer W11-43's row already reached from the other side.
 
-**Ranked, best first, and none of it is built here.** The order is how much a future author has
-to keep in step, not how many lines come out. **W11-36**, three lines over two sentences at six sites. **W11-23**, an accessibility rule with 26 instances and zero declarations.
+**Ranked, best first. The top two are built; nothing below them is.** The order is how much a
+future author has to keep in step, not how many lines come out. **W11-36**, three lines over two
+sentences at six sites, **built**, and the family turned out to be 25 sentences at 32 sites rather
+than two, so it is a pin and not three lines. **W11-23**, an accessibility rule with 26 instances
+and zero declarations, **built**, and the count of controls stayed out of it because a ternary and
+a `.map()` read backwards in source text.
 **W11-30's two sentences**, deletion-path copy written twice verbatim. **W11-1**, a degradation
 rule at 20 sites where the wrong answer is a fabricated value. **W11-17**, where the residue is a
 protocol rather than a body. **W11-38's message half**. **W11-10's four getters** from the
