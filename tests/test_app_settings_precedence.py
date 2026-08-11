@@ -9,9 +9,11 @@ two reach neither: ``get_trusted_proxies`` decodes the seed and cleans the store
 ``get_timezone`` validates both and falls through to a third source.
 
 The gate below is what neither helper buys. ``_env_seeded_getters`` reads the module and
-collects every function that takes a stored row and a ``Settings``, so an eighth one fails this
+collects every function that calls ``_get`` and takes a ``Settings``, so an eighth one fails this
 file until its case is written (rule 145) -- including one that calls no helper at all, which
-is what an author who never read this docstring writes.
+is what an author who never read this docstring writes. The ``_get`` call is the load-bearing
+half: hiding it inside a helper is what the rejected shape would have done, and it would have
+left this walk collecting four.
 
 Getting the precedence backwards is silent, and it does not fail in a random direction. A
 stored ``false`` mistaken for "nothing stored" hands the answer back to the environment, so

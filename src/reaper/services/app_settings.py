@@ -172,12 +172,12 @@ def _env_seeded_switch(stored: Any, seed: bool) -> bool:
     """An on/off switch the environment only seeds: the stored value wins, and a missing row
     falls back to ``seed``.
 
-    Only a missing row is "nothing stored". A stored ``false`` is the operator turning the
-    switch off, and reading it as unset hands the answer back to an environment variable that
-    is usually still set, so every switch here re-arms itself on the next restart with nothing
-    said (rule 1's shape for a seed). Written here rather than at each getter so the next
-    env-seeded switch inherits the order; ``tests/test_app_settings_precedence.py`` fails until
-    that switch also has a case.
+    Only a missing row is "nothing stored". A stored ``false`` is the operator turning the switch
+    off. Reading it as unset hands the answer back to an environment variable that is usually
+    still set, so the switch re-arms itself on the next restart with nothing said (rule 1's shape
+    for a seed). Written here rather than at each getter, so the next env-seeded switch inherits
+    the order. ``tests/test_app_settings_precedence.py`` fails until that switch also has a case,
+    as long as it reads its row through ``_get``, which is the only call its walk can see.
     """
     return seed if stored is None else bool(stored)
 
@@ -186,10 +186,11 @@ def _decrypted_or_absent(box: SecretBox, stored: Any) -> str | None:
     """A stored credential under the current key, or ``None`` when it will not decrypt.
 
     A credential written under a secret key that has since rotated reads as ABSENT rather than
-    raising: a broken notification URL or API key must never break a scan, a plan, or a run,
-    and re-entering it in the UI heals it. Absent is also what every caller must agree it
-    means, since a send that skips it and a UI that calls it connected are the same credential
-    described two ways.
+    raising. A broken webhook must not break a scan, a plan or a run, and a broken API key must
+    not break a request path; re-entering either in the UI heals it. Every caller has to agree
+    on that reading, because a send that skips the credential and a panel calling it connected
+    are the same credential described two ways. ``GeneralSettingsOut.api_key_set`` resolves
+    through ``get_api_key`` for that reason, having read the row until 2026-08-10 (rule 76).
     """
     try:
         return box.decrypt(str(stored))
