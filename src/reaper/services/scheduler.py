@@ -57,6 +57,7 @@ from reaper.services import (
     history_sync,
     imdb_dataset,
     list_config,
+    plex_link,
     retention,
     scan_runner,
 )
@@ -491,18 +492,26 @@ async def check_for_updates(
 async def sweep_expired_sessions(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Delete auth sessions whose window has closed. Not operator-schedulable (see the id).
+    """Delete auth state whose window has closed. Not operator-schedulable (see the id).
+
+    Two tables, one job. Auth sessions were here first; pending Plex PINs were swept only
+    inside `plex_link.start_pin`, which runs when somebody starts ANOTHER PIN, so an
+    abandoned sign-in on an install where nobody starts one again sat there indefinitely
+    (#710). They are the same shape with the same TTL and the same argument for having no
+    off switch, so they share the firing rather than growing a second job with a second
+    interval to keep in step.
 
     Swallows its own failures like every other job here: a locked database must not stop
     the scheduler, and nothing depends on this having run -- an expired session is refused
-    on sight whether or not its row is still there.
+    on sight, and an expired PIN cannot be spent, whether or not the row is still there.
     """
     try:
         async with session_factory() as session:
             removed = await sessions.sweep_expired(session)
+            pins = await plex_link.sweep_expired_pins(session)
             await session.commit()
-        if removed:
-            log.info("scheduler.sessions_swept", removed=removed)
+        if removed or pins:
+            log.info("scheduler.sessions_swept", removed=removed, pins=pins)
     except Exception as exc:
         log.warning("scheduler.session_sweep_failed", error=str(exc))
 

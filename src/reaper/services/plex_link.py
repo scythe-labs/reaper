@@ -147,6 +147,28 @@ class PinStart:
     auth_url: str
 
 
+async def sweep_expired_pins(session: AsyncSession) -> int:
+    """Delete every pending PIN whose window has closed. Returns how many went.
+
+    The twin of :func:`reaper.auth.sessions.sweep_expired`, and it exists for the same
+    reason: `start_pin` used to drop stale rows opportunistically, which only runs when
+    somebody starts ANOTHER PIN, so an abandoned sign-in on an install where nobody starts
+    one again sat there indefinitely (#710, rule 129). Both are swept by the one scheduled
+    job, `scheduler.sweep_expired_sessions`, which is on an interval and off the operator's
+    schedulable list for the argument written there: a switch on it could only ever let the
+    table grow.
+
+    An expired row authorizes nothing either way. `poll_plex_login` and `poll_link` each
+    re-check `expires_at` on read and delete the row when it has passed, so an expired PIN
+    cannot be spent whether or not its row is still on disk. This is housekeeping, not a
+    control. The caller commits.
+    """
+    result = await session.execute(
+        delete(PendingPlexLogin).where(PendingPlexLogin.expires_at <= utcnow())
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 async def start_pin(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -173,13 +195,6 @@ async def start_pin(
     """
     async with session_factory() as session:
         cid = await client_identifier(session)
-        # Opportunistically drop stale pendings so the table cannot grow without bound
-        # from abandoned sign-ins. This is the only sweeper the table has, and it covers
-        # every purpose, so a third flow added here inherits it rather than forgetting it.
-        await session.execute(
-            delete(PendingPlexLogin).where(PendingPlexLogin.expires_at <= utcnow())
-        )
-        await session.commit()
 
     async with PlexTvClient(cid, safety=safety) as plextv:
         pin = await plextv.create_pin()

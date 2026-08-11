@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from reaper import crypto
@@ -169,14 +170,22 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
 
 
 @pytest.fixture
-async def session() -> AsyncIterator[AsyncSession]:
+async def factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """A throwaway database and the factory over it, which is what the scheduler's jobs
+    take. ``session`` below is one session out of the same factory."""
     engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    factory: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+@pytest.fixture
+async def session(
+    factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
     async with factory() as s:
         yield s
-    await engine.dispose()
 
 
 class TestExpiredSessionsAreSwept:
@@ -241,6 +250,68 @@ class TestExpiredSessionsAreSwept:
 
         assert scheduler.SESSION_SWEEP_JOB_ID not in scheduler.SCHEDULABLE_JOB_IDS
         assert scheduler.SESSION_SWEEP_JOB_ID not in scheduler.DEFAULT_MAINTENANCE_CRONS
+
+    async def test_the_one_firing_sweeps_both_tables(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """`pending_plex_login` was the one table with a TTL and no scheduled sweeper.
+
+        Its rows were dropped only inside `plex_link.start_pin`, which runs when somebody
+        starts ANOTHER PIN, so an abandoned sign-in on an install where nobody starts one
+        again sat there indefinitely. Its sibling `AuthSession` is the same shape and got a
+        job with the reasoning written down (#710, rule 129).
+
+        Driven through the scheduler's job rather than through the two sweep functions:
+        those are already covered above and separately, and what this pins is that the ONE
+        firing reaches both, which is the thing the fix is. Both tables carry a live row
+        beside the expired one, so a job that emptied them wholesale would fail here.
+        """
+        from reaper.db.models import PendingPlexLogin
+        from reaper.services import scheduler
+
+        now = utcnow()
+        async with factory() as session:
+            session.add(
+                AuthSession(
+                    token_hash="dead",
+                    user_id=1,
+                    created_at=now - timedelta(days=40),
+                    expires_at=now - timedelta(days=10),
+                )
+            )
+            session.add(
+                AuthSession(
+                    token_hash="live",
+                    user_id=1,
+                    created_at=now,
+                    expires_at=now + timedelta(days=10),
+                )
+            )
+            session.add(
+                PendingPlexLogin(
+                    pin_id=101,
+                    purpose="link",
+                    created_at=now - timedelta(hours=2),
+                    expires_at=now - timedelta(hours=1),
+                )
+            )
+            session.add(
+                PendingPlexLogin(
+                    pin_id=102,
+                    purpose="login",
+                    created_at=now,
+                    expires_at=now + timedelta(minutes=10),
+                )
+            )
+            await session.commit()
+
+        await scheduler.sweep_expired_sessions(factory)
+
+        async with factory() as session:
+            tokens = (await session.execute(select(AuthSession.token_hash))).scalars().all()
+            pins = (await session.execute(select(PendingPlexLogin.pin_id))).scalars().all()
+        assert sorted(tokens) == ["live"]
+        assert sorted(pins) == [102]
 
 
 class TestTheSignInPollHonorsItsDeadline:

@@ -43,6 +43,7 @@ from reaper.services.plex_link import (
     PlexServerChoiceNeededError,
     poll_link,
     start_pin,
+    sweep_expired_pins,
 )
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
@@ -349,11 +350,17 @@ class TestThePinPurposeFence:
             assert row.purpose == purpose
             assert row.pin_id == 8321
 
-    async def test_start_pin_drops_the_expired_pendings_and_only_those(
+    async def test_the_scheduled_sweep_drops_the_expired_pendings_and_only_those(
         self, factory: async_sessionmaker[AsyncSession], pins: respx.Route
     ) -> None:
-        """The only sweeper this table has, and it covers every purpose: an abandoned
-        link must not keep a row alive forever because the next start was a sign-in.
+        """The sweep covers every purpose: an abandoned link must not keep a row alive
+        forever, and a live one must survive.
+
+        **It runs on a schedule now, not on the next `start_pin`** (#710). The
+        opportunistic delete fired only when somebody started ANOTHER PIN, so on an install
+        where nobody did, an abandoned sign-in sat there indefinitely. Its sibling
+        `AuthSession` had a scheduled job with the reasoning written down and this table had
+        none; they share that firing now.
 
         Both states are driven, because the sweep and an unconditional
         ``delete(PendingPlexLogin)`` are indistinguishable when only the expired one is
@@ -361,6 +368,10 @@ class TestThePinPurposeFence:
         case: the two flows overlap whenever an admin with a re-link in flight opens the
         sign-in route in another tab, and wiping it there costs them the whole approval
         round trip.
+
+        `start_pin` is still called afterwards, so the row it mints is on the table when the
+        sweep runs: a sweep that took a *fresh* PIN would strand the flow that just started
+        one, which is the failure this ordering is the cheapest way to catch.
         """
         async with factory() as session:
             session.add(
@@ -382,13 +393,43 @@ class TestThePinPurposeFence:
             await session.commit()
 
         await start_pin(factory, purpose="login", safety=SAFETY)
+        async with factory() as session:
+            swept = await sweep_expired_pins(session)
+            await session.commit()
 
+        assert swept == 1
         async with factory() as session:
             rows = (await session.execute(select(PendingPlexLogin))).scalars().all()
             assert sorted((r.pin_id, r.purpose) for r in rows) == [
-                (102, "link"),  # still in flight, and the new sign-in must not touch it
-                (8321, "login"),
+                (102, "link"),  # still in flight, and the sweep must not touch it
+                (8321, "login"),  # minted a moment ago, and neither must this
             ]
+
+    async def test_starting_a_pin_no_longer_sweeps(
+        self, factory: async_sessionmaker[AsyncSession], pins: respx.Route
+    ) -> None:
+        """Starting a PIN is not housekeeping, and the two were tangled (#710).
+
+        Driven rather than argued, because the opportunistic delete is exactly what a reader
+        reaches for again if the scheduled job is ever doubted: with both in place the
+        scheduled sweep would look like it worked whichever one actually ran.
+        """
+        async with factory() as session:
+            session.add(
+                PendingPlexLogin(
+                    pin_id=101,
+                    purpose="link",
+                    created_at=utcnow() - timedelta(hours=2),
+                    expires_at=utcnow() - timedelta(hours=1),
+                )
+            )
+            await session.commit()
+
+        await start_pin(factory, purpose="login", safety=SAFETY)
+
+        async with factory() as session:
+            rows = (await session.execute(select(PendingPlexLogin))).scalars().all()
+            assert sorted(r.pin_id for r in rows) == [101, 8321]
 
     async def test_a_link_pin_cannot_be_spent_as_a_sign_in(
         self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
