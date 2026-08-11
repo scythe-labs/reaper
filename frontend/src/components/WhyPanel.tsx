@@ -343,7 +343,7 @@ function KeptNotice({
   links,
   mediaType,
 }: {
-  match: Match | undefined;
+  match: Match | null | undefined;
   links: Links;
   mediaType: string;
 }) {
@@ -389,7 +389,7 @@ function KeptNotice({
  *  there. Carrying it over is a backend change (a merged count on the group payload) and is
  *  deferred rather than half-done -- a season panel silently omitting a fact the movie panel
  *  states would be worse than both being quiet. */
-export function MergedListingChip({ match }: { match: Match | undefined }) {
+export function MergedListingChip({ match }: { match: Match | null | undefined }) {
   const listings = match?.merged_rating_keys?.length ?? 0;
   if (listings < 2) return null;
   return (

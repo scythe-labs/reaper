@@ -4,15 +4,20 @@
 // reaper/api/ (schemas.py holds most, but the one route that deletes answers with
 // runs.py's ReapStatus) plus engine/policy.py and engine/explanation.py.
 //
-// Hand-written rather than generated. The set is small, it changes rarely, and a
-// codegen step is one more thing that can silently drift out of date in CI. If these
-// grow much past this size, generate them from /openapi.json instead.
+// Hand-written rather than generated, and this header used to say to generate them from
+// /openapi.json once they grew past this size. Measured at that size: the served document
+// carries one property description across 749, and the declarations below carry 679 lines
+// of comment. Almost every one of them says something no annotation holds -- when a field
+// is null and what to read instead, which of two spare expiries answers which question,
+// why a three-state field must never read as false. Generating deletes all 679 and there
+// is nothing to regenerate them from, so the answer is the guard rather than the codegen.
 //
 // tests/test_api_type_mirror.py checks this file against those declarations and fails
 // naming the field, because hand-maintained meant nothing noticed when MatchOut gained
 // `by` and `merged_rating_keys` and this file did not (#260, #289). It compares field
-// NAMES only: the type and optionality differences here are deliberate and documented
-// there. A new type with no server model is classified in that file, not ignored.
+// names AND field types; the deliberate type differences are listed by name there, in
+// NARROWED and WIDENED. Optionality is not compared, and that file says why. A new type
+// with no server model is classified in that file, not ignored.
 
 export type Verdict = "condemn" | "protect" | "abstain";
 
@@ -346,9 +351,12 @@ export interface KeepContribution {
 export interface Explanation {
   score: number;
   /** The condemnation subtotal before any keep discount. Optional so an item scored before
-   *  this shipped still parses. */
-  base_score?: number;
-  keep_discount?: number;
+   *  this shipped still parses, and nullable because that is what such a row arrives as:
+   *  `Explanation` defaults both to `None` and nothing sets `exclude_none`, so the server
+   *  sends `null` rather than omitting the key. `WhyPanel` already reads them that way
+   *  (`base_score != null`, `keep_discount ?? 0`); only the type disagreed. */
+  base_score?: number | null;
+  keep_discount?: number | null;
   /** The score the item had to beat. Null only when the stored explanation could not be
    *  read and the server sent the degraded fallback: the panel omits its "your threshold
    *  is N" clause rather than print a number that is not the operator's setting. */
@@ -381,8 +389,9 @@ export interface Explanation {
    *  it was fine", and rendering them alike is the entire Deleterr failure class. */
   protections_unknown: GateOutcome[];
   /** How it was tied to Plex. Optional so a candidate scored before this shipped still
-   *  parses (its explanation JSON has no match block). */
-  match?: Match;
+   *  parses (its explanation JSON has no match block), and nullable because a row that was
+   *  never matched arrives as an explicit `null`. Both consumers already guard it. */
+  match?: Match | null;
 }
 
 /** Where the item can be opened. Each link is null when it can't be built (unmatched in
