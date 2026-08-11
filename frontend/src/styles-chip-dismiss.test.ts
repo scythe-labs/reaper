@@ -25,12 +25,12 @@
 //
 // The two controls outside the shared rule are in the table too, so an exclusion is a row a
 // reader can check rather than a claim (rule 145: a member that drops out of a walk has to be
-// visible). `.bar-x` is a chip ✕ that keeps its own border, hover and padding; `.nudge-x`
+// visible). `.bar-x` is a chip ✕ that keeps its own border and hover; `.nudge-x`
 // dismisses a notice and was the sixth candidate the measurement pass looked at.
 
 import { describe, expect, it } from "vitest";
 
-import { CSS } from "./test/stylesheet";
+import { CSS, siteOf } from "./test/stylesheet";
 
 /** Each control in the ancestry it actually renders in, since color and font-size inherit. */
 const CONTROLS: Record<string, string> = {
@@ -126,8 +126,11 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "font-weight": "var(--weight-bold)",
     "overflow-wrap": "anywhere",
   },
-  // Outside the shared rule. It sizes off --tap-min directly and then keeps 04-buttons.css's
-  // `button` padding, which is why its box is wider than the token it names.
+  // Outside the shared rule, and the padding no longer says so: it sizes off --tap-min
+  // directly and resets 04-buttons.css's `button` padding itself, so the box is the 24x24 its
+  // own `width` declares (#736). It was 29.2px wide against the 24 it named, because a
+  // specified width under padding plus border floors at padding plus border. It stays out of
+  // the shared rule for the border and the red hover, which that rule would take.
   ".bar-x": {
     ...SHARED,
     width: "var(--tap-min)",
@@ -136,10 +139,10 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "min-height": "auto",
     color: "var(--muted)",
     "font-weight": "normal",
-    "padding-top": "6.72px",
-    "padding-right": "13.6px",
-    "padding-bottom": "6.72px",
-    "padding-left": "13.6px",
+    "padding-top": "0px",
+    "padding-right": "0px",
+    "padding-bottom": "0px",
+    "padding-left": "0px",
   },
   // Outside it too, and further out: a grid, a square corner, an SVG rather than a glyph.
   ".nudge-x": {
@@ -210,4 +213,77 @@ describe("the chip dismiss button", () => {
       expect(CSS.indexOf(later, afterShared)).toBeGreaterThan(afterShared);
     }
   });
+
+  // --- each chip's own hover tint has to beat the generic button hover (#740) ------------
+  //
+  // The shared rule above owns the RESTING shape. Hover is deliberately not shared: each of
+  // these four paints its own tone -- accent on the two filter chips, protect on the tag chip,
+  // condemn on the instance chip -- so there is nothing to fold them into. What they do share
+  // is an opponent, `04-buttons.css`'s `button:hover:not(:disabled)`, which sets the generic
+  // gray on every button in the app.
+  //
+  // `.fchip-x:hover` lost to it: (0,2,0) against (0,2,1), so the gray won on specificity
+  // whatever the load order and the accent line never painted. Two of its siblings only TIE
+  // and win on order, which is why this reads both numbers rather than either alone.
+  //
+  // Read off the selector text rather than off a computed style, because jsdom's
+  // `getComputedStyle` does not apply `:hover` at all -- a rendered test here would pass
+  // against every one of these rules deleted (rule 118).
+
+  /** (id, class, type) counts, enough for the selectors this file reads. */
+  function specificity(selector: string): [number, number, number] {
+    const ids = selector.match(/#[\w-]+/g)?.length ?? 0;
+    // Classes, attribute selectors and pseudo-CLASSES share the middle column. `:not()` adds
+    // nothing itself; its argument counts, which is why it is unwrapped rather than stripped.
+    const flat = selector.replace(/:not\(([^)]*)\)/g, "$1");
+    const classes = flat.match(/\.[\w-]+|\[[^\]]+\]|:[\w-]+(?!\()/g)?.length ?? 0;
+    // Pseudo-ELEMENTS count as types, and none of these selectors carries one.
+    const types = flat.replace(/[.#:[][^\s>+~]*/g, " ").match(/\b[a-z]+\b/g)?.length ?? 0;
+    return [ids, classes, types];
+  }
+
+  const GENERIC_HOVER = "button:hover:not(:disabled)";
+  /** Every chip dismiss with a hover of its own, and the tone each one paints. */
+  const HOVERS: Record<string, string> = {
+    ".filter-chip button:hover": "--accent",
+    ".fchip .fchip-x:hover": "--accent",
+    ".tag-chip button:hover": "--protect",
+    ".inst-chip .chip-x:hover": "--condemn",
+  };
+
+  it("counts the generic button hover the way the browser does", () => {
+    // The opponent's own number, asserted rather than assumed: every comparison below is
+    // against it, so a specificity function that read it wrong would pass all four (rule 119).
+    expect(specificity(GENERIC_HOVER)).toEqual([0, 2, 1]);
+    expect(specificity(".fchip-x:hover")).toEqual([0, 2, 0]);
+    expect(specificity(".fchip .fchip-x:hover")).toEqual([0, 3, 0]);
+  });
+
+  for (const [selector, tone] of Object.entries(HOVERS)) {
+    it(`paints ${selector} in ${tone}, not the generic gray`, () => {
+      const at = CSS.indexOf(`${selector} {`);
+      expect(at, `${selector} is not in the stylesheet`).toBeGreaterThan(-1);
+
+      const generic = CSS.indexOf(`${GENERIC_HOVER} {`);
+      expect(generic).toBeGreaterThan(-1);
+
+      const mine = specificity(selector);
+      const theirs = specificity(GENERIC_HOVER);
+      const wins =
+        mine[0] > theirs[0] ||
+        (mine[0] === theirs[0] && mine[1] > theirs[1]) ||
+        (mine[0] === theirs[0] && mine[1] === theirs[1] && mine[2] > theirs[2]);
+      const ties = mine[0] === theirs[0] && mine[1] === theirs[1] && mine[2] === theirs[2];
+
+      expect(
+        wins || (ties && at > generic),
+        `${selector} is ${mine.join(",")} against ${GENERIC_HOVER}'s ${theirs.join(",")} ` +
+          `at ${siteOf(at)}, so the generic gray paints instead of ${tone}`,
+      ).toBe(true);
+
+      // And it really is the tone, not just a rule that wins with something else in it.
+      const body = CSS.slice(at, CSS.indexOf("}", at));
+      expect(body).toContain(tone);
+    });
+  }
 });
