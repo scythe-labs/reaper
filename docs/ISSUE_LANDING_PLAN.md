@@ -241,12 +241,17 @@ validator is the only thing keeping the shape unreachable and nothing was watchi
 test pins that `get_api_key` is untouched, so the narrow answer to rule 72's sweep is recorded as
 a decision rather than an omission.
 
-**9. #734, the unreachable Plex server.** `dev`'s `except PlexError as exc:` is now the three-class
+**9. #734, the unreachable Plex server. Landed.** `dev`'s `except PlexError as exc:` is now the
+three-class
 tuple at `api/leaving_soon.py:40`, and the comment three lines above it names #734 and says the
 client's `PlexError` "lands here as it stands". The branch also added the two service errors the
-fix needs to sort against (`LeavingSoonDisabledError`, `LeavingSoonDegradedError`). Give the
-not-linked case at `services/leaving_soon.py:519` its own error, then answer a client `PlexError`
-with 502 the way the three sibling routes do.
+fix needs to sort against (`LeavingSoonDisabledError`, `LeavingSoonDegradedError`). The
+not-linked case at `services/leaving_soon.py:519` has its own `LeavingSoonUnlinkedError`, and a
+client `PlexError` answers 502 the way the three sibling routes do.
+
+**The split reached `after_scan` too, which the issue did not name.** The same two causes shared
+one `except PlexError` there and wrote one Jobs-row clause, so an operator with no Plex linked at
+all was told Reaper couldn't reach it. Two clauses now, and the fixes are different (rule 72).
 
 **10. #748, the launcher write.** `dev` has `write_conf_values`, `os.environ.update` and the commit
 inline at `api/settings.py:1993-2003`. The branch moved the first two into `_write_desktop_values`

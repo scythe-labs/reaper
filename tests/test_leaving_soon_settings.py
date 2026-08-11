@@ -237,6 +237,40 @@ class TestTheSettingsRoutes:
         assert resp.status_code == 400
         assert "linked Plex server" in resp.json()["detail"]
 
+    def test_a_linked_server_that_will_not_answer_is_a_502_in_reapers_words(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The route answered every `PlexError` 400, with the exception's text verbatim.
+
+        The service raised that class for "no linked Plex server" too, so one class arrived
+        carrying a configuration problem and an upstream failure and the route could not tell
+        them apart (#734). An operator whose linked server stopped answering got a
+        bad-request status for something that was not their request, plus a sentence the
+        client wrote for a log.
+
+        The status and the lead are both asserted, since 400 with a good lead and 502 with a
+        bare client sentence would each be half a fix.
+
+        The client's own text still trails Reaper's, which is what the three sibling routes
+        do (`api/plex.py`, `api/plex_trash.py`, `api/lists.py`, rule 72). Rule 21 is answered
+        by what the operator reads FIRST: the outcome in Reaper's words, with the diagnostic
+        behind it, rather than the diagnostic alone under a status that blamed them for it.
+        """
+        from reaper.clients.plex import PlexError
+        from reaper.services import leaving_soon as service
+
+        async def _stalled(*args: object, **kwargs: object) -> object:
+            raise PlexError("movie listing for section 3 stalled at 200 of 1000")
+
+        monkeypatch.setattr(service, "_plex_client", _stalled)
+        client.put("/api/settings/leaving-soon", json={"enabled": True})
+
+        resp = client.post("/api/leaving-soon/sync")
+
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail.startswith("Reaper couldn't reach Plex")
+
     def test_about_reports_the_facts(self, client: TestClient) -> None:
         body = client.get("/api/about").json()
         assert body["license"] == "AGPL-3.0"
