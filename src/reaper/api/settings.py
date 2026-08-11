@@ -1386,18 +1386,24 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
     # wrote each field in turn would half-apply the save while telling them it failed.
     #
     # The commit at the end is a second, independent layer: an `HTTPException` escaping
-    # this block closes the session unwritten. The one refusal still raised below the write
-    # loop is `_write_desktop_values`'s 500 on a launcher.conf it could not write, and that
-    # is the layer holding it. Neither layer is trusted alone.
+    # this block closes the session unwritten. Every refusal is raised above it.
     cleaned = _cleaned_general_values(payload)
     desktop_values = _validated_desktop_values(payload)
     async with session_factory(request)() as session:
         for field in _GENERAL_FIELDS:
             if field.name in cleaned:
                 await field.write(session, cleaned[field.name])
+        await session.commit()
+        # After the commit, not before it (#748). `launcher.conf` is a file and
+        # `os.environ` is process state, so neither is in the transaction: written first,
+        # a commit that then failed left the switch on in the file and echoed back by
+        # `_desktop_out` from the environment, while the five fields saved beside it went
+        # back and the operator was told the save failed. Ordered this way the desktop pair
+        # is never ahead of the rows. It can still fall behind them, on a `launcher.conf`
+        # that cannot be written: the 500 below reports that, the environment is not
+        # updated, so the file and every later read still agree on the old value.
         if desktop_values:
             _write_desktop_values(runtime_settings(request).data_dir, desktop_values)
-        await session.commit()
         await _refresh_proxy_state(request, session)
         stored_timezone = cleaned.get("timezone")
         if isinstance(stored_timezone, str):
