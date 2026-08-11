@@ -10,13 +10,16 @@
 // A scan is read-only: it reads from the *arr and Tautulli, scores, and writes rows to
 // Reaper's own database. GuardedTransport would refuse a mutating call even if one were tried.
 
-import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type ScheduledJob, type Snapshot } from "../api";
 import { bytes, count, totalBytes } from "../format";
+import { useScanStatus } from "../useScanStatus";
 import { JobStatus, useJobFlash } from "./JobStatus";
 import { Notice } from "./Notice";
+import { ProgressBar } from "./ProgressBar";
+import { SCANNING_LABEL } from "./ScanLine";
 
 //: Friendly names for the scan's internal phases, so the status line reads in English.
 //  Exported because the first-run wizard shows the same progress line; one table keeps
@@ -35,10 +38,6 @@ export const PHASE_LABELS: Record<string, string> = {
 export function phaseLabel(phase: string): string {
   return PHASE_LABELS[phase] ?? phase;
 }
-
-/** What the wait is called: the progress bar's name, and the lead of the sentence said when a
- *  scan starts. One string for both (rule 144). */
-const SCANNING_LABEL = "Scanning your library";
 
 /** The line under the bar, shown and said. For an operation that can run for many minutes, the
  *  fact that walking away does not cancel it is the most useful thing an operator can be told,
@@ -102,12 +101,7 @@ export function ScanRow({
 }) {
   const queryClient = useQueryClient();
 
-  const { data: status } = useQuery({
-    queryKey: ["scanStatus"],
-    queryFn: api.scanStatus,
-    // Poll only while a scan is actually running; otherwise sit quiet.
-    refetchInterval: (query) => (query.state.data?.running ? 1000 : false),
-  });
+  const status = useScanStatus();
 
   const scanning = status?.running ?? false;
   const wasScanning = useRef(false);
@@ -283,19 +277,7 @@ export function ScanRow({
 
         {scanning ? (
           <>
-            {/* A bare div with an inline width is a picture of a number and nothing else.
-                `ScanLine` was the correct twin in the tree and this was not swept
-                with it (#177, rule 72); the deletion path's pair went the same way in #170. */}
-            <div
-              className="bar"
-              role="progressbar"
-              aria-label={SCANNING_LABEL}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={pct ?? 0}
-            >
-              <div className="bar-fill" style={{ width: `${pct ?? 0}%` }} />
-            </div>
+            <ProgressBar label={SCANNING_LABEL} percent={pct ?? 0} />
             <div className="jobrow-sched">{KEEPS_RUNNING}</div>
           </>
         ) : (

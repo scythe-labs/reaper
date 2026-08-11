@@ -25,6 +25,7 @@ import { WhyPanel } from "./components/WhyPanel";
 import { DocsProvider } from "./docs/DocsContext";
 import type { Focus, NavIntent, Selection, View } from "./navIntent";
 import { usePageScrollLock } from "./pageScrollLock";
+import { useGeneralSettings } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useScanSettled } from "./useScanSettled";
 import { Notice } from "./components/Notice";
@@ -304,11 +305,7 @@ function Dashboard({ user }: { user: AuthUser }) {
   // The browser tab wears the install's chosen name (Settings → General), so two
   // Reapers stay tellable-apart. The default title is baked into index.html; only a
   // non-default name changes it, and a failed read changes nothing.
-  const { data: generalSettings } = useQuery({
-    queryKey: ["general-settings"],
-    queryFn: api.general,
-    staleTime: 60_000,
-  });
+  const { data: generalSettings } = useGeneralSettings();
   useEffect(() => {
     const name = generalSettings?.application_name;
     if (name && document.title !== name) document.title = name;
@@ -326,6 +323,10 @@ function Dashboard({ user }: { user: AuthUser }) {
   // another device) still surfaces here without a manual start or a tab refocus -- that
   // is what a global "something is running" line is for. Shares the ["scanStatus"] cache
   // with the scan bar, so the two never disagree.
+  //
+  // The idle poll is why this one is declared here rather than through `useScanStatus`, which
+  // every other reader takes: that hook speeds up during a scan and is silent otherwise, and
+  // this observer is the one that notices a scan nobody on this screen started.
   const { data: scanStatus } = useQuery({
     queryKey: ["scanStatus"],
     queryFn: api.scanStatus,

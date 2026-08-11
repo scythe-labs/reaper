@@ -16,6 +16,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createContext, useContext } from "react";
 import { api, type ExpandSeasonsMode } from "../api";
+import { useGeneralSettings } from "../useGeneralSettings";
 
 /** Whether a show card starts with its season list open, given the operator's preference and
  *  which screen they are on.
@@ -49,11 +50,14 @@ export const QueueSettingsContext = createContext<QueueSettings | null>(null);
 /** Options that make a fallback query inert while the provider is supplying the value.
  *
  *  A hook cannot be called conditionally, so both hooks below open their query either way and
- *  gate it with `enabled`. That stops the FETCH and nothing else: the observer is still
- *  subscribed, so every write to the key re-renders every component holding one -- the exact
- *  thousand-observer fan-out this file's provider exists to remove, left in place. Tracking no
- *  props at all is what actually stops the notification. Outside the provider the query is the
- *  real source, so it keeps the default tracking. */
+ *  make it inert inside the provider. `enabled` stops the FETCH and nothing else: the observer is
+ *  still subscribed, so every write to the key re-renders every component holding one -- the
+ *  exact thousand-observer fan-out this file's provider exists to remove, left in place. Tracking
+ *  no props at all is what actually stops the notification. Outside the provider the query is the
+ *  real source, so it keeps the default tracking.
+ *
+ *  `useDefaultSpareDays` says the same thing as `useGeneralSettings(false)`, which takes both off
+ *  one flag; this pair stays here because `["profile"]` has no shared hook. */
 function silentInsideProvider(shared: QueueSettings | null): { notifyOnChangeProps?: [] } {
   return shared === null ? {} : { notifyOnChangeProps: [] };
 }
@@ -64,12 +68,7 @@ function silentInsideProvider(shared: QueueSettings | null): { notifyOnChangePro
  *  default. */
 export function useDefaultSpareDays(): number {
   const shared = useContext(QueueSettingsContext);
-  const { data } = useQuery({
-    queryKey: ["general-settings"],
-    queryFn: api.general,
-    enabled: shared === null,
-    ...silentInsideProvider(shared),
-  });
+  const { data } = useGeneralSettings(shared === null);
   return shared ? shared.defaultSpareDays : (data?.default_spare_days ?? 0);
 }
 

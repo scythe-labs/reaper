@@ -73,7 +73,8 @@ import {
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
-import { usePolicyProbe } from "../usePolicyProbe";
+import { SETTLE_MS, usePolicyProbe } from "../usePolicyProbe";
+import { useScanStatus } from "../useScanStatus";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
@@ -1326,7 +1327,7 @@ export function PolicyEditor({
     const id = setTimeout(() => {
       setDebounced(draft);
       setDebouncedUnmeasured(draftedUnmeasured);
-    }, 250);
+    }, SETTLE_MS);
     return () => clearTimeout(id);
   }, [draft, draftedUnmeasured]);
 
@@ -1412,11 +1413,7 @@ export function PolicyEditor({
   const gateWarnings = warningsAt("gates");
 
   // A background scan, so the "Scan now" button in the stale notice actually does something.
-  const { data: scanState } = useQuery({
-    queryKey: ["scanStatus"],
-    queryFn: api.scanStatus,
-    refetchInterval: (query) => (query.state.data?.running ? 1000 : false),
-  });
+  const scanState = useScanStatus();
   const scanning = scanState?.running ?? false;
   // No running->stopped effect here. This panel used to carry its own copy, invalidating
   // `simulate`, `snapshot` and `validate` off its own ref -- the first two already refreshed by

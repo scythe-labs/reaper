@@ -167,9 +167,12 @@ export function ScytheIcon() {
 
 /** A small clock, the dormancy pill's shape reused -- here in the spare's green to mean "kept,
  *  for now". It marks a TIMED spare, where ∞ marks a forever one. */
-export function ClockGlyph({ dashed = false }: { dashed?: boolean } = {}) {
+export function ClockGlyph({
+  dashed = false,
+  size = 13,
+}: { dashed?: boolean; size?: number } = {}) {
   return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" aria-hidden="true">
       {/* `dashed` marks a spare whose clock has PASSED: the same dial, drawn the way this app
           draws every decision whose effect is pending a scan (the dashed .status-reap-held /
           .score-refused family). The hands stay solid so it still reads as a clock. */}
@@ -205,6 +208,31 @@ export function CaretDownGlyph() {
         d="M4 6l4 4 4-4"
         stroke="currentColor"
         strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** The mark that says a link leaves Reaper, worn by the why panel's title and the Scales
+ *  panel's heading. Decoration: the destination is already in the link's words, so it is
+ *  `aria-hidden` like everything else here (rule 21's middot clause, same reasoning). The two
+ *  sites style it differently, which is the only thing `className` carries. */
+export function ExternalMark({ className }: { className: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 16 16"
+      width="13"
+      height="13"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M6 3h7v7M13 3L4 12"
+        stroke="currentColor"
+        strokeWidth="1.7"
         strokeLinecap="round"
         strokeLinejoin="round"
       />

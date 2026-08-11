@@ -46,6 +46,7 @@ import { announce } from "../announce";
 import { useBackGuard } from "../backnav";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
+import { useGeneralSettings } from "../useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
@@ -310,10 +311,7 @@ function DormantPill({ dormantFor }: { dormantFor: string | null }) {
   if (!dormantFor) return null;
   return (
     <span className="dormant-pill" title={`Not watched in ${dormantFor}`}>
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
-        <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
-        <path d="M8 4.6V8l2.4 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      </svg>
+      <ClockGlyph size={12} />
       Not watched in {compactSpan(dormantFor)}
     </span>
   );
@@ -1878,11 +1876,7 @@ export function ReviewQueue({
   // seeds each show card's starting state; a click on a card still wins for that card.
   // Shares the query key the settings panel writes, so flipping it there and returning here
   // takes effect. Unknown/error reads as off -- the safe, unchanged default.
-  const { data: generalSettings } = useQuery({
-    queryKey: ["general-settings"],
-    queryFn: api.general,
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: generalSettings } = useGeneralSettings();
   // ...and which screens it applies to. A phone's season list is long enough to bury the next
   // card, so the two screen sizes are separately choosable. Live rather than read once: drag a
   // window across the boundary and untouched cards re-seed to match, which is also what makes

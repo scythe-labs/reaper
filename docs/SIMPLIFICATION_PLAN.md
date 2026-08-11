@@ -348,6 +348,7 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | W5-1, one model for the stored explanation | Built as the row asks, then measured: the collapse drops the whole match block, and three interlocks fail open with it. The read model's three `mode="before"` validators exist so an illegible stored byte degrades one field instead of blanking the panel, and on the write side that same leniency normalizes the writer's own value to `None`. One model cannot be lenient for a reader of old rows and strict for the writer, so `extra="forbid"` catches none of it. The row's premise was also unfounded: all 36 written keys already match the declarations. A pinning test lands instead | Phase 8, PR #706, measured against a C9 drive |
 | W3b-9, a `stored_or_seed` helper | The row's "7 times in 3 spellings" is seven exactly and five spellings, so a helper serves three of the seven and buys 0 to 2 lines depending on how the longest call wraps (S5). It also binds only its own callers, where the whole exposure is the eighth getter nobody has written yet. What the measurement found instead is that **three of the seven precedence sites were unpinned across the entire suite**: a stored empty proxy list reverting to the env seed (rule 1's shape, claimed by its own docstring), a stale env webhook clobbering a UI edit, and a credential under a rotated key reporting "connected". A gate over all seven lands instead, with an AST walk that fails until an eighth getter is named | Phase 8, PR #703, all seven mutations driven red |
 | W3b-11, four frontend hooks | All four extractions net positive, and two of the four counts are wrong. Non-blank lines throughout. The image-fallback ladder is **two** ladders at **four** sites: 14 lines at each of `Backdrop` and `WhyHero`, plus a five-line comment that relocates, so 33 leave and 35 come back, 29 of them a leaf module both callers can import without a cycle. The dirty-report **5** is exact and is the sub-item worth least, 20 out against 29 back, because rule 146's obligation is per-site and a hook cannot carry it. The test-result pairing is **four** sites, and it stays a kill on shape rather than on lines: one stores a union of two payload shapes and reads the held result at three places, the others store one and read it at one. The password form is **two**, 8 shared lines out, three boxes against two and three complaint branches against two. What the measurement found instead is **three of the four test surfaces computing the fingerprint at settle time**, where the boxes have already moved, so a badge vouches for an address nobody tried; plus a live complaint announced on every keystroke on the wizard's password step, and one ungenerated copy of the length floor. All fixed, with a gate over the fingerprint family | Phase 8, PR #719, the gate driven red and its own first two drafts fail-open |
+| W11-21's shared debounce hook | The three timers agree on 250 ms and on nothing else: one output versus two on one timer, identity by serialization versus by memoization versus a primitive, and one output that is also set imperatively to skip the wait. The only shape covering all three takes a caller-supplied dependency array, so it carries a permanent `react-hooks/exhaustive-deps` disable, at two sites that pass that check today. The number itself is shared instead | Phase 8, this PR |
 | W11-39, one read for the overrides and their expiries | Built as the row asks and measured: `whitelist.py` +14/-7 and `review.py` +2/-4, a **net +5**. The loop that splits one result set into two maps is ten lines, where each read it replaces is two statements, so the extraction is larger than what it removes (S5). **"Back to back at four call sites" is wrong**: two are adjacent pairs, `breakdown.py`'s pair sits 40 lines apart across the condemned read and `effective_condemned`, and `review.py`'s fourth sits about 150 apart, so collapsing either moves a read rather than removing one. `review.py:489` reads `spare_expiries` alone and would go from a filtered two-column select to an unfiltered three-column one. The benefit is two fewer SELECTs against a table holding one row per manual override, on two page loads, and the only version reaching the row's own figure widens the `overrides()` read the executor issues before every item of a live reap (rule 112) | Phase 8, built and measured, then reverted |
 
 ## Execution
@@ -3475,6 +3476,33 @@ half was
 already extracted (~15). **W11-20** Six navigation callbacks drilled 3 to 4 levels over a
 destination type
 `navIntent.ts` says is already one value (~40). **W11-21** Three hand-rolled 250 ms debounces.
+
+> **Killed as a hook, landed as the constant, and lines were never the question.** The scout
+> killed it on ~0 lines, the verifier overruled on "three timer-plus-cleanup pairs against a
+> 7-line hook", and the owner endorsed the verifier's *test*: a change that saves nothing and
+> removes a place a future author must remember is worth building. Applied properly, that test
+> kills the hook. **The three agree on 250 ms and on nothing else.** `usePolicyProbe` sets one
+> value off a SERIALIZED key, because the request is a fresh object every render and a timer keyed
+> on its identity restarts forever. `PolicyEditor` sets TWO values off one timer, deliberately:
+> the unmeasured allowance rides along so the validator never sees a mismatched pair (B-26), and
+> two `useDebounced` calls would be two settles and two requests, the first against that pair.
+> `ReviewQueue` sets one value that is ALSO set imperatively, by the jump that skips the wait so
+> the operator lands on the filtered list rather than the lane. A value-returning
+> `useDebounced(value)` fits none of the three.
+>
+> **The only shape that fits all three is `useDebouncedEffect(fn, deps)`, and its cost is the
+> linter.** A caller-supplied dependency array cannot be checked by `react-hooks/exhaustive-deps`,
+> so the hook carries a permanent, unconditional disable. Two of these three sites pass that
+> check today; only `usePolicyProbe` has a disable, justified in place. Rule 19 is about stable
+> effect dependencies, so a hook that turns the checker off at two compliant sites adds the drift
+> surface the item exists to remove.
+>
+> **What did land is the number.** `SETTLE_MS` was declared in `usePolicyProbe.ts` under a comment
+> reading "the same 250ms the policy editor debounces its simulate and validate reads on", which
+> is one fact asserted by prose about a literal in another file (rule 144). `PolicyEditor` imports
+> it now. The queue's search box keeps its own 250 and says why: how long a typed search waits is
+> not the same call as how long a dragged slider does, and one constant would move both.
+
 **W11-22** The
 parent-Back-guard ref mirror written three times. **Landed**, as a rule 80 fix and not a dedup:
 code net 0, and `ScheduleModal` mirrored one TERM of its `canClose`.
@@ -3580,19 +3608,19 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-13 | 2 parsers differ on a negative header | right | kill, block above |
 | W11-14 | 2 spellings, 4 sites | right | kill, two different numbers on purpose |
 | W11-15 | 80 unbounded, `ratelimit.py:200` an unused gate | block above; the gate has 3 callers and sheds load | **built**, +31 (bound, deadline) |
-| W11-16 | 4 keys, 4 existing shared hooks, ~40 | block above | build, 2 keys |
+| W11-16 | 4 keys, 4 existing shared hooks, ~40 | block above; 5 declarations each, 3 refetch intervals and 3 staleTimes, and the third staleTime is the app-wide 30s default rather than a fourth number | **built**, both keys, and #712 with them |
 | W11-17 | hand-written 6 times, ~20 | 6 sites, 4 to 5 hand-written, the rest already hooks | kill, no two of the residue do the same work |
 | W11-18 | 2 machines, deps-disable twice, ~25 | right, nets -8 to -12 | build, low priority |
 | W11-19 | caller written twice, ~15 | right, nets -8 | build |
 | W11-20 | 6 callbacks, depth 3 to 4, ~40 | 7 or 8 props, max depth 2 | unsettled, scout kills it, verifier makes it an owner call |
-| W11-21 | 3 hand-rolled 250 ms debounces | right, one is already a hook | unsettled, scout kills on ~0 lines, verifier builds the shared timer |
+| W11-21 | 3 hand-rolled 250 ms debounces | 3 right; they agree on the number and on nothing else | **settled: the timer is killed, the number is shared.** Not on lines, on the linter |
 | W11-22 | mirror written 3 times | right, plus 3 child effects and a 4th copy of the guard in `ServiceModal` | **built**, code net 0; the value is `ScheduleModal`'s one-term mirror |
 | W11-23 | 21 sites across 7 files, ~40 | block above | kill |
 | W11-24 | same component twice, ~28 | right on the copies; **-23 is wrong, code net +2** | **built**, for the copy divergence, not the lines |
-| W11-25 | 12 blocks, 4 sets, ~28 | right, the one count that survived re-derivation | build, cascade test scoped to `.strip-sq` |
-| W11-26 | 3 wrappers, each commented at the other two | 3 of 6 sites are that shape, 2 of the 3 carry a comment, and both point at `ScanLine` | build, 3 of 6, `ReapBar` excluded |
-| W11-27 | computed and marked up twice, ~14 | right, nets -6 | build, the shared `aria-label` is the reason |
-| W11-28 | 2 SVGs, one already exported | right, 2 of 6 duplicated paths, -10 | build, ride along |
+| W11-25 | 12 blocks, 4 sets, ~28 | right, and re-derived a third time: the 12 are the score/chip/status families, and the strip's 4 are a fifth set (1.5px dash, `box-shadow: none`) that is NOT in the count | **built**, into `23-queue-chips.css`, with the cascade test |
+| W11-26 | 3 wrappers, each commented at the other two | 3 of 6 sites are that shape; 2 of the 3 carry a comment and they point at `ScanLine` and at `ScanBar`, not both at `ScanLine` | **built**, 3 of 6, `ReapBar` and `ReapConfirm` excluded |
+| W11-27 | computed and marked up twice, ~14 | right, nets -6 | **built**, the shared `aria-label` is the reason |
+| W11-28 | 2 SVGs, one already exported | 2 right; **4 duplicated `d=` strings, not 6**, of which 3 are cross-file and the third pair is not one glyph | **built**, both, rode along |
 | W11-29 | 3 near-copies, one comment admits it | 5 controls, and the "borrows" comments are in the CSS | unsettled, both reports make it an owner split |
 | W11-30 | inline 64 times, `format.ts` twice, 14 `toLocaleString` | block above | kill the helper |
 | W11-31 | 4 sentences ×2, a third copy in `public.py`, comment verbatim | 4 right, the scout's 5 was the over-count; two carry the `public.py` copy, and the comment is a paraphrase | unsettled, scout -6, verifier ~0 |
@@ -3600,7 +3628,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-34 | twice in one function, pinned by nothing | right | build, -5 |
 | W11-35 | 3 arms, one 400 | right | build, -3 |
 | W11-36 | 4 copies plus a deliberate 5th | right, plus an unnamed pair in `BackupPanel` and `AboutPanel` | kill as a dedup, write the hygiene gate instead |
-| W11-37 | 3 identity entries | right | build, -3, never its own PR |
+| W11-37 | 3 identity entries | right | **built**, -3, rode along |
 | W11-38 | the ritual 5 times | 9 sites in 2 rituals, 5 status and 4 message | kill, a helper is a rename |
 | W11-39 | 4 call sites, ~15 | 4 sites, only 2 adjacent; built at **+5** | **killed**, S5 |
 | W11-40 | unindexed, never swept, grows for the life of the install | 3 tree claims right, framing wrong, block above | build the index only |

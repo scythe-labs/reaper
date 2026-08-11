@@ -31,31 +31,49 @@
   background: var(--media-movie-soft);
   color: var(--media-movie);
 }
-/* Hand decisions wear SOLID chips: outlined chips are Reaper's verdicts, filled ones
-   are yours. The reap the engine can't honor yet (chip-reap-refused) is dashed red: still
-   in the reap family you chose, but hollow and dashed so it never reads as a done removal,
-   and no longer the amber that means "left for you to decide". The ask is noted, the file
-   is held, and the text says why. */
-.chip-hand-reap {
+/* THE FOUR HAND-DECISION TONES, and the three families that wear them: the score badge
+   (.score-*, based in 11-queue-chrome.css), the card chip (.chip-*) and the status pill
+   (.status-*). One `handFate` picks the tone (components/reviewFate.ts, rule 49) and the three
+   families must never disagree about what it looks like, so each tone is one rule with three
+   selectors rather than the same declarations written out three times.
+
+   Hand decisions wear SOLID: outlined means Reaper's verdict, filled means yours.
+
+   The two DASHED tones are the ones that are not settled yet, and neither may go solid. A reap
+   the engine can't honor yet is dashed red: still the reap you chose, but hollow so it never
+   reads as a done removal, and no longer the amber that means "left for you to decide". Its
+   keep-direction twin is a hand spare whose clock has PASSED. Not the solid spare (that means
+   "you chose this and it holds") and not a scan verdict either, because only a scan realizes a
+   spare's expiry -- until then the planner, the ledger and the executor all still read it and
+   the file really is kept. See handFate's "spare-expired".
+
+   The season strip wears the same four and is NOT in these rules. Its square is the one surface
+   carrying a scan-verdict class and an override class at once, so its override rules have to sit
+   after .strip-condemn and friends to win, and they carry a heavier dash and a `box-shadow: none`
+   to cancel the verdict's inset ring. `styles-hand-fate.test.ts` pins that order, and pins that
+   these four rules stay one apiece. */
+.score-reap,
+.chip-hand-reap,
+.status-hand-reap {
   background: var(--condemn);
   color: var(--condemn-soft);
 }
-.chip-hand-spare {
+.score-spare,
+.chip-hand-spare,
+.status-hand-spare {
   background: var(--protect);
   color: var(--protect-soft);
 }
-/* A hand spare whose clock has PASSED. Dashed green on the soft fill, the keep-direction twin
-   of .chip-reap-refused: the decision was yours, and its effect is pending a scan. It is
-   deliberately NOT the solid .chip-hand-spare (the spare has run out, and solid means "you
-   chose this and it holds") and deliberately NOT a scan-verdict chip either -- only a scan
-   realizes a spare's expiry, so until then the planner, the ledger and the executor all still
-   read it and the file really is kept. See handFate's "spare-expired". */
-.chip-spare-expired {
+.score-spare-expired,
+.chip-spare-expired,
+.status-spare-expired {
   background: var(--protect-soft);
   color: var(--protect);
   border: 1px dashed var(--protect);
 }
-.chip-reap-refused {
+.score-refused,
+.chip-reap-refused,
+.status-reap-held {
   background: var(--condemn-soft);
   color: var(--condemn);
   border: 1px dashed var(--condemn);
@@ -202,31 +220,11 @@
   color: var(--condemn);
   background: var(--condemn-soft);
 }
-/* Hand decisions read SOLID here too, mirroring the card chips: outlined pills are
-   Reaper's verdicts, filled pills are yours. */
-.status-hand-reap {
-  color: var(--condemn-soft);
-  background: var(--condemn);
-}
-.status-hand-spare {
-  color: var(--protect-soft);
-  background: var(--protect);
-}
-/* The status-chip family's twin of .chip-spare-expired -- same reasoning, same dashed green. */
-.status-spare-expired {
-  color: var(--protect);
-  background: var(--protect-soft);
-  border: 1px dashed var(--protect);
-}
-/* A reap the engine can't honor yet: dashed red, mirroring .chip-reap-refused and the
-   dashed .score-refused / .strip-ov-reap-refused. It is no longer .status-look -- amber now
-   means only "left for you to decide", and a held reap is a decision you made, not one left
-   open. The dashed border reads "provisional" the way .chip-unchecked does. */
-.status-reap-held {
-  color: var(--condemn);
-  background: var(--condemn-soft);
-  border: 1px dashed var(--condemn);
-}
+/* The status pill's four hand-decision tones (.status-hand-reap, .status-hand-spare,
+   .status-spare-expired, .status-reap-held) are declared at the top of this file, in the one
+   rule each shares with its score-badge and card-chip twins. A held reap is deliberately not
+   .status-look any more: amber means only "left for you to decide", and a held reap is a
+   decision you made. */
 
 /* The season strip: one square per season of the show, colored by its lane across the
    WHOLE snapshot -- kept and condemned side by side without expanding anything. A hand

@@ -9,6 +9,11 @@
 // which is the same answer rule 18 gives: one implementation, imported twice, rather than a
 // second copy that drifts.
 
+/** What a running scan is called, wherever one is announced or named for a screen reader: this
+ *  line, the scan bar's own track and its start announcement, and the wizard's first-run track.
+ *  It was written out at three of those four (rule 144). */
+export const SCANNING_LABEL = "Scanning your library";
+
 /** A thin accent line pinned to the very top of the window while a scan runs in the
  *  background, filling to the scan's real percent and gone the moment it finishes. Ambient
  *  by design: it only says "a scan is working"; the phase, counts and controls live on the
@@ -25,7 +30,7 @@ export function ScanLine({ running, percent }: { running: boolean; percent: numb
     <div
       className={running ? "scanline on" : "scanline"}
       role="progressbar"
-      aria-label="Scanning your library"
+      aria-label={SCANNING_LABEL}
       aria-hidden={!running}
       aria-valuemin={0}
       aria-valuemax={100}
