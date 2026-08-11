@@ -54,6 +54,45 @@ for (const file of FILES) {
 /** Every imported file, concatenated in load order: what the browser ends up with. */
 export const CSS = text;
 
+/** One rule block: its selector, its declarations as written, and where the body starts.
+ *
+ *  `at` is an offset into `CSS`, for `siteOf`. */
+export interface Block {
+  selector: string;
+  body: string;
+  at: number;
+}
+
+/** Every rule block in the stylesheet, in load order, comments stripped.
+ *
+ *  The match is innermost-first. A `@media` head never matches, since `[^{}]*` cannot span the
+ *  nested brace, so a rule inside one is returned as itself. A flat at-rule like `@font-face`
+ *  does match, and the `@` check drops it. Keyframe steps (`from`, `0%`) are returned as ordinary
+ *  blocks.
+ *
+ *  `styles-scales.test.ts` and `styles-control-standard.test.ts` both walk blocks through here,
+ *  so a parse fixed for one is fixed for the other. The scales file still reads `CSS` directly
+ *  for its whole-text checks, which is not this walk.
+ *
+ *  A caller splitting `body` on `;` is safe only while no declaration carries one inside a value.
+ *  There is no `url(` and no `data:` anywhere in `styles/`, so none does today. A data URI would
+ *  break that split, and this is the line that says so. */
+export function blocksOf(): Block[] {
+  // Blanked rather than deleted, so every offset still resolves to its real line (`siteOf`).
+  const code = CSS.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+  const out: Block[] = [];
+  for (const m of code.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selector = (m[1] ?? "").trim().replace(/\s+/g, " ");
+    if (selector.startsWith("@")) continue;
+    out.push({
+      selector,
+      body: m[2] ?? "",
+      at: (m.index ?? 0) + (m[1] ?? "").length + 1,
+    });
+  }
+  return out;
+}
+
 /** Where an offset in `CSS` actually lives, as `styles/21-queue-cards.css:431`. */
 export function siteOf(offset: number): string {
   let seg = segments[0];

@@ -26,10 +26,13 @@
   color: var(--faint);
   pointer-events: none;
 }
-/* The one control chrome; only the left padding is this box's own, to clear the glyph. */
+/* The one control chrome; only the left padding is this box's own, to clear the glyph. It is a
+   `padding-left` step after the token. A four-value padding would re-type `0.42rem 0.6rem`, and
+   this was the last site in the stylesheet still doing that. */
 .search-input {
   width: 100%;
-  padding: 0.42rem 0.6rem 0.42rem 2rem;
+  padding: var(--control-pad);
+  padding-left: 2rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
