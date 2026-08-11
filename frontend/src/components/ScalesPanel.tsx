@@ -11,7 +11,9 @@
 import { useId, useState } from "react";
 import type { PersonDetail, PersonTitle, QuotaLine, Verdict } from "../api";
 import { bytes, carriesYear, count, date, itemBytes, titleWithYear } from "../format";
+import { BalanceBar } from "./BalanceBar";
 import { PosterFallback } from "./PosterFallback";
+import { ExternalMark } from "./queueIcons";
 import { UnmatchedList } from "./UnmatchedList";
 import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
 import { PanelFallback, WhyShell } from "./WhyShell";
@@ -82,22 +84,7 @@ function ProfileName({ id, name, href }: { id: string; name: string; href: strin
       title="Open this person in the request portal"
     >
       <h2 id={id}>{name}</h2>
-      <svg
-        className="scales-ext"
-        viewBox="0 0 16 16"
-        width="13"
-        height="13"
-        fill="none"
-        aria-hidden="true"
-      >
-        <path
-          d="M6 3h7v7M13 3L4 12"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      <ExternalMark className="scales-ext" />
     </a>
   );
 }
@@ -223,9 +210,6 @@ export function ScalesPanel({
   const headingId = useId();
   const granted = detail.gb_granted_bytes;
   const reclaim = detail.reclaimable_bytes;
-  const used = Math.max(0, granted - reclaim);
-  const usedPct = granted > 0 ? (100 * used) / granted : 100;
-  const reclaimPct = granted > 0 ? (100 * reclaim) / granted : 0;
   // How far Reaper can see into this person's watching, from the one derivation the board's
   // cards also read (rule 72). Null where there is no reading to report -- no Plex account
   // behind the request account, or an empty mirror -- because `played_by_them` is then
@@ -280,18 +264,7 @@ export function ScalesPanel({
 
       <section className="block">
         <h3>The balance</h3>
-        <div
-          className="fair-balance"
-          role="img"
-          aria-label={
-            hasReclaim
-              ? `${bytes(used)} kept, ${bytes(reclaim)} the scan would reclaim`
-              : `${bytes(used)} kept, nothing reclaimable`
-          }
-        >
-          <i className="used" style={{ width: `${usedPct}%` }} />
-          {reclaimPct > 0 && <i className="reclaim" style={{ width: `${reclaimPct}%` }} />}
-        </div>
+        <BalanceBar granted={granted} reclaim={reclaim} hasReclaim={hasReclaim} />
         <div className="scales-tiles">
           <div className="fair-stat">
             <span className="fair-stat-num">{bytes(granted)}</span>

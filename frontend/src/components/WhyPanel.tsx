@@ -38,6 +38,7 @@ import { coverage, itemBytes, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useArtFallback } from "./artFallback";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
+import { ExternalMark } from "./queueIcons";
 import { useHoldsBackUnmeasured } from "./queueSettings";
 import { reapIsNoop } from "./reviewFate";
 import { rowRampSentence } from "./signalRamp";
@@ -119,26 +120,7 @@ export function PanelHead({
               title="Open in Plex"
             >
               {name}
-              {/* The mark that says the title goes somewhere. It sits inside the link's
-                  accessible name and the destination is already in the words, so it is
-                  decoration and carries aria-hidden (rule 21's middot clause, same
-                  reasoning). */}
-              <svg
-                className="title-ext"
-                viewBox="0 0 16 16"
-                width="13"
-                height="13"
-                fill="none"
-                aria-hidden="true"
-              >
-                <path
-                  d="M6 3h7v7M13 3L4 12"
-                  stroke="currentColor"
-                  strokeWidth="1.7"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <ExternalMark className="title-ext" />
             </a>
           ) : (
             name
@@ -1180,10 +1162,13 @@ function Gates({
  *  (engine/gates.py `_blocked` and the custom-rule evaluator). Both vocabularies are
  *  closed and colon-free, so the first ": " splits them reliably; anything that doesn't
  *  parse (a season-order conflict, a named custom rule's wrapped detail) keeps its own
- *  row with the raw sentence, exactly as before. */
+ *  row with the raw sentence, exactly as before.
+ *
+ *  Only the phrases that CHANGE are listed. The lookup below falls back to the backend's own
+ *  words, so an entry mapping a phrase to itself ("watch history", "when it was last watched",
+ *  "who else watched it") reads as a translation and produces the fallback's string. Add an
+ *  entry when the backend's phrase is not what the operator should read. */
 const CHECK_COPY: Record<string, string> = {
-  "watch history": "watch history",
-  "when it was last watched": "when it was last watched",
   "the watch horizon": "how far back its history goes",
   "active streams": "whether anyone is watching",
   "the IMDb rating": "its IMDb rating",
@@ -1191,7 +1176,6 @@ const CHECK_COPY: Record<string, string> = {
   "the whitelist": "your keep list",
   "curated lists": "protected lists",
   "which *arr owns this": "which app manages it",
-  "who else watched it": "who else watched it",
   // The season guard, where it could not run at all. Its other outcomes are whole sentences
   // that do not parse as `could not check {what}: {cause}` and keep their own row.
   "who is part-way through it": "who's part-way through it",

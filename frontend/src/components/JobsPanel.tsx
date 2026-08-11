@@ -15,6 +15,7 @@ import { api, type Schedule, type ScheduledJob } from "../api";
 import { useBackCloseMirror, useBackGuard } from "../backnav";
 import { count } from "../format";
 import { shelfSkipIsCurrent } from "../shelfStatus";
+import { useGeneralSettings } from "../useGeneralSettings";
 import { JobStatus, useJobFlash } from "./JobStatus";
 import { ModalShell } from "./ModalShell";
 import { ScanRow } from "./ScanBar";
@@ -188,7 +189,7 @@ function ScheduleModal({
   const queryClient = useQueryClient();
   // The effective server time zone every timed job runs on, so the help names the real zone
   // instead of guessing "UTC in Docker" (U-1, rule 86). Shares GeneralPanel's cache.
-  const zone = useQuery({ queryKey: ["general-settings"], queryFn: api.general }).data?.timezone;
+  const zone = useGeneralSettings().data?.timezone;
   const meta = jobMeta(job.id);
   const presets =
     job.id === SCAN_ID ? SCAN_PRESETS : maintenancePresets(job.default_cron ?? "0 4 * * *");

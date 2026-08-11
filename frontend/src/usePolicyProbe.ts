@@ -18,9 +18,13 @@ export interface Probe {
   failed: boolean;
 }
 
-/** The same 250ms the policy editor debounces its simulate and validate reads on, so a drag
- *  fires one request when it stops rather than one per pixel. */
-const SETTLE_MS = 250;
+/** How long the policy editor's reads wait for a drag to stop, so one lands when the operator
+ *  lets go rather than one per pixel. Shared with `PolicyEditor`'s simulate/validate timer, which
+ *  used to spell the same number itself under a comment here saying the two agreed.
+ *
+ *  The review queue's search box debounces on its own 250 and says at its own site why it is not
+ *  this one. */
+export const SETTLE_MS = 250;
 
 export function usePolicyProbe(probe: PolicyProbe | null): Probe {
   const [settled, setSettled] = useState<PolicyProbe | null>(null);
