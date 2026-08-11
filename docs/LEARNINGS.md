@@ -3088,6 +3088,49 @@ the `RatingRule` dataclass's own default. That argues for pinning the boundary r
 it: the dataclass default is 0, every percentage bar carries 0, and one validator is the only
 thing standing between them.
 
+## A helper measured at zero lines was the wrong helper, not the wrong idea (2026-08-10)
+
+Two settings findings were killed on "an extraction that nets to zero lines is not worth its
+risk". Both were re-measured. One was killed on the wrong shape and is now built; the other loses
+on every reading, including the one nobody had taken.
+
+**The shape decides the arithmetic, and the first shape measured was the expensive one.** The
+helper priced for `app_settings.py`'s three identical switch getters swallowed the `await _get(...)`
+call, which is what put `leaving_soon_unarmed`'s call at 104 columns against a 100-column limit
+and made it wrap to three lines. A helper taking the value `_get` already returned is pure,
+synchronous, typed `-> bool`, and leaves every call site between 76 and 79 columns. Measured
+across both helpers: **+12 total lines, -8 code lines**, the difference being two docstrings, and
+those are the point. The rule they hold used to be implied at three sites and stated as prose at
+two of them.
+
+**A helper standing between a function and the call a walk matches for takes that function off
+the walk.** `tests/test_app_settings_precedence.py` derives its population by AST: a function
+that calls `_get` and takes a `Settings`. The swallowing helper would have dropped all three
+switch getters out of it, leaving the count at four and the gate green while three sites went
+uncovered. The value-taking helper keeps every `_get` call where the walk can see it. **Before
+extracting anything, grep the tests for a walk that matches on the call you are about to move.**
+
+**One declaration turns three mutations into one, and that is the payoff a line count cannot
+show.** Swapping `stored is None` for `not stored` inside the shared helper fails three named
+cases at once; before, the same defect had to be introduced three times to be caught three times.
+The credential helper reaches a third caller the finding never counted, `get_api_key`, whose own
+decrypt-failure path is pinned by nothing of its own: it stayed green under the mutation across
+296 tests in `test_settings_api.py`, `test_general_and_logs.py`, `test_foundations.py` and
+`test_api.py`. It is covered transitively now, by the one Discord case that drives the shared
+declaration.
+
+**The scheduler decorator loses even as a partial, and the partial had never been priced.** The
+kill judged it over all seven jobs. Decorating only the four that fit was built for real,
+formatted, mypy-clean and green on all 37 scheduler tests: **+21 total lines, +13 non-comment
+lines, +5 statements**, against an estimate of about zero. `inspect.signature().bind()` survives
+the narrowing, because three distinct argument positions do. And the drift question answers the
+same way the line count does: each of the four still declares its own job id, log event and
+result string at the decoration, so the only thing centralized is `ok=False`.
+
+**The general form is now in the plan's S5.** "Nets to zero" is a line test. "How many places has
+a future author got to keep in step" is a different question, and a kill that answers only the
+first one is not finished.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

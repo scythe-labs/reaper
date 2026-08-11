@@ -340,7 +340,8 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 | W9-6, moving `reap_in_flight` | All three importers of `api/backup.py` import `api/runs.py` in the same breath, so the 35 modules the cut drops from `api.backup`'s closure are paid by nobody, and `reaper.main` loads 931 either way. Every write of `app.state.reap_status` is in `api/runs.py`, one assignment at `:468` and 34 field mutations across ten regions from `:549` to `:762`, so every destination splits the reader off: `api/deps.py` separates `reap_in_flight` from `_reap_status`, its own create-instead-of-refuse twin, and a new module costs +1 on both counters and still leaves the mutations behind. The row's "only such edge" is five, and `auth` in its exempt set has had no importer since W9-2 | Phase 8, measured before building |
 | W3c, all six parameter objects | Every keyword at every production call site classified: `build_season_facts` assembles its 24 from 18 locals a carrier would hold one frame up, `_judge_item`'s two sites unpack off two different record types, `scan`'s 12 pass-through arguments come from four unrelated sources, and `plan_series_prune` has 87 test call sites resting on the defaults the correction calls the protection. The match record is the one clean pass-through and holds two identity-path join keys, which is W5-2's reason. `gather`'s nine policy fields stayed open as W5-3 and landed separately, being the one candidate here whose carrier already existed. The real hazard is the twelve parallel `movie_*`/`tv_*` locals, and a gate closes it from `tests/` | Phase 8, measured before building |
 | W5-1, one model for the stored explanation | Built as the row asks, then measured: the collapse drops the whole match block, and three interlocks fail open with it. The read model's three `mode="before"` validators exist so an illegible stored byte degrades one field instead of blanking the panel, and on the write side that same leniency normalizes the writer's own value to `None`. One model cannot be lenient for a reader of old rows and strict for the writer, so `extra="forbid"` catches none of it. The row's premise was also unfounded: all 36 written keys already match the declarations. A pinning test lands instead | Phase 8, PR #706, measured against a C9 drive |
-| W3b-9, a `stored_or_seed` helper | The row's "7 times in 3 spellings" is seven exactly and five spellings, so a helper serves three of the seven and buys 0 to 2 lines depending on how the longest call wraps (S5). It also binds only its own callers, where the whole exposure is the eighth getter nobody has written yet. What the measurement found instead is that **three of the seven precedence sites were unpinned across the entire suite**: a stored empty proxy list reverting to the env seed (rule 1's shape, claimed by its own docstring), a stale env webhook clobbering a UI edit, and a credential under a rotated key reporting "connected". A gate over all seven lands instead, with an AST walk that fails until an eighth getter is named | Phase 8, PR #703, all seven mutations driven red |
+| W3b-9, a `stored_or_seed` helper | **Killed, then rebuilt in a different shape. Read both halves.** The kill was right about the row and wrong about the item. Right: "7 times in 3 spellings" is seven exactly and five spellings, and the gate it landed instead found **three of the seven precedence sites unpinned across the entire suite** (a stored empty proxy list reverting to the env seed, rule 1's shape and claimed by its own docstring; a stale env webhook clobbering a UI edit; a credential under a rotated key reporting "connected"). Wrong: it measured ONE helper that swallows the `_get` call, priced it at 0 to 2 lines, and read that arithmetic as the verdict (S5). Two helpers taking the value `_get` already returned cost neither the line nor the gate, and the rebuild lands them | Phase 8, PR #703, all seven mutations driven red |
+| W3b-2, the scheduler decorator, the partial | **The four-job partial was never costed and now is: it loses too.** Built for real over `refresh_ratings`, `refresh_curated_lists`, `full_history_sweep` and `check_for_updates`, formatted, mypy-clean and green on all 37 of `test_scheduler.py`, it measures **+21 total lines, +13 non-comment lines and +5 statements** on `scheduler.py`. `inspect.signature().bind()` is still needed at four sites, not only at seven: `session_factory` sits at three distinct positions across the four, first in `full_history_sweep` and third in `refresh_ratings`, and all four are added positionally by `_maintenance_specs`. Each of the four still declares its own job id, log event and result string at the decoration, so only `ok=False` and the width of the catch are centralized, and the swallow stops being visible in the job that does it. **A fifth job binds to nothing either way**, and that is the shape that would work: each of the four already has its own named test (`test_a_ratings_state_read_failure_still_records_not_ok` and its three siblings), so what is missing is a walk over `_maintenance_specs` that fails when a job records nothing and is not named as deliberate | Phase 8, built and measured, reverted |
 
 ## Execution
 
@@ -394,6 +395,21 @@ of lines around them is noise.
 This document's Python line counts are also short by 0.2% to 16%, so do not quote one in a commit
 message. But the reason to ignore them is the first paragraph, not the second: a size estimate says
 how big a session is, never whether the change is worth making.
+
+**S5 has been read backwards as a kill criterion, and it is not one.** "Nets to zero" is a line
+test, and the question it answers is only ever "is this extraction paying for itself in size".
+The separate question is **how many places a future author has to keep in step**: a rule written
+once cannot drift, a rule written three times drifts, and CLAUDE.md's rule 144 is the standing
+form of it. A helper that saves zero lines and removes a drift surface is worth building; one
+that saves zero lines and removes nothing is what S5 is actually about. So a kill needs BOTH
+halves said, and a row that says only the arithmetic is not finished. **Counted on 2026-08-10**:
+S5 is cited against a change in six findings, and four wave-11 kills rest on line arithmetic
+alone (**W11-8** nets 0, **W11-11** costs +7, **W11-23** nets -7, **W11-44** costs +10), with
+two more citing it beside a second reason (**W11-4** at -1, **W11-7** at -2). **W3b-9 was one of
+them and is now rebuilt**, at +12 total lines and -8 code lines, because the shape that was
+measured swallowed the `_get` call and the shape that works takes the value it returns.
+**W11-41 is the row to copy**: byte-identical DDL means there is no invariant that can drift, so
+it names the drift surface as absent rather than counting lines, and its kill needs nothing else.
 
 **S6. `docs/STATUS.md` is full.** 120 of 120 lines, enforced at `tests/test_repo_hygiene.py`'s
 `STATUS_MAX_LINES` alongside the 100-column bound at `STATUS_MAX_COLUMNS`. Phases 4, 7, 8 and 9 all alter what the app does, which
@@ -1661,6 +1677,21 @@ here is preventing a future divergence.
   > and wants nothing: its wrapper `after_scan` calls it at three sites with three reasons on
   > three typed arms. That docstring's "Every skip below is written down" was contradicted by
   > the comment three lines under it, and now names the one skip that is not. Landed at #698.
+  >
+  > **The partial was costed after the fact, and it loses too.** The kill above judged the
+  > decorator all-or-nothing over seven; nobody had priced decorating only the four that fit.
+  > Built for real, formatted, mypy-clean and green on all 37 of `test_scheduler.py`, it measures
+  > **+21 total lines, +13 non-comment lines and +5 statements**, against an estimate of about
+  > zero. `inspect.signature().bind()` is still required, because three distinct positions
+  > survive the narrowing to four and `_maintenance_specs` adds every job positionally. **The
+  > drift question answers the same way**, which is the part the line count does not settle: each
+  > of the four still declares its own job id, log event and result string at the decoration, so
+  > the only thing written once is `ok=False` and the width of the catch, and a reader of the job
+  > can no longer see that its failures are swallowed. **A fifth job binds to nothing either
+  > way**, and that is what would work: all four are already pinned one at a time
+  > (`test_a_ratings_state_read_failure_still_records_not_ok` and its three siblings), so the
+  > missing piece is a walk over `_maintenance_specs` that fails on a job recording nothing
+  > unless it is named as deliberate. Not built here; it is a gate, not this row.
 - `services/lists.py:779`, `history_sync.py:220`, `imdb_dataset.py:213` — three hand-rolled
   cache-database bootstraps and three sync-state stamps in two different SQL spellings. `cache.db`
   is disposable by contract, so all three want one primitive. **~90 lines**. The generalization
@@ -1791,7 +1822,10 @@ here is preventing a future divergence.
 - `services/app_settings.py:185` — the "stored wins, else env seed" rule written **7 times in 3
   spellings**, with log level resolving in `main.py` instead of a getter.
 
-  > **Killed: both halves. A gate lands instead, and three of the seven sites were unpinned.**
+  > **Killed, then rebuilt in a different shape. Read both halves.** The gate below landed first
+  > and found three of the seven sites unpinned, which is the kill's lasting value. The
+  > arithmetic three paragraphs down is what the rebuild overturns; the `> Rebuilt:` block at the
+  > end of this finding says why, and neither block is complete on its own.
   >
   > **7 is right, 3 spellings is not; the tree holds 5.** The population is derivable: a function
   > in `app_settings.py` that calls `_get` and takes a `Settings`-annotated parameter, which is
@@ -1858,6 +1892,29 @@ here is preventing a future divergence.
   > now one. Measured while confirming it: `REAPER_LOG_LEVEL=ERROR` validates and
   > then silently resolves to INFO, because `logbuffer.LEVELS` omits ERROR while `config.py`'s
   > `Literal` and the Unraid template both offer it. On `dev`, filed as #700.
+  >
+  > **Rebuilt: two helpers, and the shape is what changed.** The kill measured one helper that
+  > swallows the `_get` call, which is why `leaving_soon_unarmed` wrapped to three lines and why
+  > the getters then dropped out of the gate's own population: `_env_seeded_getters` collects a
+  > function that calls `_get` and takes a `Settings`, so a helper standing between them takes
+  > all three off the walk and leaves it green at four. **A helper that takes the value `_get`
+  > already returned costs neither.** `_env_seeded_switch(stored, seed)` is pure, synchronous and
+  > typed `-> bool`; each of the three keeps its own `_get` line and returns in one, at 76 to 79
+  > columns. `_decrypted_or_absent(box, stored)` is the second, and it reaches three sites rather
+  > than two: both Discord getters and `get_api_key`, which the row never counted because it
+  > takes no seed. **Measured: +12 total lines, -8 code lines**, the difference being the two
+  > docstrings, which is the rule being written down once instead of implied three times. One
+  > sentence was deleted from `proxy_trust_enabled`'s docstring for saying what the helper now
+  > says. **Driven red.** `stored is None` to `not stored` in `_env_seeded_switch` fails three
+  > named cases at once, one mutation for what used to need three; returning the raw ciphertext
+  > from `_decrypted_or_absent` instead of `None` fails the rotated-key case. Full suite green,
+  > 4,279 passed. **What the rebuild does NOT buy**, and the kill was right about it: the gate is
+  > still the only thing that binds an eighth getter, because a helper binds only its callers.
+  > The two are not alternatives, and reading them as alternatives is what killed this row. **One
+  > measured negative**: `get_api_key`'s own decrypt-failure path is still pinned by nothing of
+  > its own, `tests/test_settings_api.py`, `test_general_and_logs.py`, `test_foundations.py` and
+  > `test_api.py` all staying green under the mutation across 296 tests. It is now covered
+  > transitively instead, by the one Discord case that drives the shared declaration.
 - `backup.py`/`restore.py`/`retention.py` — **5 raw `sqlite3.connect` blocks**, none using
   `db/session.py`'s `_configure_sqlite` declared pragma set, so `busy_timeout` is 5000 in two,
   30000 in one and absent in two. Two share a byte-identical operator string. Risk
@@ -3384,6 +3441,101 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-42 | ~85 lines, all `ci` | populations right, ~16 removable, provenance pair unresolved | build the macOS probe, defer the composite actions |
 | W11-43 | spelled 3 times | right, and `schema_gate.py` is a 4th deliberately different shape | build at +2, or write the gate |
 | W11-44 | written 3 times, ~23 | count right, 3 runtimes rather than 3 copies | kill, sharing costs +10 on the boot path |
+
+### The kills, sorted by whether a different shape rescues them
+
+**The table above carries 16 kills, not 20.** The other four are `unsettled` rows where one of
+the two reports killed the item (**W11-10**, **W11-20**, **W11-21**, **W11-31**), and counting
+those as kills is how 20 is arrived at. 43 rows: 21 build, 16 kill, 5 unsettled, 1 defer.
+
+The sort below is the answer to a challenge the owner made on 2026-08-10, and S5 now carries the
+general form of it. **The question is not "does the proposed shape work" but "what shape would".**
+A kill that says only "nets to zero" has answered the first question and left the second one
+open, and this wave answered the first question four times (W11-8, W11-11, W11-23, W11-44).
+
+**Premise false, and no shape rescues them.** The claimed duplication or cost is not in the tree,
+or the change breaks something these rows exist to protect. Each is correct as written.
+
+- **W11-4** The `others_watching` arm cannot fire, and the four cross-references
+  (`api/review.py`, `engine/gates.py`, `WhyPanel.tsx`, `policyMeta.ts`) each say it is kept so
+  stored explanations still decode, so it is deliberate rather than dead. No table either:
+  `min_dormancy` and `season_progression` return computed phrases, and the arm ORDER is the rule.
+- **W11-6** `services/breakdown.py` holds one count/bytes/unknown triple, four pairs of differing
+  arity and one dict. The three parallel re-zipped dicts do not exist.
+- **W11-7** Already superseded by the shape this section argues for.
+  `test_repo_hygiene.py`'s `_arr_construction_sites` walk pins all six *arr constructions and
+  their argument set, and its own docstring says a shared constructor "would only bind the sites
+  that call it". That sentence is right here and was misread into W3b-9's kill, where the gate
+  and the helper were treated as alternatives. They are not.
+- **W11-8** `_retire` is already the helper, and rule 115's four conditions live inside it. The
+  four call lines are four different `when=` predicates over four different slug sets, and
+  moving predicates into a table would detach three safety comments from the case each explains.
+  `safety-path`, so the prime directive settles it whatever the arithmetic says.
+- **W11-13** Correct kill for a reason the row does not give. `IntegrationError.retry_after`'s
+  sole reader treats `0.0` and `None` alike, which is what the row says, but `notify/discord.py`
+  has a second reader of its OWN parser that does not: `None` skips the retry and `0.0` would
+  retry immediately. Unifying on the base clamp is a live behavior change, so the kill is firmer
+  than recorded.
+- **W11-14** Two numbers on purpose: 500 is a debounced simulator replay, 100 is the stride the
+  scan's own `emit(Progress(...))` rides on, so it is progress granularity rather than a yield
+  budget. A shared constant would fuse two unrelated knobs. The only residue is naming
+  `snapshot.py`'s bare `100`, two sites and one line.
+- **W11-20** Max drill depth is 2, at two places, and `navIntent.ts` already made the destination
+  one value with one `goTo`. Threading a single untyped capability into the leaves in place of
+  nine typed props is worse, not shorter.
+- **W11-41 is the row every other kill should be written like.** Byte-identical DDL means there
+  is no invariant that can drift, so an `IntPk` alias would be a rename. It names the drift
+  surface as absent instead of counting lines, which is the whole test.
+
+**Killed on line count, and worth re-asking.** The duplication is real; the extraction measured
+to roughly zero; nobody asked what else would write the rule once. Each clause below is the shape
+that would.
+
+- **W11-1** A pure `_display_fields(item, spine_library)` returning the seven display values,
+  called from `library_index.py`, `snapshot.py` and `season_scan.py`. The kill is right that a
+  sentinel `PlexItem` must invent a `rating_key` (`identity.py`'s field has no default) and that
+  one fallback is the Tautulli spine rather than the dataclass default; neither objection touches
+  a helper that returns values instead of an object.
+- **W11-9** No shape at an acceptable price. The no-trailing-sleep guard really is byte-identical
+  at both loops, but `_exclusion_landed` gates the canary abort, and indirection there is the one
+  thing the prime directive forbids buying with tidiness. Recorded so nobody re-asks.
+- **W11-11** Not a helper, a gate: assert under `src/` that no duration is derived from
+  `time.time()`. The rule at the 12 sites is "monotonic, rounded to integer milliseconds", and
+  nothing in the tree states it.
+- **W11-17** `useEdge(flag, {onFall})` holding the callback in a ref. The six bodies genuinely
+  differ, but the shared thing was never the body: it is the ref protocol, and three sites carry
+  the same prose about it. Writing the mirror inside the `if` instead of after it is the bug the
+  hook makes unwritable.
+- **W11-23** A text gate, not a component. `.field-sm` is a `<label>` wrapping exactly one
+  control with `span.field-label` as its name, and a `<div>` exactly where there is no single
+  control. That is an accessibility rule holding across 26 sites and declared nowhere, which is
+  the reason this row's -7 lines decided nothing.
+- **W11-30** Two named sentence helpers in `format.ts`, not a `plural()`. The kill of the helper
+  is right, irregulars and agreement included. What it swallowed is two operator sentences
+  written verbatim more than once: "N size(s) unknown" at three sites including `format.ts`'s
+  own, and the held-back-unmeasured sentence at two. Rule 144's exact case, on deletion copy.
+- **W11-36** Three lines inside the gate that already exists.
+  `test_the_reload_advice_population_is_pinned_per_file` counts the WORD `reload` per file; it
+  cannot see the sentence drift. Pin the distinct never-loaded sentences across `_shipped_tsx()`
+  to the two known strings, which also brings the unnamed `AboutPanel`/`BackupPanel` pair in.
+- **W11-38** Split it. `apiStatus(e)` is the rename the kill describes, so skip it.
+  `apiMessage(e, fallback)` is not: it is where "an error that is not an `ApiError` never shows
+  the operator its raw text" lives, four call sites can leak, and `api.ts` already explains why a
+  `TypeError` falls past every branch.
+- **W11-44** A gate over the three boot paths, not shared code. They differ in process model,
+  alembic addressing and failure handling, so nothing can be shared; the invariant is that none
+  of the three serves a schema it did not just bring to head, and `launcher.py` is the only place
+  that says so. Same answer W11-43's row already reached from the other side.
+
+**Ranked, best first, and none of it is built here.** The order is how much a future author has
+to keep in step, not how many lines come out. **W11-36**, three lines and it closes six copies of
+one operator sentence. **W11-23**, an accessibility rule with 26 instances and zero declarations.
+**W11-30's two sentences**, deletion-path copy written twice verbatim. **W11-1**, a degradation
+rule at 20 sites where the wrong answer is a fabricated value. **W11-17**, where the residue is a
+protocol rather than a body. **W11-38's `apiMessage` half**. **W11-10's four getters** from the
+unsettled rows, which own the no-`await`-between-read-and-write rule that only
+`api/poster.py` states. Then **W11-11** and **W11-44** as gates, and **W11-21**'s shared 250 ms
+constant, which is one line and closes a number three files hard-code.
 
 ## Wave 12: the test suite's wall clock
 
