@@ -3317,9 +3317,62 @@ all four is close to zero while the *code* falls by 17. S5 read as a line test k
 - **W11-42**'s two copies shared the line above, so the defect would have had to be found and
   fixed twice.
 
-The reusable question is not "how many lines" but **"is there a rule here that only one copy
-states"**. Where the answer is no, the kill is right and cheap; where it is yes, the line count
-is measuring the comment.
+The plan's S5 already carries the standing form, that a kill needs both halves said. What these
+four add is the measurement: across four independent cases the code fell by 17 lines and the
+diff by nothing, so on this codebase the line half decides almost nothing on its own. The
+question that did the work each time was **"is there a rule here that only one copy states"**.
+## A helper measured at zero lines was measured in the wrong shape (2026-08-10)
+
+Two settings findings were killed on "an extraction that nets to zero lines is not worth its
+risk". Both were re-measured. One was killed on the wrong shape and is now built. The other loses on
+every reading, including the partial nobody had priced.
+
+**The shape decides the arithmetic, and the first shape measured was the expensive one.** The
+helper priced for `app_settings.py`'s three identical switch getters swallowed the `await _get(...)`
+call, which is what put `leaving_soon_unarmed`'s call at 104 columns against a 100-column limit
+and made it wrap to three lines. A helper taking the value `_get` already returned is pure,
+synchronous, typed `-> bool`, and leaves every call site between 76 and 79 columns. Measured
+across both helpers: **+13 total lines, -9 code lines**, the difference being 18 docstring
+lines and six blanks. The rule those docstrings hold used to be implied at three sites and
+stated as prose at two of them.
+
+**A test walk that matches on a call stops seeing any function that hands that call to a
+helper.** `tests/test_app_settings_precedence.py` derives its population by AST: a function
+that calls `_get` and takes a `Settings`. The swallowing helper would have dropped all three
+switch getters out of it, leaving the count at four and the gate green while three sites went
+uncovered. The value-taking helper keeps every `_get` call where the walk can see it. **Before
+extracting anything, grep the tests for a walk that matches on the call you are about to move.**
+
+**One declaration turns three mutations into one, and that is the payoff a line count cannot
+show.** Swapping `stored is None` for `not stored` inside the shared helper fails three named
+cases at once; before, the same defect had to be introduced three times to be caught three times.
+The credential helper reaches a third caller the finding never counted, `get_api_key`, whose own
+decrypt-failure path is pinned by nothing of its own: it stayed green under the mutation across
+296 tests in `test_settings_api.py`, `test_general_and_logs.py`, `test_foundations.py` and
+`test_api.py`. It is covered transitively now, by the one Discord case that drives the shared
+declaration.
+
+**The scheduler decorator loses even as a partial, and the partial had never been priced.** The
+kill judged it over all seven jobs. Decorating only the four that fit was built for real,
+formatted, mypy-clean and green on every scheduler test, 37 of them at the commit it was measured on: **+21 total lines, +13 non-comment
+lines, +5 statements**, against an estimate of about zero. `inspect.signature().bind()` is still needed after the
+narrowing, because three distinct argument positions survive it. And the drift question answers the
+same way the line count does: each of the four still declares its own job id, log event and
+result string at the decoration, so the only thing centralized is `ok=False`.
+
+**Writing the rule down is what found the site that broke it.** The credential helper's docstring
+says every caller has to agree that an undecryptable credential is absent. A review lane checked
+that claim against the tree and found `GeneralSettingsOut.api_key_set` computing presence from row
+existence, so a key written under a rotated secret reported as set while the reveal route 404s and
+the header lane refuses it. Rule 76's shape, one level up from a file check, and it was on `dev`.
+Fixed rather than filed, because the claim is this branch's. **The sweep found no second site**:
+instance credentials have no absent-on-broken posture at all, every `decrypt` of one letting the
+`ValueError` propagate, so `InstanceView.has_key` reading `bool(row.api_key_enc)` agrees with its
+own runtime and is not the same defect.
+
+**The general form is now in the plan's S5.** "Nets to zero" is a line test. How many places a
+future author has to keep in step is a different question, and a kill that answers only the
+first one is not finished.
 
 ## Prior art
 

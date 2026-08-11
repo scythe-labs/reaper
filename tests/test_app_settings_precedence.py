@@ -1,17 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The seven getters that resolve "stored wins, else the environment seed", in one table.
 
-``app_settings`` writes that precedence seven times and the seven do not share a shape. Three
-are byte-identical apart from the key and the attribute; ``get_trusted_proxies`` decodes the
-seed and cleans the stored side; ``get_timezone`` validates both and falls through to a third
-source; the two Discord getters are Fernet-encrypted, and one of them writes the seed back. A
-shared helper would serve three of the seven and could not reach the other four, so the
-duplication is pinned here rather than removed.
+``app_settings`` writes that precedence seven times and the seven do not share one shape, so
+two helpers hold the parts that do repeat. The three on/off switches call
+``_env_seeded_switch``, which owns the order. Both Discord getters call
+``_decrypted_or_absent``, which owns what a credential that will not decrypt means. The last
+two reach neither: ``get_trusted_proxies`` decodes the seed and cleans the stored side, and
+``get_timezone`` validates both and falls through to a third source.
 
-The pin is what a helper could not buy. ``_env_seeded_getters`` reads the module and collects
-every function that takes a stored row and a ``Settings``, so an eighth one fails this file
-until its case is written (rule 145) -- including one written by someone who never read this
-docstring, which is the case a helper covers only if they call it.
+The gate below is what neither helper buys. ``_env_seeded_getters`` reads the module and
+collects every function that calls ``_get`` and takes a ``Settings``, so an eighth one fails this
+file until its case is written (rule 145) -- including one that calls no helper at all, which
+is what an author who never read this docstring writes. The ``_get`` call is the load-bearing
+half: hiding it inside a helper is what the rejected shape would have done, and it would have
+left this walk collecting four.
 
 Getting the precedence backwards is silent, and it does not fail in a random direction. A
 stored ``false`` mistaken for "nothing stored" hands the answer back to the environment, so
@@ -220,9 +222,10 @@ def _getters_driven_here() -> set[str]:
 def test_every_env_seeded_getter_is_driven_above() -> None:
     """An eighth getter fails here until its case is written.
 
-    This is the whole reason the seven stay hand-written. A shared helper binds only the
-    getters that call it, so the next one is exactly as free to read a stored ``false`` as
-    "nothing stored" as the seven were, and nothing would say so.
+    A helper binds only the getters that call it, so an author who writes the precedence out by
+    hand is exactly as free to read a stored ``false`` as "nothing stored" as the three were
+    before ``_env_seeded_switch`` existed. The helper gives that author the right thing to call
+    and this makes them look, which is why the tree carries both.
     """
     population = _env_seeded_getters()
     assert len(population) == _EXPECTED_ENV_SEEDED_GETTERS, (
