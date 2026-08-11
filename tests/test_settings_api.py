@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
+import reaper.api.settings
 from reaper.api.plex import PlexUpdateIn, update_plex_settings
 from reaper.api.settings import _BAD_CRON
 from reaper.auth.ratelimit import argon2_gate
@@ -1315,18 +1316,37 @@ class TestSchedule:
         self, client: TestClient
     ) -> None:
         """The scan arm and the upkeep arm answer a cron the scheduler will not take with the
-        same words, and those words are ``_BAD_CRON``. The two arms used to spell the sentence
-        out separately with nothing asserting either, so a reword of one shipped an operator
-        two explanations of one refusal (rule 144). Matched on the declaration's own halves
-        rather than on a copy of it, since restating the sentence here would be a third copy.
+        same words, and those words are ``_BAD_CRON`` with its slot filled. The two arms each
+        spelled the sentence out, byte-identically, with nothing asserting either, so a reword
+        of one would have shipped an operator two explanations of one refusal (rule 144).
+
+        **Three mutations, and no single assertion catches more than one.** Rendering the two
+        responses cannot see a re-inlined copy at all, because the copy this replaced produced
+        identical output, so the source count is what closes rule 144's gap. Matching the
+        declaration's halves cannot see an arm that raises ``_BAD_CRON`` unformatted, because
+        the raw template starts and ends with those very halves and its literal ``{reason}``
+        satisfies a length bound, which ships the placeholder to the operator (rule 21). Every
+        expectation is derived from the declaration, so none of this restates the sentence.
         """
         prefix, suffix = _BAD_CRON.split("{reason}")
+
+        # Rule 144, and rule 147's caution about what a text scan can see: `prefix` is the
+        # declaration's own first half, so a re-inlined f-string anywhere in the package is a
+        # second hit however the rest of it was reworded.
+        package = Path(reaper.api.settings.__file__).parent
+        copies = sum(f.read_text(encoding="utf-8").count(prefix) for f in package.rglob("*.py"))
+        assert copies == 1, (
+            f"{copies} copies of the cron refusal in src/reaper, expected only _BAD_CRON's "
+            "declaration. An arm spelling its own sentence renders identically to this one."
+        )
+
         for job_id in ("scheduled_scan", "refresh_ratings"):
             resp = client.put(f"/api/settings/jobs/{job_id}/schedule", json={"cron": "nope"})
             assert resp.status_code == 422, job_id
             detail = resp.json()["detail"]
             assert detail.startswith(prefix), (job_id, detail)
             assert detail.endswith(suffix), (job_id, detail)
+            assert "{reason}" not in detail, (job_id, detail)
             assert len(detail) > len(prefix) + len(suffix), (job_id, detail)
 
     def test_saving_one_upkeep_job_leaves_the_others_untouched(self, client: TestClient) -> None:

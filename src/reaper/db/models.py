@@ -1008,10 +1008,7 @@ class ActionStep(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("reap_run.id", ondelete="CASCADE"), index=True)
-    """Which run this step belongs to. Indexed because SQLite does not index a foreign key
-    on its own, and nothing sweeps this table: retention deletes snapshots and skips every
-    snapshot a run points at, so `action_step` only ever grows. Every read of a run's
-    journal filters on this column, and each was a full table scan."""
+    """Which run this step belongs to. Indexed by revision ``f7a8b9c0d1e2``, which says why."""
 
     media_key: Mapped[str] = mapped_column(String(100), index=True)
     """Which candidate this step acts on, so the journal can be read back per item."""

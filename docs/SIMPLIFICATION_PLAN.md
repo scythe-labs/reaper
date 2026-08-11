@@ -322,7 +322,8 @@ here first and never reconstructed later.
 | #728 | 8 | W3b-11's art ladder (un-killed); W5-2 (kill confirmed, gate lands); a re-review of thirteen kill rows | `components/artFallback.ts`, `useArtFallback`, `artFallback.test.tsx`, `test_every_display_field_the_source_carries_reaches_its_lanes_pack`, `_display_pack_sites` | no | **A pass over the phase's kills asking what shape WOULD work rather than whether the plan's did. Nine of the fourteen rested on a line count.** S5 gains the paragraph saying so: it is a line test, and "does this remove a place a future author must remember something" is a second question. **Two rows moved and eleven stood.** **W3b-11's art ladder is un-killed and lands as a hook**: the kill measured a shared COMPONENT, and `Backdrop` and `WhyHero` share the ladder while sharing none of the chrome, so the component's 35 lines back were the chrome arriving as props. `useArtFallback` returns `{ src, onError }`, 41 lines leave the two sites against 6 back plus 2 imports and a 38-line leaf module, about zero on total lines and about -8 on code. The payoff is the two comments that pointed at each other. Neither copy had a test; the new file drives all three rungs plus the reset through `WhyHero` rather than a probe, red three ways. `_EXPECTED_FRONTEND_MODULES` 205 to 207, `_EXPECTED_RENDERING_TEST_FILES` 57 to 58. **W5-2's collapse stays killed and the hazard under it becomes a gate**: all fifteen `Display` fields default to `None`, so a field packed on the movie lane and forgotten on the season lane raises nothing and mypy sees nothing, and W5-2's own text names three of them as identity-path join keys. The permitted omissions derive from the source dataclass rather than a list, so a sixteenth field needs no edit; red five ways, including a pack emptied so it reads as the `_NO_DISPLAY` singleton. `Display`'s docstring opened "None of them decide anything", quoted in that kill and left standing (rule 7/24). **Two premise-false kills re-verified rather than taken on trust**: W9-5's 13 modules still reach `clients/base.py` through something they import for real work, closure identical either side of the cut for all 13, and every importer of `api/backup.py` still imports `api/runs.py` in the same breath. **Measured and rejected**: shared `Annotated` bound aliases for W5-5's seven caps, which move a deletion cap's bound off the line declaring it; a hook for the second image ladder, whose two sites are 2 lines each. **A question the kills did not ask**: W3b-11 recorded `ScalesPanel`'s `Poster` as having no reset effect and preserved the difference. It is safe, because the row key carries the title id, and nothing said so beside a sibling calling the reset load-bearing. One comment lands there. No behavior change, so `STATUS.md` is untouched |
 
 | #733 | 8 | W11-42, W11-19, W11-18, W11-10 (getters; its job blocks killed) | `binaries.yml`'s `probe`, `deps.state_singleton`, `useSwitchConfirm`, `useSuggestedMap` | no | **Four dedups, three of the four stated figures wrong, and the lines are the reason for none of them.** Code net, non-comment and non-blank: the macOS boot probe **-8**, `useSwitchConfirm` **-8**, the four `app.state` getters **-6**, `useSuggestedMap` **-3**, so **-25** over the four. The raw diff across the same files is **+21**, the shared declaration carrying the explanation the copies had split between them. So S5 read as a line test is answered four different ways here and settles nothing; what each one turns on is whether it removes a place a future author has to keep in step, and each removed one that had already been forgotten. **A first pass reported the getters at +2 by counting the helper's docstring as code**, which would have inverted that row's verdict. **The probe's two copies were carrying a live defect.** `curl -s … \| head -c 200 \| grep -qi` under `set -o pipefail` reports curl's status, and curl takes SIGPIPE once the page outgrows the pipe buffer: measured passing at 4 KB and **failing at 200 KB** against a built page under 5 KB, so a shipped gate is green on a size accident. Three copies on `dev`, two collapsed into the function and the snap's fixed beside it (rule 72). Driven four ways against a fake binary: healthy passes, 200 KB passes where the old form exits 1, a root serving JSON still fails, a binary that never boots still fails. **The gate is what pins it, not that drive**: `test_no_pipefail_gate_reads_its_verdict_through_a_short_circuiting_pipe` bans the shape in all 18 pipefail'd workflow steps and is driven red against the exact line this removed. Its population count corrected a hand reconciliation of 14 to 18 (rule 145). **`binaries.yml`'s provenance pair is settled rather than left**: both differences are forced, the `--out` paths by two consumers that read two locations (`reaper.spec:25` off `SPECPATH`, `snapcraft.yaml:100` off the repo root) and the interpreters by two jobs with different toolchains, and both steps now say so. The composite actions stay deferred. **`useSwitchConfirm` found a fourth caller the row does not count**, `JobsPanel`'s `onGoToPlex` at `Settings.tsx:208`, and its test harness was a third copy of the caller half, rewired onto the hook (rule 119). Four mutations driven red, one test each; the nonce bump was pinned by nothing. **`useSuggestedMap`'s no-clobber rule was unpinned behind rule 141**: the saved-mapping test set the stored value and the suggestion both to `TV`. Set apart it still passed, the assertion landing before the effect; a second folder the prefill may touch is what makes the wait mean anything. Three mutations driven red. **`state_singleton` is here for the invariant rather than the -6**, because "no `await` between the read and the write" was written at one of four sites and depended on at three; it is a plain `def`, so the invariant cannot be broken without turning every call site async. No behavior change anywhere, so `STATUS.md` is untouched |
-| #735 | 8 | W11-5, W11-33, W11-34, W11-35, W11-40, W11-43 | `ix_action_step_run_id`, `f7a8b9c0d1e2`, `buildinfo.project_root`, `settings._BAD_CRON`, `restore._check_schema`, `snapshot.condemned_keys`, `test_a_runs_journal_read_searches_an_index_rather_than_scanning`, `test_both_job_families_refuse_a_bad_cron_in_the_one_declared_sentence`, `TestProjectRoot` | **yes, `f7a8b9c0d1e2`**, one `create_index`, additive | **W11-40 is the only defect in the batch and the only one whose value is not lines.** `SCAN action_step` to `SEARCH ... USING INDEX`, on a table retention never sweeps; `services/retention.py`'s exclusion untouched. **Four of the six stated savings are wrong and all four in the same direction**: measured -2, -2, +2, -1, +4, +7 against -3, -7, -5, -3, index-only, +2, because a saving counts the deleted statements and not the declaration replacing them. W11-33's second half was already built at #720. W11-43 chose the consolidation over the gate: after it `src/` holds one multi-parent walk, so a ban would scan a population of one. W11-35's `PlexError` arm carries two causes and is #734 |
+| #735 | 8 | W11-5, W11-33, W11-34, W11-35, W11-40, W11-43 | `ix_action_step_run_id`, `f7a8b9c0d1e2`, `buildinfo.project_root`, `settings._BAD_CRON`, `restore._check_schema`, `snapshot.condemned_keys`, `test_a_runs_journal_read_searches_an_index_rather_than_scanning`, `test_both_job_families_refuse_a_bad_cron_in_the_one_declared_sentence`, `TestProjectRoot` | **yes, `f7a8b9c0d1e2`**, one `create_index`, additive | **W11-40 is the only defect in the batch and the only one whose value is not lines.** `SCAN action_step` to `SEARCH ... USING INDEX`, on a table retention never sweeps; `services/retention.py`'s exclusion untouched. **Code net, non-comment and non-blank: -3, -5, -3, -3, +4 with an 11-line revision, and -2**, against stated -3, -7, -5, -3, index-only and +2. Two exact, two short in the same direction, and W11-43 beating its estimate. This row first carried the same diff counted as total lines (-2, -2, +2, -1, +7), which is not the basis the rest of the table uses and reversed the reading; corrected at #740. W11-33's second half was already built at #720. W11-43 chose the consolidation over the gate: after it `src/` holds one multi-parent walk, so a ban would scan a population of one. W11-35's `PlexError` arm carries two causes and is #734 |
+| #740 | 8 | none new; corrects #735 | `test_both_job_families_refuse_a_bad_cron_in_the_one_declared_sentence`, `f7a8b9c0d1e2`'s docstring, `ActionStep.run_id`, `api.leaving_soon.sync_leaving_soon` | no | **#735's own review lanes reported after it merged, and both found defects in its new work.** **The cron test could not fail for the duplication it exists to prevent**: the copies it replaced rendered identically, so asserting over the two responses stays green when an arm re-inlines the sentence (rule 144). A source count derived from the declaration's own prefix closes it. **It was fail-open a second way the lane did not reach**, found by driving it: raising `_BAD_CRON` unformatted passes every check, because the raw template starts and ends with the halves being compared and `{reason}` satisfies the length bound, shipping the placeholder to the operator (rule 21). Two assertions, driven red separately. **Three rule 7/24 claims corrected**: the revision named `_refresh_overrides` as a second `action_step` reader when it reads `WhitelistEntry` (it is `_revive`), credited `render_as_batch` for an index that never goes through `batch_alter_table`, and `leaving_soon`'s comment said the third arm was the unlinked case when a client `PlexError` lands there carrying its own log text (#734). **The column and test docstrings each restated the revision's reasoning in full** and are pointers now (rule 144). **Every figure #735 published was on the wrong basis**: it counted total lines into a table that is code-net throughout, which read as five of six costing more than stated. Code net: -3, -5, -3, -3, +4, -2, so two are exact and W11-43 beats its +2 estimate at -2. Same slip as #733's getters row one PR earlier, opposite direction. No behavior change, so `STATUS.md` is untouched |
 
 ### Killed while executing
 
@@ -3793,7 +3794,7 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-2 | 3 to 5 re-parses, ~12 | count right, size is +2 | defer, carrier for #709 only |
 | W11-3 | 6 dispatch places, no test pins the conversions | block above; 30 sites over two spellings | **built**, test and type; table killed, 4 unlike dispatches |
 | W11-4 | 12 arms, 6 bare, the test is already that table | block above | kill |
-| W11-5 | `scan.py`'s condemned counter | right, in `services/snapshot.py` | **built**, -2 |
+| W11-5 | `scan.py`'s condemned counter | right, in `services/snapshot.py`, and **-3 is exact** | **built**, code -3 |
 | W11-6 | triple ×4 plus 3 parallel dicts | 1 triple, 4 pairs, 1 dict | kill, the file has no such shape |
 | W11-7 | 2 class names, ~14 | 2 class pairs plus 3 local names, nets -2 | kill, #655 shipped the AST gate instead |
 | W11-8 | 4 slug sets, 4 sweeps, ~10 | right, and `_retire` is already the helper | kill, nets 0 |
@@ -3820,26 +3821,34 @@ behind it; it is a verdict, not a gap left to fill in later.
 | W11-29 | 3 near-copies, one comment admits it | 5 controls, and the "borrows" comments are in the CSS | unsettled, both reports make it an owner split |
 | W11-30 | inline 64 times, `format.ts` twice, 14 `toLocaleString` | block above | kill the helper |
 | W11-31 | 4 sentences ×2, a third copy in `public.py`, comment verbatim | 4 right, the scout's 5 was the over-count; two carry the `public.py` copy, and the comment is a paraphrase | unsettled, scout -6, verifier ~0 |
-| W11-33 | dead branch at `restore.py:201`, refused 12 lines earlier, sentence ×4 | branch at 187, the gap is 11 lines; the ×4 half closed at #720 | **built**, -2, the branch alone |
-| W11-34 | twice in one function, pinned by nothing | right; the `-5` is not, the declaration costs more than the arms | **built**, +2, for the pin |
-| W11-35 | 3 arms, one 400 | right, all three identical; `PlexError` carries two causes | **built**, -1 |
+| W11-33 | dead branch at `restore.py:201`, refused 12 lines earlier, sentence ×4 | branch at 187, the gap is 11 lines; the ×4 half closed at #720 | **built**, code -5, the branch alone |
+| W11-34 | twice in one function, pinned by nothing | right; **-3 code, not -5** | **built**, code -3, and the pin is the value |
+| W11-35 | 3 arms, one 400 | right, all three identical and **-3 is exact**; `PlexError` carries two causes | **built**, code -3 |
 | W11-36 | 4 copies plus a deliberate 5th | right, plus an unnamed pair in `BackupPanel` and `AboutPanel` | kill as a dedup, write the hygiene gate instead |
 | W11-37 | 3 identity entries | right | build, -3, never its own PR |
 | W11-38 | the ritual 5 times | 9 sites in 2 rituals, 5 status and 4 message | kill, a helper is a rename |
 | W11-39 | 4 call sites, ~15 | 4 sites, only 2 adjacent; built at **+5** | **killed**, S5 |
-| W11-40 | unindexed, never swept, grows for the life of the install | 3 tree claims right, framing wrong, block above | **built**, the index only |
+| W11-40 | unindexed, never swept, grows for the life of the install | 3 tree claims right, framing wrong, block above | **built**, the index only, +4 code and an 11-line revision |
 | W11-41 | 13 models | 15 models | kill, byte-identical DDL is why nothing is gained |
 | W11-42 | ~85 lines, all `ci` | populations right; the probe is **-8 code**, and the **provenance pair is settled**, both differences forced | **built** the probe, composite actions deferred |
-| W11-43 | spelled 3 times | right, and `schema_gate.py` is a 4th deliberately different shape | **built**, +7 not +2; no gate, one site would be left to scan |
+| W11-43 | spelled 3 times | right, and `schema_gate.py` is a 4th deliberately different shape | **built**, **code -2**, so the +2 never had to be traded; no gate, one site would be left to scan |
 | W11-44 | written 3 times, ~23 | count right, 3 runtimes rather than 3 copies | kill, sharing costs +10 on the boot path |
 
 > **Built: the six backend rows W11-5, W11-33, W11-34, W11-35, W11-40 and W11-43. Every symbol
-> the six name is where the table says, and four of the six savings are not.** Code net, comments
-> counted and tests excluded: **-2, -2, +2, -1, +4 plus a 42-line revision, and +7.** The table's
-> figures were -3, -7, -5, -3, index-only and +2. The direction is one-way: five of the six cost
-> more than stated and none cost less, because a saving is counted off the statements deleted
-> while the declaration or docstring that replaces them is not counted at all. **A line estimate
-> in this wave is a locator, not a budget.**
+> the six name is where the table says, and the stated savings hold up better than the first
+> count of them said.** Code net, non-comment and non-blank, the basis every other row in this
+> table uses: **-3, -5, -3, -3, +4 with an 11-line revision, and -2.** Stated: -3, -7, -5, -3,
+> index-only and +2. Two are exact (W11-5, W11-35), two are short of the estimate in the same
+> direction (W11-33, W11-34), and **W11-43 beats its estimate outright**, at -2 against a
+> stated +2.
+>
+> **This block first published those figures as -2, -2, +2, -1 and +7, which is the same total
+> lines counted a different way, and it inverted the conclusion.** On that basis five of six read
+> as costing more than stated and the row wrote up a one-way bias that is not there. #733 had
+> already recorded the identical slip one PR earlier, a getters row read at +2 by counting a
+> helper's docstring as code. **So the basis is the finding, not the arithmetic**: a total-line
+> figure is not comparable to a code-net one, and this table is code-net throughout. The raw diff
+> across the six files is +50, almost all of it the docstrings and the revision.
 >
 > **W11-33's second half was already built.** Its "prepare-failure sentence written verbatim four
 > times" is `restore._PREPARE_FAILED`, landed at #720 with the four raise sites and four
@@ -3849,12 +3858,18 @@ behind it; it is a verdict, not a gap left to fill in later.
 > refusal in mypy's hands rather than in a second runtime copy of one operator sentence. That
 > sentence had nothing asserting it either; the surviving copy is pinned now.
 >
-> **W11-34's `-5` is wrong and the item was still worth building.** Two arms of one function spell
-> one refusal, and collapsing them to `_BAD_CRON` saves four lines and spends six on the
-> declaration and its comment. The row's own words say what the value is: *pinned by nothing*. Two
-> tests drove a bad cron down both arms and asserted only the 422, so either arm could be reworded
-> alone. The new test matches both details against the declaration's halves rather than restating
-> the sentence, which would have been a third copy of it.
+> **W11-34 is -3 code, and the pin is what it was worth.** Two arms of one function spelled one
+> refusal; `_BAD_CRON` is the declaration. The row's own words say the value: *pinned by nothing*.
+> Two tests drove a bad cron down both arms and asserted only the 422.
+>
+> **The first version of that pin was fail-open in two directions, and its own review lane caught
+> one while the branch caught the other.** Matching only the declaration's halves against the
+> rendered detail cannot see a re-inlined copy, because the copy it replaced rendered identically,
+> which is the rule 144 gap the test exists to close. It also cannot see an arm raising `_BAD_CRON`
+> unformatted: the raw template starts and ends with the very halves being compared and its
+> literal `{reason}` satisfies a length bound, so the placeholder ships to the operator (rule 21).
+> Both are fixed at #740, one assertion each, driven red separately. Every expectation is still
+> derived from the declaration, so nothing restates the sentence.
 >
 > **W11-35's three arms are byte-identical and the collapse changes nothing, but one of them
 > carries two causes.** `PlexError` reaches that arm both from the service, which raises it for
@@ -3866,10 +3881,14 @@ behind it; it is a verdict, not a gap left to fill in later.
 > **W11-40 is the index and nothing else.** `EXPLAIN QUERY PLAN` for the executor's own filter
 > returned `SCAN action_step` before and `SEARCH ... USING INDEX ix_action_step_run_id` after,
 > asserted on the plan rather than on the index existing, so an index that is present and not
-> chosen still fails. The revision is `f7a8b9c0d1e2`, one `create_index`, which copies no table
-> under `render_as_batch`. `services/retention.py`'s exclusion is untouched, per the block above.
+> chosen still fails. The revision is `f7a8b9c0d1e2`, one `create_index`: plain DDL that builds a
+> b-tree and rebuilds nothing. `services/retention.py`'s exclusion is untouched, per the block
+> above. **Its docstring named the wrong second caller** and said `render_as_batch` was what made
+> the index free, neither true; both corrected at #740, along with the column docstring and the
+> test docstring, which had each restated the revision's reasoning in full (rule 144).
 >
-> **W11-43 costs +7, and the gate is the worse of the two answers here.** After the consolidation
+> **W11-43 costs -2 code, so the trade the row offered never had to be made.** After the
+> consolidation
 > `src/` holds exactly one multi-parent walk, inside `buildinfo.project_root`, so a ban on the
 > spelling would guard a population of one. A gate would also have to run *after* this change or
 > exempt the two sites it exists to catch, which is the exclusion-list shape. The drift it removes

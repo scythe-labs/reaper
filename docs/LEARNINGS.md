@@ -3305,37 +3305,57 @@ pairs; the other two sit 40 and about 150 lines apart, so collapsing them reloca
 instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
 filtered two-column select to an unfiltered three-column one.
 
-## A dedup's stated saving counts the deletion and not the declaration (2026-08-10)
+## Two counts of one diff, and only one of them belongs in the table (2026-08-10)
 
-Six wave 11 backend rows, built and measured as code net with comments counted and tests
-excluded. Stated: -3, -7, -5, -3, index-only, +2. Measured: **-2, -2, +2, -1, +4 plus a 42-line
-revision, +7.** Five of the six cost more than the row said and none cost less.
+Six wave 11 backend rows, built and measured twice. **Total lines: -2, -2, +2, -1, +4 with a
+42-line revision, +7. Code lines, non-comment and non-blank: -3, -5, -3, -3, +4 with an 11-line
+revision, -2.** Stated in the plan: -3, -7, -5, -3, index-only, +2.
 
-**The error is one-sided because of how the figure is derived.** A reader counts the statements
-that will be deleted. What replaces them is a constant, a helper, or the docstring explaining why
-a parameter narrowed, and none of that is on the page yet when the estimate is written. So the
-estimate is systematically optimistic by whatever the replacement costs, which for a one-line
-declaration with a three-line comment is four lines against a four-line saving.
+**The two bases disagree about the outcome, not just the size.** On total lines five of the six
+cost more than stated and none cost less, which reads as a systematic optimism in how the wave
+estimates. On code lines two are exact, two are short in the same direction, and one beats its
+estimate. The first reading was published, and the write-up built a general claim on it about
+estimates counting the deletion and never the declaration. **The claim is an artifact of the
+basis.** Every other row in that table is code-net, so a total-line figure dropped into the same
+column is not a worse measurement, it is a different quantity wearing the same units.
 
-**Two of the six were worth building at a positive line count, for reasons the figure never
-carried.** The cron refusal (`api/settings.py`) was one sentence written twice in one function
-with two tests asserting only its status code, so either copy could be reworded alone; the
-declaration plus a test matching both arms against it costs +2. The root walk (`buildinfo`,
-`launcher`, `main`) was `main.py` counting three parents from its own file to reach the directory
-it serves the built SPA out of, agreeing with `launcher.py`'s count only because the two modules
-sit at the same depth; one shared `project_root()` costs +7 and makes moving either file an
-import error rather than a stale UI.
+**The identical slip had happened one pull request earlier**, a getters row read at +2 by scoring
+a helper's docstring as code, corrected to -6, which inverted its verdict. Twice in one phase, in
+opposite directions, from the same cause. **So state the basis beside any line figure**, and when
+a measurement contradicts a document, check the units before writing the lesson: the write-up is
+the expensive part to get wrong, because it is what the next reader takes as settled.
 
-**A greppable-violation gate is not automatically the cheaper answer.** The root walk was the row
-where a hygiene ban was the stated alternative. After the consolidation `src/` holds one
-multi-parent walk, inside the helper, so the ban would scan a population of one; before it, the
-ban would have to exempt the two sites it exists to catch. A gate is worth its line when the
-population it scans can grow, and the consolidation is what shrinks that population to one.
+**The row that moved most is the one whose verdict depended on it.** W11-43 was offered as "build
+at +2, or write the gate", with the gate the better answer if the consolidation cost lines. It
+costs -2, so there was no trade. The gate loses on its own merits anyway: after the consolidation
+`src/` holds one multi-parent walk, so a ban would scan a population of one, and before it the
+ban would have to exempt the two sites it exists to catch.
 
-**The one measurement that decided an item on its own was not a line count.** `ActionStep.run_id`
-was unindexed and `EXPLAIN QUERY PLAN` returned `SCAN action_step` for the executor's own filter,
-against a table retention never sweeps. The test asserts the query plan rather than the index's
-presence, so an index that exists and is not chosen still fails.
+**The one item decided by something other than a line count was the only defect in the six.**
+`ActionStep.run_id` was unindexed and `EXPLAIN QUERY PLAN` returned `SCAN action_step` for the
+executor's own filter, against a table retention never sweeps. Its test asserts the query plan
+rather than the index's presence, so an index that exists and is not chosen still fails.
+
+## A rendering test cannot see a duplicate that renders identically (2026-08-10)
+
+A dedup replaced two byte-identical copies of one operator sentence with a declaration, and
+shipped a test asserting both routes answer with that declaration's halves. **The test cannot
+fail for the thing it was written to prevent.** The copies it replaced produced identical output,
+so an arm that re-inlines the sentence renders exactly what the declaration renders, and every
+assertion over the two responses stays green. Rule 144's gap is a source-text question, and only
+a source-text assertion closes it.
+
+**The same test was fail-open a second way, found by driving it rather than reading it.** Raising
+the template unformatted passes every check: the raw string starts with the prefix and ends with
+the suffix being compared, because those are literally its own halves, and the eight characters of
+`{reason}` satisfy a "longer than prefix plus suffix" bound. That ships `{reason}` to the operator,
+which is a rule 21 defect the gate was standing in front of.
+
+**Neither hole is visible from the assertions; both are visible from a mutation.** Three mutations
+were needed to cover one three-line change: reword an arm, re-inline an arm verbatim, drop the
+`.format()`. No single assertion catches more than one of them. **When a test's expectation is
+derived from the declaration it is testing, ask what the declaration and the code under test can
+be wrong about together** — a derived expectation moves with the thing it should be pinning.
 
 ## A shell gate can be green because the page is small (2026-08-10)
 
