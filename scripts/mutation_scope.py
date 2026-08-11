@@ -66,6 +66,19 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
+class Omission:
+    """Callables in a zone's module that the zone deliberately does not mutate.
+
+    One written reason per group. A name is here or in ``functions``; being in neither is
+    what ``zone_drift`` fails on. Grouped rather than one line each because the reasons
+    genuinely repeat: a zone scoped to two shims omits the rest of its file for one reason.
+    """
+
+    reason: str
+    functions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Zone:
     """What to mutate, what gets to object, and how to tell survivors apart.
 
@@ -73,12 +86,60 @@ class Zone:
     print ``{"cases": {name: answer}}`` as JSON. Whatever an "answer" is, it has to be a value
     the direction of a change is readable from: a returned body for a repair shim, an
     accepted-or-rejected verdict for a validator.
+
+    ``functions`` and ``omits`` together account for every callable in ``module``, checked by
+    ``zone_drift``. A function with no mutable token is declarable and reports zero, which is
+    what ``evaluate_all`` already did; silence is the thing that is not allowed.
     """
 
     module: Path
     functions: tuple[str, ...]
     tests: tuple[str, ...]
     probe: str
+    omits: tuple[Omission, ...] = ()
+
+
+def module_callables(module: Path) -> set[str]:
+    """Every function and method in a module, named the way a zone names one.
+
+    A method is ``Class.method``. Bare method names are deliberately not produced here even
+    though ``func_spans`` accepts them, so a zone's list and this set compare as written.
+    """
+    tree = ast.parse((REPO / module).read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            names.update(
+                f"{node.name}.{child.name}"
+                for child in node.body
+                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+            )
+    names.update(
+        node.name for node in tree.body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    )
+    return names
+
+
+def zone_drift(name: str, zone: Zone) -> list[str]:
+    """Complaints about a zone whose list no longer matches its module, one line each.
+
+    The `engine-gates` zone declared 12 of its module's 22 callables and reported on those, so
+    a run read as a clean sweep of the gate layer while a fifth of its mutable surface was
+    never asked about -- and the undeclared eight held three survivors, one of them live on a
+    default policy (#598). The list is hand-written, so rule 103 applies to it as it does to
+    any other mirror of a declaration.
+    """
+    declared = set(zone.functions)
+    omitted = {f for group in zone.omits for f in group.functions}
+    actual = module_callables(zone.module)
+    complaints = []
+    for missing in sorted(actual - declared - omitted):
+        complaints.append(f"{name}: {zone.module}'s {missing} is in neither functions= nor omits=")
+    for gone in sorted((declared | omitted) - actual):
+        complaints.append(f"{name}: {gone} is declared but no longer exists in {zone.module}")
+    for both in sorted(declared & omitted):
+        complaints.append(f"{name}: {both} is in functions= and omits= at once")
+    return complaints
 
 
 #: Swaps per token. Deliberately small: an operator whose every mutant is caught by the
@@ -345,6 +406,11 @@ def splice(source: str, m: Mutant) -> str:
 WORKER_PATHS = (
     "src",
     "tests",
+    # `tests/test_baseline_capture.py` reads `scripts/baseline_capture.py` and errored at
+    # collection inside a worker without this, which silently capped what any zone's `tests=`
+    # could name: a whole file was uncollectable, so a mutant it would have killed read as a
+    # survivor (#598).
+    "scripts",
     "alembic",
     "alembic.ini",
     "pyproject.toml",
@@ -1114,6 +1180,28 @@ ZONES: dict[str, Zone] = {
             "tests/test_policy.py::TestRestoringALostRatingBar",
             "tests/test_profiles.py",
         ),
+        omits=(
+            Omission(
+                "The one-way list-protection conversion and its helpers. This zone is the two "
+                "shims that rewrite a stored body on LOAD, and `REPAIR_SHIM_PROBE` reads a "
+                "repaired body back; the conversion runs once per body and answers a different "
+                "question, so it wants its own zone and probe rather than a share of this one.",
+                (
+                    "convert_list_protections",
+                    "has_legacy_list_protections",
+                    "conversion_list_names",
+                    "legacy_keep_tags",
+                    "own_list_media_scope",
+                    "library_media_types",
+                    "_config_value",
+                ),
+            ),
+            Omission(
+                "Declared in `policy-save-boundary` instead, as `PolicyBody._drop_retired_gates`, "
+                "which is the validator that calls it and the surface the probe drives.",
+                ("drop_retired_gate_keys",),
+            ),
+        ),
         probe=REPAIR_SHIM_PROBE,
     ),
     "policy-save-boundary": Zone(
@@ -1139,6 +1227,32 @@ ZONES: dict[str, Zone] = {
             "tests/test_profiles.py",
             "tests/test_policy_permutations.py",
         ),
+        omits=(
+            Omission(
+                "Translators and hashes, not validators. `SAVE_BOUNDARY_PROBE` offers a body "
+                "and reads back accepted-or-rejected, so a mutant in one of these changes what "
+                "a scan then does with an accepted body rather than what the boundary lets "
+                "through. That is the scan's behavior and wants a probe that runs a scan.",
+                (
+                    "ConditionSpec.to_condition",
+                    "PolicyBody.popularity_window_days",
+                    "PolicyBody.rating_rules",
+                    "PolicyBody.keep_configs",
+                    "PolicyBody.custom_signal_configs",
+                    "PolicyBody._gathering_evidence",
+                    "PolicyBody.canonical_json",
+                    "PolicyBody.policy_hash",
+                    "PolicyBody.scoring_hash",
+                    "PolicyBody.evidence_hash",
+                    "combine_hashes",
+                ),
+            ),
+            Omission(
+                "Operator copy, not a decision. Its twin `fields._join_or` sits in another "
+                "module, so a zone over one of them would report on half a pair.",
+                ("join_and",),
+            ),
+        ),
         probe=SAVE_BOUNDARY_PROBE,
     ),
     "engine-gates": Zone(
@@ -1156,6 +1270,28 @@ ZONES: dict[str, Zone] = {
             "MinDormancyGate.evaluate",
             "DataHorizonGate.evaluate",
             "evaluate_all",
+            # The eight the zone omitted while reporting a clean sweep of the gate layer
+            # (#598). `_blocked` matters most in principle: it is the one fail-closed helper
+            # every gate routes through, so deleting its `Unknown` guard withdraws the block
+            # from all five at once. `_miss_phrase` matters most in fact -- all three
+            # survivors a supplementary run found were in it, one live on a default policy.
+            # The four `Evaluation` properties carry no mutable token and report zero, which
+            # is the honest answer `evaluate_all` already gave.
+            "_blocked",
+            "GateResult.fired",
+            "RatingFloorGate._miss_phrase",
+            "Evaluation.checked_and_did_not_fire",
+            "Evaluation.protected",
+            "Evaluation.blocked",
+            "Evaluation.protectors",
+            "Evaluation.could_not_be_checked",
+        ),
+        omits=(
+            Omission(
+                "Protocol members. The body is `...`, so there is nothing to mutate and no "
+                "implementation to answer for; the real ones are declared above.",
+                ("Gate.id", "Gate.evaluate"),
+            ),
         ),
         tests=(
             "tests/test_engine_invariants.py",
@@ -1212,7 +1348,10 @@ ZONES: dict[str, Zone] = {
     # answer about the detector, so it is scoped whole.
     "policy-inspect": Zone(
         module=Path("src/reaper/engine/policy_warnings.py"),
-        functions=("inspect",),
+        # `_protect_blocks_on_reach` decides one of `inspect`'s warnings and was undeclared, so
+        # the zone's own "one function" note was true of the list rather than of the module.
+        # `INSPECT_PROBE` reads the warnings out, so its mutants are answerable here.
+        functions=("inspect", "_protect_blocks_on_reach"),
         tests=(
             "tests/test_policy.py",
             "tests/test_custom_condemn.py",
@@ -1294,6 +1433,12 @@ def main() -> int:
 
     name, zone = args.zone, ZONES[args.zone]
     report = args.report or REPO / f"mutation-report-{name}.json"
+
+    # Before anything is copied or run: a zone whose list has drifted reports a clean sweep of
+    # a surface it never asked about (#598). `tests/test_repo_hygiene.py` checks every zone in
+    # CI, which this script is not in; this is the same check for the person running it.
+    if drift := zone_drift(name, zone):
+        raise SystemExit("\n".join(drift))
 
     original = (REPO / zone.module).read_text()
     mutants = generate(original, zone)

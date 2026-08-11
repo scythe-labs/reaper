@@ -19,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
 from datetime import timedelta
@@ -7254,3 +7255,68 @@ def test_the_accent_default_and_its_hex_shape_agree_across_both_languages() -> N
         "widening on one side alone is a color the operator can type, the panel accepts, and "
         "the server then refuses."
     )
+
+
+# --- the mutation zones' function lists (#598) ---------------------------------------
+
+
+def _mutation_scope() -> Any:
+    """``scripts/mutation_scope.py``, imported by path.
+
+    `scripts/` is not a package and is not on the path, so the module is loaded from its file.
+    Importing it runs only module-level definitions; nothing here starts a mutation run.
+    """
+    import importlib.util
+
+    path = REPO / "scripts" / "mutation_scope.py"
+    spec = importlib.util.spec_from_file_location("_mutation_scope", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered before execution: the module's dataclasses resolve their annotations through
+    # `sys.modules[cls.__module__]`, which raises on a module that is not in there yet.
+    sys.modules["_mutation_scope"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_mutation_zone_accounts_for_its_whole_module() -> None:
+    """A zone's ``functions=`` is a hand-written mirror of its module's callables (rule 103).
+
+    The `engine-gates` zone declared 12 of 22 and reported on those, so a run read as a clean
+    sweep of the gate layer while a fifth of its mutable surface was never asked about. The
+    undeclared eight held three survivors, one live on a default policy (#598).
+
+    This lives here rather than only in the script because the script is not in CI, so a zone
+    that has drifted is otherwise discovered by whoever next runs it. A callable belongs in
+    ``functions=`` or in an ``Omission`` with a written reason; being in neither is the
+    failure. Silence is what this forbids, not omission.
+    """
+    scope = _mutation_scope()
+
+    complaints = [
+        line for name, zone in scope.ZONES.items() for line in scope.zone_drift(name, zone)
+    ]
+
+    assert not complaints, (
+        "a mutation zone's function list no longer matches its module:\n  "
+        + "\n  ".join(complaints)
+        + "\n\nDeclare the callable in that zone's `functions=` -- one with no mutable token "
+        "reports zero, which is honest -- or add it to an `Omission` saying why the zone does "
+        "not answer for it."
+    )
+
+
+def test_every_mutation_omission_carries_a_reason() -> None:
+    """An ``Omission`` with an empty or throwaway reason is the silence this guards against.
+
+    The reason is the whole mechanism: the check above passes for anything listed, so a list
+    with no argument behind it would turn the guard into a way of recording that a function
+    was seen once.
+    """
+    for name, zone in _mutation_scope().ZONES.items():
+        for group in zone.omits:
+            assert len(group.reason.split()) >= 8, (
+                f"the {name} zone omits {list(group.functions)} with a reason too short to be "
+                f"an argument: {group.reason!r}"
+            )
+            assert group.functions, f"the {name} zone has an Omission naming no functions"

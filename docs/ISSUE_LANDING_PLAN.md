@@ -175,11 +175,17 @@ before a link, the autosync storing the list, and the autosync swallowing a fail
 the promise that hid the gap. The merge test fails when `stored.get(s.key, True)` is flattened
 to `True`.
 
-**4. #598, the mutation zone.** The branch's hunk `@@ -1168,8 +1153,6` removes two entries from the
-same `engine-gates` `functions=` tuple this fix appends to, and two other zones re-pointed `module=`
-at `policy_migrations.py` and `policy_warnings.py`, which the proposed drift check has to read.
-Declare `_blocked`, `GateResult.fired`, `RatingFloorGate._miss_phrase` and the four `Evaluation`
-properties, then add the check that fails when a zone's list and its module's callables disagree.
+**4. #598, the mutation zone. Landed.** The branch's hunk `@@ -1168,8 +1153,6` removes two entries
+from the same `engine-gates` `functions=` tuple this fix appends to, and two other zones re-pointed
+`module=` at `policy_migrations.py` and `policy_warnings.py`, which the drift check has to read.
+
+**The check is an exact set, so every zone had to be settled, not just `engine-gates`.** Four of the
+five had drift; `ratings` was already exact. A callable now sits in a zone's `functions=` or in an
+`Omission` carrying a written reason, and being in neither is the failure. `engine-gates` declares
+all eight the issue names and omits the two `Gate` protocol stubs. `policy-inspect` gained
+`_protect_blocks_on_reach`, which decides one of `inspect`'s warnings. The guard is
+`test_repo_hygiene.py`, because the script is not in CI, and `main()` runs the same function before
+it copies anything.
 
 **5. #685, the rule-scope gate.** Not because `test_repo_hygiene.py` is long, though a `dev`-side
 append now lands on the same anchor as the branch's own 2,329 lines. It belongs here because **both
