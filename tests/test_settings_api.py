@@ -23,13 +23,14 @@ import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 import reaper.api.settings
 from reaper.api.plex import PlexUpdateIn, update_plex_settings
 from reaper.api.settings import _BAD_CRON
 from reaper.auth.ratelimit import argon2_gate
 from reaper.clients.base import IntegrationError
-from reaper.clients.plex import PlexClient, PlexError
+from reaper.clients.plex import PlexClient, PlexError, PlexSection
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -1783,6 +1784,157 @@ class TestPlexLinkChoice:
         )
         assert saved.status_code == 200, saved.text
         assert saved.json()["connection_uri"] == "https://192.0.2.52:32400"
+
+
+class TestPlexLibrarySync:
+    """The library refresh on a server that answers, which nothing had ever driven (#584).
+
+    Every route into ``_sync_libraries`` reached it through a failure. ``video_sections``
+    builds a plexapi server and plexapi speaks ``requests``, which ``respx`` does not
+    intercept, so the seven ``TestPlexLinkChoice`` tests fired the autosync at a real name
+    lookup and had it fail; ``_sync_libraries_after_link`` catches every exception on purpose,
+    so the suite stayed green. This drives the merge instead, which is the part with logic in
+    it: an operator's off stays off, a new library arrives on, and one that left the server
+    drops out.
+    """
+
+    @pytest.fixture
+    def linked(self, client: TestClient) -> None:
+        """A linked server whose token really opens, since ``_sync_libraries`` decrypts it
+        before it builds the client. ``_link_plex`` stores the literal ``"enc"``, which is
+        enough for the row-exists checks it was written for and not for this."""
+        settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
+        box = client.app.state.secret_box  # type: ignore[attr-defined]
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            session.add(
+                PlexServer(
+                    machine_identifier="machine-sync",
+                    name="Example Server",
+                    connection_uri="http://plex.example:32400",
+                    token_enc=box.encrypt("tok"),
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+        engine.dispose()
+
+    @staticmethod
+    def _sections(
+        monkeypatch: pytest.MonkeyPatch, sections: list[tuple[int, str, str]]
+    ) -> list[str]:
+        """Answer ``video_sections`` instead of raising, and record that it was asked.
+
+        Stubbed at ``video_sections`` rather than at ``_connect``: the layer under it is
+        plexapi's synchronous ``library.sections()``, and standing that up would be testing
+        plexapi. The list it returns is the client's own ``PlexSection``, which is the type
+        ``_sync_libraries`` reads.
+        """
+        asked: list[str] = []
+
+        async def _fake(_self: PlexClient) -> list[PlexSection]:
+            asked.append("video_sections")
+            return [PlexSection(key=k, title=t, kind=kind) for k, t, kind in sections]
+
+        monkeypatch.setattr(PlexClient, "video_sections", _fake)
+        return asked
+
+    def test_the_sync_route_merges_rather_than_replaces(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
+    ) -> None:
+        """The three merge outcomes at once, because they are one dict lookup with a default
+        and a test naming only the new-library case cannot tell that default from a rewrite.
+
+        The operator's choice is the one that fails toward writing to a library they turned
+        off, so it is the arm the assertion leads with.
+        """
+        asked = self._sections(
+            monkeypatch, [(2, "Movies", "movie"), (5, "TV", "show"), (9, "Kids", "movie")]
+        )
+        first = client.post("/api/settings/plex/libraries/sync")
+        assert first.status_code == 200, first.text
+        assert asked == ["video_sections"]
+        # A fresh library starts ON, so a default install marks every library without setup.
+        assert [(lib["key"], lib["enabled"]) for lib in first.json()] == [
+            (2, True),
+            (5, True),
+            (9, True),
+        ]
+
+        client.put("/api/settings/plex/libraries", json={"enabled_keys": [2, 9]})
+
+        # Second pass: 5 is still off, 9 has left the server, 12 is new.
+        self._sections(
+            monkeypatch, [(2, "Movies", "movie"), (5, "TV", "show"), (12, "Docs", "show")]
+        )
+        again = client.post("/api/settings/plex/libraries/sync")
+        assert again.status_code == 200, again.text
+        assert [(lib["key"], lib["enabled"]) for lib in again.json()] == [
+            (2, True),  # untouched
+            (5, False),  # the operator turned it off; a refresh must not turn it back on
+            (12, True),  # new since the last sync
+        ]
+        # Dropped, not left behind enabled: a library that is gone from the server would
+        # otherwise keep a stored `enabled` row nothing can ever reach to turn off.
+        assert 9 not in {lib["key"] for lib in again.json()}
+
+    def test_the_sync_route_answers_502_for_an_unreachable_server(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
+    ) -> None:
+        """The arm the suite already had, kept beside the one it did not: the route maps
+        ``PlexError`` rather than letting it reach the operator as a 500."""
+
+        async def _boom(_self: PlexClient) -> NoReturn:
+            raise PlexError("no route to host")
+
+        monkeypatch.setattr(PlexClient, "video_sections", _boom)
+
+        answer = client.post("/api/settings/plex/libraries/sync")
+        assert answer.status_code == 502, answer.text
+        assert "Could not reach Plex" in answer.json()["detail"]
+
+    def test_the_sync_route_refuses_before_a_server_is_linked(self, client: TestClient) -> None:
+        assert client.post("/api/settings/plex/libraries/sync").status_code == 400
+
+    async def test_the_autosync_after_a_link_stores_the_libraries(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
+    ) -> None:
+        """The other route in, and the one that carried the swallowed failure.
+
+        ``_sync_libraries_after_link`` returns nothing and reports nothing, so the only
+        evidence it did its job is the stored list afterwards. Driving it through the route
+        would mean standing up the whole plex.tv link flow again, which
+        ``TestPlexLinkChoice`` already pins; this calls the function the way both link
+        endpoints do.
+        """
+        from reaper.api.plex import _sync_libraries_after_link
+
+        self._sections(monkeypatch, [(2, "Movies", "movie")])
+        request = Request({"type": "http", "app": client.app, "headers": []})
+
+        await _sync_libraries_after_link(request)
+
+        stored = client.get("/api/settings/plex/libraries").json()
+        assert [(lib["key"], lib["title"], lib["enabled"]) for lib in stored] == [
+            (2, "Movies", True)
+        ]
+
+    async def test_a_failed_autosync_never_strands_the_sign_in(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
+    ) -> None:
+        """The promise in its docstring, which is why the failure above was silent. It has
+        to keep holding, so it is pinned rather than left as prose (rule 7/24)."""
+        from reaper.api.plex import _sync_libraries_after_link
+
+        async def _boom(_self: PlexClient) -> NoReturn:
+            raise PlexError("no route to host")
+
+        monkeypatch.setattr(PlexClient, "video_sections", _boom)
+        request = Request({"type": "http", "app": client.app, "headers": []})
+
+        await _sync_libraries_after_link(request)  # returns, does not raise
+
+        assert client.get("/api/settings/plex/libraries").json() == []
 
 
 class TestConnectionTestCarriesTheMapping:

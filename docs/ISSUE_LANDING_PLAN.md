@@ -163,11 +163,17 @@ no longer exist. The defect survived the rewrite: the new closure never read
 screen; on this panel the switch sits two rows above the line, so saying it again would restate a
 control already on screen. `lsStatus` returns `null` while the shelf is off.
 
-**3. #584, the Plex library sync success path.** `_sync_libraries` moved from
+**3. #584, the Plex library sync success path. Landed.** `_sync_libraries` moved from
 `api/settings.py:1201` to `api/plex.py:599`, and `tests/test_settings_api.py` changed inside
 `TestPlexLinkChoice` itself. A test written on `dev` names a file that no longer holds the
-function. Stub `PlexClient.video_sections` to return sections and assert the merge: a disabled
-library stays disabled, a new one arrives enabled, a vanished one drops out.
+function.
+
+`TestPlexLibrarySync` stubs `PlexClient.video_sections` rather than `_connect`, since the layer
+under it is plexapi's synchronous `library.sections()` and standing that up would be testing
+plexapi. Five tests: the merge across two passes, the 502 an unreachable server gets, the 400
+before a link, the autosync storing the list, and the autosync swallowing a failure, which is
+the promise that hid the gap. The merge test fails when `stored.get(s.key, True)` is flattened
+to `True`.
 
 **4. #598, the mutation zone.** The branch's hunk `@@ -1168,8 +1153,6` removes two entries from the
 same `engine-gates` `functions=` tuple this fix appends to, and two other zones re-pointed `module=`
