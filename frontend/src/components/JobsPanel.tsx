@@ -12,7 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type Schedule, type ScheduledJob } from "../api";
-import { useBackGuard } from "../backnav";
+import { useBackCloseMirror, useBackGuard } from "../backnav";
 import { count } from "../format";
 import { shelfSkipIsCurrent } from "../shelfStatus";
 import { JobStatus, useJobFlash } from "./JobStatus";
@@ -177,12 +177,13 @@ function maintenanceScheduleText(job: ScheduledJob): string {
 function ScheduleModal({
   job,
   onClose,
-  savePendingRef,
+  blockCloseRef,
 }: {
   job: ScheduledJob;
   onClose: () => void;
-  // Set by JobsPanel so its Back guard can read the same canClose the scrim/Escape/✕ use (B-11).
-  savePendingRef?: RefObject<boolean>;
+  /** Set by JobsPanel so its Back guard reads the same `canClose` the scrim, Escape and the ✕
+   *  read (B-11, rule 80). Written by `useBackCloseMirror`, which takes the whole predicate. */
+  blockCloseRef?: RefObject<boolean>;
 }) {
   const queryClient = useQueryClient();
   // The effective server time zone every timed job runs on, so the help names the real zone
@@ -211,14 +212,12 @@ function ScheduleModal({
     onError: (e: Error) => setError(e.message),
   });
 
-  // Mirror the save's pending state up to JobsPanel's Back guard, and clear it on unmount so a
-  // stale true never lingers after the modal closes (B-11).
-  useEffect(() => {
-    if (savePendingRef) savePendingRef.current = save.isPending;
-    return () => {
-      if (savePendingRef) savePendingRef.current = false;
-    };
-  }, [save.isPending, savePendingRef]);
+  /** Whether a dismissal is allowed, computed once and handed to every path that can dismiss:
+   *  a close mid-save unmounts the only place that failure is ever shown (B-11). */
+  const canClose = !save.isPending;
+
+  // Up to JobsPanel's Back guard, whole rather than by term (rule 80).
+  useBackCloseMirror(blockCloseRef, canClose);
 
   const chosenCron =
     choice === OFF_VALUE ? null : choice === CUSTOM_VALUE ? custom.trim() || null : choice;
@@ -226,7 +225,7 @@ function ScheduleModal({
   const saveDisabled = save.isPending || (choice === CUSTOM_VALUE && custom.trim() === "");
 
   return (
-    <ModalShell title={meta.title} onClose={onClose} canClose={!save.isPending}>
+    <ModalShell title={meta.title} onClose={onClose} canClose={canClose}>
       <div className="service-form">
         <p className="help">{meta.modalDesc ?? meta.desc}</p>
 
@@ -571,16 +570,15 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
     refetchInterval: (query) => (query.state.data?.jobs.some((j) => j.running) ? 1500 : false),
   });
   const [editing, setEditing] = useState<ScheduledJob | null>(null);
-  // The modal's save lives inside ScheduleModal; it mirrors its pending state here so the Back
-  // guard can refuse a close mid-save exactly as the scrim/Escape/✕ do (canClose={!save.isPending}
-  // below). Without this, Back would tear the modal down while the save is in flight, dropping
-  // the error it would have shown (B-11, rule 80).
-  const savePendingRef = useRef(false);
-  // Back closes the schedule editor instead of leaving Reaper -- unless a save is in flight.
+  // ScheduleModal owns the reasons a dismissal is refused and mirrors its whole `canClose` here,
+  // so Back refuses what the scrim, Escape and the ✕ refuse. Without this, Back would tear the
+  // modal down mid-save and drop the error it would have shown (B-11, rule 80).
+  const blockCloseRef = useRef(false);
+  // Back closes the schedule editor instead of leaving Reaper, unless the modal says it can't.
   useBackGuard(
     editing !== null,
     () => setEditing(null),
-    () => !savePendingRef.current,
+    () => !blockCloseRef.current,
   );
 
   // The shelf row owns this read and renders inside this panel, so the panel has to know whether
@@ -655,7 +653,7 @@ export function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
         <ScheduleModal
           job={editing}
           onClose={() => setEditing(null)}
-          savePendingRef={savePendingRef}
+          blockCloseRef={blockCloseRef}
         />
       )}
     </div>
