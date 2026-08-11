@@ -25,11 +25,13 @@ import { useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type SetupStatus } from "../api";
 import { reapBlockers, type ReapBlocker } from "../reapReadiness";
+import { useScanStatus } from "../useScanStatus";
 import { DiscordModal } from "./DiscordModal";
 import { Notice } from "./Notice";
 import { SafetyBanner } from "./SafetyBanner";
+import { ProgressBar } from "./ProgressBar";
 import { phaseLabel } from "./ScanBar";
-import { ScanLine } from "./ScanLine";
+import { ScanLine, SCANNING_LABEL } from "./ScanLine";
 import { StepCard } from "./SetupStepper";
 
 export function SetupScanStep({
@@ -50,11 +52,7 @@ export function SetupScanStep({
   const queryClient = useQueryClient();
   const [discordOpen, setDiscordOpen] = useState(false);
 
-  const { data: scan } = useQuery({
-    queryKey: ["scanStatus"],
-    queryFn: api.scanStatus,
-    refetchInterval: (query) => (query.state.data?.running ? 1000 : false),
-  });
+  const scan = useScanStatus();
   const running = scan?.running ?? false;
   const percent = scan?.percent ?? 0;
 
@@ -126,16 +124,7 @@ export function SetupScanStep({
               <span className="spinner" aria-hidden="true" />
               <h3>Your first scan is running</h3>
             </div>
-            <div
-              className="bar"
-              role="progressbar"
-              aria-label="Scanning your library"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(percent)}
-            >
-              <div className="bar-fill" style={{ width: `${percent}%` }} />
-            </div>
+            <ProgressBar label={SCANNING_LABEL} percent={percent} />
             <p className="blurb">
               You can leave this page; it keeps running. The line at the very top of the window
               follows it, here and in the app, and the review queue fills in the moment it finishes.

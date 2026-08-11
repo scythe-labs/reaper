@@ -8,12 +8,13 @@
 // One save bar covers the whole panel (rule 43), and it reports upward through `onDirtyChange`
 // so the section rail can hold a switch that would discard a draft (rule 146).
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, type RefObject, useEffect, useState } from "react";
 import { accentInk, accentText, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { announce } from "../announce";
 import { useSavebarFocus, useSuccessorFocus } from "../focus";
 import { api, type ExpandSeasonsMode } from "../api";
+import { useGeneralSettings } from "../useGeneralSettings";
 import { useMediaQuery } from "../useMediaQuery";
 import { FixedQuantity } from "./QuantityInput";
 import { Segmented } from "./Segmented";
@@ -101,7 +102,7 @@ export function GeneralPanel({
   onDirtyChange?: ((dirty: boolean) => void) | undefined;
 } = {}) {
   const queryClient = useQueryClient();
-  const general = useQuery({ queryKey: ["general-settings"], queryFn: api.general });
+  const general = useGeneralSettings();
   // Save and Discard both unmount the bar holding the pressed button (#173), the twin of the
   // policy editor's (rule 72). Declared ABOVE every early return, which is rule 146's shape:
   // this panel returns a loading line and a failure notice before the form exists, and a hook
