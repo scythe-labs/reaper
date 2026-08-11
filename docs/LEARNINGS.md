@@ -3237,6 +3237,35 @@ pairs; the other two sit 40 and about 150 lines apart, so collapsing them reloca
 instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
 filtered two-column select to an unfiltered three-column one.
 
+## A form control does not inherit its font, so five of six fields right looks right (2026-08-10)
+
+Rule 40's control standard is six declarations, and ten CSS blocks type them out. Two blocks set
+`font-size` and no `font: inherit`. A browser gives `<input>` and `<select>` their own
+font-family in its UA stylesheet, and that beats inheritance, so those boxes rendered in the
+browser's form font while every label beside them rendered in the app's. Measured in Chromium:
+15px Arial at the Logs search box, 13.76px Arial at every box and dropdown in the Settings
+control column, against system-ui everywhere else. On `dev` too.
+
+**The shape is what makes it survive review.** The block declares five of the six fields
+correctly, so a reader checking it against the standard finds four matches and a fifth line that
+mentions the right property. And the symptom is a typeface, which reads at a glance as a size
+difference and gets attributed to the `font-size` that IS there. Neither the diff nor the screen
+says the word "family".
+
+**The other five fields would have failed loudly, which is why only this one drifted.** A missing
+border, radius, fill or padding is visible in one look. A missing focus ring falls back to
+`01-base.css`'s `:focus-visible`, which draws a slightly different ring rather than none. The
+font is the only field in the standard whose absence is silent, and it is the one that drifted at
+two of ten sites.
+
+**The extraction the finding asked for was killed on measurement.** Hoisting the six declarations
+into one grouped base rule in `01-base.css` nets about -56 lines of 10,614, and it moves
+`.set-row .set-control input` (specificity 0,2,1) from file 27 to file 1, which inverts its tie
+with `.swatch-wrap input[type="color"]` at 27-settings-rows.css:218. That tie is decided by
+source order today and the later rule wins; the evidence is `:271`, a third rule written to
+re-override the pair inside `.hex-join`. Reachable only through one DOM shape at this tip, so
+latent. A gate landed instead, and it caught the drift the extraction was supposed to prevent.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
