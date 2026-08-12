@@ -1583,26 +1583,16 @@ export function PolicyEditor({
   // document ends first, so Deletion -- the section that arms a removal, and the one this
   // finding named -- would have stayed unmarkable. Measuring from positions has no such
   // dead zone. The cost is four rect reads, at most once a frame, and only while this page
-  // is mounted; an unchanged section is a React state bail-out, not a re-render.
+  // is mounted; an unchanged section is a React state bail-out, not a re-render. That still
+  // holds now the section lives in `App`: a scroll frame that reports the section already on
+  // screen hands the same value to the same setter, and React drops it without rendering.
   //
-  // It reports only a CHANGE. The section lives in `App` now, so an unchanged one handed up once
-  // a frame would ask the whole shell to re-render for a scroll that moved nothing. Compared
-  // against a ref rather than against the prop, so `section` stays out of the dependencies below:
-  // a dependency re-registers the listeners, and registering runs `pick` again, which on a page
-  // too short to scroll answers "the first section" and would take a rail click straight back off
-  // the section it just landed on.
-  const reported = useRef(section);
-  useEffect(() => {
-    reported.current = section;
-  }, [section]);
+  // `section` is deliberately not a dependency below. A dependency re-registers the listeners,
+  // and registering runs `pick` again, which on a page too short to scroll answers "the first
+  // section" and would take a rail click straight back off the section it just landed on.
   const ready = draft !== null;
   useEffect(() => {
     if (!ready) return;
-    const report = (next: SectionId) => {
-      if (next === reported.current) return;
-      reported.current = next;
-      onSectionChange(next);
-    };
     const heads = SECTIONS.map((s) => [s.id, sectionRefs[s.id].current] as const).filter(
       (pair): pair is [SectionId, HTMLHeadingElement] => pair[1] !== null,
     );
@@ -1614,7 +1604,7 @@ export function PolicyEditor({
       // on; there is no "further down" to have reached.
       const scrollable = document.documentElement.scrollHeight > window.innerHeight + 1;
       if (!scrollable) {
-        report(first[0]);
+        onSectionChange(first[0]);
         return;
       }
       // At the very bottom nothing more can reach the line, so the last heading on screen
@@ -1627,7 +1617,7 @@ export function PolicyEditor({
         const top = el.getBoundingClientRect().top;
         if (atBottom ? top < window.innerHeight : top <= line + 1) current = id;
       }
-      report(current);
+      onSectionChange(current);
     };
 
     let frame = 0;

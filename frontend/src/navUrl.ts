@@ -75,25 +75,14 @@ const MEDIA_PATHS: Record<"movie" | "tv", string> = {
   tv: "tv",
 };
 
-// Read back off those same five declarations, so a hand-edited or stale link naming a section, a
-// lane, a panel, a media type or a policy section that no longer exists simply misses the map and
-// falls back below. A `Map` rather than a plain object, so `__proto__` and `constructor` are
-// ordinary misses.
-const VIEW_BY_PATH = new Map(
-  Object.entries(SECTION_PATHS).map(([view, path]) => [path, view as View]),
-);
-const LANE_BY_PATH = new Map(
-  Object.entries(LANE_PATHS).map(([lane, path]) => [path, lane as Verdict]),
-);
-const PANEL_BY_PATH = new Map(
-  Object.entries(PANEL_PATHS).map(([panel, path]) => [path, panel as Panel]),
-);
-const POLICY_BY_PATH = new Map(
-  Object.entries(POLICY_PATHS).map(([id, path]) => [path, id as PolicySectionId]),
-);
-const MEDIA_BY_PATH = new Map(
-  Object.entries(MEDIA_PATHS).map(([media, path]) => [path, media as "movie" | "tv"]),
-);
+/** The reverse of any of those five declarations: which key answers to this path, or nothing.
+ *
+ *  It searches the record's own entries and compares values, so `__proto__` and `constructor`
+ *  are ordinary misses, and a hand-edited or stale link naming a section, a lane, a panel, a
+ *  media type or a policy section that no longer exists falls back below. The longest record
+ *  holds ten entries and this runs at mount alone. */
+const keyFor = <T extends string>(paths: Record<T, string>, path: string): T | undefined =>
+  (Object.entries(paths) as [T, string][]).find(([, p]) => p === path)?.[0];
 
 /** Everywhere a cold load can land: the section, and what that section has open inside it. Each
  *  field is read by the one piece of state that owns it in `App`. */
@@ -117,23 +106,23 @@ export const DEFAULT_LANDING: Landing = {
 
 /** What this URL names, or the defaults. Never throws, and each value falls back on its own: an
  *  unknown section, an unknown segment under it, or a segment on a section that has none is a
- *  miss on a `Map` and nothing more. `/settings/nonsense` is Settings on General,
+ *  miss and nothing more. `/settings/nonsense` is Settings on General,
  *  `/policy/nonsense/deletion` is the Movies policy on Deletion, and a bare `/policy` is the
  *  default of both. The write below then puts the real location in the address bar. */
 export function readLanding(): Landing {
   const [first, second = "", third = ""] = window.location.pathname.split("/").filter(Boolean);
-  const view = VIEW_BY_PATH.get(first ?? "");
+  const view = keyFor(SECTION_PATHS, first ?? "");
   if (view === undefined) return DEFAULT_LANDING;
   // Policy is the one section whose location is two values, so it reads a third segment. Media
   // comes first, matching `/review/<lane>`: the broad split, then where you are inside it.
   const policy = view === "policy";
   return {
     view,
-    lane: (view === "review" ? LANE_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.lane,
-    panel: (view === "settings" ? PANEL_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.panel,
-    policyMedia: (policy ? MEDIA_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.policyMedia,
+    lane: (view === "review" ? keyFor(LANE_PATHS, second) : undefined) ?? DEFAULT_LANDING.lane,
+    panel: (view === "settings" ? keyFor(PANEL_PATHS, second) : undefined) ?? DEFAULT_LANDING.panel,
+    policyMedia: (policy ? keyFor(MEDIA_PATHS, second) : undefined) ?? DEFAULT_LANDING.policyMedia,
     policySection:
-      (policy ? POLICY_BY_PATH.get(third) : undefined) ?? DEFAULT_LANDING.policySection,
+      (policy ? keyFor(POLICY_PATHS, third) : undefined) ?? DEFAULT_LANDING.policySection,
   };
 }
 
