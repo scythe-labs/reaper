@@ -1002,7 +1002,7 @@ def _requested_known_false(
     freezes for it. An Unknown -- no Seerr, an unreachable one, a show with no tvdb id -- is
     not a definite no and returns False, which is what keeps the scope fail-closed.
     """
-    tvdb_id = int(series["tvdbId"]) if series.get("tvdbId") else None
+    tvdb_id = identity.ExternalIds.of(tvdb=series.get("tvdbId")).tvdb
     requested = request_index.show_requested(tvdb_id) if request_index is not None else None
     return isinstance(requested, Known) and requested.value is False
 
@@ -1065,15 +1065,19 @@ def _log_series_decision(
     panel. Narrowed rather than fixed because the line is developer-facing only -- a repo-wide
     grep finds ``season_scan.series_decision`` named in no operator doc, UI string or support
     text (rules 7/24, 132).
+
+    The ids are the CLEANED ones (``identity.ExternalIds.of``), not Sonarr's raw strings, so
+    the line says what Reaper matched with -- the movie twin's rule.
     """
+    ids = identity.ExternalIds.of(imdb=series.get("imdbId"), tvdb=series.get("tvdbId"))
     log.debug(
         "season_scan.series_decision",
         instance_id=source.instance_id,
         instance=source.name,
         title=str(series.get("title") or "?"),
         sonarr_id=series.get("id"),
-        tvdb_id=series.get("tvdbId") or None,
-        imdb_id=series.get("imdbId") or None,
+        tvdb_id=ids.tvdb,
+        imdb_id=ids.imdb,
         status=series.get("status") or None,
         ended=series.get("ended"),
         outcome=outcome,
@@ -1349,8 +1353,8 @@ async def gather(
                 instance_id=item.source.instance_id,
                 title=str(series.get("title") or ""),
                 year=_as_year(series.get("year")),
-                imdb_id=series.get("imdbId") or None,
-                tvdb_id=series.get("tvdbId") or None,
+                imdb_id=ids.imdb,
+                tvdb_id=ids.tvdb,
                 match_status=str(resolution.status),
                 detail=resolution.detail,
                 mapped_library=plex_library,
@@ -1495,7 +1499,10 @@ async def gather(
     # exactly as it does on the movie path -- a missing rating REMOVES protection.
     # Look up by BOTH the Sonarr series imdbId and the matched Plex show's imdb id, so a
     # show Sonarr has no (or a wrong) imdbId for still gets its rating when Plex knows it.
-    imdb_ids = [str(w.series["imdbId"]) for w in work if w.series.get("imdbId")]
+    # Cleaned, so the set asked for is the set `_judge_series` will read the answer under: a
+    # sentinel id asked about here would come back unresolved and count against the coverage
+    # line below while naming no show.
+    imdb_ids = [i for w in work if (i := identity.ExternalIds.of(imdb=w.series.get("imdbId")).imdb)]
     imdb_ids += [w.plex_imdb_id for w in work if w.plex_imdb_id]
     # A show's Sonarr imdbId and its Plex-matched imdb id are usually the same string;
     # the dataset lookup returns a keyed map, so deduping only trims the chunk count.
@@ -1588,17 +1595,24 @@ def _judge_series(
     series_title = str(series.get("title") or "")
     ranks = rank_seasons(list(item.seasons))
 
+    # THE door in for this show's Sonarr ids (identity.ExternalIds.of): the sentinel filter
+    # runs once here and everything below reads `sonarr_ids`. A raw `imdbId` of "tt0000000"
+    # is truthy, so it would shadow the id Plex matched in the `or` fallbacks below and send
+    # the keep-list lookup out under an id no list row carries (#709) -- the movie lane's
+    # defect, on the show that owns every one of its seasons.
+    sonarr_ids = identity.ExternalIds.of(
+        imdb=series.get("imdbId"), tmdb=series.get("tmdbId"), tvdb=series.get("tvdbId")
+    )
+
     # The show's IMDb rating (if any), shared by every season -- see build_season_facts.
     # Prefer Sonarr's imdbId; fall back to the Plex-matched imdb id when Sonarr's is
     # missing or does not resolve (reality/recent shows TVDB has no IMDb mapping for).
     # The bool is whether we had any id to ask with: a show with neither a Sonarr imdbId
     # nor a Plex-matched one was never looked up, and must not be recorded as unrated.
-    show_rating, show_rating_looked_up = dataset_lookup(
-        ratings, str(series.get("imdbId") or "") or None, item.plex_imdb_id
-    )
+    show_rating, show_rating_looked_up = dataset_lookup(ratings, sonarr_ids.imdb, item.plex_imdb_id)
 
     # Show-level display fields, shared by every season row of this series.
-    tvdb_id = int(series["tvdbId"]) if series.get("tvdbId") else None
+    tvdb_id = sonarr_ids.tvdb
     show_year = int(series["year"]) if series.get("year") else None
     show_summary = _series_summary(series)
     group_key = f"sonarr:{item.source.instance_id}:{series_id}"
@@ -1606,8 +1620,8 @@ def _judge_series(
     # Outbound-link coordinates: Seerr and TMDb key on the show's tmdb id; the IMDb page
     # on its imdb id (Sonarr's first, the Plex-matched one as fallback -- the same
     # precedence the rating lookup uses).
-    show_tmdb_id = int(series["tmdbId"]) if series.get("tmdbId") else None
-    show_imdb_id = str(series.get("imdbId") or "") or item.plex_imdb_id
+    show_tmdb_id = sonarr_ids.tmdb
+    show_imdb_id = sonarr_ids.imdb or item.plex_imdb_id
     # The frozen ratings row: the dataset entry the scoring signal used first (they must
     # never disagree), the matched Plex show's ratings filling the rest.
     show_ratings_json = build_ratings_json(show_rating, item.show_plex_ratings)
