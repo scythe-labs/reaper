@@ -589,3 +589,30 @@ including the load out of the database, not only on the write path that first ac
 A body holding a whitespace-only target is refused on read before any comparison happens. Raised
 by the `diff` lane while reviewing the fold fix (#657) and refuted by the `safety` lane in the
 same pass. Pinned at `bc11ca3`.
+
+**`identity._clean_imdb` lowercases, so cleaning the writes breaks a keep-list match that used to
+work, or widens one that should not.** Refuted: both sides move together. `MembershipIndex._by_imdb`
+is a case-sensitive dict, so a divergence would need one side normalized and the other not. After
+the write cleaning every writer normalizes: `ImdbList` and `ArrTagRule` go through
+`ExternalIds.of`, `PlexCollection` and `PlexWatchlist` through `identity.parse_guids` (which
+already called `of` on `dev`), and the item side through `_raw_items` / `_judge_series`. The
+lookup itself never treats `None` as "no constraint" either: it early-returns `[]` when every key
+is falsy and gates each id on `is not None` before extending, so a `None` where a string used to
+go narrows the entry set and can never widen it. Pinned at `350b418`.
+
+**Existing databases still hold protection rows stored under the `tt0000000` sentinel, so cleaning
+only the writes leaves the fix half-landed until a re-sync.** Refuted, and the residue is inert.
+`_clean_imdb` can never *return* the sentinel, so no cleaned item can key into a stored sentinel
+row: the stale row answers nothing rather than answering wrongly. Both directions were checked.
+`_keep_keys` welds the previous ids back onto an entry that came back id-less, and `_rows_to_store`
+holds the row outright when `is_protectable` goes False, so a row is preserved rather than dropped
+on the first sync after the upgrade. For a row to lose its last key it must have arrived carrying a
+sentinel imdb and nothing else, which no real source produces: Radarr is tmdb-native, Sonarr always
+carries `tvdbId`, and the IMDb mirror carries `TmdbId`. Pinned at `350b418`.
+
+**Swapping `seerr._as_int` for `identity._clean_numeric` drops a request key, widening the season
+prune scope.** Refuted twice over. The only divergence is a float-valued `tmdbId`/`tvdbId`, and
+Overseerr and Jellyseerr both type those as integers. Granting it anyway, the path fails closed: a
+lost key sends `RequestIndex.show_requested` to `Unknown`, `_requested_known_false` requires a
+definite `Known(False)` and so returns `False`, and `season_evidence.keep_last_applies` leaves the
+keep-last floor on. A dropped request key protects more, not less. Pinned at `350b418`.
