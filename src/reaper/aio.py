@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Small asyncio helpers: the scan's concurrent fan-outs, and per-loop mutual exclusion.
+"""Small asyncio helpers: the scan's concurrent fan-outs, per-loop mutual exclusion, and
+the done-callback that logs a detached task nobody is awaiting.
 
 Bare ``asyncio.gather`` is the wrong tool where this codebase fans out against an
 operator's live services: on the first failure it re-raises immediately but leaves
@@ -74,7 +75,7 @@ def report_background_failure(task: asyncio.Task[Any]) -> None:
         return
     exc = task.exception()
     if exc is not None:
-        log.warning("background_task_failed", task=task.get_name(), error=str(exc))
+        log.warning("aio.background_task_failed", task=task.get_name(), error=str(exc))
 
 
 def per_loop_lock() -> Callable[[], asyncio.Lock]:
