@@ -12,7 +12,8 @@ import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings 
 import { DocsProvider } from "../docs/DocsContext";
 import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
-import type { WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
+import { useState } from "react";
+import type { PolicySectionId, WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
 import { PolicyEditor, REPAIR_NOTICES, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 
 const { apiMock } = await vi.hoisted(async () => ({
@@ -107,6 +108,8 @@ function renderEditor(
   /** What /policy/validate answers with. The GET's warnings are never rendered, so this
    *  is the only way a warning reaches the page. */
   validationWarnings: PolicyWarning[] = [],
+  /** Which section the page opens on, as a cold load on `/policy/<section>` does. */
+  openAt: PolicySectionId = "flags",
 ) {
   apiMock.policy.mockResolvedValue({
     policy_hash: "hash",
@@ -162,9 +165,17 @@ function renderEditor(
   });
   return renderWithProviders(
     <DocsProvider>
-      <PolicyEditor />
+      <EditorAt open={openAt} />
     </DocsProvider>,
   );
+}
+
+/** `App` owns which section is being read, so the address bar can name it (`/policy/deletion`,
+ *  navUrl.ts). This is that owner, so a rail click moves the rail here the way it does in the
+ *  app. A fixed `section` would sit still through every click and prove nothing. */
+function EditorAt({ open }: { open: PolicySectionId }) {
+  const [section, setSection] = useState(open);
+  return <PolicyEditor section={section} onSectionChange={setSection} />;
 }
 
 describe("a policy the server had to repair", () => {
@@ -1877,5 +1888,31 @@ describe("the panel's verdict on an edit it has not simulated yet", () => {
       target: { value: "42" },
     });
     expect(await screen.findByText(INERT)).toBeInTheDocument();
+  });
+});
+
+describe("the section rail", () => {
+  // Which section is being read is `App` state now, so the address bar can name it
+  // (`/policy/deletion`, navUrl.ts). What this page owes that owner is a click reported upward,
+  // and a rail drawn from what it is handed back rather than from a second copy of its own.
+  //
+  // Only the click is driven here. The other way in, scrolling past a heading, is measured from
+  // four rects and the document's height, and jsdom answers 0 for both, so a test of it would be
+  // measuring jsdom (rule 119). `AppUrl.test.tsx` carries the shell's half.
+  it("reports the section a click asks for, and marks what it is handed back", async () => {
+    const person = userEvent.setup();
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+
+    const rail = document.querySelector(".policy-rail");
+    expect(rail, "the policy rail is not on the page").not.toBeNull();
+    const deletion = within(rail as HTMLElement).getByRole("button", { name: "Deletion" });
+    expect(deletion).not.toHaveAttribute("aria-current");
+
+    await person.click(deletion);
+    expect(deletion).toHaveAttribute("aria-current", "page");
+    expect(
+      within(rail as HTMLElement).getByRole("button", { name: "What flags a title" }),
+    ).not.toHaveAttribute("aria-current");
   });
 });

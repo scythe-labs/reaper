@@ -68,9 +68,14 @@ export type NavIntent =
  *  by name on the way off screen. Both incidents in `App`'s own clearing effect are that list
  *  going stale. A focus that names its view cannot be read by another view, and it outlives its
  *  own by exactly the commit that changes `view`. The drop runs in an effect, so `App` reads
- *  every aim through a check on the name rather than trusting the state to be clean. A fourth
- *  destination is a member here and nothing else. */
+ *  every aim through a check on the name rather than trusting the state to be clean. A third
+ *  destination is a member here and nothing else.
+ *
+ *  **Settings was a member and is not.** Its open panel is `App` state now, so the address bar
+ *  can name it, and a place you can come back to is not a one-shot aim: the panel is where the
+ *  operator left it, the way the review lane is. What stays here is what only fires once. The
+ *  search box seeded by a jump must not refill itself on the way back, and a policy section is a
+ *  scroll position on one long page, which is an instruction rather than a state. */
 export type Focus =
   | { view: "review"; search: string; nonce: number }
-  | { view: "policy"; section: PolicySectionId; nonce: number }
-  | { view: "settings"; panel: Panel; nonce: number };
+  | { view: "policy"; section: PolicySectionId; nonce: number };

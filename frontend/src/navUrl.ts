@@ -18,6 +18,8 @@
 // still open.
 
 import type { Verdict } from "./api";
+import type { PolicySectionId } from "./components/PolicyEditor";
+import type { Panel } from "./components/Settings";
 import type { View } from "./navIntent";
 
 /** The path each section answers to. A `Record` keyed on the union, so a sixth section has to
@@ -40,27 +42,73 @@ const LANE_PATHS: Record<Verdict, string> = {
   abstain: "limbo",
 };
 
-// Read back off those same two declarations, so a hand-edited or stale link naming a section or
-// a lane that no longer exists simply misses the map and falls back below.
+/** Settings' ten panels. Same shape again: an eleventh panel does not compile until it names a
+ *  path here. */
+const PANEL_PATHS: Record<Panel, string> = {
+  general: "general",
+  services: "services",
+  plex: "plex",
+  lists: "lists",
+  jobs: "jobs",
+  notifications: "notifications",
+  security: "security",
+  backup: "backup",
+  logs: "logs",
+  about: "about",
+};
+
+/** The policy editor's four sections. Its rail reads "What flags a title", so these are the
+ *  short words rather than the labels, and a label reworded on the page keeps every link. */
+const POLICY_PATHS: Record<PolicySectionId, string> = {
+  flags: "flags",
+  kept: "kept",
+  pace: "pace",
+  deletion: "deletion",
+};
+
+// Read back off those same four declarations, so a hand-edited or stale link naming a section, a
+// lane, a panel or a policy section that no longer exists simply misses the map and falls back
+// below.
 const VIEW_BY_PATH = new Map(
   Object.entries(SECTION_PATHS).map(([view, path]) => [path, view as View]),
 );
 const LANE_BY_PATH = new Map(
   Object.entries(LANE_PATHS).map(([lane, path]) => [path, lane as Verdict]),
 );
+const PANEL_BY_PATH = new Map(
+  Object.entries(PANEL_PATHS).map(([panel, path]) => [path, panel as Panel]),
+);
+const POLICY_BY_PATH = new Map(
+  Object.entries(POLICY_PATHS).map(([id, path]) => [path, id as PolicySectionId]),
+);
 
-/** Where the app opens with nothing to go on: the review queue, on the condemned lane. */
-export const DEFAULT_LANDING: { view: View; lane: Verdict } = { view: "review", lane: "condemn" };
+/** Everywhere a cold load can land: the section, and what that section has open inside it. Each
+ *  field is read by the one piece of state that owns it in `App`. */
+type Landing = { view: View; lane: Verdict; panel: Panel; policySection: PolicySectionId };
 
-/** The section and lane this URL names, or the defaults. Never throws: an unknown section, an
- *  unknown lane, or a lane on a section that has none each fall back, so a mangled link opens
- *  the app rather than breaking it. */
-export function readLanding(): { view: View; lane: Verdict } {
-  const [section, lane] = window.location.pathname.split("/").filter(Boolean);
-  const view = VIEW_BY_PATH.get(section ?? "");
+/** Where the app opens with nothing to go on: the review queue, on the condemned lane, with each
+ *  section's own first panel behind it. */
+export const DEFAULT_LANDING: Landing = {
+  view: "review",
+  lane: "condemn",
+  panel: "general",
+  policySection: "flags",
+};
+
+/** What this URL names, or the defaults. Never throws: an unknown section, an unknown second
+ *  segment, or a second segment on a section that has none each fall back, so a mangled link
+ *  opens the app rather than breaking it. `/settings/nonsense` is Settings on General. */
+export function readLanding(): Landing {
+  const [first, second = ""] = window.location.pathname.split("/").filter(Boolean);
+  const view = VIEW_BY_PATH.get(first ?? "");
   if (view === undefined) return DEFAULT_LANDING;
-  const named = view === "review" ? LANE_BY_PATH.get(lane ?? "") : undefined;
-  return { view, lane: named ?? DEFAULT_LANDING.lane };
+  return {
+    view,
+    lane: (view === "review" ? LANE_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.lane,
+    panel: (view === "settings" ? PANEL_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.panel,
+    policySection:
+      (view === "policy" ? POLICY_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.policySection,
+  };
 }
 
 /** The review queue's URL: the lane in the path, its filters already built into `query`
@@ -68,8 +116,19 @@ export function readLanding(): { view: View; lane: Verdict } {
 export const reviewUrl = (lane: Verdict, query: string) =>
   `/${SECTION_PATHS.review}/${LANE_PATHS[lane]}${query}`;
 
-/** Any other section's URL. Review is the only one carrying more than its name. */
-export const sectionUrl = (view: View) => `/${SECTION_PATHS[view]}`;
+/** Any other section's URL. Settings and Policy name the panel they have open, so a reload or a
+ *  bookmark lands on it; Reap and Scales have no sub-navigation and are just their own name.
+ *
+ *  It takes both on every call, whichever section is being written, so `App` has one call site
+ *  instead of a branch per section and this file stays the only reader of the two records. */
+export const sectionUrl = (
+  view: View,
+  at: { panel: Panel; policySection: PolicySectionId },
+): string => {
+  if (view === "settings") return `/${SECTION_PATHS.settings}/${PANEL_PATHS[at.panel]}`;
+  if (view === "policy") return `/${SECTION_PATHS.policy}/${POLICY_PATHS[at.policySection]}`;
+  return `/${SECTION_PATHS[view]}`;
+};
 
 //: The last URL this module wrote. Held here because the entry it was written onto does not
 //: survive: `backnav` gives an entry back with a real `history.back()` whenever a layer closes

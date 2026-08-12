@@ -81,7 +81,9 @@ beforeEach(() => {
 /** The row's own status line and its counts line, read off the DOM the way `JobStatus.test`
  *  reads them: the sentence is built from nested spans, so no single text node holds it. */
 async function shelfRow(): Promise<{ status: string; counts: string }> {
-  renderWithProviders(<Settings initialPanel="jobs" />);
+  // `App` owns which panel is open, so the address bar can name it (navUrl.ts). Nothing
+  // here switches panel, so the owner does nothing.
+  renderWithProviders(<Settings panel="jobs" onPanelChange={() => {}} />);
   const title = await screen.findByText("Update Leaving Soon shelf");
   const row = title.closest(".jobrow");
   // Not an optional chain into the assertions below: a selector that stopped matching would
@@ -187,7 +189,7 @@ describe("the shelf row's confirmation after Update now", () => {
         finish = resolve;
       }),
     );
-    renderWithProviders(<Settings initialPanel="jobs" />);
+    renderWithProviders(<Settings panel="jobs" onPanelChange={() => {}} />);
 
     // The enabled branch's own text, so the wait settles the read this button's existence
     // depends on rather than racing it (the off branch draws a disabled "Update now" too).

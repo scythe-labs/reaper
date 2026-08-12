@@ -65,15 +65,20 @@ export const PANELS: { id: Panel; label: string }[] = [
 ];
 
 export function Settings({
-  initialPanel,
+  panel,
+  onPanelChange,
   onGoToPolicy,
 }: {
-  initialPanel?: Panel | undefined;
+  /** Which section is open. Owned by `App`, not by this file: the address bar names the open
+   *  panel (`/settings/logs`), and the URL is written where every other nav is written. */
+  panel: Panel;
+  /** Where a rail click goes. Every path that changes the panel runs the confirm below first,
+   *  so this is called with a destination the operator has already agreed to leave for. */
+  onPanelChange: (next: Panel) => void;
   /** Jump to the Policy screen's keep-rules section, for the Lists rows' policy-use links.
    *  Optional the way `SafetyBanner`'s jump is: tests mount Settings without a navigator. */
   onGoToPolicy?: (() => void) | undefined;
 }) {
-  const [panel, setPanel] = useState<Panel>(initialPanel ?? "general");
   // General's save bar can hold six unsaved fields at once, and switching section unmounts the
   // panel holding them. So the switch waits for a yes, the same two-step confirm the policy
   // editor's Movies/TV switch uses and in the same place: directly under the control that was
@@ -136,7 +141,13 @@ export function Settings({
   // The refusal, the focus nonce, and the clear-on-clean are `useSwitchConfirm`'s, shared with
   // the policy editor's Movies/TV switch. This file supplies only what is local: which panel is
   // open, whether it holds anything, and what a yes does.
-  const confirmSwitch = useSwitchConfirm(panel, leavingDirty, setPanel);
+  //
+  // A yes commits through `onPanelChange`, which is where the open panel lives now. Every switch
+  // still goes through this hook: the rail, the narrow-screen picker, and the Jobs panel's link
+  // to Plex all call `request`. What it does not cover is `App` setting `panel` itself, which is
+  // one route: a jump from the user menu's About and update items. That route unmounted the whole
+  // of Settings before this change, so a draft was dropped there with no confirm either way.
+  const confirmSwitch = useSwitchConfirm(panel, leavingDirty, onPanelChange);
   const pendingLabel = PANELS.find((p) => p.id === confirmSwitch.pending)?.label ?? "";
   // The section being LEFT, so one string serves every panel that raises the shared sentence.
   const leavingLabel = PANELS.find((p) => p.id === panel)?.label ?? "";

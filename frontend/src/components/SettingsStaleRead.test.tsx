@@ -116,7 +116,11 @@ beforeEach(() => {
 
 function renderPanel(panel: "about" | "jobs" | "notifications"): QueryClient {
   const queryClient = testQueryClient();
-  renderWithProviders(<Settings initialPanel={panel} />, { client: queryClient });
+  // `App` owns which panel is open, so the address bar can name it (navUrl.ts). Nothing
+  // here switches panel, so the owner does nothing.
+  renderWithProviders(<Settings panel={panel} onPanelChange={() => {}} />, {
+    client: queryClient,
+  });
   return queryClient;
 }
 

@@ -4646,7 +4646,9 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "components/PlexPin.test.tsx": "the poll's state machine; it mounts the announcer, no screen",
     "focus.test.tsx": "focus moves, not a screen",
     "AppFocus.test.tsx": "which view holds a jump's aim; both routes it drives to are stubs",
-    "AppUrl.test.tsx": "which section a URL lands on; four of its five routes are stubs",
+    "AppUrl.test.tsx": (
+        "which section a URL lands on; its Settings rail is audited in SettingsNav.test.tsx"
+    ),
 }
 
 # The population the walk itself collects: every `*.test.tsx` under frontend/src that mounts
@@ -4667,7 +4669,8 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # +1 for `artFallback.test.tsx`, which mounts `WhyHero` to drive the art-then-poster ladder the
 # hook now declares once. It audits the banner on both rungs, the fallback included.
 # +1 for `AppUrl.test.tsx`, exempt for `AppFocus.test.tsx`'s reason: it mounts the shell to ask
-# which section a URL lands on, and four of the five it drives to are stubs.
+# which section a URL lands on. Three of the five it drives to are stubs; the two that are real,
+# the queue and the settings rail, are audited in their own files.
 _EXPECTED_RENDERING_TEST_FILES = 59
 
 

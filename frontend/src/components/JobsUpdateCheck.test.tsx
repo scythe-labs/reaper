@@ -82,7 +82,9 @@ function renderJobs(): QueryClient {
   renderWithProviders(
     <>
       <UpdateProbe />
-      <Settings initialPanel="jobs" />
+      {/* `App` owns which panel is open, so the address bar can name it (navUrl.ts).
+          Nothing here switches panel, so the owner does nothing. */}
+      <Settings panel="jobs" onPanelChange={() => {}} />
     </>,
     { client: queryClient },
   );

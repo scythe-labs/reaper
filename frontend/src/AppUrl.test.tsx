@@ -12,12 +12,27 @@
 //     happens in (a lane change has parked one).
 //   - Back still closes an open layer before it moves sections, and still moves sections after.
 //
+// Two of the five sections have sub-navigation of their own, and the URL names the open panel:
+// `/settings/logs`, `/policy/deletion`. `App` owns both, which is what lets one effect write
+// them, so each is driven here from the address bar down to the page and back.
+//
 // The pages the shell lands on stand in for themselves, as in `AppFocus.test.tsx`: what each
-// one renders is its own tests' subject, and stubbing them keeps four heavy trees out of a file
+// one renders is its own tests' subject, and stubbing them keeps the heavy trees out of a file
 // about the shell. The review queue is real, because the filters a link carries are its state.
+// **Settings is real too**, because its panel is the claim: "opens on Logs" is about the panel
+// on screen, and a stub that printed the prop it was handed would assert the shell against
+// itself. Its rail is also where the unsaved-edits confirm sits, which the lifted panel has to
+// keep.
+//
+// **The policy editor is the one that stays stubbed, and its rail is why.** Which section is
+// current there is measured from the scroll position of four headings, and jsdom has no layout:
+// every rect is 0 and the document reports itself as too short to scroll, so the real rail
+// answers "the first section" whatever it is handed. The stub takes the section and reports one
+// back, which is `App`'s half of the loop; the editor's half is `PolicyEditor.test.tsx`, where a
+// rail click is driven through the real component.
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   type AuthUser,
@@ -29,6 +44,7 @@ import {
   type Verdict,
 } from "./api";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, DEFAULT_UPDATE, IDLE_SCAN } from "./test/apiFixtures";
+import { fill } from "./test/forms";
 import { renderWithProviders } from "./test/renderWithProviders";
 import { filtersKey } from "./components/queueFilters";
 import { App } from "./App";
@@ -42,8 +58,23 @@ vi.mock("./api", async (importOriginal) => ({
   api: apiMock,
 }));
 
-vi.mock("./components/PolicyEditor", () => ({ PolicyEditor: () => <p>policy page</p> }));
-vi.mock("./components/Settings", () => ({ Settings: () => <p>settings page</p> }));
+vi.mock("./components/PolicyEditor", () => ({
+  PolicyEditor: ({
+    section,
+    onSectionChange,
+  }: {
+    section: string;
+    onSectionChange: (next: string) => void;
+  }) => (
+    <>
+      <p>policy page, at {section}</p>
+      {/* The rail, in the one shape jsdom can drive: a click that reports a section upward. */}
+      <button type="button" onClick={() => onSectionChange("pace")}>
+        rail: Pace and limits
+      </button>
+    </>
+  ),
+}));
 vi.mock("./components/ReapPlan", () => ({ ReapPlan: () => <p>reap page</p> }));
 vi.mock("./components/Fairness", () => ({ Fairness: () => <p>scales page</p> }));
 vi.mock("./components/SetupWizard", () => ({ SetupWizard: () => <p>setup wizard</p> }));
@@ -126,6 +157,15 @@ const SETUP_DONE: SetupStatus = {
   complete: true,
 };
 
+// `App` puts Settings behind `React.lazy`, so the first render through that boundary in this
+// process pays Vite's cold transform of ten panels' worth of modules -- inside Testing Library's
+// 1000ms `asyncUtilTimeout`, which `testTimeout` does not reach. Warmed the way
+// `AppStaleRead.test.tsx` warms the wizard, rather than by lengthening one assertion's timeout:
+// which test pays the cost is otherwise an accident of file order (#651).
+beforeAll(async () => {
+  await import("./components/Settings");
+});
+
 beforeEach(() => {
   window.localStorage.clear();
   apiMock.me.mockResolvedValue(USER);
@@ -145,6 +185,18 @@ beforeEach(() => {
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+  apiMock.saveGeneral.mockResolvedValue(DEFAULT_GENERAL);
+  // The two settings panels this file opens. Settings is the real component here, so the panel
+  // it lands on does its own reads, and an unanswered one renders a failed-read branch with no
+  // rail tab to leave by.
+  apiMock.logs.mockResolvedValue({ lines: [], last_seq: 0, level: "INFO", files_kept: 3 });
+  apiMock.about.mockResolvedValue({
+    version: "0.0.0-test",
+    license: "AGPL-3.0-or-later",
+    data_dir: "/data",
+    reaper_db_bytes: 1024,
+    cache_db_bytes: 1024,
+  });
   apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: true, will_reap: 0, condemned_by: [] });
   apiMock.reapStatus.mockResolvedValue({ running: false });
   // The shell's own read for the Scales panel, made on that section whether or not the page
@@ -213,10 +265,12 @@ describe("a cold load", () => {
   // (rule 145). Review is in the list too: it is the default, so it is the one that would still
   // pass with the whole feature deleted.
   it.each([
-    ["/policy", "policy page"],
+    ["/policy", "policy page, at flags"],
     ["/reap", "reap page"],
     ["/scales", "scales page"],
-    ["/settings", "settings page"],
+    // Settings is real, so its marker is a rail tab: the section is on screen, on the panel a
+    // link that names none opens.
+    ["/settings", "Backup & Restore"],
   ])("lands on the section %s names", async (path, marker) => {
     await open(path);
     expect(await screen.findByText(marker)).toBeInTheDocument();
@@ -280,6 +334,37 @@ describe("a cold load", () => {
     await waitFor(() => expect(here()).toBe("/review/condemned?genre=Comedy"));
   });
 
+  // Both sections with sub-navigation, every panel driven off the same two declarations the
+  // writer reads (`PANEL_PATHS`, `POLICY_PATHS` in navUrl.ts). A panel added without a path
+  // does not compile; one whose path is wrong lands on the default, which is what these catch.
+  it.each([
+    ["/settings/logs", "Logs"],
+    ["/settings/about", "About"],
+    // Hand-edited, and it opens the section rather than throwing. General is where a link
+    // naming no panel lands too, so the address bar is checked below rather than here.
+    ["/settings/nonsense", "General"],
+  ])("opens Settings on the panel %s names", async (path, heading) => {
+    await open(path);
+    expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
+  });
+
+  it("corrects the address bar when a link names a panel that does not exist", async () => {
+    await open("/settings/nonsense");
+    await screen.findByRole("heading", { name: "General" });
+    await waitFor(() => expect(here()).toBe("/settings/general"));
+  });
+
+  it.each([
+    ["/policy/flags", "flags"],
+    ["/policy/kept", "kept"],
+    ["/policy/pace", "pace"],
+    ["/policy/deletion", "deletion"],
+    ["/policy/nonsense", "flags"],
+  ])("opens the policy editor at the section %s names", async (path, section) => {
+    await open(path);
+    expect(await screen.findByText(`policy page, at ${section}`)).toBeInTheDocument();
+  });
+
   it("leaves the recovery path alone", async () => {
     // `/recover` is a path the signed-out app already reads, and no section may take it over or
     // rewrite it: whoever is standing there is locked out of their own install.
@@ -298,9 +383,9 @@ describe("a cold load", () => {
 
   it("does not let a deep link walk past the setup gate", async () => {
     apiMock.setupStatus.mockResolvedValue({ ...SETUP_DONE, has_scanned: false, complete: false });
-    await open("/settings");
+    await open("/settings/logs");
     expect(await screen.findByText("setup wizard")).toBeInTheDocument();
-    expect(screen.queryByText("settings page")).toBeNull();
+    expect(screen.queryByText("Backup & Restore")).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Sections" })).toBeNull();
   });
 });
@@ -314,8 +399,8 @@ describe("the address bar", () => {
 
     await settle();
     await person.click(screen.getByRole("button", { name: "Policy" }));
-    await screen.findByText("policy page");
-    expect(here()).toBe("/policy");
+    await screen.findByText("policy page, at flags");
+    expect(here()).toBe("/policy/flags");
 
     await settle();
     await person.click(screen.getByRole("button", { name: "Review" }));
@@ -332,6 +417,77 @@ describe("the address bar", () => {
     await person.type(await queue(), "alpha");
     await waitFor(() => expect(here()).toBe("/review/limbo?q=alpha"));
     expect(history.length).toBe(entries);
+  });
+
+  it("follows a click between the panels inside a section", async () => {
+    const person = userEvent.setup();
+    await open("/settings/general");
+    await screen.findByRole("heading", { name: "General" });
+
+    await settle();
+    await person.click(screen.getByRole("button", { name: "Logs" }));
+    expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
+    await waitFor(() => expect(here()).toBe("/settings/logs"));
+
+    // The policy rail, through the stub: what `App` does with a section reported upward is the
+    // half that lives here.
+    await settle();
+    await person.click(screen.getByRole("button", { name: "Policy" }));
+    await screen.findByText("policy page, at flags");
+    await person.click(screen.getByRole("button", { name: "rail: Pace and limits" }));
+    expect(await screen.findByText("policy page, at pace")).toBeInTheDocument();
+    await waitFor(() => expect(here()).toBe("/policy/pace"));
+  });
+
+  it("waits for the unsaved-edits confirm before it names the new panel", async () => {
+    // The panel moved out of `Settings` and into `App`, and this is what that must not cost: a
+    // rail click still runs the confirm, and neither the panel nor the address bar moves until
+    // the operator says the draft can go.
+    const person = userEvent.setup();
+    await open("/settings/general");
+    const url = await screen.findByLabelText("Application URL");
+    await fill(person, url, "https://reaper.example.com");
+    await waitFor(() => expect(document.querySelector(".savebar")).not.toBeNull());
+
+    await person.click(screen.getByRole("button", { name: "Logs" }));
+    expect(document.querySelector(".notice-warn")!.textContent).toContain(
+      "You have unsaved General settings. Switching to Logs discards them.",
+    );
+    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+    expect(here()).toBe("/settings/general");
+
+    await person.click(screen.getByRole("button", { name: "Discard and switch" }));
+    expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
+    await waitFor(() => expect(here()).toBe("/settings/logs"));
+  });
+
+  it("names the panel a jump lands on, and the one Back comes back to", async () => {
+    // A panel is a place now, not a one-shot aim (navIntent.ts): Back into Settings lands on the
+    // panel it was left on, the way Back into Review lands on the lane it was left on. The user
+    // menu's update item is the app's one always-mounted jump into Settings.
+    apiMock.update.mockResolvedValue({
+      ...DEFAULT_UPDATE,
+      update_available: true,
+      latest: "0.2.0",
+    });
+    const person = userEvent.setup();
+    await open("/review/condemned");
+    await queue();
+
+    await settle();
+    await person.click(screen.getByRole("button", { name: /owner, update available/i }));
+    await person.click(await screen.findByRole("button", { name: /^update available$/i }));
+    await screen.findByRole("heading", { name: "About" });
+    await waitFor(() => expect(here()).toBe("/settings/about"));
+
+    await settle();
+    await person.click(screen.getByRole("button", { name: "Review" }));
+    await queue();
+
+    await settle();
+    await back();
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
+    await waitFor(() => expect(here()).toBe("/settings/about"));
   });
 
   it("keeps the Back sentinel when it writes, and Back still unwinds layers before sections", async () => {
