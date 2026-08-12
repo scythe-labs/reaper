@@ -2571,6 +2571,106 @@ def test_the_workflows_that_filter_themselves_by_path_are_the_ones_the_prose_nam
     # other, so nothing is repeated here.
 
 
+CI_WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
+
+#: A `case` arm in `ci.yml`'s `changes` job: `manual/*|website/*)      site=true  ;;`.
+_CI_LANE_ARM = re.compile(r"^\s*([^\s#)]+)\)\s*(\w+)=true\s*;;", re.MULTILINE)
+
+#: A lane named in a job's `if:`: `needs.changes.outputs.code == 'true'`.
+_CI_LANE_REF = re.compile(r"needs\.changes\.outputs\.(\w+)\s*==\s*'true'")
+
+#: `ci.yml`'s lane classification, in the order the `case` tries the arms. First match wins, so
+#: the order is load-bearing: `*.md` matches at any depth, and with prose ahead of site a
+#: `manual/guide.md` skipped the site build while docs-deploy.yml published it (#589).
+_CI_LANE_ARMS = (
+    ("manual/*|website/*", "site"),
+    ("docs/*|.claude/*|*.md", "prose"),
+    ("*", "code"),
+)
+
+#: Every lane each conditional job in `ci.yml` runs for. The two jobs with no lane in their
+#: `if:` are excluded below and named there: `changes` produces the verdict and `ci-gate`
+#: reports on every commit.
+#:
+#: **`frontend` and `hygiene` each name `site` as well as the lane they were written for**, and
+#: that is the fix for #783 rather than a convenience. A commit touching only `manual/` or
+#: `website/` ran the site build alone, which compiles a hand-edited generated page exactly as
+#: happily as a correct one; both guards below live in jobs that lane did not start.
+_CI_JOB_LANES = {
+    "check": {"code"},
+    "frontend": {"code", "site"},
+    "hygiene": {"prose", "site"},
+    "docker": {"code"},
+    "site": {"site"},
+}
+
+#: The guards that READ `manual/` or `website/`, against the `ci.yml` job that runs each. Four
+#: walks in this file read `manual/features.mdx`, `manual/**/*.mdx` and
+#: `website/src/css/custom.css`; `manual.gen.test.ts` is the drift gate for every generated page
+#: and is collected by `npm run test` in `frontend`.
+_SITE_TREE_GUARDS = {
+    "hygiene": SELF,
+    "frontend": FRONTEND_SRC / "docs" / "manual.gen.test.ts",
+}
+
+
+def test_a_commit_touching_only_the_manual_runs_the_guards_that_read_it() -> None:
+    """The site lane starts the jobs holding the guards for the trees it classifies (#783).
+
+    Three facts, and the gap needed all three to be true at once. `manual/` and `website/`
+    classify as `site`, in an arm ordered ahead of prose. `frontend` and `hygiene` name `site`
+    in their `if:` beside the lane each was written for. And the two guard files still sit where
+    those jobs run them: a `manual.gen.test.ts` moved out of `frontend/src` is dropped by
+    vitest's include and reports nothing, which is what a clean tree looks like.
+
+    `if:` is what makes a skipped lane reportable, so widening one is safe for `CI gate`: a job
+    skipped by an `if:` publishes a check run with conclusion `skipped`, which that gate counts
+    as a pass, where a workflow skipped by its own `paths` filter publishes nothing at all.
+    """
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+
+    decide = [s for s in jobs["changes"]["steps"] if s.get("id") == "decide"]
+    assert len(decide) == 1, (
+        f"expected one `decide` step in ci.yml's `changes` job, found {len(decide)}.\n"
+        "The job's shape changed; fix this walk before trusting the arms below."
+    )
+    arms = tuple(_CI_LANE_ARM.findall(decide[0]["run"]))
+    assert arms == _CI_LANE_ARMS, (
+        f"ci.yml's lane classification is now {arms},\nexpected {_CI_LANE_ARMS}.\n"
+        "Order is part of the pin: first match wins, and prose ahead of site re-opens #589."
+    )
+
+    lanes = {
+        name: set(_CI_LANE_REF.findall(str(job["if"]))) for name, job in jobs.items() if "if" in job
+    }
+    unconditional = {n for n, job in jobs.items() if "if" not in job} | {
+        n for n, seen in lanes.items() if not seen
+    }
+    assert unconditional == {"changes", "ci-gate"}, (
+        f"ci.yml jobs that read no lane are now {sorted(unconditional)},\n"
+        "expected ['ci-gate', 'changes']. Every other job reads the `changes` verdict rather\n"
+        "than carrying globs of its own, and `CI gate` reports on every commit."
+    )
+    conditional = {n: seen for n, seen in lanes.items() if seen}
+    assert conditional == _CI_JOB_LANES, (
+        f"ci.yml's jobs now run for {conditional},\nexpected {_CI_JOB_LANES}.\n"
+        "Dropping `site` from `frontend` or `hygiene` puts #783 back: a commit touching only\n"
+        "manual/ or website/ builds the site and runs no test of either tree.\n"
+        "CLAUDE.md's paragraph on which jobs appear says the same thing in prose (rule 144)."
+    )
+
+    for job, guard in _SITE_TREE_GUARDS.items():
+        assert guard.is_file(), (
+            f"{guard.relative_to(REPO)} reads manual/ or website/ and is run by ci.yml's\n"
+            f"`{job}` job. It moved, so that job no longer guards those trees (#783)."
+        )
+        assert "site" in _CI_JOB_LANES[job], (
+            f"the table above stopped running `{job}` for the site lane, and\n"
+            f"{guard.relative_to(REPO)} is the guard that lane needs it for."
+        )
+
+
 BINARIES_WORKFLOW = REPO / ".github" / "workflows" / "binaries.yml"
 
 

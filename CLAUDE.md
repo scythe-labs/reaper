@@ -304,6 +304,10 @@ any depth, so with prose first a `manual/` page never reached the site build (#5
 job in that file reads the verdict rather than filtering itself, so a prose-only commit runs
 `hygiene` alone, a code-only commit runs `check`, `frontend` and `docker`, and a commit
 spanning lanes runs each lane it touched — which is not the same as everything.
+**A lane names a tree, not a job**, so a site-only commit runs `site`, `hygiene` *and*
+`frontend`: the guards that read `manual/` and `website/` live in those last two, and for as
+long as the site lane started only its own build, a hand-edited generated page compiled and
+published with nothing having read it (#783).
 **Two workflows outside it carry their own path lists and have to** — a `paths` filter decides
 whether a workflow starts, so it cannot read another one's output. `codeql.yml` restates the
 prose globs as `paths-ignore` once per trigger, in `**` spelling rather than the `case` globs
