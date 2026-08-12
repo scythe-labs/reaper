@@ -14,7 +14,7 @@ things do, and they are the two that decide whether the committed file is safe t
 
 The capture itself is not replayed by anything (rule 132: this file must not read as coverage
 of a run nobody performs). It is diffed by hand at phase boundaries, which
-``docs/SIMPLIFICATION_PLAN.md``'s S8 governs.
+``docs/history/SIMPLIFICATION_PLAN.md``'s S8 governs.
 """
 
 from __future__ import annotations

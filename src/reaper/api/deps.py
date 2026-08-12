@@ -21,7 +21,7 @@ collapse for the lazily-built per-app objects, which were four copies of one rea
 
 Routers that read ``request.app.state`` inline are left alone. They copied no function,
 so they are outside what this module collapses, and the pull request that landed it
-records the deferral (``docs/SIMPLIFICATION_PLAN.md``, wave 3). **Thirty-two such reads
+records the deferral (``docs/history/SIMPLIFICATION_PLAN.md``, wave 3). **Thirty-two such reads
 survive across eleven modules, and three of them are in ``api/runs.py``** -- the one route
 that deletes -- so a later sweep that walks only the read-only routers has not honored the
 deferral. Exactly three cannot adopt these accessors without a signature change, all in

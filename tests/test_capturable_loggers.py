@@ -115,7 +115,7 @@ class TestTheGuardReachesEveryLoggerInTheTree:
         assert len(declared) == 50, (
             f"expected 50 modules declaring a logger, found {len(declared)}. Bump the number "
             "here AND in the two prose copies of it, which nothing else asserts (rule 144): "
-            "this class's docstring above, and docs/SIMPLIFICATION_PLAN.md's S7 paragraph, "
+            "this class's docstring above, and docs/history/SIMPLIFICATION_PLAN.md's S7 paragraph, "
             "which names this file and restates the figure. Leave the *Landed* rows in that "
             "document alone: their figures are historical deltas, so editing one makes a "
             "correct record false."

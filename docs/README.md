@@ -114,8 +114,6 @@ auto-memory note to explain the product, move it here.
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
 | `CSS_SPLIT_PLAN.md` | state (one feature) | **live** — 3 of 7 stages landed; the last 4 are optional |
 | `I18N_PLAN.md` | state (one feature) | **live** — a proposal; nothing landed, no stage committed to |
-| `SIMPLIFICATION_PLAN.md` | state (one pass) | **live** — its own `Progress` table is the status; all work lands on `audit/simplification-plan` |
-| `ISSUE_LANDING_PLAN.md` | state (one branch) | **live** — which open issues land on `audit/simplification-plan`; delete when #552 merges |
 | `brand/README.md` | reference | stable; nothing here ships |
 | `../manual/` | the operator's manual | **live** — half generated from the app's help content |
 | `../website/` | the manual's site | **live** — Docusaurus; owns no words of its own |
@@ -125,3 +123,4 @@ auto-memory note to explain the product, move it here.
 | `history/UI_REVIEW.md` | history | frozen — 92/94 findings fixed |
 | `history/SCREEN_READER_SWEEP.md` | history | frozen — the sweep's narrative; open half in `STATUS.md` |
 | `history/SIZE_TRUTH_PLAN.md` | history | frozen — 5 stages shipped, 4 retired on a false premise |
+| `history/SIMPLIFICATION_PLAN.md` | history | frozen — every phase landed in #552; still cited from `src/` and `tests/` |

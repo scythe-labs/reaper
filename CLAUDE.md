@@ -397,9 +397,6 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
   and `api/review.py`. Read it before touching any of them: it is also the only place the rewatch
   curve is written down, now that the engines that measured it are gone.
 - The live plans: `docs/CSS_SPLIT_PLAN.md` (4 optional stages remain) and `docs/I18N_PLAN.md` (a
-  proposal, nothing landed), neither committed to. `docs/SIMPLIFICATION_PLAN.md` is committed to
-  and being executed: its own `Progress` table is the status, every change lands on
-  `audit/simplification-plan`, and nothing reaches `dev` until the last phase closes.
-  `docs/README.md`'s map is the list to correct.
+  proposal, nothing landed), neither committed to. `docs/README.md`'s map is the list to correct.
 - `docs/history/` — frozen: the retired plan narratives and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.
