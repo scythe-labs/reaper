@@ -28,7 +28,13 @@ from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.verdict import decide_verdict
 from reaper.services import lists
 from reaper.services.imdb_dataset import ImdbRating
-from reaper.services.snapshot import RawItem, ScanContext, _reported_size, build_facts
+from reaper.services.snapshot import (
+    RawItem,
+    ScanContext,
+    _raw_items,
+    _reported_size,
+    build_facts,
+)
 
 _EMPTY_INDEX = lists.MembershipIndex({}, {}, {}, {})
 
@@ -158,6 +164,42 @@ class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
         )
 
         assert facts.is_whitelisted == Known(value=False, source="lists")
+
+    def test_radarrs_unknown_id_sentinel_does_not_shadow_the_one_plex_matched(self) -> None:
+        """The fallback above is an ``or``, and ``"tt0000000"`` is truthy.
+
+        Some sources emit ``tt0000000`` / ``tt0`` for "unknown" (``identity._clean_imdb``).
+        A sentinel reaching ``RawItem.imdb_id`` raw means the lookup runs under an id no
+        list row carries and the ``or`` never reaches the id Plex matched, so the keep list
+        is defeated in exactly the case it was written for. Driven through ``_raw_items``,
+        because that is the site that has to filter it.
+        """
+        plex = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=10,
+                    title="A title",
+                    year=2020,
+                    added_at=datetime(2020, 1, 1, tzinfo=UTC),
+                    ids=identity.ExternalIds.of(tmdb=7, imdb="tt0000042"),
+                )
+            ]
+        )
+        movie = {
+            "id": 1,
+            "title": "A title",
+            "year": 2020,
+            "tmdbId": 7,
+            "imdbId": "tt0000000",
+            "hasFile": True,
+            "sizeOnDisk": 8_000_000_000,
+        }
+        item = _raw_items([movie], plex, instance_id=1)[0]
+        assert item.plex_imdb_id == "tt0000042"
+
+        facts = _facts(item, membership_index=self._keep_list_stored_under_imdb_only())
+
+        assert facts.is_whitelisted == Known(value=True, source="Never Reap")
 
 
 class TestAMatchedItemWithNoArrivalDateIsWarned:

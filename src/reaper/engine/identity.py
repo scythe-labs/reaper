@@ -206,7 +206,22 @@ class ExternalIds:
 
     @classmethod
     def of(cls, *, imdb: object = None, tmdb: object = None, tvdb: object = None) -> ExternalIds:
-        """Construct with the sentinel filter applied to every id -- the only safe door in."""
+        """Construct with the sentinel filter applied to every id -- the only safe door in.
+
+        "Only" is a grep trigger (rule 127): every site that reads an ``imdbId``/``tmdbId``/
+        ``tvdbId`` off a payload comes through here, not just the matcher. Nine did not, and a
+        raw ``tt0000000`` reaching a stored record is truthy, so it shadowed the cleaned id at
+        every ``item.imdb_id or item.plex_imdb_id`` downstream and sent the keep-list lookup
+        out under an id no list row carries (#709).
+        ``test_repo_hygiene.test_every_external_id_read_goes_through_the_sentinel_filter``
+        parses ``src/`` and fails on a tenth.
+
+        Two reads are exempt, in writing rather than by omission: ``executor.py``'s Radarr
+        import-exclusion pair reads ``tmdbId`` raw on both sides of a comparison against the
+        same instance, and the send already fails closed on ``tmdb_id == 0``. They are the
+        two entries the gate counts, so a third cannot inherit the exemption. Someone
+        grepping to check the sentence above finds them and can tell they are deliberate.
+        """
         return cls(
             imdb=_clean_imdb(imdb),
             tmdb=_clean_numeric(tmdb),

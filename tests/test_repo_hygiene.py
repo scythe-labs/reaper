@@ -457,6 +457,135 @@ def test_plex_sections_are_never_resolved_by_title() -> None:
     assert not offenders, "resolve Plex sections by key, never by title:\n" + "\n".join(offenders)
 
 
+#: Every spelling an *arr, Seerr or list payload uses for an external id. Reading one of these
+#: off a payload is an identity read, and rule 29 sends it through ``identity.ExternalIds.of``.
+_ID_PAYLOAD_KEYS = frozenset({"imdbId", "ImdbId", "tmdbId", "TmdbId", "tvdbId", "TvdbId"})
+
+#: How many of those literals ``src/`` holds, reconciled by hand (rules 145, 147): 3 in
+#: ``clients/seerr.py``, 2 in ``services/executor.py``, 6 in ``services/lists.py``, 9 in
+#: ``services/season_scan.py``, 4 in ``services/snapshot.py``. A count of the population the
+#: ban itself scans, so a reader that drops out of the walk is visible: a flag-shaped
+#: assertion alone cannot tell a compliant site from one the parse never saw.
+ID_PAYLOAD_KEY_READS = 24
+
+#: The reads that are NOT identity reads, classified in writing rather than silenced (rule 103).
+_NOT_AN_IDENTITY_READ = {
+    # Radarr's import-exclusion list, matched against itself. Both sides read this key raw off
+    # the same instance, and ``tmdb_id == 0`` is the no-id sentinel the send already fails
+    # closed on before deleting anything. Cleaning it would change the spelling and nothing
+    # else, since no cross-system join is being made.
+    ("services/executor.py", "tmdbId"),
+}
+
+#: How many reads `_NOT_AN_IDENTITY_READ` actually waves through. The set is keyed on
+#: (file, key) and cannot bound a count on its own, so this is what makes a third read in an
+#: already-named file fail rather than inherit the exemption.
+EXEMPTED_ID_KEY_READS = 2
+
+
+def _is_external_ids_of(func: ast.expr) -> bool:
+    """Is this call ``ExternalIds.of(...)``, however the module spells the import?"""
+    if not (isinstance(func, ast.Attribute) and func.attr == "of"):
+        return False
+    owner = func.value
+    if isinstance(owner, ast.Attribute):  # identity.ExternalIds.of / reaper...ExternalIds.of
+        return owner.attr == "ExternalIds"
+    return isinstance(owner, ast.Name) and owner.id == "ExternalIds"
+
+
+def _id_key_reads(source: str) -> list[tuple[int, str, bool]]:
+    """``(line, key, went_through_the_door)`` for every id-key literal in one module.
+
+    Parsed, not matched on text: the calls span several lines, sit inside comprehensions and
+    argument lists, and a delimiter-anchored regex reads one of those spellings and not the
+    rest (rule 147). Anything lexically inside an ``ExternalIds.of(...)`` call counts as
+    through the door, which is what makes a multi-line call and a nested ``.get`` both pass.
+    """
+    tree = ast.parse(source)
+    guarded: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _is_external_ids_of(node.func):
+            guarded.update(id(inner) for inner in ast.walk(node))
+    return [
+        (node.lineno, node.value, id(node) in guarded)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in _ID_PAYLOAD_KEYS
+    ]
+
+
+def test_every_external_id_read_goes_through_the_sentinel_filter() -> None:
+    """Rule 29, and ``ExternalIds.of``'s claim to be "the only safe door in" (rule 7/24).
+
+    Some sources emit ``tt0000000`` / ``tt0`` for "unknown". A sentinel is truthy, so a raw
+    ``imdbId`` carried onto a stored or in-memory record shadows the cleaned id Plex matched
+    at every ``item.imdb_id or item.plex_imdb_id`` below it, and the keep-list lookup then
+    runs under an id no list row carries. That fails toward deleting a keep-listed file, so
+    the filter belongs at the write and this gate is what keeps a tenth site from arriving.
+    """
+    scanned = 0
+    exempted = 0
+    offenders: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        for lineno, key, guarded in _id_key_reads(path.read_text(encoding="utf-8")):
+            scanned += 1
+            if guarded:
+                continue
+            if (rel, key) in _NOT_AN_IDENTITY_READ:
+                exempted += 1
+                continue
+            offenders.append(f"src/reaper/{rel}:{lineno} reads {key!r} raw")
+    assert not offenders, "read external ids through identity.ExternalIds.of:\n" + "\n".join(
+        offenders
+    )
+    assert scanned == ID_PAYLOAD_KEY_READS, (
+        f"src/ holds {scanned} external-id key literals, not {ID_PAYLOAD_KEY_READS}. Reconcile "
+        "the count by hand and update ID_PAYLOAD_KEY_READS: a ban with no count cannot tell a "
+        "compliant reader from one that dropped out of the walk."
+    )
+    # The exemption is keyed on (file, key), so it waves through EVERY `tmdbId` read in
+    # `executor.py`, not the two that were classified. Counting them is what stops a third
+    # arriving unexamined in the one module that sends the delete: without this, the only
+    # signal is the total above, and its message asks the author to reconcile the count by
+    # hand -- which they would do, landing a raw id read on the send path.
+    assert exempted == EXEMPTED_ID_KEY_READS, (
+        f"{exempted} external-id reads are exempt, not {EXEMPTED_ID_KEY_READS}. A new one in a "
+        "file already named in _NOT_AN_IDENTITY_READ is waved through by the key alone, so it "
+        "is classified here in writing or it goes through identity.ExternalIds.of."
+    )
+
+
+def test_the_external_id_matcher_reads_every_spelling_it_claims() -> None:
+    """Rule 147: the ban is bounded by what it parses, so prove it on both verdicts.
+
+    Accepts a call however the module reaches ``ExternalIds`` and however it wraps the
+    arguments; rejects a bare payload read, and rejects the constructor, which applies no
+    filter at all. That last one is the near miss a name-only matcher would wave through.
+    """
+    accepted = [
+        'x = identity.ExternalIds.of(imdb=m.get("imdbId"), tmdb=m.get("tmdbId"))',
+        'x = ExternalIds.of(tvdb=s.get("tvdbId"))',
+        'x = identity.ExternalIds.of(\n    imdb=s.get("imdbId"),\n    tvdb=s.get("tvdbId"),\n)',
+        'ids = [identity.ExternalIds.of(imdb=w.get("imdbId")).imdb for w in work]',
+    ]
+    rejected = [
+        'x = m.get("imdbId") or None',
+        'x = int(s["tvdbId"]) if s.get("tvdbId") else None',
+        'x = identity.ExternalIds(imdb=m.get("imdbId"))',
+        'log.debug("scan", imdb_id=m.get("imdbId"))',
+    ]
+    for source in accepted:
+        reads = _id_key_reads(source)
+        assert reads, f"the matcher saw no id key at all in: {source}"
+        assert all(guarded for _, _, guarded in reads), f"wrongly flagged: {source}"
+    for source in rejected:
+        reads = _id_key_reads(source)
+        assert reads, f"the matcher saw no id key at all in: {source}"
+        assert not any(guarded for _, _, guarded in reads), f"wrongly cleared: {source}"
+
+
 def test_no_bare_exception_assertions_in_tests() -> None:
     """Rule 119: assert the domain error and its message, never ``pytest.raises(Exception)``.
 

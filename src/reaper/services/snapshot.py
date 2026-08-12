@@ -2029,13 +2029,18 @@ def _log_movie_decision(instance_id: int, movie: Mapping[str, Any], *, outcome: 
     queue" without re-running the scan. Plex match status is logged separately
     (``scan.plex_matched`` / ``scan.plex_unmatched``); an unmatched movie still becomes a
     candidate and is never dropped here.
+
+    The ids are the CLEANED ones (``identity.ExternalIds.of``), not Radarr's raw strings, so
+    the line says what Reaper matched with. A source emitting the ``tt0000000`` sentinel logs
+    it as no id, which is what it was treated as.
     """
+    ids = identity.ExternalIds.of(imdb=movie.get("imdbId"), tmdb=movie.get("tmdbId"))
     log.debug(
         "scan.movie_decision",
         instance_id=instance_id,
         title=str(movie.get("title") or "?"),
-        tmdb_id=movie.get("tmdbId") or None,
-        imdb_id=movie.get("imdbId") or None,
+        tmdb_id=ids.tmdb,
+        imdb_id=ids.imdb,
         year=int(movie["year"]) if movie.get("year") else None,
         outcome=outcome,
         has_file=bool(movie.get("hasFile")),
@@ -2065,8 +2070,14 @@ def _raw_items(
             _log_movie_decision(instance_id, movie, outcome="no_file")
             continue
         _log_movie_decision(instance_id, movie, outcome="candidate")
-        tmdb_id = int(movie["tmdbId"]) if movie.get("tmdbId") else None
+        # THE door in for this movie's ids (identity.ExternalIds.of): the sentinel filter runs
+        # once here, and everything below reads `ids` rather than the raw payload. A raw
+        # `imdbId` of "tt0000000" is truthy, so carrying it onto the RawItem would shadow the
+        # id Plex matched at every `item.imdb_id or item.plex_imdb_id` downstream -- including
+        # the keep-list lookup in `build_facts`, which would then run under an id no list row
+        # carries and condemn a keep-listed film (#709).
         ids = identity.ExternalIds.of(imdb=movie.get("imdbId"), tmdb=movie.get("tmdbId"))
+        tmdb_id = ids.tmdb
         # The Plex library the operator mapped this movie's root folder to, if any. Tried ahead
         # of the folder and size corroborators, but a positive size contradiction still vetoes.
         plex_library = identity.library_for_path(_movie_file_path(movie), library_map)
@@ -2120,7 +2131,7 @@ def _raw_items(
                 instance_id=instance_id,
                 title=str(movie.get("title") or ""),
                 year=int(movie["year"]) if movie.get("year") else None,
-                imdb_id=movie.get("imdbId") or None,
+                imdb_id=ids.imdb,
                 tmdb_id=tmdb_id,
                 match_status=str(resolution.status),
                 detail=resolution.detail,
@@ -2157,7 +2168,7 @@ def _raw_items(
                 # reaching this loop cleared the `hasFile` filter above, so a missing size
                 # means we could not read it, not that there is nothing to read.
                 size_bytes=_reported_size(movie),
-                imdb_id=movie.get("imdbId") or None,
+                imdb_id=ids.imdb,
                 tmdb_id=tmdb_id,
                 # added_at comes from the matched Plex item (Tautulli spine), preserving the
                 # dormancy floor exactly as before.

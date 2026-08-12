@@ -33,6 +33,7 @@ import structlog
 from reaper.clients.base import BaseClient, IntegrationError
 from reaper.clock import from_iso
 from reaper.config import RuntimeSafety
+from reaper.engine import identity
 
 log = structlog.get_logger(__name__)
 
@@ -174,6 +175,14 @@ def _parse_request(payload: dict[str, Any], portal_key: str = "") -> MediaReques
     media = payload.get("media") or {}
     user = payload.get("requestedBy") or {}
     is_4k = bool(payload.get("is4k"))
+    # The external ids go through identity.ExternalIds.of, the one sentinel filter, exactly
+    # as the scan's own reads of Radarr/Sonarr/Plex do. Seerr fills `imdbId` from TMDB, which
+    # emits "tt0000000" for a title with no IMDb entry; carried raw, every such request and
+    # candidate would join to each other in Scales (services.fairness._index_candidates) and
+    # credit one person with another's disk (#709). `_as_int` still owns the non-id integers.
+    ids = identity.ExternalIds.of(
+        imdb=media.get("imdbId"), tmdb=media.get("tmdbId"), tvdb=media.get("tvdbId")
+    )
 
     return MediaRequest(
         request_id=_as_int(payload.get("id")) or 0,
@@ -187,9 +196,9 @@ def _parse_request(payload: dict[str, Any], portal_key: str = "") -> MediaReques
             display_name=user.get("displayName"),
             email=user.get("email"),
         ),
-        tmdb_id=_as_int(media.get("tmdbId")),
-        tvdb_id=_as_int(media.get("tvdbId")),
-        imdb_id=media.get("imdbId") or None,
+        tmdb_id=ids.tmdb,
+        tvdb_id=ids.tvdb,
+        imdb_id=ids.imdb,
         # ratingKey is a string in the API, and null until Plex matches the item.
         plex_rating_key=(media.get("ratingKey4k") if is_4k else media.get("ratingKey")) or None,
         arr_id=_as_int(

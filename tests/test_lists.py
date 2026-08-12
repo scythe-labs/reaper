@@ -1046,9 +1046,11 @@ class TestAStoredCacheIsWidenedNeverRebuilt:
 
 
 def _top250_payload(count: int = 250) -> list[dict[str, object]]:
+    """Ids from 1, never 0: ``tt0000000`` is the "unknown" sentinel ``identity._clean_imdb``
+    drops, so an entry numbered from zero is stored under no imdb id at all."""
     return [
         {"ImdbId": f"tt{i:07d}", "TmdbId": 1000 + i, "Title": f"Film {i}", "Year": 1920 + i}
-        for i in range(count)
+        for i in range(1, count + 1)
     ]
 
 
@@ -1121,11 +1123,29 @@ class TestImdbList:
         )
         await sync(engine, ImdbList(list_name="IMDb Top 250"))
 
-        found = await memberships(engine, media_type="movie", imdb_id="tt0000000")
+        found = await memberships(engine, media_type="movie", imdb_id="tt0000001")
 
         assert len(found) == 1
         assert found[0].rank is None
         assert found[0].describe() == "IMDb Top 250"  # no fabricated "#1"
+
+    async def test_an_unknown_id_sentinel_is_stored_under_no_imdb_id(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        """The mirror emits ``tt0000000`` for a chart entry it has no IMDb id for.
+
+        Stored raw, that row answers every OTHER item whose own imdbId is the same sentinel,
+        and the why-panel then names a list the film is not on. The entry keeps protecting by
+        its tmdb id, which is the id it is actually identified by (#709).
+        """
+        payload = _top250_payload()
+        payload[0]["ImdbId"] = "tt0000000"
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=payload))
+
+        await sync(engine, ImdbList(list_name="IMDb Top 250"))
+
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000000") == []
+        assert len(await memberships(engine, media_type="movie", tmdb_id=1001)) == 1
 
     @pytest.mark.parametrize(
         ("variant", "floor"),
