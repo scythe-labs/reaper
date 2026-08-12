@@ -112,7 +112,6 @@ auto-memory note to explain the product, move it here.
 | `DECISIONS.md` | knowledge | **live** — one section per daggered `STATUS.md` row |
 | `LEARNINGS.md` | knowledge | **live** — append by topic |
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
-| `CSS_SPLIT_PLAN.md` | state (one feature) | **live** — 3 of 7 stages landed; the last 4 are optional |
 | `I18N_PLAN.md` | state (one feature) | **live** — a proposal; nothing landed, no stage committed to |
 | `brand/README.md` | reference | stable; nothing here ships |
 | `../manual/` | the operator's manual | **live** — half generated from the app's help content |
@@ -124,3 +123,4 @@ auto-memory note to explain the product, move it here.
 | `history/SCREEN_READER_SWEEP.md` | history | frozen — the sweep's narrative; open half in `STATUS.md` |
 | `history/SIZE_TRUTH_PLAN.md` | history | frozen — 5 stages shipped, 4 retired on a false premise |
 | `history/SIMPLIFICATION_PLAN.md` | history | frozen — every phase landed in #552; still cited from `src/` and `tests/` |
+| `history/CSS_SPLIT_PLAN.md` | history | frozen — 5 stages landed, 1 refused, the remainder is #779 |

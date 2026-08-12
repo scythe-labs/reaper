@@ -2751,7 +2751,7 @@ rule numbers cite.
 **An automated dead-CSS sweep.** The measurement is the argument against it: 11 selectors have no
 literal occurrence in TSX and **9 of them are alive** via template literals (`kind-${kind}`,
 `state-${state}`, `strip-${verdict}`). An automated sweep would have deleted nine live styles to
-remove two dead ones. `docs/CSS_SPLIT_PLAN.md`'s "by hand, or not at all" is correct.
+remove two dead ones. `docs/history/CSS_SPLIT_PLAN.md`'s "by hand, or not at all" is correct.
 
 ## Verification protocol
 
