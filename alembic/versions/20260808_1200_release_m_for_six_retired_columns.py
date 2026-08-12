@@ -69,8 +69,10 @@ depends_on: str | Sequence[str] | None = None
 # Four `batch_alter_table` blocks are four full table copies taken from SQLite's reflection,
 # and the `list_config` comment below is the accident that shape produces: reflection does not
 # report a collation, so a rebuild that does not restate one drops it, and the table comes out
-# of the migration looking fine. Release M+1's `drop_column` sweep carries this too, and needs
-# it harder -- there, `downgrade()` recreates the column and cannot bring its data back.
+# of the migration looking fine. Release M+1's `drop_column` sweep will carry this too, and will
+# need it harder -- there, `downgrade()` recreates the column and cannot bring its data back.
+# That revision does not exist yet; `test_repo_hygiene`'s
+# `test_a_revision_that_cannot_be_undone_asks_for_a_snapshot` is what will refuse it without one.
 needs_snapshot = True
 
 

@@ -32,6 +32,11 @@ down_revision: str | None = "c3d4e5f6a7b8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Copy the database aside before this runs (`reaper.db.schema_gate.SNAPSHOT_ATTR`, #566). Its
+# `alter_column` is a full table copy taken from SQLite's reflection, and the table it rebuilds
+# is `list_config`, which is the one carrying a collation reflection does not report.
+needs_snapshot = True
+
 
 def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())

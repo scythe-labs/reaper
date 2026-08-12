@@ -308,12 +308,19 @@ def _prune_pre_migration(directory: Path) -> None:
     """Keep the newest :data:`KEEP_PRE_MIGRATION` snapshots and remove the rest.
 
     Sorted by name, which is sorted by time: the stamp is ``YYYYMMDDTHHMMSS``, so the
-    lexicographic order is the chronological one. A file that will not delete is reported
-    and not raised on -- the snapshot this boot just wrote is already on disk, and refusing
-    the migration over a stale file that would not go is a boot the operator loses for
-    nothing.
+    lexicographic order is the chronological one.
+
+    **Nothing in here raises**, and the listing is inside the guard for the same reason the
+    unlink is. This runs after the snapshot is already on disk, so an exception escaping it
+    would reach preflight's refusal and stop the boot under :data:`SNAPSHOT_FAILED`, a
+    sentence saying the backup could not be saved when it was (rule 126). Losing a boot over
+    a stale file that would not delete is the wrong trade either way.
     """
-    snapshots = sorted(directory.glob(f"{PRE_MIGRATION_PREFIX}*.reaper"))
+    try:
+        snapshots = sorted(directory.glob(f"{PRE_MIGRATION_PREFIX}*.reaper"))
+    except OSError as exc:
+        log.warning("backup.pre_migration_prune_failed", name="(listing)", error=str(exc))
+        return
     for stale in snapshots[:-KEEP_PRE_MIGRATION]:
         try:
             stale.unlink()

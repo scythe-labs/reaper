@@ -113,7 +113,19 @@ def main(refuse: Callable[[str], None] = _to_stderr) -> int:
     # not open is not one to spend minutes copying either. Nothing sits between here and
     # `alembic upgrade head` in any of the three launchers, so this is the last moment a
     # destructive revision can be given something to fall back to (#566).
-    if schema_gate.needs_snapshot(revision):
+    #
+    # `stored_revision` answers None for three different things and only two of them are
+    # "nothing to lose": no file, and no `alembic_version` row. The third is a database it
+    # could not READ -- locked by a second instance on a shared data dir (a documented dev
+    # shape), or damaged -- and that is an ambiguity, not an answer (rule 93). It reaches here
+    # rather than being refused above because the gate's own reasoning does not carry: an
+    # unreadable file is not a schema this build is BEHIND. It does not carry to this second
+    # question either. A lock released between this read and alembic's open would let the one
+    # migration a `downgrade()` cannot undo run with nothing to fall back to, so a file that
+    # exists and would not say what it is gets copied, and a copy that also cannot be taken
+    # stops the boot.
+    unreadable = revision is None and settings.database_path.is_file()
+    if unreadable or schema_gate.needs_snapshot(revision):
         try:
             path = backup.snapshot_before_migration(settings, revision)
         except Exception as exc:

@@ -162,14 +162,19 @@ SNAPSHOT_ATTR = "needs_snapshot"
 def needs_snapshot(revision: str | None) -> bool:
     """Whether anything between ``revision`` and head asks to be snapshotted first.
 
-    ``revision`` is what the database on disk sits at. ``None`` means there is nothing to
-    lose: no file yet, or no ``alembic_version`` row, which is a first boot or a database
-    a test built straight from the models.
+    ``revision`` is what the database on disk sits at, and ``None`` answers ``False`` here.
 
-    Every ambiguity answers ``True``. A script directory that will not read, a revision
-    that is not an ancestor of head, a revision module that raises on import: none of them
-    is "no snapshot needed", and taking one that was not wanted costs a file. Reading a
-    revision's module runs it, which is side effect free for the same reason
+    **That is only correct for two of the three things** :func:`stored_revision` **answers
+    ``None`` for.** No file and no ``alembic_version`` row are both "nothing to lose". The
+    third is a database it could not *read*, and an unreadable database is an ambiguity, not
+    an answer (rule 93). Deciding that one needs the file itself, which this function is not
+    given, so :mod:`reaper.preflight` decides it at the call site and snapshots a database
+    that exists and would not say what it is.
+
+    Every ambiguity this function *can* see answers ``True``. A script directory that will
+    not read, a revision that is not an ancestor of head, a revision module that raises on
+    import: none of them is "no snapshot needed", and taking one that was not wanted costs a
+    file. Reading a revision's module runs it, which is side effect free for the same reason
     :func:`known_revisions` walking them is.
     """
     if revision is None:

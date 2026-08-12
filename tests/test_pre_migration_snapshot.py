@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import errno
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -228,6 +229,71 @@ class TestPreflightRefusesRatherThanMigrateUnprotected:
         written = list((tmp_path / backup.PRE_MIGRATION_DIR).iterdir())
         assert len(written) == 1
         assert written[0].name in capsys.readouterr().err
+
+    def test_a_database_that_will_not_say_what_it_is_is_copied_rather_than_migrated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``stored_revision`` answers ``None`` for three things and only two are "nothing to
+        lose". The third is a database it could not read, and reading that as "no snapshot
+        needed" is rule 93's fail-open: a lock released between preflight's read and alembic's
+        open would let the one migration a ``downgrade()`` cannot undo run unprotected.
+
+        A file that exists and carries no ``alembic_version`` is that third answer, driven
+        without a race. ``needs_snapshot(None)`` is asserted to be ``False`` in the same
+        breath, because that is the value the guard has to survive: the branch lives at the
+        call site, and a test that only drove ``needs_snapshot`` could not see it.
+        """
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        settings.ensure_data_dir()
+        con = sqlite3.connect(settings.database_path)
+        con.execute("CREATE TABLE something (a)")
+        con.close()
+        monkeypatch.setattr(preflight, "get_settings", lambda: settings)
+        assert schema_gate.stored_revision(settings.database_path) is None
+        assert schema_gate.needs_snapshot(None) is False
+
+        assert preflight.main() == 0
+
+        written = list((tmp_path / backup.PRE_MIGRATION_DIR).iterdir())
+        assert len(written) == 1
+        assert "unknown" in written[0].name  # the revision it could not read
+
+    def test_a_database_held_open_by_something_else_stops_the_boot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The same guard at its other outcome, and the one an operator can actually hit: a
+        second instance on a shared data dir holds a write lock, so the database will neither
+        answer its revision nor be copied. Refusing is the fail-closed end of that, and it is
+        what the guard buys. Without it this boots and migrates.
+        """
+        settings, config = _install(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        monkeypatch.setattr(preflight, "get_settings", lambda: settings)
+
+        holder = sqlite3.connect(settings.database_path, isolation_level=None)
+        try:
+            holder.execute("BEGIN EXCLUSIVE")
+            seen: list[str] = []
+
+            assert preflight.main(seen.append) == 1
+        finally:
+            holder.close()
+
+        assert len(seen) == 1
+        assert backup.SNAPSHOT_FAILED in seen[0]
+
+    def test_a_first_boot_with_no_database_still_writes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other side of the guard above: ``None`` with no file is the ordinary first boot,
+        and copying a database that does not exist yet is work for nothing."""
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        monkeypatch.setattr(preflight, "get_settings", lambda: settings)
+        assert not settings.database_path.exists()
+
+        assert preflight.main() == 0
+
+        assert not (tmp_path / backup.PRE_MIGRATION_DIR).exists()
 
     def test_an_ordinary_additive_upgrade_writes_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
