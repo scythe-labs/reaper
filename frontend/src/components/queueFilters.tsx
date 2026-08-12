@@ -167,8 +167,12 @@ export function initialFilters(verdict: string, search: string): QueueFilters {
   const params = new URLSearchParams(search);
   const named = LINKED_KEYS.filter((key) => params.has(key));
   if (named.length === 0) return stored;
+  // A key given twice (`?requested=yes&requested=no`) takes neither. `get` would answer with the
+  // first, which is a value the sender may never have meant and is narrower than the default on
+  // every dimension here. Every other hostile shape in this function widens; so does this one.
+  const one = (key: string) => (params.getAll(key).length > 1 ? null : params.get(key));
   return {
-    ...sanitize(Object.fromEntries(named.map((key) => [key, params.get(key)]))),
+    ...sanitize(Object.fromEntries(named.map((key) => [key, one(key)]))),
     sort: stored.sort,
     order: stored.order,
   };

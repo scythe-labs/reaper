@@ -71,11 +71,39 @@ export const reviewUrl = (lane: Verdict, query: string) =>
 /** Any other section's URL. Review is the only one carrying more than its name. */
 export const sectionUrl = (view: View) => `/${SECTION_PATHS[view]}`;
 
+//: The last URL this module wrote. Held here because the entry it was written onto does not
+//: survive: `backnav` gives an entry back with a real `history.back()` whenever a layer closes
+//: by anything other than a Back press (`unpark`), and again for each step of its mount walk
+//: over sentinels a reload left parked (`reconcileStep`). Those traversals land AFTER React's
+//: passive effects, so the address bar reverts to the entry underneath and no render follows to
+//: notice. Re-asserting from a render cannot fix it: there is no render.
+let written: string | null = null;
+
 /** Put `url` on the entry the app is standing on, keeping that entry's state.
  *
  *  Never `pushState`: Back belongs to `backnav`, and an entry per nav would double every step
  *  it parks, while an entry per keystroke in the search box would bury the app under them. */
 export function writeUrl(url: string): void {
+  written = url;
   if (url === window.location.pathname + window.location.search) return;
   history.replaceState(history.state, "", url);
+}
+
+/** Put the last written URL back after `backnav` has stepped off the entry carrying it.
+ *
+ *  Called from the one branch that knows the traversal was the app's own, never from the branch
+ *  that handles a user's Back press: a real Back is the operator asking to go somewhere, and the
+ *  state it restores writes its own URL on the next render. Without this the ＋ Filter menu's own
+ *  close discarded every filter it had just put in the address bar, and a section reached by
+ *  clicking the nav reloaded onto whichever one the previous entry named. */
+export function reassertUrl(): void {
+  if (written === null || written === window.location.pathname + window.location.search) return;
+  history.replaceState(history.state, "", written);
+}
+
+/** Forget what was written. For the test setup only: this module's `written` outlives a render
+ *  tree, so without this one file's last URL would be re-asserted over the next test's own
+ *  (rule 133). Production never calls it, and never wants to. */
+export function forgetWrittenUrl(): void {
+  written = null;
 }

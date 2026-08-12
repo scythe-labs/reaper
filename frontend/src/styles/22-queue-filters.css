@@ -93,6 +93,11 @@
   align-items: center;
   gap: 0.3rem;
   min-height: var(--tap-min);
+  /* A genre or library value used to come from the server's vocabulary or this device's own
+     storage. A link can now put arbitrary text here, so it wraps and it is bounded, rather than
+     painting through the toolbar (rule 139). */
+  max-width: 100%;
+  overflow-wrap: anywhere;
   background: none;
   border: none;
   color: inherit;

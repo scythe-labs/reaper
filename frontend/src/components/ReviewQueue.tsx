@@ -1515,16 +1515,16 @@ export function ReviewQueue({
   // The debounced `search`, not the box's text: it is the value the list is actually filtered
   // by, and it spares the URL a write per keystroke on top of the `replaceState` in `writeUrl`.
   //
-  // No dependency list, because the browser can change the URL underneath this. Each open panel
-  // parks its own history entry (backnav.tsx) and every write here lands on the newest one, so
-  // closing a panel steps back to an entry whose URL predates any filter changed while it was
-  // open -- and the list would then be filtered by a term the address bar no longer carries.
-  // Re-asserting on each render heals that on the same commit that closes the panel. It is
-  // still one direction: state is written to the URL, never read back from it (navUrl.ts), and
+  // Every open panel parks its own history entry (backnav.tsx) and this write lands on the
+  // newest one, so a close that steps that entry back would leave the address bar on an older
+  // URL. That is repaired where it happens, in `backnav`'s own self-pop branch (navUrl.
+  // `reassertUrl`), not here: three of the four close routes traverse AFTER this effect has
+  // already run, so no dependency list and no re-assert from a render can reach them. It is one
+  // direction either way: state is written to the URL, never read back from it (navUrl.ts), and
   // `writeUrl` returns without touching history when the two already agree.
   useEffect(() => {
     writeUrl(reviewUrl(verdict, filtersToQuery(search, filters)));
-  });
+  }, [verdict, search, filters]);
 
   // Start over from the top whenever the list itself changes (a new tab, filter or sort), and
   // drop any selection -- a key picked on one tab is not visible on another.

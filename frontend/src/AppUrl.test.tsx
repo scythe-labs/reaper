@@ -401,4 +401,43 @@ describe("the address bar", () => {
     await waitFor(() => expect(panel).not.toBeInTheDocument());
     expect(here()).toBe("/review/condemned?q=alpha");
   });
+
+  it("keeps the filters in it when a panel closes by its own control", async () => {
+    // The other half, and the one that was broken. Above, the browser traverses FIRST and React
+    // renders after, so the queue's effect rewrites the URL on its way past. Here the app closes
+    // the panel itself, `backnav` gives the entry back with its own `history.back()`, and that
+    // traversal lands AFTER every passive effect has run -- so nothing renders afterwards and no
+    // effect, with or without a dependency list, can put the address bar back. `navUrl.
+    // reassertUrl`, called from `backnav`'s self-pop branch, is what does. Deleting that call
+    // turns this red and leaves the test above green.
+    const person = userEvent.setup();
+    apiMock.candidate.mockRejectedValue(new Error("the panel's contents are not this test's"));
+    apiMock.candidates.mockResolvedValue({
+      items: [CARD],
+      groups: [],
+      total: 1,
+      total_bytes: CARD.size_bytes ?? 0,
+      unknown_size: 0,
+      offset: 0,
+      snapshot_id: 1,
+    });
+    await open("/review/condemned");
+    await queue();
+
+    await person.click(await screen.findByRole("button", { name: /^why example title scored/i }));
+    const panel = await screen.findByText(/couldn't load the reasons for this item/i);
+    await person.type(await queue(), "alpha");
+    await waitFor(() => expect(here()).toBe("/review/condemned?q=alpha"));
+    // The panel's entry is parked and the search was written onto it. Both facts matter: the
+    // marker is what lets `backnav` step off this entry at all, and a write that dropped it
+    // would stop the close below from working rather than only losing the URL.
+    expect((history.state as { __reaperBack?: boolean } | null)?.__reaperBack).toBe(true);
+
+    // Closed from inside the app, which is every route but a Back press. `backnav` unparks the
+    // entry the URL was written onto and steps off it itself.
+    await person.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(panel).not.toBeInTheDocument());
+    await settle();
+    expect(here()).toBe("/review/condemned?q=alpha");
+  });
 });
