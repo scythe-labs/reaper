@@ -646,6 +646,35 @@ async def scan(
                 "watch history has not updated recently, so nothing can be judged on how "
                 "long it has gone unwatched"
             )
+        # The third state, and the one both tests above call healthy: populated, synced an
+        # hour ago, and holding a fraction of what the source has. It is reachable by the
+        # ordinary route rather than a broken one -- a restore leaves the mirror behind
+        # (`services/backup.py` excludes it deliberately), and every sync from then until the
+        # first full sweep is INCREMENTAL, so each one completes correctly against a paging
+        # total that is the size of its own increment and never notices the hole underneath.
+        # `synced_at` is stamped by `_check_regression` BEFORE the walk, so the clock above
+        # reads fresh throughout.
+        #
+        # Measured: a scan in that window moved 245 titles off the condemned list, 2.17 TB,
+        # on a mirror at 65% -- with an identical policy, scorer and evidence hash, and
+        # `degraded = 0`. Coverage collapsing is the engine working (an unsigned score can
+        # only fall as evidence goes missing); presenting the result as executable is not.
+        #
+        # It is not only the keep direction, which is why this degrades rather than warns.
+        # A short mirror caps dormancy, lowering pressure, AND reports fewer distinct
+        # watchers, raising it. `history_sync` already calls a truncated mirror the largest
+        # mass-deletion vector here (rule 56).
+        elif (shortfall := mirror.shortfall) is not None and (
+            shortfall > MIRROR_SHORTFALL_FLOOR
+            and shortfall > (mirror.source_total or 0) * MIRROR_SHORTFALL_FRACTION
+        ):
+            # `shortfall is None` means no sync ever recorded a source total: "we were not
+            # told", which is rule 93's Unknown and not a clean bill of health. It is left to
+            # the staleness guard above, which a mirror nobody has ever synced already fails.
+            context.degrade(
+                "watch history is still catching up, so nothing can be judged on how long "
+                "it has gone unwatched. Let it finish, then scan again"
+            )
 
     # Failures the caller detected BEFORE the gather (an unreachable Plex, a protection list
     # that failed to sync with an empty keep-list) degrade this snapshot the same loud,
@@ -2585,6 +2614,29 @@ async def sync_protection_lists(
 #: quantity: that one bounds a *failed* sync coasting on stored keep-list membership,
 #: this one bounds a sync that stopped running at all.
 MIRROR_STALE_AFTER = timedelta(hours=48)
+
+
+#: How far short of the source's own count the mirror may sit before the snapshot degrades,
+#: as a fraction of that count. Empty is caught by the horizon test and stale by the clock
+#: above; this is the third state, and the only one of the three that looks healthy from
+#: every angle: populated, freshly synced, and missing a third of the evidence.
+#:
+#: **Both ends of this are measured, on a 425,604-row history.** An incremental sync fetches
+#: only what is new, so its own paging total is the size of the increment (`of=266`) and it
+#: completes correctly while the mirror sits at 274,992 of 425,596. Nothing in that walk is
+#: wrong, and nothing in it can notice. The gap was 35%.
+#:
+#: The *legitimate* gap is far smaller and has a known cause: a play still in progress is
+#: counted by the source and deliberately skipped by the ingest (`history.rows_skipped`),
+#: so the mirror can never equal the total and an equality here would degrade every scan
+#: forever. On the full sweep that gap was 8 rows, 0.002%. A percent leaves that three
+#: orders of magnitude of headroom and still catches a defect 35 times its size.
+#:
+#: The floor is what makes it safe on a SMALL history, where the same handful of live plays
+#: is a large fraction: 50 concurrent streams against 5,000 rows is 1% on the ratio alone.
+#: A scan degrades only when the mirror is short by BOTH.
+MIRROR_SHORTFALL_FRACTION = 0.01
+MIRROR_SHORTFALL_FLOOR = 500
 
 
 #: How long a failed whitelist may coast on its stored membership before the snapshot
