@@ -113,10 +113,14 @@ function Dashboard({ user }: { user: AuthUser }) {
   const [view, setView] = useState<View>(() => readLanding().view);
   const [verdict, setVerdict] = useState<Verdict>(() => readLanding().lane);
   // The two sections with sub-navigation of their own. Held here for the same reason `verdict` is:
-  // the address bar names the open panel, and the URL is written from here. Each is the whole of
-  // where that section is, so `Settings` and `PolicyEditor` render what they are handed and report
-  // a click back rather than keeping a second copy (rule 146).
+  // the address bar names where you are inside them, and the URL is written from here. These three
+  // are the whole of it, so `Settings` and `PolicyEditor` render what they are handed and report a
+  // click back rather than keeping a second copy (rule 146).
   const [settingsPanel, setSettingsPanel] = useState<Panel>(() => readLanding().panel);
+  // Policy takes two of them, because Movies and TV are separate policies with separate caps,
+  // byte budgets and weights. While this one lived in the editor, a reload on the section URL
+  // reopened the right section with the other media type's numbers on every control.
+  const [policyMedia, setPolicyMedia] = useState<"movie" | "tv">(() => readLanding().policyMedia);
   const [policySection, setPolicySection] = useState<PolicySectionId>(
     () => readLanding().policySection,
   );
@@ -206,10 +210,11 @@ function Dashboard({ user }: { user: AuthUser }) {
   // acted on once, counted by its nonce: revisiting the page later must not replay the jump that
   // first brought you there.
   //
-  // A cold load on `/policy/deletion` seeds one, because the policy sections are places on one
+  // A cold load on `/policy/tv/deletion` seeds one, because the policy sections are places on one
   // long page rather than panels: landing there means scrolling there, and the editor already
-  // knows how to do that for a jump. Settings needs no seed, since its panel is the whole of
-  // where it is.
+  // knows how to do that for a jump. The media type needs no seed of its own -- it is a prop the
+  // editor reads, not a place on the page. Settings needs none either, since its panel is the
+  // whole of where it is.
   const [focus, setFocus] = useState<Focus | null>(() => {
     const landing = readLanding();
     return landing.view === "policy"
@@ -255,8 +260,10 @@ function Dashboard({ user }: { user: AuthUser }) {
   // reach it, and it is left out for its own reason: a request handle is the one thing on these
   // screens that names a person, and a URL is the part of the app that gets pasted into a chat.
   useEffect(() => {
-    if (view !== "review") writeUrl(sectionUrl(view, { panel: settingsPanel, policySection }));
-  }, [view, settingsPanel, policySection]);
+    if (view !== "review") {
+      writeUrl(sectionUrl(view, { panel: settingsPanel, policyMedia, policySection }));
+    }
+  }, [view, settingsPanel, policyMedia, policySection]);
 
   // Every jump in the app, in one place. The caller names a whole destination (navIntent.ts) and
   // this applies it; nothing else calls the raw setters, so a new destination is a new call site
@@ -305,6 +312,13 @@ function Dashboard({ user }: { user: AuthUser }) {
         // be mounted when this arrives (the safety banner's link is on every screen), so a
         // one-shot nonce is the only thing that fires a second jump to the same section.
         setFocus({ view: "policy", section: intent.section, nonce: Date.now() });
+      } else {
+        // A plain nav click names no section, and the page it opens is scrolled to the top. The
+        // persisted one would put the rail's `aria-current` and the address bar on a section the
+        // operator is not looking at, until the scroll spy corrects it a draft-load later. Land
+        // where the page actually opens instead. Settings needs no equivalent: its panels do not
+        // share a scroll position, so the one it was left on is still the one it shows.
+        setPolicySection("flags");
       }
     } else if (intent.view === "settings") {
       if (intent.panel !== undefined) setSettingsPanel(intent.panel);
@@ -576,6 +590,8 @@ function Dashboard({ user }: { user: AuthUser }) {
           ) : view === "policy" ? (
             <PolicyEditor
               focus={policyFocus}
+              mediaType={policyMedia}
+              onMediaTypeChange={setPolicyMedia}
               section={policySection}
               onSectionChange={setPolicySection}
             />

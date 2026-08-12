@@ -1379,10 +1379,16 @@ export function ReviewQueue({
   // again (navUrl.ts): re-reading the URL later would fight the state `backnav`'s undo restores
   // on a Back press. A jump wins over it -- a jump is happening now, and the query string
   // belongs to the section the operator is leaving.
-  const [linked] = useState(() => ({
-    search: new URLSearchParams(window.location.search).get("q") ?? "",
-    filters: initialFilters(verdict, window.location.search),
-  }));
+  const [linked] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      // A key given twice takes neither, the same answer `initialFilters` gives its five
+      // dimensions: the first of `?q=x&q=y` is a value the sender may never have meant, and it
+      // is narrower than the empty default. Every hostile shape in this file widens (rule 72).
+      search: (params.getAll("q").length > 1 ? null : params.get("q")) ?? "",
+      filters: initialFilters(verdict, window.location.search),
+    };
+  });
   const [searchInput, setSearchInput] = useState(focus?.search ?? linked.search);
   const [search, setSearch] = useState(focus?.search ?? linked.search);
   // The last jump this queue has already acted on. Seeded with the one it mounted under, so the

@@ -12,9 +12,11 @@
 //     happens in (a lane change has parked one).
 //   - Back still closes an open layer before it moves sections, and still moves sections after.
 //
-// Two of the five sections have sub-navigation of their own, and the URL names the open panel:
-// `/settings/logs`, `/policy/deletion`. `App` owns both, which is what lets one effect write
-// them, so each is driven here from the address bar down to the page and back.
+// Two of the five sections have sub-navigation of their own, and the URL names where you are
+// inside them: `/settings/logs`, `/policy/tv/deletion`. Policy takes two segments because Movies
+// and TV are separate policies, and a URL naming only the section reopened the right section with
+// the other one's caps, budget and weights on it. `App` owns all three values, which is what lets
+// one effect write them, so each is driven here from the address bar down to the page and back.
 //
 // The pages the shell lands on stand in for themselves, as in `AppFocus.test.tsx`: what each
 // one renders is its own tests' subject, and stubbing them keeps the heavy trees out of a file
@@ -60,17 +62,28 @@ vi.mock("./api", async (importOriginal) => ({
 
 vi.mock("./components/PolicyEditor", () => ({
   PolicyEditor: ({
+    mediaType,
+    onMediaTypeChange,
     section,
     onSectionChange,
   }: {
+    mediaType: "movie" | "tv";
+    onMediaTypeChange: (next: "movie" | "tv") => void;
     section: string;
     onSectionChange: (next: string) => void;
   }) => (
     <>
-      <p>policy page, at {section}</p>
-      {/* The rail, in the one shape jsdom can drive: a click that reports a section upward. */}
+      <p>
+        policy page, {mediaType}, at {section}
+      </p>
+      {/* The rail and the Movies/TV switch, in the one shape jsdom can drive: a click that
+          reports one half of the location upward. The switch names where it goes, so a click
+          on it cannot be confused for a click on the state it left. */}
       <button type="button" onClick={() => onSectionChange("pace")}>
         rail: Pace and limits
+      </button>
+      <button type="button" onClick={() => onMediaTypeChange(mediaType === "tv" ? "movie" : "tv")}>
+        switch: {mediaType === "tv" ? "Movies" : "TV"}
       </button>
     </>
   ),
@@ -265,7 +278,9 @@ describe("a cold load", () => {
   // (rule 145). Review is in the list too: it is the default, so it is the one that would still
   // pass with the whole feature deleted.
   it.each([
-    ["/policy", "policy page, at flags"],
+    // A bare section still works where the section has sub-navigation: it lands on the default
+    // of every value below it.
+    ["/policy", "policy page, movie, at flags"],
     ["/reap", "reap page"],
     ["/scales", "scales page"],
     // Settings is real, so its marker is a rail tab: the section is on screen, on the panel a
@@ -354,15 +369,26 @@ describe("a cold load", () => {
     await waitFor(() => expect(here()).toBe("/settings/general"));
   });
 
+  // Both halves of the policy page, every member of both declarations driven (`MEDIA_PATHS`,
+  // `POLICY_PATHS`), and each media type with two different sections so the two segments cannot
+  // be read in the wrong order and still pass.
   it.each([
-    ["/policy/flags", "flags"],
-    ["/policy/kept", "kept"],
-    ["/policy/pace", "pace"],
-    ["/policy/deletion", "deletion"],
-    ["/policy/nonsense", "flags"],
-  ])("opens the policy editor at the section %s names", async (path, section) => {
+    ["/policy/movies/flags", "movie", "flags"],
+    ["/policy/movies/kept", "movie", "kept"],
+    ["/policy/tv/pace", "tv", "pace"],
+    ["/policy/tv/deletion", "tv", "deletion"],
+    // Each value validates on its own, so a hand-edited link keeps the half it got right.
+    ["/policy/nonsense/deletion", "movie", "deletion"],
+    ["/policy/tv/nonsense", "tv", "flags"],
+  ])("opens the policy editor where %s says", async (path, media, section) => {
     await open(path);
-    expect(await screen.findByText(`policy page, at ${section}`)).toBeInTheDocument();
+    expect(await screen.findByText(`policy page, ${media}, at ${section}`)).toBeInTheDocument();
+  });
+
+  it("corrects the address bar when a link names a policy that does not exist", async () => {
+    await open("/policy/nonsense/nonsense");
+    await screen.findByText("policy page, movie, at flags");
+    await waitFor(() => expect(here()).toBe("/policy/movies/flags"));
   });
 
   it("leaves the recovery path alone", async () => {
@@ -399,8 +425,8 @@ describe("the address bar", () => {
 
     await settle();
     await person.click(screen.getByRole("button", { name: "Policy" }));
-    await screen.findByText("policy page, at flags");
-    expect(here()).toBe("/policy/flags");
+    await screen.findByText("policy page, movie, at flags");
+    expect(here()).toBe("/policy/movies/flags");
 
     await settle();
     await person.click(screen.getByRole("button", { name: "Review" }));
@@ -433,10 +459,30 @@ describe("the address bar", () => {
     // half that lives here.
     await settle();
     await person.click(screen.getByRole("button", { name: "Policy" }));
-    await screen.findByText("policy page, at flags");
+    await screen.findByText("policy page, movie, at flags");
     await person.click(screen.getByRole("button", { name: "rail: Pace and limits" }));
-    expect(await screen.findByText("policy page, at pace")).toBeInTheDocument();
-    await waitFor(() => expect(here()).toBe("/policy/pace"));
+    expect(await screen.findByText("policy page, movie, at pace")).toBeInTheDocument();
+    await waitFor(() => expect(here()).toBe("/policy/movies/pace"));
+  });
+
+  it("moves one half of the policy page at a time", async () => {
+    // The two values are independent, and that is the whole finding: the Movies/TV switch used
+    // to live in the editor, so a reload restored the section and reset the policy under it to
+    // Movies. Every number on the page is the other one's.
+    const person = userEvent.setup();
+    await open("/policy/movies/kept");
+    await screen.findByText("policy page, movie, at kept");
+    await waitFor(() => expect(here()).toBe("/policy/movies/kept"));
+
+    await settle();
+    await person.click(screen.getByRole("button", { name: "switch: TV" }));
+    expect(await screen.findByText("policy page, tv, at kept")).toBeInTheDocument();
+    await waitFor(() => expect(here()).toBe("/policy/tv/kept"));
+
+    await settle();
+    await person.click(screen.getByRole("button", { name: "rail: Pace and limits" }));
+    expect(await screen.findByText("policy page, tv, at pace")).toBeInTheDocument();
+    await waitFor(() => expect(here()).toBe("/policy/tv/pace"));
   });
 
   it("waits for the unsaved-edits confirm before it names the new panel", async () => {
@@ -559,13 +605,16 @@ describe("the address bar", () => {
   });
 
   it("keeps the filters in it when a panel closes by its own control", async () => {
-    // The other half, and the one that was broken. Above, the browser traverses FIRST and React
-    // renders after, so the queue's effect rewrites the URL on its way past. Here the app closes
-    // the panel itself, `backnav` gives the entry back with its own `history.back()`, and that
-    // traversal lands AFTER every passive effect has run -- so nothing renders afterwards and no
-    // effect, with or without a dependency list, can put the address bar back. `navUrl.
-    // reassertUrl`, called from `backnav`'s self-pop branch, is what does. Deleting that call
-    // turns this red and leaves the test above green.
+    // The other close route: the app closes the panel itself and `backnav` gives the entry back
+    // with its own `history.back()`, rather than the operator's Back doing it. Neither route
+    // re-renders anything that writes a URL, so `navUrl.reassertUrl` is what carries the address
+    // bar across both -- called unconditionally at the top of `backnav`'s `onPop`, above the
+    // self-pop check, because the app's own steps and the operator's revert it alike. Deleting
+    // that call turns BOTH this test and the one above red.
+    //
+    // The pair is worth keeping even so: they enter `onPop` by different doors (`selfPopRef` set
+    // and unset), and a fix restricted to one of them passes the other. That was the first
+    // attempt at this, and the test above is what caught it.
     const person = userEvent.setup();
     apiMock.candidate.mockRejectedValue(new Error("the panel's contents are not this test's"));
     apiMock.candidates.mockResolvedValue({

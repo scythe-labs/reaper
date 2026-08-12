@@ -82,7 +82,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Size acquisition | **Sonarr or Radarr's own total, never a stand-in** † |
 | Kill switch | **Asymmetric, not one-way** † |
 | Section nav | **Its own grammar, not the pill track** † |
-| Address bar | **A URL per section, lane, filters and panel**, written on nav, read at mount |
+| Address bar | **A URL per section, lane, filters, panel, policy**, written on nav, read at mount |
 | Settings saves | **One save bar on General**, the policy editor's `.savebar` reused † |
 | Settings row layout | **One fixed control track per box**, released for everything else † |
 | Setup readiness | **Scanning and reaping are two readinesses, reported apart** † |

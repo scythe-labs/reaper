@@ -66,9 +66,19 @@ const POLICY_PATHS: Record<PolicySectionId, string> = {
   deletion: "deletion",
 };
 
-// Read back off those same four declarations, so a hand-edited or stale link naming a section, a
-// lane, a panel or a policy section that no longer exists simply misses the map and falls back
-// below.
+/** The two policies the editor edits. Movies and TV are tuned separately, so a policy URL that
+ *  names only the section restores half a location: the caps, the byte budget and the weights on
+ *  screen are the other media type's. Their own words again, so the Movies/TV switch can be
+ *  relabelled without breaking a link. */
+const MEDIA_PATHS: Record<"movie" | "tv", string> = {
+  movie: "movies",
+  tv: "tv",
+};
+
+// Read back off those same five declarations, so a hand-edited or stale link naming a section, a
+// lane, a panel, a media type or a policy section that no longer exists simply misses the map and
+// falls back below. A `Map` rather than a plain object, so `__proto__` and `constructor` are
+// ordinary misses.
 const VIEW_BY_PATH = new Map(
   Object.entries(SECTION_PATHS).map(([view, path]) => [path, view as View]),
 );
@@ -81,10 +91,19 @@ const PANEL_BY_PATH = new Map(
 const POLICY_BY_PATH = new Map(
   Object.entries(POLICY_PATHS).map(([id, path]) => [path, id as PolicySectionId]),
 );
+const MEDIA_BY_PATH = new Map(
+  Object.entries(MEDIA_PATHS).map(([media, path]) => [path, media as "movie" | "tv"]),
+);
 
 /** Everywhere a cold load can land: the section, and what that section has open inside it. Each
  *  field is read by the one piece of state that owns it in `App`. */
-type Landing = { view: View; lane: Verdict; panel: Panel; policySection: PolicySectionId };
+type Landing = {
+  view: View;
+  lane: Verdict;
+  panel: Panel;
+  policyMedia: "movie" | "tv";
+  policySection: PolicySectionId;
+};
 
 /** Where the app opens with nothing to go on: the review queue, on the condemned lane, with each
  *  section's own first panel behind it. */
@@ -92,22 +111,29 @@ export const DEFAULT_LANDING: Landing = {
   view: "review",
   lane: "condemn",
   panel: "general",
+  policyMedia: "movie",
   policySection: "flags",
 };
 
-/** What this URL names, or the defaults. Never throws: an unknown section, an unknown second
- *  segment, or a second segment on a section that has none each fall back, so a mangled link
- *  opens the app rather than breaking it. `/settings/nonsense` is Settings on General. */
+/** What this URL names, or the defaults. Never throws, and each value falls back on its own: an
+ *  unknown section, an unknown segment under it, or a segment on a section that has none is a
+ *  miss on a `Map` and nothing more. `/settings/nonsense` is Settings on General,
+ *  `/policy/nonsense/deletion` is the Movies policy on Deletion, and a bare `/policy` is the
+ *  default of both. The write below then puts the real location in the address bar. */
 export function readLanding(): Landing {
-  const [first, second = ""] = window.location.pathname.split("/").filter(Boolean);
+  const [first, second = "", third = ""] = window.location.pathname.split("/").filter(Boolean);
   const view = VIEW_BY_PATH.get(first ?? "");
   if (view === undefined) return DEFAULT_LANDING;
+  // Policy is the one section whose location is two values, so it reads a third segment. Media
+  // comes first, matching `/review/<lane>`: the broad split, then where you are inside it.
+  const policy = view === "policy";
   return {
     view,
     lane: (view === "review" ? LANE_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.lane,
     panel: (view === "settings" ? PANEL_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.panel,
+    policyMedia: (policy ? MEDIA_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.policyMedia,
     policySection:
-      (view === "policy" ? POLICY_BY_PATH.get(second) : undefined) ?? DEFAULT_LANDING.policySection,
+      (policy ? POLICY_BY_PATH.get(third) : undefined) ?? DEFAULT_LANDING.policySection,
   };
 }
 
@@ -116,17 +142,21 @@ export function readLanding(): Landing {
 export const reviewUrl = (lane: Verdict, query: string) =>
   `/${SECTION_PATHS.review}/${LANE_PATHS[lane]}${query}`;
 
-/** Any other section's URL. Settings and Policy name the panel they have open, so a reload or a
+/** Any other section's URL. Settings and Policy name what they have open, so a reload or a
  *  bookmark lands on it; Reap and Scales have no sub-navigation and are just their own name.
+ *  Policy names two values, because half its location restores the wrong numbers.
  *
- *  It takes both on every call, whichever section is being written, so `App` has one call site
- *  instead of a branch per section and this file stays the only reader of the two records. */
+ *  `at` carries every one of them on every call, whichever section is being written, so `App` has
+ *  one call site instead of a branch per section and this file stays the only reader of the three
+ *  records. A section that grows a second value widens `at` rather than adding a call site. */
 export const sectionUrl = (
   view: View,
-  at: { panel: Panel; policySection: PolicySectionId },
+  at: { panel: Panel; policyMedia: "movie" | "tv"; policySection: PolicySectionId },
 ): string => {
   if (view === "settings") return `/${SECTION_PATHS.settings}/${PANEL_PATHS[at.panel]}`;
-  if (view === "policy") return `/${SECTION_PATHS.policy}/${POLICY_PATHS[at.policySection]}`;
+  if (view === "policy") {
+    return `/${SECTION_PATHS.policy}/${MEDIA_PATHS[at.policyMedia]}/${POLICY_PATHS[at.policySection]}`;
+  }
   return `/${SECTION_PATHS[view]}`;
 };
 
@@ -148,13 +178,24 @@ export function writeUrl(url: string): void {
   history.replaceState(history.state, "", url);
 }
 
-/** Put the last written URL back after `backnav` has stepped off the entry carrying it.
+/** Put the last written URL back after a traversal has stepped off the entry carrying it.
  *
- *  Called from the one branch that knows the traversal was the app's own, never from the branch
- *  that handles a user's Back press: a real Back is the operator asking to go somewhere, and the
- *  state it restores writes its own URL on the next render. Without this the ＋ Filter menu's own
- *  close discarded every filter it had just put in the address bar, and a section reached by
- *  clicking the nav reloaded onto whichever one the previous entry named. */
+ *  Called from `backnav`'s `onPop` on EVERY pop, its own steps and the operator's alike. A pop
+ *  that only closes a layer changes no state, so no effect ever runs to correct the address bar
+ *  and this is the only thing that does. Restricting it to the app's own steps was tried and is
+ *  wrong: a Back press that closes a panel is the operator's pop, and it reverted the URL
+ *  exactly like the rest.
+ *
+ *  **A pop that genuinely MOVES the app writes the real URL over this one, and that comes from
+ *  `App.goTo`, not from anything here.** `pushNav` has one call site, guarded on the view or the
+ *  lane actually changing, so every frame's undo changes one of them and one of the two writers
+ *  fires. Were a frame ever parked whose undo restores a value already current, React would bail
+ *  out, no effect would run, and this re-assert would win against a real navigation. That is a
+ *  property of the guard in `App.tsx`, so a second `pushNav` call site has to keep it.
+ *
+ *  Without this the ＋ Filter menu's own close discarded every filter it had just put in the
+ *  address bar, and a section reached by clicking the nav reloaded onto whichever one the
+ *  previous entry named. */
 export function reassertUrl(): void {
   if (written === null || written === window.location.pathname + window.location.search) return;
   history.replaceState(history.state, "", written);

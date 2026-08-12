@@ -108,8 +108,9 @@ function renderEditor(
   /** What /policy/validate answers with. The GET's warnings are never rendered, so this
    *  is the only way a warning reaches the page. */
   validationWarnings: PolicyWarning[] = [],
-  /** Which section the page opens on, as a cold load on `/policy/<section>` does. */
+  /** Where the page opens, as a cold load on `/policy/<media>/<section>` does. */
   openAt: PolicySectionId = "flags",
+  openMedia: "movie" | "tv" = "movie",
 ) {
   apiMock.policy.mockResolvedValue({
     policy_hash: "hash",
@@ -165,17 +166,26 @@ function renderEditor(
   });
   return renderWithProviders(
     <DocsProvider>
-      <EditorAt open={openAt} />
+      <EditorAt open={openAt} media={openMedia} />
     </DocsProvider>,
   );
 }
 
-/** `App` owns which section is being read, so the address bar can name it (`/policy/deletion`,
- *  navUrl.ts). This is that owner, so a rail click moves the rail here the way it does in the
- *  app. A fixed `section` would sit still through every click and prove nothing. */
-function EditorAt({ open }: { open: PolicySectionId }) {
+/** `App` owns both halves of where the operator is, so the address bar can name them
+ *  (`/policy/tv/deletion`, navUrl.ts). This is that owner, so a rail click and the Movies/TV
+ *  switch move the page here the way they do in the app. Fixed props would sit still through
+ *  every click and prove nothing. */
+function EditorAt({ open, media }: { open: PolicySectionId; media: "movie" | "tv" }) {
   const [section, setSection] = useState(open);
-  return <PolicyEditor section={section} onSectionChange={setSection} />;
+  const [mediaType, setMediaType] = useState(media);
+  return (
+    <PolicyEditor
+      mediaType={mediaType}
+      onMediaTypeChange={setMediaType}
+      section={section}
+      onSectionChange={setSection}
+    />
+  );
 }
 
 describe("a policy the server had to repair", () => {
@@ -1893,8 +1903,9 @@ describe("the panel's verdict on an edit it has not simulated yet", () => {
 
 describe("the section rail", () => {
   // Which section is being read is `App` state now, so the address bar can name it
-  // (`/policy/deletion`, navUrl.ts). What this page owes that owner is a click reported upward,
-  // and a rail drawn from what it is handed back rather than from a second copy of its own.
+  // (`/policy/tv/deletion`, navUrl.ts). What this page owes that owner is a click reported
+  // upward, and a rail drawn from what it is handed back rather than from a second copy of its
+  // own.
   //
   // Only the click is driven here. The other way in, scrolling past a heading, is measured from
   // four rects and the document's height, and jsdom answers 0 for both, so a test of it would be
@@ -1914,5 +1925,60 @@ describe("the section rail", () => {
     expect(
       within(rail as HTMLElement).getByRole("button", { name: "What flags a title" }),
     ).not.toHaveAttribute("aria-current");
+  });
+});
+
+describe("the policy the URL names", () => {
+  // The other half of where the operator is, and the one that used to be lost. The Movies/TV
+  // switch lived here, unpersisted, so a reload on a policy link reopened the right section with
+  // the other media type's caps, budget and weights under it. `App` owns it now and hands it
+  // down, the way it hands down the section.
+  it("opens on the policy it is handed, with no click to get there", async () => {
+    renderEditor({ body: tvBody() }, pace, null, [], "deletion", "tv");
+
+    expect(await screen.findByText("TV policy")).toBeInTheDocument();
+    // The read that decides every number on the page. `api.policy` defaults to "movie", so a
+    // call carrying "tv" is the prop arriving and cannot be an omission (rule 141).
+    expect(apiMock.policy).toHaveBeenCalledWith("tv");
+    // ...and the controls only the TV policy draws.
+    expect(
+      await screen.findByRole("heading", { name: "TV season protection" }),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the switch until the operator says the unsaved edits can go", async () => {
+    // The confirm stays in this component while the value it commits lives in `App`, because
+    // `dirty` and the draft it is about are both here. So the press must not reach the owner
+    // ahead of the answer: the address bar would then name a policy that is not on screen, over
+    // edits that are. Switching discards the draft, which is what the confirm says out loud and
+    // what it is for.
+    const person = userEvent.setup();
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    // The other policy, for the fetch the switch starts. Set after the mount fetch has gone, as
+    // `renderTvEditor` sets the season shape.
+    apiMock.policy.mockResolvedValue({
+      policy_hash: "hash",
+      name: "default",
+      warnings: [],
+      body: tvBody(),
+    });
+
+    fireEvent.change(screen.getByLabelText("Put a title on the list once it scores"), {
+      target: { value: "42" },
+    });
+    await waitFor(() => expect(document.querySelector(".savebar")).not.toBeNull());
+
+    await person.click(screen.getByRole("button", { name: "TV" }));
+    expect(document.querySelector(".notice-warn")!.textContent).toContain(
+      "You have unsaved movie policy changes. Switching to TV discards them.",
+    );
+    expect(screen.getByText("Movies policy")).toBeInTheDocument();
+
+    await person.click(screen.getByRole("button", { name: "Discard and switch" }));
+    expect(await screen.findByText("TV policy")).toBeInTheDocument();
+    // The edits went with it: the draft re-seeded from the TV policy, so there is nothing left
+    // to save and no bar offering to.
+    await waitFor(() => expect(document.querySelector(".savebar")).toBeNull());
   });
 });

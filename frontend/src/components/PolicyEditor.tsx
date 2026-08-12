@@ -1230,6 +1230,8 @@ export function anchorClaims(anchor: WarningAnchor, field: string): boolean {
 
 export function PolicyEditor({
   focus,
+  mediaType,
+  onMediaTypeChange,
   section,
   onSectionChange,
 }: {
@@ -1238,9 +1240,18 @@ export function PolicyEditor({
    *  is what separates an instruction to SCROLL from the report of where the page is scrolled to.
    *  A jump can arrive with this page already mounted: the safety banner is on every screen. */
   focus?: { section: PolicySectionId; nonce: number } | null;
+  /** Which policy is being edited. Movies and TV are tuned separately -- keep-last-N seasons and
+   *  season rank only make sense for TV -- so this decides both the controls the page draws and
+   *  the numbers in them. Owned by `App` for the same reason `section` is: it is half of where
+   *  the operator is, and a URL naming only the other half reopens the page with the wrong
+   *  numbers on it. */
+  mediaType: "movie" | "tv";
+  /** Reported when the Movies/TV switch goes through, which is after the unsaved-edits confirm
+   *  where there is one. */
+  onMediaTypeChange: (next: "movie" | "tv") => void;
   /** Which section is being read. Owned by `App`, not here: the rail's `aria-current` and the
-   *  address bar (`/policy/deletion`) are one fact, and the URL is written where every other nav
-   *  is written. */
+   *  address bar (`/policy/tv/deletion`) are one fact, and the URL is written where every other
+   *  nav is written. */
   section: PolicySectionId;
   /** Reported on a rail click, on a jump, and as the page is scrolled past a heading. */
   onSectionChange: (next: PolicySectionId) => void;
@@ -1261,9 +1272,6 @@ export function PolicyEditor({
   // leftover always arrives with a repair, and `dirty` counts repairs.
   const saveRef = useRef<HTMLButtonElement>(null);
   const protections = useRemovalFocus(saveRef);
-  // Movies and TV are tuned separately -- keep-last-N seasons and season rank only make
-  // sense for TV -- so this toggle picks which policy you are editing.
-  const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
   const { data: saved, isError: policyFailed } = useQuery({
     queryKey: ["policy", mediaType],
     queryFn: () => api.policy(mediaType),
@@ -1528,7 +1536,12 @@ export function PolicyEditor({
   // Switching re-seeds the draft from the other saved policy, which would silently throw
   // those edits away, so it waits for the same two-step confirm the rest of the app uses
   // (never a native confirm()). `useSwitchConfirm` is the shared caller half.
-  const confirmSwitch = useSwitchConfirm(mediaType, dirty, setMediaType);
+  //
+  // The confirm stays HERE while the value it commits lives in `App`: `dirty` is this
+  // component's, and the draft it guards is too. `App` is handed the switch only once the
+  // operator has said the edits can go, so the address bar cannot name a policy that is not on
+  // screen (rule 146).
+  const confirmSwitch = useSwitchConfirm(mediaType, dirty, onMediaTypeChange);
 
   // Section jump targets for the rail. Memoized (the refs themselves are stable) so the
   // cross-page-jump effect below can depend on the record without refiring every render.
@@ -1540,10 +1553,11 @@ export function PolicyEditor({
     () => ({ flags: flagsRef, kept: keptRef, pace: paceRef, deletion: deletionRef }),
     [],
   );
-  // A cross-page jump lands on a specific section, and so does a cold load on `/policy/deletion`:
-  // `App` seeds the same aim from the URL, so both scroll through one path. The editor may still
-  // be loading when the aim arrives (the headings do not exist until the draft renders), so the
-  // draft is a dependency: once it loads, this refires and consumes the nonce exactly once.
+  // A cross-page jump lands on a specific section, and so does a cold load on a URL naming one
+  // (`/policy/tv/deletion`). `App` seeds the same aim from both, so they scroll through one path.
+  // The editor may still be loading when the aim arrives (the headings do not exist until the
+  // draft renders), so the draft is a dependency: once it loads, this refires and consumes the
+  // nonce exactly once.
   const handledFocus = useRef(0);
   useEffect(() => {
     if (!focus || draft === null || focus.nonce === handledFocus.current) return;
