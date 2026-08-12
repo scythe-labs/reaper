@@ -234,7 +234,14 @@ class IntegrationError(RuntimeError):
         connect or pool timeout says nothing about the size of the request, and shrinking it
         would not help. ``False`` therefore means "not known to be one", which leaves a caller
         raising rather than retrying. A typed flag rather than a match on the message, which
-        is operator copy and will be reworded (rule 92)."""
+        is operator copy and will be reworded (rule 92).
+
+        **Never re-send a mutation on it.** :meth:`BaseClient._mutate` maps its
+        transport errors through the same function, so a DELETE whose answer did not arrive
+        carries this flag too, and there it means the request reached the service and the
+        write may already have applied. Only the executor's verification step settles that,
+        never the response (see ``_mutate``). This is a fact about a READ that can be asked
+        again smaller."""
 
     @property
     def is_auth_failure(self) -> bool:

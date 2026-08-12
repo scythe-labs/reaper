@@ -221,9 +221,14 @@ class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
         self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Every row still lands. The walk halves the page and carries on from the same
-        offset, rather than losing the whole sweep to the first oversized request."""
+        offset, rather than losing the whole sweep to the first oversized request.
+
+        The page cap is set to exactly the number of pages the walk needs, so a shrink that
+        charged itself against it would run the mirror short: that is the claim the comment
+        on ``MAX_HISTORY_PAGES`` makes, and nothing else pins it."""
         monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
         monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        monkeypatch.setattr(history_sync, "MAX_HISTORY_PAGES", 3)
         fake = _TimingOutTautulli(
             [_row(n, days_ago=n) for n in range(1, 13)], serves=4, error=httpx2.ReadTimeout
         )

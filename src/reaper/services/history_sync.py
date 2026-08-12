@@ -88,8 +88,10 @@ log = structlog.get_logger(__name__)
 #: budget, so the same instance answering roughly 1.8x slower timed out on the first page and
 #: the sweep aborted, three days from its next slot (#780). A smaller page cannot cost more
 #: than a larger one, so the margin is bought here rather than by widening a timeout every
-#: other Tautulli call would inherit -- ``get_activity`` is the pre-delete streaming veto and
-#: is polled once per item, and the artwork proxy answers a browser.
+#: other Tautulli call would inherit. ``TautulliClient`` passes no timeout of its own, so one
+#: budget covers all of them: the executor re-asks ``get_history`` once per item mid-reap
+#: (``executor._watched_since_approval``), and the artwork proxy answers a browser
+#: (``api.poster._artwork_client``).
 #:
 #: The extra round trips are cheap beside a sweep that stops running: the sweep is the only
 #: thing that catches a row Tautulli backfills with an old timestamp, and while it is failing
@@ -103,10 +105,19 @@ PAGE_SIZE = 5_000
 MIN_PAGE_SIZE = 1_000
 
 #: Hard stop on the history paging loop, for a source that serves page after page without
-#: ever reporting a total. At PAGE_SIZE rows a page this is far past any real library's
-#: history, so it never truncates a genuine sync -- it only stops a runaway one. A shrink
-#: does not spend one of these: it re-asks for rows that were never served.
-MAX_HISTORY_PAGES = 1_000
+#: ever reporting a total. A shrink does not spend one of these: it re-asks for rows that
+#: were never served.
+#:
+#: **Count it at MIN_PAGE_SIZE, never at PAGE_SIZE.** The bound is in pages, so its reach in
+#: rows moves with the page size, and the walk that runs at the floor is by construction the
+#: slow one against the deepest history. At 1,000 pages the old figure covered 25M rows at
+#: the old 25k page and would cover 1M at the floor, which is one to ten times a mature
+#: install rather than far past it. Tripping the cap logs and stops with the sweep still
+#: reporting success, and the mirror shortfall guard cannot catch that on a nightly sweep
+#: (the mirror is already complete from earlier syncs, so there is no shortfall to see), so
+#: a cap reached quietly is the #780 loss again at the oldest tail. 5,000 pages holds 5M rows
+#: at the floor and 25M at PAGE_SIZE, and still stops a source that is not advancing.
+MAX_HISTORY_PAGES = 5_000
 
 
 class HistoryRegressionError(RuntimeError):

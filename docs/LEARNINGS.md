@@ -3656,6 +3656,29 @@ equal the total: the full sweep ended `inserted=425596` against `of=425604`, wit
 orders of magnitude apart. A percent with an absolute floor sits between them, and the floor is
 what keeps a handful of live plays from degrading a scan on a small history.
 
+## A page is not free, and a bound in pages is not a bound in rows (2026-08-11)
+
+The history walk asked Tautulli for 25,000 rows a page on a written claim that a 25k page costs
+about what a 1k page costs, so large pages were strictly better: 17 requests instead of 422. The
+claim is false. On a six-figure history each 25k page spent 60-80% of the client's 30s read
+budget, and the same instance answering roughly 1.8x slower timed out on the first page. The
+walk then aborted, and since nothing retries before the next cron slot, a persistently slower
+instance never completed another sweep (#780).
+
+**The request count was the wrong thing to optimize.** What a page costs is time, and the budget
+it is spent against is fixed. Trading 422 cheap requests for 17 expensive ones bought nothing
+measurable and spent the entire margin, so the sweep's survival came to rest on the source never
+getting slower. `transient_retry` cannot help: it re-sends the identical oversized request
+against the same budget.
+
+**The second half only appeared after the fix.** A hard stop of 1,000 pages was written as "far
+past any real library's history," which was true at 25k rows a page and is a different number at
+every other page size. Adding a shrink-on-timeout floor of 1k rows silently moved that ceiling
+to a million rows, roughly one to ten times a mature install, and the walk that reaches the
+floor is by construction the slow one against the deepest history. A bound expressed in one unit
+and read as a claim about another goes stale the moment either factor moves, and nothing in the
+type system or the tests notices. State the reach at the SMALLEST page the code can choose.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
