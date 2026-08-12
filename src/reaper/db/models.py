@@ -1018,7 +1018,10 @@ class ActionStep(Base):
     item, executed and verified alone before anything else is allowed to proceed."""
 
     kind: Mapped[str] = mapped_column(String(40))
-    """What sort of action: 'radarr_delete', 'sonarr_unmonitor_season', 'plex_refresh'..."""
+    """Which action, one of the four the planner emits: 'radarr_delete',
+    'sonarr_unmonitor', 'sonarr_verify_unmonitor', 'sonarr_delete_files'. The Plex refresh
+    is not among them: it is ``executor._best_effort_refresh``, declared to the guard
+    rather than journalled as a step, so nothing here records one."""
 
     method: Mapped[str] = mapped_column(String(10))
     path: Mapped[str] = mapped_column(String(500))
