@@ -218,12 +218,23 @@ class IntegrationError(RuntimeError):
         *,
         status: int | None = None,
         retry_after: float | None = None,
+        read_timed_out: bool = False,
     ) -> None:
         super().__init__(f"{service}: {message}")
         self.service = service
         self.status = status
         self.retry_after = retry_after
         """Seconds the server asked us to wait (a numeric Retry-After), or None."""
+        self.read_timed_out = read_timed_out
+        """The service took the request and did not finish the body inside the read budget.
+
+        That is a statement about how much was asked for, so a caller that asked for a large
+        page can ask for a smaller one and get an answer. ``history_sync.sync`` is the caller
+        that does. Set only by :func:`transport_failure`, and only for a ``ReadTimeout``: a
+        connect or pool timeout says nothing about the size of the request, and shrinking it
+        would not help. ``False`` therefore means "not known to be one", which leaves a caller
+        raising rather than retrying. A typed flag rather than a match on the message, which
+        is operator copy and will be reworded (rule 92)."""
 
     @property
     def is_auth_failure(self) -> bool:
@@ -264,9 +275,16 @@ def transport_failure(service: str, exc: httpx2.TransportError) -> IntegrationEr
 
     ``TimeoutException`` is itself a ``TransportError``, so callers catch the one type and the
     split happens here, in the order the two ``except`` arms used to sit in.
+
+    A ``ReadTimeout`` also carries ``read_timed_out``, so a caller can tell the one timeout
+    kind that a smaller request would fix from the ones it would not.
     """
     if isinstance(exc, httpx2.TimeoutException):
-        return IntegrationError(service, f"timed out ({type(exc).__name__})")
+        return IntegrationError(
+            service,
+            f"timed out ({type(exc).__name__})",
+            read_timed_out=isinstance(exc, httpx2.ReadTimeout),
+        )
     return IntegrationError(service, f"unreachable ({exc})")
 
 

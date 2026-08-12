@@ -442,6 +442,43 @@ class TestTimeoutMessageNamesTheKind:
         assert "ConnectTimeout" in message
         assert "30" not in message  # never the misleading fixed read-timeout figure
 
+    @pytest.mark.parametrize(
+        ("kind", "shrinkable"),
+        [(httpx2.ReadTimeout, True), (httpx2.ConnectTimeout, False), (httpx2.PoolTimeout, False)],
+    )
+    async def test_only_a_read_timeout_is_marked_as_one(
+        self,
+        httpx2_mock: respx.Router,
+        kind: type[httpx2.TimeoutException],
+        shrinkable: bool,
+    ) -> None:
+        """A read timeout says the service took the request and could not finish the body,
+        so asking for less is worth trying -- ``history_sync.sync`` halves its page on it.
+        A connect or pool timeout says nothing about size, and marking one would have the
+        history walk shrink its way through an unreachable host before giving up."""
+        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
+            side_effect=kind("no answer")
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError) as exc:
+                await client.system_status()
+
+        assert exc.value.read_timed_out is shrinkable
+
+    async def test_a_status_failure_is_not_marked_as_a_timeout(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The flag defaults to False, so an answer that arrived cannot be mistaken for one
+        that never did."""
+        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
+            return_value=httpx.Response(503)
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError) as exc:
+                await client.system_status()
+
+        assert exc.value.read_timed_out is False
+
 
 class TestPlexTvErrorsAreMapped:
     """plex.tv login/authorization calls must fail closed.
