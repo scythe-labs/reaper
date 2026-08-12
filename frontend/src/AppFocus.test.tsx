@@ -123,8 +123,11 @@ beforeEach(() => {
 // do between their tests. There is one test below and it ends with two layers unpopped, so this
 // is here for the second one (rule 72, and the file's own shape invites it).
 beforeEach(async () => {
+  // The path is reset with it: `App` reads its section from it at mount (navUrl.ts), and those
+  // deferred steps land jsdom on whichever entry's URL, which is regularly another section's
+  // (rule 72 -- `App.test.tsx` carries the same reset for the same reason).
   for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
-  history.replaceState(null, "");
+  history.replaceState(null, "", "/");
 });
 
 /** A Back press, the way `backnav.test.tsx` drives one: the provider parks a sentinel entry per

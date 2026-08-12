@@ -113,6 +113,13 @@ console.error = (...args: unknown[]) => {
 };
 
 afterEach(() => {
+  // The address bar is app state now (navUrl.ts): `App` reads its section from the path and the
+  // queue seeds its filters from the query string, both at mount. jsdom carries one location
+  // across a whole file, so a test that leaves `/review/limbo?genre=…` behind would silently
+  // open the next test's queue on that lane, filtered. Replaced, never pushed, so the file's
+  // session history is left as it was found (rule 133).
+  if (hasDom) history.replaceState(null, "", "/");
+
   const queries = missingQueryFn;
   const undefineds = undefinedData;
   const unacted = outsideAct;

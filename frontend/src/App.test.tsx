@@ -703,8 +703,11 @@ describe("the authenticated app's heading outline", () => {
     // real popstates: arriving after this test's provider is up, they read as Back presses and eat
     // the ones below. Drain them while nothing is listening, then clear the marker the provider's
     // mount-time reconcile keys on, the same reset `backnav.test.tsx` does between its tests.
+    // The path is part of the reset now: `App` reads its section from it at mount (navUrl.ts),
+    // and those deferred steps land jsdom on whichever entry's URL, which is regularly another
+    // section's. Left alone, this test mounted on Scales and never found the Condemned tab.
     for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
-    history.replaceState(null, "");
+    history.replaceState(null, "", "/");
 
     const person = userEvent.setup();
     mountTheShell();

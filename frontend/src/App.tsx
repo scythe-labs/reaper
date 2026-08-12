@@ -24,6 +24,7 @@ import { ShowPanel } from "./components/ShowPanel";
 import { WhyPanel } from "./components/WhyPanel";
 import { DocsProvider } from "./docs/DocsContext";
 import type { Focus, NavIntent, Selection, View } from "./navIntent";
+import { readLanding, sectionUrl, writeUrl } from "./navUrl";
 import { usePageScrollLock } from "./pageScrollLock";
 import { useGeneralSettings } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
@@ -106,8 +107,11 @@ function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => voi
 }
 
 function Dashboard({ user }: { user: AuthUser }) {
-  const [view, setView] = useState<View>("review");
-  const [verdict, setVerdict] = useState<Verdict>("condemn");
+  // Where the URL says to land, read once at mount and nowhere else (navUrl.ts). The URL is the
+  // authority for a cold load and for nothing after it: `backnav` owns Back, and its undo
+  // restores these two setters directly, so re-deriving either from the URL would fight it.
+  const [view, setView] = useState<View>(() => readLanding().view);
+  const [verdict, setVerdict] = useState<Verdict>(() => readLanding().lane);
   const [selected, setSelected] = useState<Selection>(null);
   // Which Scales person has their panel open. Kept here (not in Fairness) so the panel is a
   // sibling of the list inside `main.split`, exactly as the why-panel sits beside the queue.
@@ -219,6 +223,15 @@ function Dashboard({ user }: { user: AuthUser }) {
   // dropping only the one focus that had been shown to replay.
   useEffect(() => {
     setFocus((f) => (f?.view === view ? f : null));
+  }, [view]);
+
+  // The address bar names the section, so a reload or a bookmark lands back on it. Review is
+  // the one section not written here: its URL carries the lane and the filters, both of which
+  // live in `ReviewQueue`, so the queue writes the whole thing (one writer per URL). No open
+  // panel is in the URL either -- a candidate id belongs to one snapshot, and the next scan
+  // would leave the link pointing at a row that no longer exists (rule 79).
+  useEffect(() => {
+    if (view !== "review") writeUrl(sectionUrl(view));
   }, [view]);
 
   // Every jump in the app, in one place. The caller names a whole destination (navIntent.ts) and
