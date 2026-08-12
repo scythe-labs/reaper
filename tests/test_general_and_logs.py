@@ -1425,7 +1425,11 @@ class TestTheEnvironmentsLogLevel:
         """Widening what the app runs at must not widen what the UI sells. Hiding warnings
         from a tool that deletes files is still not a choice on offer, so the route narrows
         to ``UI_LEVELS`` rather than to everything ``normalize_level`` takes."""
-        assert logbuffer.UI_LEVELS == ("DEBUG", "INFO", "WARNING")
+        assert logbuffer.UI_LEVELS == ("DEBUG", "INFO", "WARNING"), (
+            "UI_LEVELS is what the picker offers, so LogsPanel.tsx's option list mirrors it. "
+            "Change one and the other is wrong: an option the route refuses 422s on save, and "
+            "a level with no option leaves the operator no way back to it (rule 144)."
+        )
 
         assert client.put("/api/logs/level", json={"level": "ERROR"}).status_code == 422
 

@@ -2476,8 +2476,8 @@ export function PolicyEditor({
                     zero. Without it the help explained a keep and the control did the
                     opposite (#688). */}
                 <span className="help">
-                  Kept by default. Size caps can't measure them. Above 0, Reaper deletes that many.
-                  25 at most.
+                  Kept by default. Size caps can't measure them. Above 0, Reaper can delete that
+                  many. 25 at most.
                 </span>
                 <WarnBlock
                   anchor="max_unmeasured_per_run"
