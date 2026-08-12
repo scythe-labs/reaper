@@ -49,7 +49,7 @@ Last verified against the code: 2026-08-02.
    `docs/history/SCREEN_READER_SWEEP.md`; the guard's own measurement is in `docs/LEARNINGS.md`.
    A scroll container is now held reachable by a stylesheet-driven gate, not by memory. Whether a
    notice speaks is `standing`, declared per call site and held by a count and a written reason.
-3. **The stylesheet is 34 files with named scales** (`docs/CSS_SPLIT_PLAN.md`). Load order is
+3. **The stylesheet is 35 files with named scales** (`docs/history/CSS_SPLIT_PLAN.md`). Load
    declared by `index.css` and load-bearing. Type (9 steps), weight (4) and the constants
    (`--control-pad`, `--radius-pill`, a `--z-*` ladder) are adopted everywhere; space is 11 steps
    adopted only where nothing moved, with a ratchet on the 294 literals left. Gates hold the file

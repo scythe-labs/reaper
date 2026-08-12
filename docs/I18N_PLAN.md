@@ -314,7 +314,7 @@ Also this stage: the CONTRIBUTING note that non-English files are overwritten, a
 
 88 physical direction properties against 1 logical. This is a real stylesheet migration to
 logical properties plus a `dir` pass, and it should be judged on its own, after at least one LTR
-locale has actually shipped and taught us something. `docs/CSS_SPLIT_PLAN.md`'s remaining stages
+locale has actually shipped and taught us something. `docs/history/CSS_SPLIT_PLAN.md`'s remaining stages
 overlap this and should be sequenced with it rather than against it.
 
 ## 8. What this plan does not do

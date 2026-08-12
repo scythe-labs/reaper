@@ -1,4 +1,18 @@
-# Simplification plan
+# Simplification plan — archived narrative
+
+> **FROZEN 2026-08-12. Do not update this file; it is history, not state.**
+>
+> Every phase landed. The branch it governed, `audit/simplification-plan`, squash-merged into
+> `dev` as #552, and the `Progress` table below is the record of what each phase did, what was
+> killed, and why. Nothing here is a plan any more, so a row that reads as outstanding is
+> describing the moment it was written.
+>
+> Its companion, `ISSUE_LANDING_PLAN.md`, is deleted rather than archived: it tracked which
+> open issues had to land on the branch instead of on `dev`, and every one of them closed when
+> #552 merged. What it recorded is in the issues and in that merge.
+>
+> Code and tests still cite this file for the reasoning behind a decision (`S7`, `S8`, `W4.3`).
+> Those citations are why it is archived rather than deleted.
 
 A whole-tree audit for accidental complexity, run 2026-08-07 against `6f36a0c`. Thirteen
 read-only passes covered every directory: the deletion path, the scan pipeline, the season
@@ -2737,7 +2751,7 @@ rule numbers cite.
 **An automated dead-CSS sweep.** The measurement is the argument against it: 11 selectors have no
 literal occurrence in TSX and **9 of them are alive** via template literals (`kind-${kind}`,
 `state-${state}`, `strip-${verdict}`). An automated sweep would have deleted nine live styles to
-remove two dead ones. `docs/CSS_SPLIT_PLAN.md`'s "by hand, or not at all" is correct.
+remove two dead ones. `docs/history/CSS_SPLIT_PLAN.md`'s "by hand, or not at all" is correct.
 
 ## Verification protocol
 

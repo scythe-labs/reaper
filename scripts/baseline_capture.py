@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Freeze what Reaper concludes about a WHOLE real library, de-identified by construction.
 
-Tier B of ``docs/SIMPLIFICATION_PLAN.md``'s behavioral baseline. ``tests/_policy_lab.py``
+Tier B of ``docs/history/SIMPLIFICATION_PLAN.md``'s behavioral baseline. ``tests/_policy_lab.py``
 replays 440 sampled fact vectors through ``judge_facts`` and pins the judgment per vector;
 that is the CI-enforced tier and it samples. This one reads every candidate in one stored
 snapshot and records, per item:

@@ -797,7 +797,8 @@ NARROWED: set[str] = {
 #: in ``(string & {})`` so an id this build has never heard of is a value TypeScript admits
 #: exists rather than a cast, which is what lets ``PolicyEditor``'s fallback handle it. The
 #: other six carry no such argument. They are the plain ``string`` the field was first written
-#: as, and each is one place ``docs/SIMPLIFICATION_PLAN.md``'s 4.3 has left to do -- ``GateId``
+#: as, and each is one place ``docs/history/SIMPLIFICATION_PLAN.md``'s 4.3 has left to do
+#: -- ``GateId``
 #: already exists as a union in ``components/policyMeta.ts``, so ``GateSetting.gate`` is the
 #: cheapest of them.
 WIDENED: set[str] = {

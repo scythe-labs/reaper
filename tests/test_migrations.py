@@ -1819,7 +1819,7 @@ _GET_BIND_CLAIM_SITES = (
     "alembic/env.py",
     "CONTRIBUTING.md",
     "tests/test_migrations.py",
-    "docs/SIMPLIFICATION_PLAN.md",
+    "docs/history/SIMPLIFICATION_PLAN.md",
 )
 
 #: Matches the claim in every spelling the four files use, anchored on the words rather than on

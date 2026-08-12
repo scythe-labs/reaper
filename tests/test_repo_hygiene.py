@@ -2311,14 +2311,15 @@ _MYPY_INVOCATION = re.compile(r"uv run mypy ((?:[\w./\[\]*-]+ ?)+?)(?=\s*(?:#|`|
 #: `tests/_fakes.py`'s own docstring -- which is the copy most likely to go stale, since it is
 #: the file arguing for its place on the gate. `docs/history/**` is frozen and records what the
 #: gate was at the time, so it is skipped rather than counted; `docs/I18N_PLAN.md` proposes a
-#: gate for a plan nothing has started, and `docs/SIMPLIFICATION_PLAN.md` records the command as
+#: gate for a plan nothing has started, and `docs/history/SIMPLIFICATION_PLAN.md` records
+#: the command as
 #: it stood when a change landed and moves to `docs/history/` when it retires.
 _EXPECTED_MYPY_SITES = 4
 
 #: Files that quote the command as a record rather than as the instruction to follow. A record
 #: is pinned to its moment, so holding it to today's gate would ask a finished plan to be edited
 #: every time the gate moves.
-_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md", "docs/SIMPLIFICATION_PLAN.md")
+_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md", "docs/history/SIMPLIFICATION_PLAN.md")
 
 
 def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
@@ -3000,7 +3001,7 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
     Rule 64's supply chain, for the citation form no other guard covers.
     ``test_docs_referenced_from_code_exist`` above does this for a ``docs/`` path; nothing did it
     for a symbol, so splitting a module left every comment pointing at its old address, and the
-    only thing that found them was `docs/SIMPLIFICATION_PLAN.md` happening to warn that they
+    only thing that found them was `docs/history/SIMPLIFICATION_PLAN.md` happening to warn that they
     existed. Splitting the API routes module into five moved **39** of these across 26 files, and
     the plan's own first estimate of that population was "roughly ten".
 
@@ -3023,7 +3024,8 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
 
     #: A dotted name ending in one of these is a filename, not a symbol: `api.types.gen.ts`.
     suffixes = (".ts", ".tsx", ".py", ".md", ".mdx", ".json", ".css", ".html", ".yml", ".yaml")
-    #: `docs/SIMPLIFICATION_PLAN.md` is exempt, and it is the one document that has to be. Its
+    #: `docs/history/SIMPLIFICATION_PLAN.md` is exempt, and it is the one document that has
+    #: to be. Its
     #: finding bodies quote the tree as it stood *before* each change, with `> Corrected:` and
     #: `Landed` blocks layered on top rather than edited in — so a citation that no longer
     #: resolves is often the record working, not rot. Re-pathing them against today's tree would
@@ -5133,7 +5135,8 @@ def test_the_four_packages_import_only_downward() -> None:
     assert len(modules) == _EXPECTED_LAYERED_MODULES, (
         f"expected {_EXPECTED_LAYERED_MODULES} modules under {'/, '.join(_LAYERS)}/, walked "
         f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number -- AND the two prose\n"
-        "copies of it, which nothing else asserts (rule 144): docs/SIMPLIFICATION_PLAN.md's S7\n"
+        "copies of it, which nothing else asserts (rule 144):\n"
+        "docs/history/SIMPLIFICATION_PLAN.md's S7\n"
         "paragraph names this constant and restates the figure, and its C3 checkpoint row does\n"
         "too. Both were already stale by two when this message was written. Leave the *Landed*\n"
         "rows alone -- their figures are historical deltas, and editing one makes a correct\n"
@@ -5174,7 +5177,7 @@ def test_every_deferred_cross_package_import_is_named() -> None:
     and they are also exactly where a layering violation would go to hide, since the module
     graph a tool draws does not have the edge at all.
 
-    `docs/SIMPLIFICATION_PLAN.md`'s wave 9 measured all three of these and found that none
+    `docs/history/SIMPLIFICATION_PLAN.md`'s wave 9 measured all three of these and found that none
     breaks the cycle it looks like it was written for. All three are gone. This list is what
     made that deletion visible: without it the walk skips the sites, the count never moves, and
     the gate is blind to the one change it exists to watch.
@@ -5194,7 +5197,8 @@ def test_every_deferred_cross_package_import_is_named() -> None:
         "The set is empty, so anything here at all is NEW, and a new one needs a\n"
         "reason written down: it is a cross-package dependency that no import graph will show,\n"
         "so if it is here to break a cycle, name the cycle.\n"
-        "docs/SIMPLIFICATION_PLAN.md's S7 paragraph restates this set's size in prose, and\n"
+        "docs/history/SIMPLIFICATION_PLAN.md's S7 paragraph restates this set's size in\n"
+        "prose, and\n"
         "nothing asserts that copy (rule 144)."
     )
 
@@ -6379,7 +6383,7 @@ def test_every_arr_client_is_built_with_the_same_arguments() -> None:
         f"expected {_EXPECTED_ARR_CONSTRUCTIONS} *arr client constructions under src/, walked "
         f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass "
         f"{sorted(_ARR_CONSTRUCTION_ARGS)}; bump the number here AND in "
-        "docs/SIMPLIFICATION_PLAN.md's wave 3 row, which states the population in prose."
+        "docs/history/SIMPLIFICATION_PLAN.md's wave 3 row, which states the population in prose."
     )
     missing = {
         site: sorted(_ARR_CONSTRUCTION_ARGS - args)
@@ -6513,7 +6517,8 @@ def test_every_client_carries_the_operators_own_tls_setting() -> None:
         f"expected {_EXPECTED_TLS_CONSTRUCTIONS} client constructions under src/ for "
         f"{sorted(_TLS_CLIENTS)}, walked {len(sites)}: {sorted(sites)}. A new one is fine and "
         f"must pass {sorted(_TLS_CLIENT_ARGS)}; bump the number here AND in "
-        "docs/SIMPLIFICATION_PLAN.md's W3b-8 kill block, which states it in prose (rule 144). "
+        "docs/history/SIMPLIFICATION_PLAN.md's W3b-8 kill block, which states it in prose "
+        "(rule 144). "
         "A new client CLASS built against a stored address belongs in _TLS_CLIENTS, or the "
         "walk cannot see any of its sites and this count cannot tell you."
     )
@@ -6755,14 +6760,15 @@ def test_a_judged_item_is_never_handed_the_other_lanes_policy() -> None:
 
     This is the gate rather than a lane carrier, per CLAUDE.md's "write the gate instead": a
     carrier binds the sites that adopt it, and ``services/snapshot.py`` is the deletion path.
-    ``docs/SIMPLIFICATION_PLAN.md``'s wave 3 parameter-object paragraph carries the measurement.
+    ``docs/history/SIMPLIFICATION_PLAN.md``'s wave 3 parameter-object paragraph carries the
+    measurement.
     """
     sites = _judge_item_lane_arguments(SRC)
     assert len(sites) == _EXPECTED_JUDGE_ITEM_CALLS, (
         f"expected {_EXPECTED_JUDGE_ITEM_CALLS} `_judge_item` calls under src/, walked "
         f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass every argument in "
         f"{sorted(_LANE_ARGUMENTS)} off one lane's locals; bump the number here AND in "
-        "docs/SIMPLIFICATION_PLAN.md's wave 3 parameter-object paragraph, which states the "
+        "docs/history/SIMPLIFICATION_PLAN.md's wave 3 parameter-object paragraph, which states the "
         "population in prose."
     )
     lanes: dict[str, str] = {}
@@ -7127,7 +7133,7 @@ def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None
     four today. That list is hand-written on purpose: see the constant for the derivation
     that replaced it and the movie-lane omission it read as permitted.
 
-    ``docs/SIMPLIFICATION_PLAN.md``'s W5-2 row carries the measurement, including why the
+    ``docs/history/SIMPLIFICATION_PLAN.md``'s W5-2 row carries the measurement, including why the
     collapse this replaces was killed: ``_judge_item`` already takes ``Display`` whole, so
     merging the packs removes no parameter and no line. What it would have removed is this
     hazard, and the gate removes it from ``tests/``.
