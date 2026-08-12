@@ -593,14 +593,14 @@ def _rating_facts(ratings: tuple[Rating, ...]) -> Facts:
 #: word order it takes -- the population, not just the two members that motivated the table
 #: (rule 145).
 _BAR_TEXT: dict[RatingSource, str] = {
-    RatingSource.IMDB: "7.5 on IMDb from 1,000 votes",
-    RatingSource.TMDB: "7.5 on TMDb from 1,000 votes",
+    RatingSource.IMDB: "7.5 on IMDb from 1,000+ votes",
+    RatingSource.TMDB: "7.5 on TMDb from 1,000+ votes",
     RatingSource.ROTTEN_TOMATOES_CRITIC: "Rotten Tomatoes critics 75%",
     RatingSource.ROTTEN_TOMATOES_AUDIENCE: "Rotten Tomatoes audience 75%",
     RatingSource.METACRITIC: "Metacritic 75%",
-    RatingSource.TRAKT: "7.5 on Trakt from 1,000 votes",
-    RatingSource.TVDB: "7.5 on TVDB from 1,000 votes",
-    RatingSource.UNKNOWN: "7.5 on an unknown source from 1,000 votes",
+    RatingSource.TRAKT: "7.5 on Trakt from 1,000+ votes",
+    RatingSource.TVDB: "7.5 on TVDB from 1,000+ votes",
+    RatingSource.UNKNOWN: "7.5 on an unknown source from 1,000+ votes",
 }
 
 #: How "we found no rating at all from this source" reads for every source, written from
@@ -610,8 +610,8 @@ _BAR_TEXT: dict[RatingSource, str] = {
 _MISS_TEXT: dict[RatingSource, str] = {
     source: f"no rating on {label} (you keep {bar})"
     for source, label, bar in (
-        (RatingSource.IMDB, "IMDb", "7.5 on IMDb from 1,000 votes"),
-        (RatingSource.TMDB, "TMDb", "7.5 on TMDb from 1,000 votes"),
+        (RatingSource.IMDB, "IMDb", "7.5 on IMDb from 1,000+ votes"),
+        (RatingSource.TMDB, "TMDb", "7.5 on TMDb from 1,000+ votes"),
         (
             RatingSource.ROTTEN_TOMATOES_CRITIC,
             "Rotten Tomatoes critics",
@@ -623,9 +623,9 @@ _MISS_TEXT: dict[RatingSource, str] = {
             "Rotten Tomatoes audience 75%",
         ),
         (RatingSource.METACRITIC, "Metacritic", "Metacritic 75%"),
-        (RatingSource.TRAKT, "Trakt", "7.5 on Trakt from 1,000 votes"),
-        (RatingSource.TVDB, "TVDB", "7.5 on TVDB from 1,000 votes"),
-        (RatingSource.UNKNOWN, "an unknown source", "7.5 on an unknown source from 1,000 votes"),
+        (RatingSource.TRAKT, "Trakt", "7.5 on Trakt from 1,000+ votes"),
+        (RatingSource.TVDB, "TVDB", "7.5 on TVDB from 1,000+ votes"),
+        (RatingSource.UNKNOWN, "an unknown source", "7.5 on an unknown source from 1,000+ votes"),
     )
 }
 
@@ -657,26 +657,30 @@ class TestRatingGate:
 
     @pytest.mark.parametrize(
         ("min_votes", "clause"),
-        [(0, ""), (1, " from 1 vote"), (2, " from 2 votes"), (1000, " from 1,000 votes")],
+        [(0, ""), (1, " from 1+ votes"), (2, " from 2+ votes"), (1000, " from 1,000+ votes")],
         ids=["no-vote-floor", "one-vote", "two-votes", "a-thousand"],
     )
-    def test_the_bar_names_its_vote_floor_and_counts_one_as_one_vote(
-        self, min_votes: int, clause: str
-    ) -> None:
-        """The clause is present exactly when there is a vote floor, and reads as English.
+    def test_the_bar_names_its_vote_floor_as_a_floor(self, min_votes: int, clause: str) -> None:
+        """The clause says the number is a bar to clear, not a count the title has.
 
-        Three copies of this phrase existed -- here, ``Rating.describe`` and
-        ``Rating.describe_for_user`` -- and all three said "from 1 votes", because every
-        case that drove them used a count in the thousands. A vote floor of 1 is a legal
-        policy and a title with a single vote is ordinary, so all three were reachable.
-        They now derive from ``ratings.describe_votes`` (rule 104), and this pins the
-        presence of the clause in both directions as well as its wording: with no floor
-        there is nothing honest to print, and "from 0 votes" would read as a measurement
-        rather than as its absence.
+        The why-panel prints both, one line apart: the bar under "you keep", the item's own
+        count under "too few to trust". They shared ``ratings.describe_votes`` and came out
+        word for word the same, so "from 1,000 votes" was a floor in one sentence and a
+        measurement in the next, with nothing saying which (#623).
+
+        The "+" is also why this clause cannot be that helper plus an append: at a floor of 1
+        it has to read "from 1+ votes", where the helper correctly renders a real count of 1
+        as "from 1 vote". Presence is pinned in both directions as well, since with no floor
+        there is nothing honest to print and "from 0+ votes" would name a bar that is not
+        there.
         """
         bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=min_votes)
 
-        assert bar.describe_bar() == f"7.5 on IMDb{clause}"
+        assert bar.describe_bar() == f"7.5 on IMDb{clause}", (
+            "The vote clause moved. `describeBar` in frontend/src/components/PolicyEditor.tsx "
+            "renders the same clause for the same rule, and one operator reads both, so it "
+            "changes in the same commit (rule 144)."
+        )
 
     @pytest.mark.parametrize("source", list(_BAR_TEXT), ids=[s.value for s in _BAR_TEXT])
     def test_each_source_states_its_bar_in_its_own_word_order(self, source: RatingSource) -> None:
@@ -691,7 +695,10 @@ class TestRatingGate:
         """
         bar = RatingRule(source=source, floor=75, min_votes=1000)
 
-        assert bar.describe_bar() == _BAR_TEXT[source]
+        assert bar.describe_bar() == _BAR_TEXT[source], (
+            "`describeBar` in frontend/src/components/PolicyEditor.tsx states the same bar "
+            "in the same word order, for the same rule (rule 144)."
+        )
 
     def test_the_table_of_word_orders_covers_every_source(self) -> None:
         """Set equality both ways, so the sweep above is over the sources that exist rather

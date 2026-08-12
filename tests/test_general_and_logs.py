@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -57,6 +58,7 @@ from reaper.config import Settings, parse_trusted_proxies
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import AppSetting
+from reaper.logging import configure_logging
 from reaper.main import create_app
 from reaper.services import app_settings
 from tests._auth import login
@@ -1398,6 +1400,54 @@ class TestTheLogsRoutes:
         # backend retention constant.
         page = client.get("/api/logs").json()
         assert page["files_kept"] == logbuffer.LOG_BACKUP_COUNT + 1
+
+
+class TestTheEnvironmentsLogLevel:
+    """``REAPER_LOG_LEVEL`` sets the level until the operator picks one in the UI, and it
+    may carry ERROR, which the picker deliberately does not offer (#700)."""
+
+    def test_error_from_the_environment_is_the_level_reaper_runs_at(
+        self, _restore_logging: None
+    ) -> None:
+        """Booting at ERROR left the app at INFO, with nothing said about it.
+
+        ``LEVELS`` omitted ERROR, so ``normalize_level`` returned None for a value
+        ``Settings.log_level`` had already accepted, and ``set_level``'s fallback -- there
+        to survive a corrupt stored setting -- overrode an operator's choice instead of
+        catching a bad one. Someone quieting a noisy log kept every INFO line.
+        """
+        configure_logging(level="ERROR")
+
+        assert logbuffer.level_name() == "ERROR"
+        assert logging.getLogger().getEffectiveLevel() == logging.ERROR
+
+    def test_the_picker_still_refuses_error(self, client: TestClient) -> None:
+        """Widening what the app runs at must not widen what the UI sells. Hiding warnings
+        from a tool that deletes files is still not a choice on offer, so the route narrows
+        to ``UI_LEVELS`` rather than to everything ``normalize_level`` takes."""
+        assert logbuffer.UI_LEVELS == ("DEBUG", "INFO", "WARNING"), (
+            "UI_LEVELS is what the picker offers, so LogsPanel.tsx's option list mirrors it. "
+            "Change one and the other is wrong: an option the route refuses 422s on save, and "
+            "a level with no option leaves the operator no way back to it (rule 144)."
+        )
+
+        assert client.put("/api/logs/level", json={"level": "ERROR"}).status_code == 422
+
+    def test_the_env_and_the_logger_offer_the_same_levels(self) -> None:
+        """The two declarations behind #700, pinned against each other.
+
+        Prose asking a future author to keep them in step does nothing; this fails instead.
+        A level in one and not the other is accepted at boot and then silently resolved to
+        something the operator did not ask for.
+        """
+        blessed = get_args(Settings.model_fields["log_level"].annotation)
+
+        assert set(blessed) == set(logbuffer.LEVELS), (
+            "config.Settings.log_level validates REAPER_LOG_LEVEL; logbuffer.LEVELS is what "
+            "set_level will actually run at. They name one set. Changing it also changes "
+            "frontend/src/components/LogsPanel.tsx's picker and the Log level field in "
+            "contrib/unraid/my-Reaper.xml (rule 144)."
+        )
 
 
 class TestTheLogDownload:

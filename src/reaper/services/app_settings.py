@@ -129,8 +129,10 @@ API_KEY_KEY = "api_key_enc"
 #: from an untrusted peer is attacker-controlled and is always ignored.
 PROXY_TRUST_ENABLED_KEY = "proxy_trust_enabled"
 TRUSTED_PROXIES_KEY = "trusted_proxies"
-#: The logging level (DEBUG/INFO/WARNING). Stored value wins; ``REAPER_LOG_LEVEL`` is
-#: only the first-boot seed, like every other env-seeded switch.
+#: The logging level the operator picked, one of ``logbuffer.UI_LEVELS``
+#: (DEBUG/INFO/WARNING). Stored value wins; ``REAPER_LOG_LEVEL`` is only the seed until
+#: then, like every other env-seeded switch, and it may also carry ERROR, which the picker
+#: does not offer.
 LOG_LEVEL_KEY = "log_level"
 #: The server time zone the scheduler's timed jobs run on -- the nightly scan and the upkeep
 #: jobs. An IANA name like ``America/New_York``, so a cron set for 2 AM fires at 2 AM here,
