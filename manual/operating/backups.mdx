@@ -42,6 +42,16 @@ signed in.
   threads all the same.
 </Callout>
 
+## The one Reaper takes on its own
+
+Most updates only add to the database. When one has to change or remove something instead,
+Reaper copies the database into a `pre-migration` folder beside it before the update runs, and
+keeps the newest three. If it cannot write that copy, it stops and does not run the update.
+
+Those files are ordinary Reaper backups, so Settings, Backup restores one the same way it
+restores any other. Treat them as sensitive: each carries the same credentials the archive
+above does.
+
 ## The one you can throw away
 
 `cache.db` sits next to them and is disposable. It is other people's data mirrored

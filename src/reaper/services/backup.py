@@ -33,6 +33,12 @@ The snapshot is taken with SQLite's ``VACUUM INTO``: it reads a consistent view
 inside one transaction (so a scan writing mid-backup cannot tear the copy), writes
 one defragmented file with no side ``-wal`` / ``-shm``, and drops free pages so the
 archive is smaller than the live database on disk.
+
+Two things build one: the operator pressing Download, and
+:func:`snapshot_before_migration`, which runs at boot when a pending schema change asks to
+be snapshotted first (#566). The second keeps its archives in ``data/pre-migration/`` and
+prunes to the newest few; both write the same format, so either restores through the same
+Settings -> Backup card.
 """
 
 from __future__ import annotations
@@ -92,6 +98,40 @@ BACKUP_TMP_PREFIX = ".backup-tmp-"
 RESTORE_TMP_PREFIX = ".restore-tmp-"
 RESTORE_UPLOAD_PREFIX = ".restore-upload-"
 _STALE_TEMP_PREFIXES = (BACKUP_TMP_PREFIX, RESTORE_TMP_PREFIX, RESTORE_UPLOAD_PREFIX)
+
+#: Where :func:`snapshot_before_migration` leaves its archives, and how many it keeps.
+#:
+#: Under ``data/`` rather than anywhere else, because that is the folder an operator already
+#: mounts, already backs up, and already knows to look in -- and because the move out of the
+#: build's temp dir is then a rename on the same filesystem rather than a copy of the whole
+#: database. Ordinary ``.reaper`` archives, so recovery is the restore the app already has
+#: (Settings -> Backup, which accepts exactly this file) rather than a second path written
+#: for this one case.
+#:
+#: Three, because the point of the file is the upgrade that just went wrong, and the release
+#: before it, and one to spare. Each one is roughly the size of ``reaper.db`` compressed, and
+#: they are only ever written by a schema change that asked for one, so the folder does not
+#: grow on its own between releases.
+PRE_MIGRATION_DIR = "pre-migration"
+PRE_MIGRATION_PREFIX = "pre-migration-"
+KEEP_PRE_MIGRATION = 3
+
+#: What the operator is told when the snapshot could not be written. Declared here, beside
+#: the code that fails, and printed by :mod:`reaper.preflight`, which is what turns it into a
+#: refusal (rule 144). It says the update did not run, which preflight makes true by
+#: returning non-zero before ``alembic upgrade head`` -- and it claims nothing about the state
+#: of the data, because the staged-restore swap runs above this and may already have replaced
+#: it (rule 126).
+#:
+#: It asks the operator to *check* the free space rather than telling them to make some. A full
+#: disk is the usual cause and not the only one: :class:`BackupTooLargeError` fires on a
+#: database past :data:`MAX_DB_BYTES` with all the space in the world, and "free up disk space"
+#: would then be an instruction that cannot work. Preflight appends the underlying error, which
+#: is where the exact cause is.
+SNAPSHOT_FAILED = (
+    "Reaper stopped before an update that changes its database, because it couldn't save a "
+    "backup first. Check the free space in Reaper's data folder, then start Reaper again."
+)
 
 
 class BackupTooLargeError(RuntimeError):
@@ -264,14 +304,78 @@ def cleanup(archive: BackupArchive) -> None:
     shutil.rmtree(archive.tmp_dir, ignore_errors=True)
 
 
+def _prune_pre_migration(directory: Path) -> None:
+    """Keep the newest :data:`KEEP_PRE_MIGRATION` snapshots and remove the rest.
+
+    Sorted by name, which is sorted by time: the stamp is ``YYYYMMDDTHHMMSS``, so the
+    lexicographic order is the chronological one.
+
+    **Nothing in here raises**, and the listing is inside the guard for the same reason the
+    unlink is. This runs after the snapshot is already on disk, so an exception escaping it
+    would reach preflight's refusal and stop the boot under :data:`SNAPSHOT_FAILED`, a
+    sentence saying the backup could not be saved when it was (rule 126). Losing a boot over
+    a stale file that would not delete is the wrong trade either way.
+    """
+    try:
+        snapshots = sorted(directory.glob(f"{PRE_MIGRATION_PREFIX}*.reaper"))
+    except OSError as exc:
+        log.warning("backup.pre_migration_prune_failed", name="(listing)", error=str(exc))
+        return
+    for stale in snapshots[:-KEEP_PRE_MIGRATION]:
+        try:
+            stale.unlink()
+        except OSError as exc:
+            log.warning("backup.pre_migration_prune_failed", name=stale.name, error=str(exc))
+
+
+def snapshot_before_migration(settings: Settings, revision: str | None) -> Path:
+    """Copy the database into ``data/pre-migration/`` before a migration that asked for it.
+
+    Called from :mod:`reaper.preflight`, which every way of starting Reaper runs immediately
+    before ``alembic upgrade head`` -- the container entrypoint, ``scripts/dev-local.sh`` and
+    :func:`reaper.launcher.main` alike, so one call site covers all three and none of them
+    can drift out of it. Which migrations ask is
+    :func:`reaper.db.schema_gate.needs_snapshot`.
+
+    Raises rather than returning on failure, and preflight turns that into a refusal: a
+    migration that can destroy data must not run with nothing to go back to, so a full disk
+    stops the boot instead of taking the update unprotected.
+
+    ``revision`` is the revision the database sits at, and it goes in the filename because
+    that is the fact an operator needs when picking which snapshot to restore. The archive is
+    a normal backup, key material and all, so it restores through Settings -> Backup like any
+    other.
+    """
+    created_at = utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    archive = _build_sync(settings, created_at)
+    try:
+        # 0700 at creation, never widened afterwards: each archive carries `secret.key`, so
+        # the folder holding them is as sensitive as the key (rule 14/83). `mkdir` masks with
+        # the umask, which can only remove bits, so this is a ceiling and not a floor.
+        directory = settings.data_dir / PRE_MIGRATION_DIR
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stamp = created_at.replace("-", "").replace(":", "")[:15]  # 20260723T100000
+        target = directory / f"{PRE_MIGRATION_PREFIX}{stamp}-{revision or 'unknown'}.reaper"
+        # The build wrote it inside a 0700 mkdtemp, so it has never been reachable; this
+        # keeps it owner-only if the operator later moves it somewhere that is.
+        archive.path.chmod(0o600)
+        shutil.move(str(archive.path), str(target))
+    finally:
+        cleanup(archive)
+    _prune_pre_migration(directory)
+    log.warning("backup.pre_migration_snapshot", name=target.name, revision=revision)
+    return target
+
+
 def sweep_stale_temp(settings: Settings) -> int:
     """Remove crash-leftover backup/restore temp entries under ``data/``. Returns the count.
 
     A healthy backup or restore removes its own temp dir or upload spool; anything under
     ``data/`` matching :data:`_STALE_TEMP_PREFIXES` at boot is debris from a crash mid-run
     (PR-3). Called from preflight, which runs before the app starts, so nothing is in flight
-    to race. Only the dotted temp prefixes match, so the ``pending-restore`` staging and the
-    ``pre-restore-*`` recovery copies (no leading dot) are never touched.
+    to race. Only the dotted temp prefixes match, so the ``pending-restore`` staging, the
+    ``pre-restore-*`` recovery copies and the ``pre-migration/`` snapshots (none of them
+    dotted) are never touched.
     """
     swept = 0
     try:

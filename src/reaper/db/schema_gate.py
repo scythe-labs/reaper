@@ -24,6 +24,12 @@ served:
 an operator already locked out, it writes one auth row, and refusing there would take away
 the last door in the building.
 
+This module also answers the other question about the shipped migration scripts:
+:func:`needs_snapshot`, whether anything between the database's revision and head asks for
+a copy of the database before it runs. It lives here because reading those scripts is what
+this module already does, and because the two answers are read one after the other by the
+same caller (:mod:`reaper.preflight`).
+
 Three answers, and the middle one is the whole subject:
 
 ``None``
@@ -42,6 +48,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from reaper.buildinfo import install_root
 
@@ -99,6 +106,21 @@ def alembic_dir() -> Path:
     raise SchemaRefusedError(MIGRATIONS_UNREADABLE)
 
 
+def _script() -> Any:
+    """Alembic's reader for the shipped ``alembic/`` directory.
+
+    Built the same way at all three call sites below, so it is built once (rule 104).
+    Raises whatever Alembic raises; each caller decides what an unreadable script
+    directory means for the question it is answering.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config()
+    config.set_main_option("script_location", str(alembic_dir()))
+    return ScriptDirectory.from_config(config)
+
+
 def known_revisions() -> frozenset[str]:
     """Every Alembic revision id this build ships, from the migration scripts.
 
@@ -107,15 +129,8 @@ def known_revisions() -> frozenset[str]:
     the boot gate below and :mod:`reaper.services.restore`'s backup gate both read it, and
     a second copy of the set would be a second answer to drift from.
     """
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    location = alembic_dir()
     try:
-        config = Config()
-        config.set_main_option("script_location", str(location))
-        script = ScriptDirectory.from_config(config)
-        return frozenset(revision.revision for revision in script.walk_revisions())
+        return frozenset(revision.revision for revision in _script().walk_revisions())
     except Exception as exc:  # unreadable migrations are unanswerable, never "fine"
         raise SchemaRefusedError(MIGRATIONS_UNREADABLE) from exc
 
@@ -126,15 +141,55 @@ def current_head() -> str | None:
     Cosmetic, and only the restore summary consults it: a miss there reads as "older",
     which is the conservative side. Nothing that refuses anything reads this.
     """
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
     try:
-        config = Config()
-        config.set_main_option("script_location", str(alembic_dir()))
-        return ScriptDirectory.from_config(config).get_current_head()
+        head: str | None = _script().get_current_head()
+        return head
     except Exception:
         return None
+
+
+#: The module-level attribute a revision sets to ask for a snapshot of the database before
+#: it runs: ``needs_snapshot = True``, beside ``revision`` and ``down_revision``.
+#:
+#: It is on the revision because the revision is the only thing that knows. A revision that
+#: cannot be undone by its own ``downgrade()`` sets it -- rule 148's release M+1, where a
+#: ``drop_column`` takes the data with it, and any batch rebuild, where the table is copied
+#: from SQLite's reflection and a constraint reflection does not report is lost on the way
+#: through. An ordinary ``ADD COLUMN`` sets nothing and costs nothing.
+SNAPSHOT_ATTR = "needs_snapshot"
+
+
+def needs_snapshot(revision: str | None) -> bool:
+    """Whether anything between ``revision`` and head asks to be snapshotted first.
+
+    ``revision`` is what the database on disk sits at, and ``None`` answers ``False`` here.
+
+    **That is only correct for two of the three things** :func:`stored_revision` **answers
+    ``None`` for.** No file and no ``alembic_version`` row are both "nothing to lose". The
+    third is a database it could not *read*, and an unreadable database is an ambiguity, not
+    an answer (rule 93). Deciding that one needs the file itself, which this function is not
+    given, so :mod:`reaper.preflight` decides it at the call site and snapshots a database
+    that exists and would not say what it is.
+
+    Every ambiguity this function *can* see answers ``True``. A script directory that will
+    not read, a revision that is not an ancestor of head, a revision module that raises on
+    import: none of them is "no snapshot needed", and taking one that was not wanted costs a
+    file. Reading a revision's module runs it, which is side effect free for the same reason
+    :func:`known_revisions` walking them is.
+    """
+    if revision is None:
+        return False
+    try:
+        script = _script()
+        head = script.get_current_head()
+        if head is None:
+            return True
+        return any(
+            getattr(pending.module, SNAPSHOT_ATTR, False)
+            for pending in script.iterate_revisions(head, revision)
+        )
+    except Exception:
+        return True
 
 
 def stored_revision(db_path: Path) -> str | None:

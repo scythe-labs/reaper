@@ -35,6 +35,11 @@ down_revision: str | None = "6f708192a3b4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Copy the database aside before this runs (`reaper.db.schema_gate.SNAPSHOT_ATTR`, #566). Its
+# `alter_column` is a full table copy taken from SQLite's reflection, which is the shape that
+# loses a constraint reflection does not report.
+needs_snapshot = True
+
 
 def _column(inspector: sa.Inspector, table: str, name: str) -> dict[str, object] | None:
     """The reflected column dict, or None if the table lacks that column."""

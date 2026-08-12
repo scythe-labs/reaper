@@ -7455,3 +7455,121 @@ def test_each_rule_files_paths_and_its_governs_cell_describe_the_same_files() ->
         "Governs column of CLAUDE.md's table. Fix whichever is wrong; the frontmatter is the "
         "one that decides what a session actually reads."
     )
+
+
+# --------------------------------------------------------------------------------------
+# A destructive revision cannot forget to ask for its snapshot (#566)
+# --------------------------------------------------------------------------------------
+
+#: The Alembic operations that make a revision unrecoverable by its own ``downgrade()``, so a
+#: revision performing one must carry ``needs_snapshot = True``
+#: (:data:`reaper.db.schema_gate.SNAPSHOT_ATTR`).
+#:
+#: **What this matcher accepts, written down before it shipped (rule 147).** It reads the AST of
+#: each revision and collects the attribute name of every call inside ``upgrade()``, so it sees
+#: ``op.drop_column(...)``, ``batch_op.drop_column(...)``, a call nested in an ``if``, and one
+#: reached through any receiver name at all. It does not see a drop spelled as raw
+#: ``op.execute(sa.text("ALTER TABLE ... DROP COLUMN ..."))``, which nothing in the tree does
+#: and which the population count below is what would surface.
+#:
+#: **Two operations are deliberately absent.** ``batch_alter_table`` is the context manager, not
+#: the change: 15 shipped revisions open one to ``add_column`` alone, so matching it would flag
+#: every additive revision and produce exactly the growing exclusion list CLAUDE.md warns about.
+#: ``drop_index`` and ``drop_constraint`` lose no rows and are recreated by their own
+#: ``downgrade()``. The collation hazard a rebuild carries is held by a behavioral test rather
+#: than by this list: ``test_migrations.TestAListNameIsUniqueWithoutRegardToCase`` migrates to
+#: head and asserts the constraint still refuses a case collision, which catches any revision
+#: that drops it, including one spelled in a form this matcher cannot read.
+_UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
+
+#: The revision files walked, pinned for rule 145's reason: a flag-shaped assertion cannot tell
+#: a revision that complies from one that dropped out of the walk. Bump the first with any new
+#: revision, the second only with one performing an operation above.
+_EXPECTED_REVISION_FILES = 25
+_EXPECTED_UNRECOVERABLE_REVISIONS = 4
+
+
+def _revision_modules() -> list[tuple[str, ast.Module]]:
+    versions = REPO / "alembic" / "versions"
+    return [
+        (path.name, ast.parse(path.read_text(encoding="utf-8")))
+        for path in sorted(versions.glob("*.py"))
+    ]
+
+
+def _asks_for_a_snapshot(tree: ast.Module) -> bool:
+    """Whether the module assigns ``needs_snapshot = True`` at the top level.
+
+    Read the way :func:`reaper.db.schema_gate.needs_snapshot` reads it, as a truthy module
+    attribute, so this gate cannot pass a spelling the production walk would not see.
+    """
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+        if "needs_snapshot" in names:
+            return bool(getattr(node.value, "value", False))
+    return False
+
+
+def _unrecoverable_ops(tree: ast.Module) -> set[str]:
+    """The operations from :data:`_UNRECOVERABLE_OPS` this revision's ``upgrade()`` calls."""
+    upgrade = next(
+        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "upgrade"), None
+    )
+    if upgrade is None:
+        return set()
+    called = {
+        node.func.attr
+        for node in ast.walk(upgrade)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    return called & _UNRECOVERABLE_OPS
+
+
+def test_a_revision_that_cannot_be_undone_asks_for_a_snapshot() -> None:
+    """The marker is the whole mechanism, and prose cannot bind the author who never read it.
+
+    ``preflight`` copies the database aside before ``alembic upgrade head`` only for a pending
+    revision carrying ``needs_snapshot = True`` (#566). Nothing about writing a ``drop_column``
+    suggests the attribute exists, and a revision that omits it produces a green, silent,
+    unprotected upgrade: "no snapshot needed" is exactly what an ordinary additive boot looks
+    like, so no other test can tell the two apart (rule 38/117).
+
+    So the obligation is a gate rather than a sentence in rule 148, per CLAUDE.md: write the
+    gate instead, when the violation is greppable.
+    """
+    missing = [
+        f"  {name} calls {', '.join(sorted(ops))} and has no `needs_snapshot = True`"
+        for name, tree in _revision_modules()
+        if (ops := _unrecoverable_ops(tree)) and not _asks_for_a_snapshot(tree)
+    ]
+    assert not missing, (
+        "a revision performs an operation its own downgrade() cannot undo and does not ask "
+        "for a snapshot of the database first:\n" + "\n".join(missing) + "\n\n"
+        "Add `needs_snapshot = True` beside `revision`, with a line saying what it loses. "
+        "`reaper.db.schema_gate.needs_snapshot` reads it, and `reaper.services.backup."
+        "snapshot_before_migration` writes the copy."
+    )
+
+
+def test_the_revision_walk_still_sees_every_revision() -> None:
+    """Rule 145: the gate above passes vacuously on a walk that collected nothing.
+
+    Both populations are pinned, because they answer different questions. The first says the
+    walk still reaches ``alembic/versions/``; the second says the matcher still selects the
+    revisions it selected, so a rename in Alembic's API (or a drop spelled as raw SQL, which
+    the matcher cannot read) shows up as a count that fell rather than as a quiet pass.
+    """
+    modules = _revision_modules()
+    assert len(modules) == _EXPECTED_REVISION_FILES, (
+        f"expected {_EXPECTED_REVISION_FILES} revision files under alembic/versions/, walked "
+        f"{len(modules)}. Bump the constant if you added one."
+    )
+    selected = [name for name, tree in modules if _unrecoverable_ops(tree)]
+    assert len(selected) == _EXPECTED_UNRECOVERABLE_REVISIONS, (
+        f"expected {_EXPECTED_UNRECOVERABLE_REVISIONS} revisions performing an operation in "
+        f"_UNRECOVERABLE_OPS, matched {len(selected)}: {selected}.\n\n"
+        "A count that FELL means the matcher stopped reading a spelling the tree uses, which "
+        "is worse than a red gate: it reads as every revision complying."
+    )

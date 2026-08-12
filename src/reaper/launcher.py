@@ -554,10 +554,11 @@ def main() -> None:
     # and that first call must see the data dir chosen above.
     from reaper.preflight import main as preflight
 
-    # `_say`, not preflight's own stderr write: its three fatal sentences are the ones a
+    # `_say`, not preflight's own stderr write: its four fatal sentences are the ones a
     # double-clicked build has to see, and a windowed PyInstaller build's stderr is
     # `os.devnull` (#622). The branch's schema-gate refusal is the third of them, and it is
-    # the one a `dev`-side fix would have left invisible.
+    # the one a `dev`-side fix would have left invisible; the fourth is a pre-migration
+    # snapshot that could not be written (#566).
     code = preflight(lambda message: _say(message, frozen=frozen))
     if code:
         raise SystemExit(code)
@@ -565,7 +566,10 @@ def main() -> None:
     # Preflight above is also what refuses a database this build cannot serve
     # (``reaper.db.schema_gate.refusal``, called at the end of ``preflight.main``). It has
     # to be that call and not one here: it runs after preflight's staged-restore swap, and
-    # restoring a backup is one of the two ways out the refusal names.
+    # restoring a backup is one of the two ways out the refusal names. The snapshot the
+    # line below may need is taken there too, for the same reason and one line later
+    # (``backup.snapshot_before_migration``, #566) -- so this call site needs nothing, and
+    # the container entrypoint and ``scripts/dev-local.sh`` need nothing either.
     _migrate(root)
     if _browser_wanted(settled, frozen=frozen):
         _open_browser_when_up(port)
