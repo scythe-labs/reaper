@@ -298,8 +298,10 @@ answer: a test with something to tell you must fail, not warn.
 **Asking whether CI is green** is far cheaper than reading a log: `gh pr checks <n>` lists one
 row per job with its conclusion, and it is the merge gate above. **Which jobs appear depends on
 what the commit touched.** `ci.yml`'s `changes` job classifies each changed path into one of
-three lanes, first match winning: `docs/*`, `.claude/*` and `*.md` are prose, `manual/*` and
-`website/*` are the site, everything else is code. Every other job in that file reads the
+three lanes, first match winning: `manual/*` and `website/*` are the site, `docs/*`, `.claude/*`
+and `*.md` are prose, everything else is code. The site arm is first because `*.md` matches at
+any depth, so with prose first a `manual/` page never reached the site build (#589). Every other
+job in that file reads the
 verdict rather than filtering itself, so a prose-only commit runs `hygiene` alone, a code-only
 commit runs `check`, `frontend` and `docker`, and a commit spanning lanes runs each lane it
 touched — which is not the same as everything.

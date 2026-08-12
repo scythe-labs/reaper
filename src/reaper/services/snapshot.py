@@ -1080,7 +1080,6 @@ async def scan(
             policy=movie_policy,
             now=now,
             window_days=movie_window,
-            grace_days=grace_days,
             display=Display(
                 year=item.year,
                 summary=item.summary,
@@ -1181,7 +1180,6 @@ async def scan(
             policy=tv_policy,
             now=now,
             window_days=tv_window,
-            grace_days=grace_days,
             display=Display(
                 year=judgment.year,
                 summary=judgment.summary,
@@ -1489,7 +1487,6 @@ def _judge_item(
     policy: PolicyBody,
     now: datetime,
     window_days: int = 365,
-    grace_days: int = 14,
     display: Display = _NO_DISPLAY,
     matched_by: identity.MatchedBy | None = None,
     match_detail: str | None = None,

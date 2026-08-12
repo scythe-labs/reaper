@@ -2,8 +2,11 @@
 #
 # Publishes the manual to GitHub Pages.
 #
-# `ci.yml`'s `site` job already builds this tree on every pull request, so by the time anything
-# reaches here it has compiled once. This workflow exists to publish, not to check.
+# `ci.yml`'s `site` job builds `manual/` and `website/` on every pull request that touches
+# either, so a page reaching here has compiled once. This workflow exists to publish, not to
+# check. The `paths` list below is wider than that by one entry: editing this file fires this
+# workflow, and `ci.yml` classifies it as `code`, so `site` skips and nothing rebuilds the site
+# for it. That is fine, since the pages did not change.
 #
 # It publishes from `dev`, not from `main`, because `dev` is what operators are running: the
 # README tells them to pull `:dev` and says `:latest` follows `main` "once a release is cut",

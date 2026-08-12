@@ -59,6 +59,24 @@ async def gather_reaped(*aws: Awaitable[Any]) -> list[Any]:
         raise
 
 
+def report_background_failure(task: asyncio.Task[Any]) -> None:
+    """Log why a detached task died, instead of letting asyncio mumble at GC time (rule 102).
+
+    A task nobody awaits keeps its exception until it is garbage collected, and then all
+    the operator gets is a bare "Task exception was never retrieved" with no name attached
+    (PR-12). Cancellation is the normal shutdown path and says nothing.
+
+    Lives here rather than in ``main``, which imports the api routers: two of the three
+    callers are routers, so importing it from ``main`` would close a cycle. Pass ``name=``
+    to ``create_task``, or the log names the task ``Task-7``.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("background_task_failed", task=task.get_name(), error=str(exc))
+
+
 def per_loop_lock() -> Callable[[], asyncio.Lock]:
     """A getter returning this event loop's lock, created on first use.
 

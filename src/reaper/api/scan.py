@@ -22,6 +22,7 @@ import structlog
 from fastapi import APIRouter, FastAPI, Request
 from pydantic import BaseModel
 
+from reaper.aio import report_background_failure
 from reaper.api import tags as api_tags
 from reaper.api.deps import state_singleton
 from reaper.clients.base import IntegrationError
@@ -189,7 +190,13 @@ def launch_scan(app: FastAPI) -> ScanStatus:
 
     # Held on app.state so the task is not garbage-collected mid-run, and can be canceled on
     # shutdown. It is deliberately NOT tied to any request's lifetime.
-    app.state.scan_task = asyncio.create_task(run())
+    task = asyncio.create_task(run(), name="scan")
+    # `run` catches Exception itself, so what is left for the callback is a raise from the
+    # `finally` arm above and any non-Exception BaseException. `status.running = False` lives
+    # in that arm, so a failure there leaves the UI polling a scan that has already stopped
+    # and nothing else would say why (rule 102).
+    task.add_done_callback(report_background_failure)
+    app.state.scan_task = task
     return status
 
 

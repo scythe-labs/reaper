@@ -146,13 +146,18 @@ jobs:
           while IFS= read -r f; do
             [ -n "${f}" ] || continue
             case "${f}" in
-              docs/*|.claude/*|*.md)   prose=true ;;
               # The manual's words and the site that renders them. Neither ships in the
               # image, so a docs-only commit does not need the backend, frontend or
-              # docker lanes -- but it DOES need a lane of its own, or an .mdx that fails
-              # to compile lands with nothing having tried to build it. Note `*.md` above
-              # does not match `.mdx`, which is why these are listed rather than assumed.
+              # docker lanes -- but it DOES need a lane of its own, or a page that fails
+              # to compile lands with nothing having tried to build it.
+              #
+              # First arm, ahead of prose, because `*.md` below matches at any depth: with
+              # prose first, `manual/guide.md` classified as prose and the `site` job never
+              # ran, while docs-deploy.yml (which filters on `manual/**` with no ordering)
+              # published it anyway (#589). The tree happens to be all `.mdx` today, which
+              # `*.md` does not match, so the hole was latent rather than firing.
               manual/*|website/*)      site=true  ;;
+              docs/*|.claude/*|*.md)   prose=true ;;
               *)                       code=true  ;;
             esac
           done <<< "${files}"

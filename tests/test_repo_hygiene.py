@@ -2177,6 +2177,11 @@ _CODEQL_LANGUAGES = {
 #: What ``codeql.yml`` declines to scan, which is ``ci.yml``'s prose lane written in glob rather
 #: than in a shell ``case``. The two spellings cannot be diffed, so they are pinned instead and
 #: the failure below names the other file (rule 144).
+#:
+#: The arms agree on spelling and not on reach: ``ci.yml`` classifies ``manual/`` and
+#: ``website/`` ahead of its prose arm (#589), so a ``.md`` there is site rather than prose,
+#: while ``**/*.md`` here still covers it. Nothing rides on that, since neither extractor reads
+#: markdown.
 _CODEQL_PATHS_IGNORE = ["docs/**", ".claude/**", "**/*.md"]
 
 
@@ -3319,8 +3324,11 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # one place its live complaint was still announced. Same `{pw.length} so far` inside a live
 # region on every keystroke, on the form that sets the key arming deletion; the sibling above has
 # been standing since #394 and this copy was never swept (rule 72).
+# Then 37: the policy editor's `savebar` half of `REPAIR_NOTICES`, the twin of the `top` half two
+# entries up. Same repair, carried by the same fetch, and it interrupted when the save bar
+# appeared while `top` stayed silent (#718, rule 72).
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 36
+_EXPECTED_STANDING = 37
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
