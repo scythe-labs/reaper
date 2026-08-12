@@ -215,6 +215,12 @@ class ExternalIds:
         out under an id no list row carries (#709).
         ``test_repo_hygiene.test_every_external_id_read_goes_through_the_sentinel_filter``
         parses ``src/`` and fails on a tenth.
+
+        Two reads are exempt, in writing rather than by omission: ``executor.py``'s Radarr
+        import-exclusion pair reads ``tmdbId`` raw on both sides of a comparison against the
+        same instance, and the send already fails closed on ``tmdb_id == 0``. They are the
+        two entries the gate counts, so a third cannot inherit the exemption. Someone
+        grepping to check the sentence above finds them and can tell they are deliberate.
         """
         return cls(
             imdb=_clean_imdb(imdb),

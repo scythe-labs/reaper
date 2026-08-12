@@ -90,8 +90,12 @@ async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
 
 
 def _top250_payload(count: int = 250) -> list[dict[str, object]]:
+    # Numbered from 1, not 0: `tt0000000` is the "unknown id" sentinel every writer now filters
+    # (`identity._clean_imdb`), so a fixture starting at zero hands its first entry an id that
+    # is stored under nothing. Sibling of the same fixture in `test_lists.py` (#709).
     return [
-        {"ImdbId": f"tt{i:07d}", "TmdbId": 1000 + i, "Title": f"Film {i}"} for i in range(count)
+        {"ImdbId": f"tt{i:07d}", "TmdbId": 1000 + i, "Title": f"Film {i}"}
+        for i in range(1, count + 1)
     ]
 
 

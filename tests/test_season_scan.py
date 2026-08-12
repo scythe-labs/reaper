@@ -1688,6 +1688,95 @@ class TestGatherEndToEnd:
             assert isinstance(judgment.facts.is_whitelisted, Known)
             assert judgment.facts.is_whitelisted.value is True
 
+    async def test_sonarrs_unknown_id_sentinel_does_not_shadow_the_one_plex_matched(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Sonarr's ``tt0000000`` "unknown" sentinel must not stand in for the imdb id Plex
+        matched. A sentinel is truthy, so before the ids were cleaned at the write the show's
+        membership lookup ran under an id no keep row carries, and the row stored under the
+        real one was not found. The show owns every season beneath it, so one shadowed id
+        un-protects the whole series at once, which is why this is pinned end to end rather
+        than left to the hygiene gate: that gate reads the source for an ``ExternalIds.of``
+        call and would stay green if the lookup were re-pointed at the raw payload.
+
+        The keep row is stored under imdb ALONE on purpose. Give it a tvdb id as well and the
+        lookup finds it by tvdb whatever the imdb arm does, and the test stops discriminating.
+        """
+        series = [
+            {
+                "id": 91,
+                "title": "Sentinel Show",
+                "year": 2019,
+                "status": "ended",
+                "ended": True,
+                "tvdbId": 5150,
+                "imdbId": "tt0000000",  # the sentinel, not a real id
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        tautulli = show_library(
+            rows=[
+                {"rating_key": 900, "title": "Sentinel Show", "year": 2019, "added_at": "1000000"}
+            ],
+            children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
+        )
+        plex = _FakePlexGuids(
+            {
+                900: identity.PlexItem(
+                    rating_key=900,
+                    title="Sentinel Show",
+                    year=2019,
+                    added_at=None,
+                    ids=identity.ExternalIds.of(tvdb=5150, imdb="tt0000042"),
+                    content_rating="TV-14",
+                    runtime_minutes=45,
+                    ratings=(),
+                )
+            },
+            seasons=_season_rows(
+                {900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]}
+            ),
+        )
+        keep_row = lists.Membership(
+            slug="arr-tag-keep",
+            display_name='Sonarr tag "reaper-keep"',
+            mode=lists.ListMode.HARD,
+            kind=lists.ListKind.WHITELIST,
+            rank=None,
+        )
+        index = lists.MembershipIndex(
+            _by_imdb={"tt0000042": ((0, "tv", keep_row),)},
+            _by_tmdb={},
+            _by_tvdb={},
+            _by_plex_key={},
+        )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            plex=plex,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            membership_index=index,
+            watch_marks={},
+        )
+
+        assert judgments, "the show's seasons must still be gathered"
+        for judgment in judgments:
+            assert isinstance(judgment.facts.is_whitelisted, Known)
+            assert judgment.facts.is_whitelisted.value is True, (
+                "the sentinel shadowed the imdb id Plex matched, so the keep row stored under "
+                "the real id was not found and every season of the show lost its protection"
+            )
+
     async def test_an_unmatched_series_yields_unresolved_seasons(
         self, cache_engine: AsyncEngine
     ) -> None:

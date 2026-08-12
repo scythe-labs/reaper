@@ -477,6 +477,11 @@ _NOT_AN_IDENTITY_READ = {
     ("services/executor.py", "tmdbId"),
 }
 
+#: How many reads `_NOT_AN_IDENTITY_READ` actually waves through. The set is keyed on
+#: (file, key) and cannot bound a count on its own, so this is what makes a third read in an
+#: already-named file fail rather than inherit the exemption.
+EXEMPTED_ID_KEY_READS = 2
+
 
 def _is_external_ids_of(func: ast.expr) -> bool:
     """Is this call ``ExternalIds.of(...)``, however the module spells the import?"""
@@ -520,12 +525,16 @@ def test_every_external_id_read_goes_through_the_sentinel_filter() -> None:
     the filter belongs at the write and this gate is what keeps a tenth site from arriving.
     """
     scanned = 0
+    exempted = 0
     offenders: list[str] = []
     for path in sorted(SRC.rglob("*.py")):
         rel = path.relative_to(SRC).as_posix()
         for lineno, key, guarded in _id_key_reads(path.read_text(encoding="utf-8")):
             scanned += 1
-            if guarded or (rel, key) in _NOT_AN_IDENTITY_READ:
+            if guarded:
+                continue
+            if (rel, key) in _NOT_AN_IDENTITY_READ:
+                exempted += 1
                 continue
             offenders.append(f"src/reaper/{rel}:{lineno} reads {key!r} raw")
     assert not offenders, "read external ids through identity.ExternalIds.of:\n" + "\n".join(
@@ -535,6 +544,16 @@ def test_every_external_id_read_goes_through_the_sentinel_filter() -> None:
         f"src/ holds {scanned} external-id key literals, not {ID_PAYLOAD_KEY_READS}. Reconcile "
         "the count by hand and update ID_PAYLOAD_KEY_READS: a ban with no count cannot tell a "
         "compliant reader from one that dropped out of the walk."
+    )
+    # The exemption is keyed on (file, key), so it waves through EVERY `tmdbId` read in
+    # `executor.py`, not the two that were classified. Counting them is what stops a third
+    # arriving unexamined in the one module that sends the delete: without this, the only
+    # signal is the total above, and its message asks the author to reconcile the count by
+    # hand -- which they would do, landing a raw id read on the send path.
+    assert exempted == EXEMPTED_ID_KEY_READS, (
+        f"{exempted} external-id reads are exempt, not {EXEMPTED_ID_KEY_READS}. A new one in a "
+        "file already named in _NOT_AN_IDENTITY_READ is waved through by the key alone, so it "
+        "is classified here in writing or it goes through identity.ExternalIds.of."
     )
 
 
