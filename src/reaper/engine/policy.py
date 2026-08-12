@@ -67,8 +67,19 @@ SCHEMA_VERSION = 3
 off the RATING_FLOOR gate row into ``keep_rating_rules``
 (see ``policy_migrations.recover_rating_rules``, which backfills a body written before it)."""
 
-SCORER_VERSION = 2
+SCORER_VERSION = 3
 """Bumped when the SCORER changes meaning, not when the schema gains a field.
+
+3 marks the build where ``fields._compare`` folds a ``contains`` target the way ``eq`` and
+``in`` already did, so a stored text rule can start matching text it used to miss (#657).
+Neither gate below asked for this bump and both were run: the recorded surface holds the
+operator's vocabulary, not the comparison behind it, and no vector in the lab's fixture
+carries a ``contains`` rule, so 0 of 880 baselines moved. What decided it is that a rule
+which starts matching moves an item in whichever direction it was written for. ``on_list``
+is protect-only, and ``genre`` and ``quality`` take ``contains`` on both lanes, so a plan
+approved before the upgrade can execute over an item this build protects, and can carry a
+score this build would have pushed higher.
+
 Both are inside the policy hash: an item scored under a different scorer was not
 approved under this one.
 

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from structlog.testing import capture_logs
 
 from reaper.config import RuntimeSafety, Settings, parse_instance_seeds
 from reaper.crypto import SecretBox
@@ -56,6 +57,99 @@ class TestSeedParsing:
         seeds = parse_instance_seeds({"REAPER_RADARR_HD_URL": "https://radarr.example.net"})
         assert seeds == []
 
+    def test_a_missing_url_says_which_variable_to_set(self) -> None:
+        """A slot with no URL is the one case where the operator has clearly tried to set
+        something up and Reaper never asked for the gap. The skip used to say nothing at
+        all, so they got no instance and no reason (#658)."""
+        with capture_logs() as logs:
+            parse_instance_seeds({"REAPER_RADARR_HD_API_KEY": "key-hd"})
+
+        assert [entry["event"] for entry in logs] == ["seed.incomplete"]
+        assert "REAPER_RADARR_HD_URL" in logs[0]["detail"]
+
+    def test_a_missing_api_key_stays_silent(self) -> None:
+        """``seed.complete`` tells the operator the REAPER_*_API_KEY variables can be
+        removed once the import lands, so a URL left behind with no key is the steady state
+        of an install that worked. Warning there would call a running service broken on
+        every boot, and seeding runs on every start."""
+        with capture_logs() as logs:
+            assert parse_instance_seeds({"REAPER_RADARR_HD_URL": "https://radarr.test"}) == []
+
+        assert logs == []
+
+    def test_a_complete_group_says_nothing(self) -> None:
+        """The other arm, so the warning above cannot pass by always firing (rule 118)."""
+        with capture_logs() as logs:
+            assert parse_instance_seeds(ENV)
+
+        assert logs == []
+
+    def test_two_spellings_of_one_slot_are_one_instance(self) -> None:
+        """``_SEED_PATTERN`` is IGNORECASE, so the grouping key has to absorb case the way
+        ``kind`` and ``field`` already do. Grouped as typed, these are two half-configured
+        instances and both are skipped silently: the operator gets nothing (#658)."""
+        seeds = parse_instance_seeds(
+            {
+                "REAPER_SONARR_Main_URL": "https://sonarr.example.net",
+                "REAPER_SONARR_main_API_KEY": "key-main",
+            }
+        )
+
+        assert len(seeds) == 1
+        assert seeds[0].api_key.get_secret_value() == "key-main"
+
+    def test_the_later_spelling_of_a_field_supplies_its_value(self) -> None:
+        """How an environment variable reaches this function after the dotenv file:
+        ``configured_env`` merges the files first, so the environment's key is the later
+        one. Pinned as the ordering rule it is, because this function is handed one mapping
+        and cannot see where a key came from."""
+        seeds = parse_instance_seeds(
+            {
+                "REAPER_SONARR_Main_URL": "https://first.example.net",
+                "REAPER_SONARR_Main_API_KEY": "key-main",
+                "REAPER_SONARR_MAIN_URL": "https://second.example.net",
+            }
+        )
+
+        assert [s.base_url for s in seeds] == ["https://second.example.net"]
+
+    def test_the_display_name_keeps_the_spelling_as_typed(self) -> None:
+        """Folding the grouping key must not rename an instance an earlier boot already
+        seeded: ``seed_instances`` matches ``Instance.name`` exactly, so a slot stored as
+        ``main`` and re-read as ``MAIN`` imports a second row for one server."""
+        seeds = parse_instance_seeds(
+            {
+                "REAPER_SONARR_main_URL": "https://sonarr.example.net",
+                "REAPER_SONARR_main_API_KEY": "key-main",
+            }
+        )
+
+        assert [s.name for s in seeds] == ["main"]
+
+    def test_the_first_spelling_is_the_one_kept(self) -> None:
+        """Two spellings have no third answer, so the earlier key wins, which is the one
+        the file wrote before an environment override was added beside it."""
+        seeds = parse_instance_seeds(
+            {
+                "REAPER_SONARR_Main_URL": "https://sonarr.example.net",
+                "REAPER_SONARR_MAIN_API_KEY": "key-main",
+            }
+        )
+
+        assert [s.name for s in seeds] == ["Main"]
+
+    def test_an_explicit_name_is_taken_exactly_as_typed(self) -> None:
+        """The fold reaches the grouping key, never the operator's chosen name."""
+        seeds = parse_instance_seeds(
+            {
+                "REAPER_SONARR_main_URL": "https://sonarr.example.net",
+                "REAPER_SONARR_main_API_KEY": "key-main",
+                "REAPER_SONARR_MAIN_NAME": "Main library",
+            }
+        )
+
+        assert [s.name for s in seeds] == ["Main library"]
+
     def test_unrelated_env_vars_are_ignored(self) -> None:
         kinds = {s.kind for s in parse_instance_seeds(ENV)}
         assert kinds <= {"sonarr", "radarr", "tautulli", "seerr"}
@@ -85,6 +179,29 @@ class TestSeeding:
 
         assert (imported, skipped) == (0, 3)
         assert len((await session.execute(select(Instance))).scalars().all()) == 3
+
+    async def test_re_reading_a_lowercase_slot_does_not_import_a_second_row(
+        self, session: AsyncSession
+    ) -> None:
+        """The upgrade path, and why the display name keeps the spelling as typed.
+
+        ``seed_instances`` matches ``Instance.name`` exactly and the column is
+        BINARY-collated, so an instance seeded as ``hd`` and re-read as ``HD`` reads as a
+        new instance. Two rows point at one server, every title on it is enumerated twice,
+        and the second row carries none of the operator's per-instance settings.
+        """
+        box = SecretBox("test-key")
+        env = {
+            "REAPER_SONARR_hd_URL": "https://sonarr.example.net",
+            "REAPER_SONARR_hd_API_KEY": "key-hd",
+        }
+
+        await seed_instances(session, parse_instance_seeds(env), box)
+        imported, skipped = await seed_instances(session, parse_instance_seeds(env), box)
+
+        assert (imported, skipped) == (0, 1)
+        rows = (await session.execute(select(Instance))).scalars().all()
+        assert [r.name for r in rows] == ["hd"]
 
     async def test_a_second_tautulli_seed_is_skipped_not_imported(
         self, session: AsyncSession

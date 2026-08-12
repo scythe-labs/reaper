@@ -269,6 +269,43 @@ class TestTextMatchingIsForgiving:
         cond = Condition(field="genre", op=Op.IN, value="Anime, Documentary")
         assert evaluate(cond, facts).matched is False
 
+    @pytest.mark.parametrize("typed", ["Kids ", " Kids", "kids ", "KIDS"])
+    @pytest.mark.parametrize("op", [Op.EQ, Op.IN, Op.CONTAINS])
+    def test_every_text_operator_reads_one_stored_list_name_the_same_way(
+        self, op: Op, typed: str
+    ) -> None:
+        """The three operators ``on_list`` offers agree, or the odd one out is a keep rule
+        that names a list and does not cover it.
+
+        ``contains`` used to lower-case without trimming while its two siblings trimmed and
+        case-folded, so ``contains "Kids "`` missed the list named ``Kids`` (#657). Missing
+        is not neutral here: ``on_list`` is protect-only, so the item stays in the condemn
+        lane while Policy still shows the rule as live. The UI trims the box, the API key
+        lane does not, and the trailing space is what an editor's autocomplete leaves
+        behind.
+        """
+        facts = _facts(on_lists=Known(value="Kids", source="lists"))
+
+        assert evaluate(Condition(field="on_list", op=op, value=typed), facts).matched is True
+
+    @pytest.mark.parametrize("op", [Op.EQ, Op.IN, Op.CONTAINS])
+    def test_every_text_operator_folds_past_ascii(self, op: Op) -> None:
+        """The narrower half of #657, reachable from the trimmed UI box too:
+        ``str.lower`` leaves ``ß`` alone where ``str.casefold`` maps it to ``ss``, so only
+        ``contains`` used to miss."""
+        facts = _facts(on_lists=Known(value="Straße", source="lists"))
+
+        assert evaluate(Condition(field="on_list", op=op, value="STRASSE"), facts).matched is True
+
+    def test_contains_still_misses_a_name_that_is_not_there(self) -> None:
+        """The other arm, so the two above cannot pass by ``contains`` matching everything
+        (rule 118). ``fold`` trims the haystack as well, and that must not make a needle
+        match a list it is not part of."""
+        facts = _facts(on_lists=Known(value="Kids", source="lists"))
+
+        cond = Condition(field="on_list", op=Op.CONTAINS, value="Holiday")
+        assert evaluate(cond, facts).matched is False
+
 
 class TestAnExplanationSaysWhatItFound:
     """The why-panel quotes these sentences under "Kept by your rule:" and "Your rule
