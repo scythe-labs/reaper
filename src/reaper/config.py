@@ -30,9 +30,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+import structlog
 from dotenv import dotenv_values
 from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+log = structlog.get_logger(__name__)
 
 # REAPER_SONARR_1_URL / _API_KEY / _NAME  ->  ("sonarr", "1", "URL")
 _SEED_PATTERN = re.compile(
@@ -331,20 +334,51 @@ def parse_instance_seeds(env: dict[str, str]) -> list[InstanceSeed]:
 
     The slot is free-form and becomes the instance's display name unless an
     explicit ``_NAME`` is given. A group missing a URL or an API key is skipped
-    rather than half-imported.
+    rather than half-imported, and the skip says so in the log.
+
+    **Case is not part of the slot.** ``_SEED_PATTERN`` carries ``re.IGNORECASE``, so the
+    grouping key has to absorb what the regex absorbed, the way ``kind`` and ``field``
+    already do. Grouped as typed, ``REAPER_SONARR_Main_URL`` and
+    ``REAPER_SONARR_main_API_KEY`` were two half-configured instances and both were
+    skipped (#658). It also decides which value wins: ``configured_env`` merges the dotenv
+    file and ``os.environ`` keyed on the exact string, so two spellings of one variable
+    arrive as two keys, and the environment's copy is merged last. Folding here is what
+    puts the pair back together, so the override lands on the file's value instead of
+    sitting beside it.
+
+    Folding is upward, so the display name of a lowercase slot reads uppercase. Every
+    example Reaper ships spells the slot in caps, and ``_NAME`` sets it outright.
     """
     groups: dict[tuple[str, str], dict[str, str]] = {}
     for raw_key, value in env.items():
         match = _SEED_PATTERN.match(raw_key)
         if not match or not value.strip():
             continue
-        kind, slot, field = match.group(1).lower(), match.group(2), match.group(3).upper()
+        kind, slot, field = (
+            match.group(1).lower(),
+            match.group(2).upper(),
+            match.group(3).upper(),
+        )
         groups.setdefault((kind, slot), {})[field] = value.strip().strip("\"'")
 
     seeds: list[InstanceSeed] = []
     for (kind, slot), fields in sorted(groups.items()):
         url, api_key = fields.get("URL"), fields.get("API_KEY")
         if not url or not api_key:
+            # Something was declared for this slot, so the operator meant to configure it.
+            # Naming the variables that are missing costs one line, where the silent
+            # `continue` left them with no instance and no reason.
+            absent = [
+                f"REAPER_{kind.upper()}_{slot}_{name}"
+                for name in ("URL", "API_KEY")
+                if not fields.get(name)
+            ]
+            log.warning(
+                "seed.incomplete",
+                kind=kind,
+                slot=slot,
+                detail=f"This service was not added. Set {' and '.join(absent)}, then restart.",
+            )
             continue
         seeds.append(
             InstanceSeed(

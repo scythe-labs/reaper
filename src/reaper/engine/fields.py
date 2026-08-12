@@ -854,7 +854,13 @@ def _compare(op: Op, value: object, target: object, *, multi: bool = False) -> b
                 return not targets.isdisjoint(_split_csv(value))
             return fold(str(value)) in targets
         case Op.CONTAINS:
-            return isinstance(target, str) and target.lower() in str(value).lower()
+            # Folded on both sides, the same as eq and in above. `.lower()` left the
+            # target's leading and trailing spaces in and case-folded only ASCII, so
+            # `on_list contains "Kids "` stopped matching the list named `Kids` and
+            # `contains "STRASSE"` stopped matching `Straße`. `on_list` is protect-only,
+            # so a rule that stops matching leaves the item in the condemn lane while
+            # still reading as a live protection on the panel.
+            return isinstance(target, str) and fold(target) in fold(str(value))
 
 
 def _num(value: object) -> float:

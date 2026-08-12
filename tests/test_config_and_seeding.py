@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from structlog.testing import capture_logs
 
 from reaper.config import RuntimeSafety, Settings, parse_instance_seeds
 from reaper.crypto import SecretBox
@@ -55,6 +56,83 @@ class TestSeedParsing:
     def test_a_group_missing_its_api_key_is_skipped_not_half_imported(self) -> None:
         seeds = parse_instance_seeds({"REAPER_RADARR_HD_URL": "https://radarr.example.net"})
         assert seeds == []
+
+    def test_the_skip_names_the_variable_that_is_missing(self) -> None:
+        """A half-configured slot is the one case where the operator has clearly tried to
+        set something up, and the skip used to say nothing at all. They got no instance and
+        no reason (#658)."""
+        with capture_logs() as logs:
+            parse_instance_seeds({"REAPER_RADARR_HD_URL": "https://radarr.example.net"})
+
+        assert [entry["event"] for entry in logs] == ["seed.incomplete"]
+        assert "REAPER_RADARR_HD_API_KEY" in logs[0]["detail"]
+        assert "REAPER_RADARR_HD_URL" not in logs[0]["detail"]
+
+    def test_a_complete_group_says_nothing(self) -> None:
+        """The other arm, so the assertion above cannot pass on a warning that always
+        fires (rule 118)."""
+        with capture_logs() as logs:
+            assert parse_instance_seeds(ENV)
+
+        assert logs == []
+
+    def test_two_spellings_of_one_slot_are_one_instance(self) -> None:
+        """``_SEED_PATTERN`` is IGNORECASE, so the grouping key has to absorb case the way
+        ``kind`` and ``field`` already do. Grouped as typed, these are two half-configured
+        instances and both are skipped silently: the operator gets nothing (#658)."""
+        seeds = parse_instance_seeds(
+            {
+                "REAPER_SONARR_Main_URL": "https://sonarr.example.net",
+                "REAPER_SONARR_main_API_KEY": "key-main",
+            }
+        )
+
+        assert len(seeds) == 1
+        assert seeds[0].api_key.get_secret_value() == "key-main"
+
+    def test_an_environment_override_spelled_differently_wins_over_the_file(self) -> None:
+        """The reachable shape, and the reason the fold matters. ``configured_env`` merges
+        the dotenv file and ``os.environ`` on the exact string and puts the environment
+        last, so a compose ``environment:`` block and a ``.env`` file that disagree about
+        the slot's case arrive as two keys. Ungrouped, the override was dropped and the
+        file's URL was seeded."""
+        merged = {
+            "REAPER_SONARR_Main_URL": "https://from-the-file.example.net",
+            "REAPER_SONARR_Main_API_KEY": "key-from-the-file",
+            "REAPER_SONARR_MAIN_URL": "https://from-the-environment.example.net",
+        }
+
+        seeds = parse_instance_seeds(merged)
+
+        assert len(seeds) == 1
+        assert seeds[0].base_url == "https://from-the-environment.example.net"
+        assert seeds[0].api_key.get_secret_value() == "key-from-the-file"
+
+    def test_the_display_name_of_a_folded_slot_is_the_folded_one(self) -> None:
+        """Folding is upward, and the slot is the display name when no ``_NAME`` is given,
+        so a lowercase slot now reads uppercase. Recorded rather than left to be noticed:
+        every example Reaper ships spells the slot in caps, and two spellings of one slot
+        have no third answer to pick between them."""
+        seeds = parse_instance_seeds(
+            {
+                "REAPER_SONARR_main_URL": "https://sonarr.example.net",
+                "REAPER_SONARR_main_API_KEY": "key-main",
+            }
+        )
+
+        assert [s.name for s in seeds] == ["MAIN"]
+
+    def test_an_explicit_name_is_taken_exactly_as_typed(self) -> None:
+        """The fold reaches the grouping key, not the operator's chosen name."""
+        seeds = parse_instance_seeds(
+            {
+                "REAPER_SONARR_main_URL": "https://sonarr.example.net",
+                "REAPER_SONARR_main_API_KEY": "key-main",
+                "REAPER_SONARR_MAIN_NAME": "Main library",
+            }
+        )
+
+        assert [s.name for s in seeds] == ["Main library"]
 
     def test_unrelated_env_vars_are_ignored(self) -> None:
         kinds = {s.kind for s in parse_instance_seeds(ENV)}
