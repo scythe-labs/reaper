@@ -122,10 +122,15 @@ KEEP_PRE_MIGRATION = 3
 #: returning non-zero before ``alembic upgrade head`` -- and it claims nothing about the state
 #: of the data, because the staged-restore swap runs above this and may already have replaced
 #: it (rule 126).
+#:
+#: It asks the operator to *check* the free space rather than telling them to make some. A full
+#: disk is the usual cause and not the only one: :class:`BackupTooLargeError` fires on a
+#: database past :data:`MAX_DB_BYTES` with all the space in the world, and "free up disk space"
+#: would then be an instruction that cannot work. Preflight appends the underlying error, which
+#: is where the exact cause is.
 SNAPSHOT_FAILED = (
-    "Reaper stopped. It couldn't save a backup of your database, and the update waiting to "
-    "run changes the database, so Reaper didn't run it. Free up disk space in Reaper's data "
-    "folder, then start Reaper again."
+    "Reaper stopped before an update that changes its database, because it couldn't save a "
+    "backup first. Check the free space in Reaper's data folder, then start Reaper again."
 )
 
 
