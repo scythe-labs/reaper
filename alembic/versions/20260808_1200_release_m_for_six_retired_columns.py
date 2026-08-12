@@ -65,6 +65,14 @@ down_revision: str | None = "d5e6f7a8b9c0"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Copy the database aside before this runs (`reaper.db.schema_gate.SNAPSHOT_ATTR`, #566).
+# Four `batch_alter_table` blocks are four full table copies taken from SQLite's reflection,
+# and the `list_config` comment below is the accident that shape produces: reflection does not
+# report a collation, so a rebuild that does not restate one drops it, and the table comes out
+# of the migration looking fine. Release M+1's `drop_column` sweep carries this too, and needs
+# it harder -- there, `downgrade()` recreates the column and cannot bring its data back.
+needs_snapshot = True
+
 
 def upgrade() -> None:
     with op.batch_alter_table("profile", schema=None) as batch_op:

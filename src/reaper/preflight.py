@@ -22,10 +22,17 @@ applied.** The container entrypoint does; so does ``scripts/dev-local.sh``, whic
 not, and the restore banner there asked for a restart that could not finish however
 many times it was given one (#381).
 
-Last, it refuses a database this build cannot serve (:mod:`reaper.db.schema_gate`).
+Last, it refuses a database this build cannot serve (:mod:`reaper.db.schema_gate`), and
+then copies the database aside when a pending migration asks for it
+(:func:`reaper.services.backup.snapshot_before_migration`, #566).
+
 Being the one thing every launcher runs *before* ``alembic upgrade head`` is exactly
-why the gate sits here: it is the last moment a rolled-back install can be stopped
-before anything is migrated.
+why both sit here. It is the last moment a rolled-back install can be stopped before
+anything is migrated, and the last moment a migration that its own ``downgrade()``
+cannot undo can be given something to fall back to. It is also why neither needed a
+line in the container entrypoint, the dev script, or the launcher: those three already
+run this, in this order, and a copy in each would be three places for one of them to
+fall out of.
 """
 
 from __future__ import annotations
@@ -43,11 +50,12 @@ def _to_stderr(message: str) -> None:
 
 
 def main(refuse: Callable[[str], None] = _to_stderr) -> int:
-    """Prepare the data folder, apply a staged restore, and refuse a schema this build
-    cannot serve. Zero means go.
+    """Prepare the data folder, apply a staged restore, refuse a schema this build cannot
+    serve, and snapshot the database when a pending migration asks for one. Zero means go.
 
-    ``refuse`` carries **the three fatal messages only** -- an unwritable data folder, a
-    restore swap that could not complete, and the schema gate's refusal -- so a caller that
+    ``refuse`` carries **the four fatal messages only** -- an unwritable data folder, a
+    restore swap that could not complete, the schema gate's refusal, and a pre-migration
+    snapshot that could not be written -- so a caller that
     can reach the operator some other way gets them. That is the frozen desktop builds:
     Windows is windowed and macOS is `LSUIElement`, PyInstaller leaves the streams `None`
     and `packaging/pyinstaller/entry.py` rebinds them to `os.devnull`, so a stderr-only
@@ -96,10 +104,27 @@ def main(refuse: Callable[[str], None] = _to_stderr) -> int:
     # Last, and after the swap above rather than before it: the database the migrations are
     # about to open is the RESTORED one, and restoring a backup is one of the two ways out
     # this refusal names. Checking first would refuse the boot that was about to fix itself.
-    message = schema_gate.refusal(schema_gate.stored_revision(settings.database_path))
+    revision = schema_gate.stored_revision(settings.database_path)
+    message = schema_gate.refusal(revision)
     if message:
         refuse(message)
         return 1
+    # And after the refusal, on the same revision it just judged: a database this build must
+    # not open is not one to spend minutes copying either. Nothing sits between here and
+    # `alembic upgrade head` in any of the three launchers, so this is the last moment a
+    # destructive revision can be given something to fall back to (#566).
+    if schema_gate.needs_snapshot(revision):
+        try:
+            path = backup.snapshot_before_migration(settings, revision)
+        except Exception as exc:
+            # Fatal, unlike the two sweeps above. A migration that its own `downgrade()`
+            # cannot undo must not run unprotected, so a full disk stops the boot instead.
+            refuse(f"{backup.SNAPSHOT_FAILED}\n\nOriginal error: {exc}")
+            return 1
+        sys.stderr.write(
+            f"reaper: saved a backup before updating the database: "
+            f"data/{backup.PRE_MIGRATION_DIR}/{path.name}\n"
+        )
     return 0
 
 

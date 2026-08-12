@@ -255,7 +255,7 @@ def test_preflight_prints_message_and_returns_one(
     assert captured.out == ""
 
 
-class TestTheThreeFatalMessagesReachTheCaller:
+class TestTheFourFatalMessagesReachTheCaller:
     """A frozen desktop build's operator sees a refusal, or sees nothing at all (#622).
 
     Windows is windowed and macOS is `LSUIElement`, PyInstaller leaves the streams `None`,
@@ -264,9 +264,17 @@ class TestTheThreeFatalMessagesReachTheCaller:
     closes with no window, no dialog and no message. `preflight.main` returned an int and
     kept its sentence to itself, so the launcher had nothing to hand `_say`.
 
-    **Three fatal messages ride this path, not the two the issue names.** The third is the
+    **Three fatal messages rode this path, not the two the issue names.** The third is the
     schema gate's refusal, which `audit/simplification-plan` added, and it has exactly the
     same shape. A fix written against `dev` would have covered two and left it invisible.
+
+    **The fourth is a pre-migration snapshot that could not be written** (#566), and its
+    test is not here: it needs a database migrated to a real revision, so it lives with the
+    rest of that feature, as
+    `test_pre_migration_snapshot.TestPreflightRefusesRatherThanMigrateUnprotected
+    ::test_a_snapshot_that_cannot_be_written_stops_the_boot`. Three tests below, four
+    messages, and this paragraph is what says so rather than the class implying otherwise
+    (rule 132).
     """
 
     @staticmethod

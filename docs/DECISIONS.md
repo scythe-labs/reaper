@@ -771,6 +771,14 @@ migration:
   first, *then* start M-1. Starting M-1 against an M database leaves it stamped at a revision that
   image has never heard of, and its boot migration stops the container. Fail-closed, but the
   operator needs the recipe rather than the property.
+- **A revision that cannot be undone by its own `downgrade()` gets a copy of the database
+  first.** It sets `needs_snapshot = True` beside `revision`, and preflight writes a normal
+  `.reaper` backup into `data/pre-migration/` before `alembic upgrade head` runs, keeping the
+  newest three. Preflight is where it lives because the container entrypoint, `dev-local.sh` and
+  the packaged launcher all run it immediately before the upgrade, so one call site covers three
+  and none of them can fall out of step. A snapshot that cannot be written stops the boot rather
+  than taking the update unprotected. Release M carries the marker for its four batch rebuilds;
+  release M+1 needs it more, since a recreated column comes back empty (#566).
 - **A column retiring takes the code that existed only to satisfy it.** `active_policy_id` had a
   writer whose whole job was giving the foreign key something to point at, and it persisted the
   bare shipped policy — so the first Pace save replaced the wider body `active_policy` computes
