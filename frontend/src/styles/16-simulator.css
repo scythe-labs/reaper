@@ -35,31 +35,6 @@
   margin-top: var(--space-lg);
 }
 
-/* Severity-typed inline notices, so an error never wears a warning's clothes and vice
-   versa. Error (red): can't be saved. Warning (amber): legal, but probably not meant. */
-.notice {
-  font-size: var(--text-md);
-  padding: var(--space-md) var(--space-xl);
-  border-radius: var(--radius-sm);
-  margin: var(--space-md) 0;
-  border: 1px solid;
-  line-height: 1.45;
-}
-.notice-error {
-  background: var(--condemn-soft);
-  border-color: var(--condemn);
-  color: var(--text);
-}
-.notice-warn {
-  background: var(--unknown-soft);
-  border-color: var(--unknown);
-  color: var(--text);
-}
-/* A notice living inside the rule it describes, right under the control that fixes it. */
-.notice-inline {
-  margin: 0.55rem 0 0;
-}
-
 /* The acknowledgement inside the Plex-trash warning (PlexTrashNotice). It sits INSIDE the
    notice on purpose: the consent is bound to the warning that motivates it, the way help
    text binds to the one control it explains. Its rule is drawn from the notice's own
