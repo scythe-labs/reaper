@@ -14,7 +14,7 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { QueryClient } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthUser, CandidatePage, SetupStatus } from "./api";
 import {
   DEFAULT_GENERAL,
@@ -95,6 +95,17 @@ const dashboardNav = () => screen.queryByRole("navigation", { name: "Sections" }
 const wizardSteps = () => screen.queryByRole("list", { name: "Setup progress" });
 const WIZARD_UNREADABLE = /Couldn't check what's set up yet/;
 const WIZARD_WAY_OUT = /Go to the app/;
+
+// `App` puts the wizard behind `React.lazy`, so the first render through that boundary in this
+// process pays Vite's cold transform of the wizard's whole module graph -- inside Testing
+// Library's 1000ms `asyncUtilTimeout`, which `testTimeout` does not reach. Running the whole
+// suite hid it, because another file had already transformed the wizard; this file alone failed
+// (#651). Warm it here rather than lengthening one assertion's timeout: which test pays the cost
+// is then an accident of file order, and the next wizard test written above this one inherits the
+// failure (rule 119).
+beforeAll(async () => {
+  await import("./components/SetupWizard");
+});
 
 beforeEach(() => {
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);

@@ -99,8 +99,13 @@ class GateId(enum.StrEnum):
     (``season_evidence.guard_result``); no policy row builds it."""
 
     CUSTOM = "custom"
-    """Not authorable in a policy. Tags the result of an operator-authored custom rule,
-    which is configured under ``custom_condemn``, not as a gate."""
+    """Not built from a gate row. Tags an operator-authored protect condition: one
+    ``fields.CustomProtectGate`` per ``protect_conditions`` entry, built in
+    ``scan_runner.build_gates``, and each can only return PROTECT or ABSTAIN.
+    The operator's other two keep kinds carry different ids: ``graded_keeps`` is a
+    score discount through ``keep_configs()`` and builds no gate, and
+    ``keep_rating_rules`` tags ``RATING_FLOOR``.
+    ``custom_condemn`` is the removal side and reaches no gate."""
 
 
 #: The gate ids a policy body may carry: exactly the ones ``scan_runner.build_gates`` can

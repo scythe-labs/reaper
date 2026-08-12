@@ -67,11 +67,12 @@ jobs:
   # `docs-deploy.yml` carries its own, three globs against the two here.
   #
   # **`docs-deploy.yml`'s list and the `site` lane are near neighbors, not the same set**,
-  # and the gap runs both ways -- do not restate one as the other, which a correction here
-  # already did once. Editing `docs-deploy.yml` itself fires that workflow while landing in
-  # `code` here, so `site` skips; and a `.md` under `manual/` or `website/` is caught by the
-  # `*.md` arm first, so `site` skips while docs-deploy publishes it. That second one is
-  # latent while those trees hold only `.mdx` (#589).
+  # and one gap remains -- do not restate one as the other, which a correction here already
+  # did once. Editing `docs-deploy.yml` itself fires that workflow while landing in `code`
+  # here, so `site` skips. The second direction is closed: a `.md` under `manual/` or
+  # `website/` used to hit the `*.md` arm first and skip `site` while docs-deploy published
+  # it, which is why the site arm is ordered ahead of prose below (#589). Restoring
+  # prose-first re-opens it.
   #
   # `tests/test_repo_hygiene.py` pins all three by name, so neither the count nor which
   # file holds which can move without this comment being re-read.
@@ -146,13 +147,18 @@ jobs:
           while IFS= read -r f; do
             [ -n "${f}" ] || continue
             case "${f}" in
-              docs/*|.claude/*|*.md)   prose=true ;;
               # The manual's words and the site that renders them. Neither ships in the
               # image, so a docs-only commit does not need the backend, frontend or
-              # docker lanes -- but it DOES need a lane of its own, or an .mdx that fails
-              # to compile lands with nothing having tried to build it. Note `*.md` above
-              # does not match `.mdx`, which is why these are listed rather than assumed.
+              # docker lanes -- but it DOES need a lane of its own, or a page that fails
+              # to compile lands with nothing having tried to build it.
+              #
+              # First arm, ahead of prose, because `*.md` below matches at any depth: with
+              # prose first, `manual/guide.md` classified as prose and the `site` job never
+              # ran, while docs-deploy.yml (which filters on `manual/**` with no ordering)
+              # published it anyway (#589). The tree happens to be all `.mdx` today, which
+              # `*.md` does not match, so the hole was latent rather than firing.
               manual/*|website/*)      site=true  ;;
+              docs/*|.claude/*|*.md)   prose=true ;;
               *)                       code=true  ;;
             esac
           done <<< "${files}"

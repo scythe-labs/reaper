@@ -27,6 +27,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from reaper.aio import report_background_failure
 from reaper.api import tags as api_tags
 from reaper.api.deps import newest_snapshot, session_factory, state_singleton
 from reaper.api.scan import launch_scan
@@ -726,7 +727,13 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
 
     # Held on app.state so the task is not garbage-collected mid-run. Deliberately NOT tied
     # to this request's lifetime: the reap must outlive the request that started it.
-    app.state.reap_task = asyncio.create_task(_reap())
+    task = asyncio.create_task(_reap(), name="reap")
+    # `_reap` catches Exception itself, so what is left for the callback is a raise from the
+    # `finally` arm above and any non-Exception BaseException. `status.running = False` lives
+    # in that arm, so a failure there leaves the sheet polling a reap that has already
+    # stopped and nothing else would say why (rule 102).
+    task.add_done_callback(report_background_failure)
+    app.state.reap_task = task
     return status
 
 

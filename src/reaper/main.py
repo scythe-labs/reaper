@@ -23,6 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import __version__, logbuffer
+from reaper.aio import report_background_failure
 from reaper.api import tags as api_tags
 from reaper.api.about import router as about_router
 from reaper.api.auth import router as auth_router
@@ -99,20 +100,6 @@ class HealthResponse(BaseModel):
     """
 
     status: str
-
-
-def _report_background_failure(task: asyncio.Task[Any]) -> None:
-    """Log why a detached startup task died, instead of letting asyncio mumble at GC time.
-
-    A task nobody awaits keeps its exception until it is garbage collected, and then all
-    the operator gets is a bare "Task exception was never retrieved" with no name attached
-    (PR-12). Cancellation is the normal shutdown path and says nothing.
-    """
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        log.warning("startup.background_task_failed", task=task.get_name(), error=str(exc))
 
 
 def _refuse_unservable_schema(revision: str | None) -> None:
@@ -426,8 +413,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             detail="No automatic scan is scheduled. Reaper only scans when you ask it to.",
         )
 
-    catch_up = asyncio.create_task(catch_up_on_startup(cache_engine, settings.data_dir))
-    catch_up.add_done_callback(_report_background_failure)
+    catch_up = asyncio.create_task(
+        catch_up_on_startup(cache_engine, settings.data_dir), name="catch_up"
+    )
+    catch_up.add_done_callback(report_background_failure)
 
     try:
         yield

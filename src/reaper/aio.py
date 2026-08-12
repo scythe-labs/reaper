@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Small asyncio helpers: the scan's concurrent fan-outs, and per-loop mutual exclusion.
+"""Small asyncio helpers: the scan's concurrent fan-outs, per-loop mutual exclusion, and
+the done-callback that logs a detached task nobody is awaiting.
 
 Bare ``asyncio.gather`` is the wrong tool where this codebase fans out against an
 operator's live services: on the first failure it re-raises immediately but leaves
@@ -57,6 +58,24 @@ async def gather_reaped(*aws: Awaitable[Any]) -> list[Any]:
     except BaseException:
         await reap(tasks)
         raise
+
+
+def report_background_failure(task: asyncio.Task[Any]) -> None:
+    """Log why a detached task died, instead of letting asyncio mumble at GC time (rule 102).
+
+    A task nobody awaits keeps its exception until it is garbage collected, and then all
+    the operator gets is a bare "Task exception was never retrieved" with no name attached
+    (PR-12). Cancellation is the normal shutdown path and says nothing.
+
+    Lives here rather than in ``main``, which imports the api routers: two of the three
+    callers are routers, so importing it from ``main`` would close a cycle. Pass ``name=``
+    to ``create_task``, or the log names the task ``Task-7``.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("aio.background_task_failed", task=task.get_name(), error=str(exc))
 
 
 def per_loop_lock() -> Callable[[], asyncio.Lock]:

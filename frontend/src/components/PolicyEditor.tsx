@@ -2539,9 +2539,14 @@ export function PolicyEditor({
                   which is built by re-validating the draft and so can never carry anything about
                   how the policy loaded. No guard against the louder `fell_back` is needed: that
                   one is returned alone (`services/profiles.py`), because nothing of the stored
-                  body survived for a second repair to be about. */}
+                  body survived for a second repair to be about.
+
+                  `standing`, for the reason the `top` half already carries: a repair is carried
+                  by the fetch, so it is the state of the page from its first paint and not a
+                  reply to anything the operator pressed. Without it this half was an alert that
+                  interrupted the moment the bar appeared, while its twin stayed silent. */}
               {repairNotices.savebar.map(({ id, notice }) => (
-                <Notice key={id} tone={notice.tone} className="budget-notice" as="span">
+                <Notice key={id} tone={notice.tone} className="budget-notice" as="span" standing>
                   {notice.text}
                 </Notice>
               ))}
