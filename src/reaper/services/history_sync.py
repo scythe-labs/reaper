@@ -101,11 +101,29 @@ class HistoryState:
     rows: int
     earliest: datetime | None
     latest: datetime | None
+    #: What the source said IT holds, at the last sync that reached it
+    #: (``history_sync_state.tautulli_total``). ``None`` when no sync has ever recorded one,
+    #: which is "we were never told" and not zero (rule 93). Carried here so the scan can ask
+    #: whether the mirror is COMPLETE in the same read that asks whether it is empty or stale.
+    source_total: int | None = None
 
     @property
     def horizon(self) -> datetime | None:
         """The data horizon. Nothing before this can be judged."""
         return self.earliest
+
+    @property
+    def shortfall(self) -> int | None:
+        """How many rows the source has that we do not, or ``None`` if we cannot tell.
+
+        Never negative, and that is a property of this value rather than of any one caller.
+        ``rows`` legitimately exceeds ``source_total``: the total is read once per sync and
+        the mirror never deletes, so a source pruned since we last asked leaves us holding
+        more than it now reports. That is evidence in hand, never evidence missing.
+        """
+        if self.source_total is None:
+            return None
+        return max(0, self.source_total - self.rows)
 
 
 SCHEMA = """
@@ -321,6 +339,7 @@ async def _state(engine: AsyncEngine) -> HistoryState:
         rows=int(row.n or 0),
         earliest=from_epoch(row.lo),
         latest=from_epoch(row.hi),
+        source_total=await _last_tautulli_total(engine),
     )
 
 

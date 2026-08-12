@@ -234,20 +234,25 @@ async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     await eng.dispose()
 
 
-async def _seed_sync(engine: AsyncEngine, *, ago: timedelta) -> None:
+async def _seed_sync(engine: AsyncEngine, *, ago: timedelta, source_total: int = 1) -> None:
     """Record when the watch-history ingest last ran, the way a real sync does.
 
     This clock, not the newest play, is what the scan checks for a stalled ingest
     (``snapshot.MIRROR_STALE_AFTER``); with no row at all the scan has no evidence the
     ingest ever ran and degrades.
+
+    ``source_total`` is what Tautulli said IT holds, which the completeness guard compares
+    the mirror against (``snapshot.MIRROR_SHORTFALL_FRACTION``). The default of 1 matches
+    the single play ``_seed_play`` writes, so every test predating that guard describes a
+    complete mirror and none of them degrades on it.
     """
     async with engine.begin() as conn:
         await conn.execute(
             text(
                 "INSERT OR REPLACE INTO history_sync_state (id, tautulli_total, synced_at) "
-                "VALUES (1, 1, :ts)"
+                "VALUES (1, :total, :ts)"
             ),
-            {"ts": int((NOW - ago).timestamp())},
+            {"ts": int((NOW - ago).timestamp()), "total": source_total},
         )
 
 
@@ -952,6 +957,78 @@ class TestAStaleMirrorDegradesTheSnapshot:
 
         assert snapshot.degraded is True
         assert "Watch history has not updated recently" in (snapshot.degraded_reason or "")
+
+    async def test_a_mirror_still_catching_up_degrades(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The state between the two guards above: populated, freshly synced, and short.
+
+        This is what a restore leaves behind. Backups exclude the mirror deliberately, and
+        every sync until the first full sweep is incremental, so each completes correctly
+        against its own increment while the mirror holds a fraction of the source. Measured
+        on a real library at 65%: 245 titles came off the condemned list, 2.17 TB, under an
+        identical policy and scorer, and the snapshot read `degraded = 0` (rule 2).
+        """
+        await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
+        await _seed_sync(cache_engine, ago=timedelta(hours=1), source_total=100_000)
+
+        snapshot = await self._scan_with(session, cache_engine)
+
+        assert snapshot.degraded is True
+        assert "still catching up" in (snapshot.degraded_reason or "")
+
+    async def test_a_mirror_short_by_less_than_the_floor_does_not_degrade(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """A play in progress is counted by the source and skipped by the ingest, so the
+        mirror can never equal the total. Measured at 8 rows on a 425,604-row history.
+
+        Both bounds have to bite, so a handful of live plays cannot degrade a scan however
+        small the library is. This mirror is short by 400, under ``MIRROR_SHORTFALL_FLOOR``,
+        and 400 of 402 is far past the fraction on its own.
+        """
+        await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
+        await _seed_sync(cache_engine, ago=timedelta(hours=1), source_total=402)
+
+        snapshot = await self._scan_with(session, cache_engine)
+
+        assert snapshot.degraded is False, snapshot.degraded_reason
+
+    async def test_a_mirror_holding_more_than_the_source_reports_has_no_shortfall(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The total is read once per sync and the mirror never deletes, so a source pruned
+        since we asked leaves us holding more than it reports.
+
+        Asserted on ``shortfall`` rather than through a scan, because a scan cannot tell the
+        two apart: a negative shortfall and a clamped zero both fail the floor test, so the
+        guard degrades on neither and a scan-level assertion here would pass with the clamp
+        deleted (rule 118). The clamp is a property of the value, so it is pinned as one.
+        """
+        await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
+        await _seed_sync(cache_engine, ago=timedelta(hours=1), source_total=0)
+
+        state = await history_sync.state(cache_engine)
+
+        assert state.rows > 0
+        assert state.shortfall == 0
+
+    async def test_a_mirror_nobody_ever_synced_cannot_report_a_shortfall(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """No stored total is "we were not told", which is Unknown and not zero (rule 93).
+
+        The staleness guard is what fails such a mirror, and it already does. What must not
+        happen is this reading as a complete mirror on the strength of a total nobody wrote.
+        """
+        await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
+        async with cache_engine.begin() as conn:
+            await conn.execute(text("DELETE FROM history_sync_state"))
+
+        state = await history_sync.state(cache_engine)
+
+        assert state.source_total is None
+        assert state.shortfall is None
 
     async def test_a_quiet_library_that_synced_recently_does_not_degrade(
         self, session: AsyncSession, cache_engine: AsyncEngine
