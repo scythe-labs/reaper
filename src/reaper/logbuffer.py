@@ -39,9 +39,17 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-#: The levels the operator can pick. ERROR is deliberately absent from the UI choices:
-#: hiding warnings from a tool that deletes files serves nobody.
-LEVELS = ("DEBUG", "INFO", "WARNING")
+#: The levels the Settings -> Logs picker offers. ERROR is deliberately absent from the
+#: PICKER: hiding warnings from a tool that deletes files serves nobody, so it is not a
+#: choice the UI sells. ``api/logs.put_log_level`` is what enforces that.
+UI_LEVELS = ("DEBUG", "INFO", "WARNING")
+
+#: Every level Reaper will actually run at, and the set ``normalize_level`` accepts.
+#: ``config.Settings.log_level`` accepts exactly these four, so an operator who sets
+#: ``REAPER_LOG_LEVEL=ERROR`` gets ERROR. It used to fall off the end of this tuple and land
+#: on :func:`set_level`'s INFO fallback, which quietly handed back every INFO line the
+#: operator had asked to be rid of (#700).
+LEVELS = (*UI_LEVELS, "ERROR")
 
 #: How many lines the ring keeps. Enough to cover a full scan with room around it,
 #: small enough to be irrelevant to memory.
@@ -317,7 +325,11 @@ _level_no = logging.INFO
 
 
 def normalize_level(name: str) -> str | None:
-    """The canonical level name, or None for anything not offered in the UI."""
+    """The canonical level name, or None for anything Reaper will not run at.
+
+    Wider than the picker: ``LEVELS`` carries ERROR for the environment path. The route
+    that stores an operator's pick narrows it back to ``UI_LEVELS`` itself.
+    """
     upper = (name or "").strip().upper()
     return upper if upper in LEVELS else None
 
@@ -337,7 +349,9 @@ def set_level(name: str) -> str:
 
     Unknown names fall back to INFO rather than raising: the logging system must never
     be crashable by a stored setting (the API validates before storing; this is the
-    second net).
+    second net). It is only the second net, so ``LEVELS`` has to hold every level config
+    blesses. While ERROR was missing from it, an operator's ``REAPER_LOG_LEVEL=ERROR``
+    arrived here and was overridden by a fallback meant for corrupt values (#700).
     """
     global _level_no
     canonical = normalize_level(name) or "INFO"

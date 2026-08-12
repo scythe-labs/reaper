@@ -186,11 +186,16 @@ class Rating:
 def describe_votes(count: int | None) -> str:
     """The vote clause an operator reads, or nothing at all: `` from 1 vote``.
 
-    The one derivation of this phrase (rule 104). It had three copies -- ``Rating.describe``,
-    ``Rating.describe_for_user`` and ``engine.gates.RatingRule.describe_bar`` -- and every one
-    of them said "from 1 votes", because each was only ever exercised at a count in the
-    thousands. A vote floor of 1 is a legal policy and a title with a single vote is ordinary,
-    so all three were reachable.
+    The one derivation of this phrase (rule 104), for the two callers that render a count a
+    title really has: ``Rating.describe`` and ``Rating.describe_for_user``. It had three
+    copies, and every one said "from 1 votes", because each was only ever exercised at a
+    count in the thousands. A title with a single vote is ordinary, so all three were
+    reachable.
+
+    ``engine.gates.RatingRule.describe_bar`` was the third, and it is not a caller any more:
+    it renders a vote *floor*, and the why-panel prints a floor and a count one line apart,
+    so one wording for both said "from 1,000 votes" for a bar the operator set and for a
+    number a title measured (#623). Its clause carries a "+" and lives there.
 
     A falsy count (``None`` or ``0``) yields the empty string: there is no honest clause to
     print, and "from 0 votes" reads as a measurement rather than as its absence.

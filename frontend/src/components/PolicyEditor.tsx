@@ -2471,8 +2471,13 @@ export function PolicyEditor({
                   )}
                   onChange={(v) => updatePace({ max_unmeasured_per_run: v })}
                 />
+                {/* The clause about deleting is the only one an operator reads BEFORE
+                    raising this, since the server's warning fires once it is already above
+                    zero. Without it the help explained a keep and the control did the
+                    opposite (#688). */}
                 <span className="help">
-                  Kept by default. Size caps can't measure them. Set 0 to always keep, 25 at most.
+                  Kept by default. Size caps can't measure them. Above 0, Reaper deletes that many.
+                  25 at most.
                 </span>
                 <WarnBlock
                   anchor="max_unmeasured_per_run"

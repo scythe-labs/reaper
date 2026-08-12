@@ -80,8 +80,9 @@ These are always on, with no setting to get wrong:
 - **A phrase bound to the plan.** You type `REAP 7 SOULS 214 GB`, recomputed on the server, so
   a stale tab and muscle memory both fail.
 - **A practice run** that walks every interlock and sends nothing.
-- **Unknown sizes are kept.** An item Reaper could not measure is never removed, and can never
-  be the test item.
+- **Unknown sizes never go first.** An item Reaper could not measure can never be the test
+  item. It is held back from the run entirely too, unless you raise the unknown-size
+  allowance on Policy, which starts at 0.
 - **The scheduler never deletes.** Scans are automatic; removals are not.
 
 ## What protects a title

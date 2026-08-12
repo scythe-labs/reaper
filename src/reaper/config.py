@@ -126,6 +126,10 @@ class Settings(BaseSettings):
 
     # --- Core -----------------------------------------------------------------
     data_dir: Path = Path("data")
+    # Must stay equal to ``logbuffer.LEVELS``, which is what `set_level` will actually run
+    # at. A level this Literal blessed and that tuple omitted was accepted at boot and then
+    # silently resolved to INFO (#700); `test_the_env_and_the_logger_offer_the_same_levels`
+    # is the gate.
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_json: bool = False
 

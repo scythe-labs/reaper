@@ -37,7 +37,6 @@ from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import (
     Rating,
     RatingSource,
-    describe_votes,
     is_percentage_source,
     source_label,
 )
@@ -455,15 +454,21 @@ class RatingRule:
 
     def describe_bar(self) -> str:
         """The full bar, for the why-panel and the checked line: the number, the source, and
-        the vote floor where the source has one (``7.5 on IMDb from 1,000 votes``)."""
+        the vote floor where the source has one (``7.5 on IMDb from 1,000+ votes``)."""
         if is_percentage_source(self.source):
             return f"{source_label(self.source)} {self.floor}%"
-        # `describe_votes` is the one derivation of this clause (rule 104); it also renders a
-        # count of 1 as "vote", which all three copies of the phrase used to get wrong.
-        return (
-            f"{self.threshold_text()} on {source_label(self.source)}"
-            f"{describe_votes(self.min_votes)}"
-        )
+        # The floor gets its own clause rather than `ratings.describe_votes`, which renders
+        # a count a title really has. The why-panel prints both one line apart -- the bar
+        # under "you keep", the item's own count under "too few to trust" -- so sharing the
+        # wording made "from 1,000 votes" a floor in one sentence and a measurement in the
+        # next (#623). The "+" is the whole difference, and it is why this cannot call the
+        # helper and append one: at a floor of 1 the clause reads "from 1+ votes", where a
+        # real count of 1 correctly reads "from 1 vote".
+        # `PolicyEditor.tsx`'s `describeBar` renders this same clause for the same rule and
+        # already spells it with the "+"; the two are pinned together in
+        # `test_the_bar_names_its_vote_floor_as_a_floor`.
+        floor = f" from {self.min_votes:,}+ votes" if self.min_votes > 0 else ""
+        return f"{self.threshold_text()} on {source_label(self.source)}{floor}"
 
 
 @dataclass(frozen=True, slots=True)

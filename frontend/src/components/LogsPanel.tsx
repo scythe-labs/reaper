@@ -293,6 +293,12 @@ export function LogsPanel() {
               <option value="DEBUG">Debug</option>
               <option value="INFO">Info</option>
               <option value="WARNING">Warning</option>
+              {/* REAPER_LOG_LEVEL also takes ERROR, which this picker does not offer:
+                  hiding warnings from a tool that deletes files serves nobody. Render it
+                  while it is the live level anyway, or a box with no matching option shows
+                  blank and the picker stops saying what Reaper is recording. Picking any
+                  other level stores that one and drops this option (#700). */}
+              {recordLevel === "ERROR" && <option value="ERROR">Error</option>}
             </select>
           </SetRow>
           {/* A button, not a box, so it releases the control track (`.set-row-plain`). */}
