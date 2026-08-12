@@ -61,6 +61,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.aio import per_loop_lock
+from reaper.clients.base import IntegrationError
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 
@@ -77,14 +78,46 @@ INCREMENTAL_OVERLAP = timedelta(days=2)
 
 log = structlog.get_logger(__name__)
 
-PAGE_SIZE = 25_000
+#: Rows per page of the history walk. The number that matters about it is not the request
+#: count, it is how much of the client's read budget one page spends
+#: (``clients.base.DEFAULT_TIMEOUT``, 30s read), because a page that does not finish inside
+#: that budget aborts the whole sweep.
+#:
+#: This was 25,000, on the claim that Tautulli serves a 25k page in about the time it serves
+#: a 1k page. It does not. On a six-figure history each 25k page landed at 60-80% of the 30s
+#: budget, so the same instance answering roughly 1.8x slower timed out on the first page and
+#: the sweep aborted, three days from its next slot (#780). A smaller page cannot cost more
+#: than a larger one, so the margin is bought here rather than by widening a timeout every
+#: other Tautulli call would inherit. ``TautulliClient`` passes no timeout of its own, so one
+#: budget covers all of them: the executor re-asks ``get_history`` once per item mid-reap
+#: (``executor._watched_since_approval``), and the artwork proxy answers a browser
+#: (``api.poster._artwork_client``).
+#:
+#: The extra round trips are cheap beside a sweep that stops running: the sweep is the only
+#: thing that catches a row Tautulli backfills with an old timestamp, and while it is failing
+#: a title someone watched keeps reading as never watched.
+PAGE_SIZE = 5_000
+
+#: The floor the walk shrinks to on a read timeout, and the page size the library sweep
+#: already uses against this same source (``library_index._SPINE_PAGE_SIZE``). A source that
+#: cannot finish a page this small inside the read budget is not merely slow, so the walk
+#: raises there instead of shrinking further.
+MIN_PAGE_SIZE = 1_000
 
 #: Hard stop on the history paging loop, for a source that serves page after page without
-#: ever reporting a total. At PAGE_SIZE rows a page this is far past any real library's
-#: history, so it never truncates a genuine sync -- it only stops a runaway one.
-MAX_HISTORY_PAGES = 1_000
-"""Tautulli serves a 25k page in about the same time as a 1k page, so large pages
-are strictly better: 17 requests instead of 422."""
+#: ever reporting a total. A shrink does not spend one of these: it re-asks for rows that
+#: were never served.
+#:
+#: **Count it at MIN_PAGE_SIZE, never at PAGE_SIZE.** The bound is in pages, so its reach in
+#: rows moves with the page size, and the walk that runs at the floor is by construction the
+#: slow one against the deepest history. At 1,000 pages the old figure covered 25M rows at
+#: the old 25k page and would cover 1M at the floor, which is one to ten times a mature
+#: install rather than far past it. Tripping the cap logs and stops with the sweep still
+#: reporting success, and the mirror shortfall guard cannot catch that on a nightly sweep
+#: (the mirror is already complete from earlier syncs, so there is no shortfall to see), so
+#: a cap reached quietly is the #780 loss again at the oldest tail. 5,000 pages holds 5M rows
+#: at the floor and 25M at PAGE_SIZE, and still stops a source that is not advancing.
+MAX_HISTORY_PAGES = 5_000
 
 
 class HistoryRegressionError(RuntimeError):
@@ -379,8 +412,24 @@ async def sync(
     skipped_malformed = 0
 
     pages = 0
+    length = PAGE_SIZE
     while True:
-        page = await client.history(length=PAGE_SIZE, start=start, after=after)
+        try:
+            page = await client.history(length=length, start=start, after=after)
+        except IntegrationError as exc:
+            # A read timeout says the source took the request and could not finish the body
+            # in time, which is a fact about how much was asked for. Halve and keep paging.
+            # `transient_retry` has already re-sent this identical page twice against the
+            # same budget by the time we get here, so a fourth attempt at the same size is
+            # not the move -- and aborting means no sweep at all until the next cron slot,
+            # while every backfilled row stays missing and its title reads never watched
+            # (#780). At the floor the source is not merely slow: raise, and let the
+            # scheduler record the failure.
+            if not exc.read_timed_out or length <= MIN_PAGE_SIZE:
+                raise
+            length = max(MIN_PAGE_SIZE, length // 2)
+            log.warning("history.page_shrunk", length=length, fetched=start)
+            continue
         pages += 1
         rows = page.get("data") or []
         if total is None:
@@ -442,10 +491,11 @@ async def sync(
                 )
             inserted += len(batch)
 
-        # Advance by what the page actually held, never by the constant. A middle page
-        # shorter than PAGE_SIZE used to move `start` past rows nobody had fetched, and
-        # a truncated mirror reads as a shallow horizon -- which is the single largest
-        # mass-deletion vector this codebase has (rule 56).
+        # Advance by what the page actually held, never by what was asked for. A middle
+        # page shorter than the requested length used to move `start` past rows nobody had
+        # fetched, and a truncated mirror reads as a shallow horizon -- which is the single
+        # largest mass-deletion vector this codebase has (rule 56). This is also what makes
+        # a shrunk page correct: `length` falls mid-walk, and `start` follows the rows.
         start += len(rows)
         log.info("history.page", fetched=start, of=total, inserted=inserted)
         # `total` is trusted only when it is actually there. `int(... or 0)` makes a

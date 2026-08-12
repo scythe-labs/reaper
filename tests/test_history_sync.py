@@ -20,10 +20,12 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.clients.base import IntegrationError, transport_failure
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.session import create_engine
@@ -175,6 +177,99 @@ class TestThePageLoopFetchesEveryRow:
         await sync(engine, _Endless(rows), full=True)
 
         assert await _count(engine) == 2  # it stopped, and kept what it read
+
+
+class _TimingOutTautulli(PagingTautulli):
+    """A Tautulli that answers a page of at most ``serves`` rows and fails on anything
+    larger, recording every length it was asked for.
+
+    The failure is built by the production mapper (``clients.base.transport_failure``), so
+    what the walk sees here is what a real timeout arrives as (rule 119)."""
+
+    def __init__(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        serves: int,
+        error: type[httpx2.TimeoutException],
+    ) -> None:
+        super().__init__(rows)
+        self.serves = serves
+        self.error = error
+        self.lengths: list[int] = []
+
+    async def history(self, **kwargs: Any) -> dict[str, Any]:
+        length = int(kwargs.get("length", 100))
+        if length > 1:  # the regression check's length=1 probe is not a page
+            self.lengths.append(length)
+            if length > self.serves:
+                raise transport_failure("tautulli", self.error("the page did not finish"))
+        return await super().history(**kwargs)
+
+
+class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
+    """The full sweep is the only thing that catches a row Tautulli backfills with an old
+    timestamp, so a sweep that stops running leaves a watched title reading never watched --
+    the condemn direction, three days at a time until someone notices.
+
+    It used to stop for good on a source that merely got slower. ``PAGE_SIZE`` was 25,000
+    against a 30s read budget each page already spent most of, and ``transient_retry``
+    re-sends the *identical* oversized page rather than a smaller one, so a persistently
+    slower Tautulli failed every sweep from then on (#780)."""
+
+    async def test_a_read_timeout_on_the_first_page_shrinks_and_keeps_paging(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every row still lands. The walk halves the page and carries on from the same
+        offset, rather than losing the whole sweep to the first oversized request.
+
+        The page cap is set to exactly the number of pages the walk needs, so a shrink that
+        charged itself against it would run the mirror short: that is the claim the comment
+        on ``MAX_HISTORY_PAGES`` makes, and nothing else pins it."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        monkeypatch.setattr(history_sync, "MAX_HISTORY_PAGES", 3)
+        fake = _TimingOutTautulli(
+            [_row(n, days_ago=n) for n in range(1, 13)], serves=4, error=httpx2.ReadTimeout
+        )
+
+        await sync(engine, fake, full=True)
+
+        assert await _count(engine) == 12
+        assert fake.lengths == [8, 4, 4, 4]
+
+    async def test_a_failure_that_is_not_a_read_timeout_still_aborts_at_once(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same source, same page sizes, only the timeout kind differs. A connect timeout
+        is a host that never answered, and a smaller page cannot fix that, so the walk must
+        not spend a shrink cycle on one."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        fake = _TimingOutTautulli(
+            [_row(n, days_ago=n) for n in range(1, 13)], serves=4, error=httpx2.ConnectTimeout
+        )
+
+        with pytest.raises(IntegrationError, match=r"timed out \(ConnectTimeout\)"):
+            await sync(engine, fake, full=True)
+
+        assert fake.lengths == [8]  # asked once, never shrank
+
+    async def test_a_source_too_slow_for_the_smallest_page_raises_at_the_floor(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shrink is bounded. At ``MIN_PAGE_SIZE`` the source is not merely slow, so the
+        walk raises and the scheduler records a failed sweep, rather than halving forever."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        fake = _TimingOutTautulli(
+            [_row(n, days_ago=n) for n in range(1, 13)], serves=1, error=httpx2.ReadTimeout
+        )
+
+        with pytest.raises(IntegrationError, match=r"timed out \(ReadTimeout\)"):
+            await sync(engine, fake, full=True)
+
+        assert fake.lengths == [8, 4, 2]
 
 
 class TestRegressionDetection:
