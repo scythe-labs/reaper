@@ -37,6 +37,9 @@ Each one is imported and encrypted the first time Reaper sees it, and Reaper the
 variable can be removed. The import runs on *every* start, so a service added to the environment
 later is picked up on the next restart.
 
+The label between the service and the field, `HD` above, is yours to choose. Its case is ignored,
+so `hd` and `HD` are one service, not two.
+
 <Callout tone="note">
   **The database is the source of truth regardless.** An instance that already exists is never
   overwritten from the environment, so rotating a key in the UI cannot be silently clobbered by

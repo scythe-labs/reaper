@@ -82,9 +82,9 @@ services:
       # imported into the database, encrypted, and can then be removed -- Reaper logs when
       # that is safe. An instance that already exists is never overwritten from here, so a
       # key rotated in the UI cannot be clobbered by a stale value left below. <NAME> is
-      # free-form and becomes the display name, in capitals; its case is ignored, so "hd"
-      # and "HD" are one instance. Plex is not seeded: it is linked with "Sign in with
-      # Plex" in the web UI.
+      # free-form and becomes the display name; its case is ignored, so "hd" and "HD" are
+      # one instance. Plex is not seeded: it is linked with "Sign in with Plex" in the
+      # web UI.
       # REAPER_SONARR_HD_URL: "https://sonarr.example.net"
       # REAPER_SONARR_HD_API_KEY: "..."
       # REAPER_RADARR_HD_URL: "https://radarr.example.net"

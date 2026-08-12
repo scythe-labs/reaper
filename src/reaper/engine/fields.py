@@ -855,8 +855,8 @@ def _compare(op: Op, value: object, target: object, *, multi: bool = False) -> b
             return fold(str(value)) in targets
         case Op.CONTAINS:
             # Folded on both sides, the same as eq and in above. `.lower()` left the
-            # target's leading and trailing spaces in and case-folded only ASCII, so
-            # `on_list contains "Kids "` stopped matching the list named `Kids` and
+            # target's leading and trailing spaces in, and it lacks casefold's extra
+            # mappings, so `on_list contains "Kids "` stopped matching the list `Kids` and
             # `contains "STRASSE"` stopped matching `Straße`. `on_list` is protect-only, so
             # a rule that stops matching withdraws a protection and nothing announces it:
             # Policy still renders the rule as live.

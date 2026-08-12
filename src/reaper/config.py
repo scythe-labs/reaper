@@ -333,23 +333,25 @@ def parse_instance_seeds(env: dict[str, str]) -> list[InstanceSeed]:
         REAPER_SONARR_4K_API_KEY=...
 
     The slot is free-form and becomes the instance's display name unless an
-    explicit ``_NAME`` is given. A group missing a URL or an API key is skipped
-    rather than half-imported, and the skip says so in the log.
+    explicit ``_NAME`` is given. A group missing a URL is skipped rather than
+    half-imported, and the skip says so in the log.
 
-    **Case is not part of the slot.** ``_SEED_PATTERN`` carries ``re.IGNORECASE``, so the
-    grouping key has to absorb what the regex absorbed, the way ``kind`` and ``field``
-    already do. Grouped as typed, ``REAPER_SONARR_Main_URL`` and
+    **Case groups the slot; it does not rename it.** ``_SEED_PATTERN`` carries
+    ``re.IGNORECASE``, so the grouping key has to absorb what the regex absorbed, the way
+    ``kind`` and ``field`` already do. Grouped as typed, ``REAPER_SONARR_Main_URL`` and
     ``REAPER_SONARR_main_API_KEY`` were two half-configured instances and both were
-    skipped (#658). It also decides which value wins: ``configured_env`` merges the dotenv
-    file and ``os.environ`` keyed on the exact string, so two spellings of one variable
-    arrive as two keys, and the environment's copy is merged last. Folding here is what
-    puts the pair back together, so the override lands on the file's value instead of
-    sitting beside it.
+    skipped, so the operator got no instance and no message (#658). Where two spellings
+    disagree the later key in ``env`` supplies each field, which is how an environment
+    variable reaches this function after the dotenv file ``configured_env`` merged first.
 
-    Folding is upward, so the display name of a lowercase slot reads uppercase. Every
-    example Reaper ships spells the slot in caps, and ``_NAME`` sets it outright.
+    The display name keeps the spelling as typed, first one wins, following
+    ``list_config._clean_config``. Folding it instead renames an instance an earlier boot
+    already seeded, and ``seed_instances`` matches ``Instance.name`` exactly against a
+    BINARY-collated column, so the rename reads as a new instance and imports a second row
+    pointing at the same server.
     """
     groups: dict[tuple[str, str], dict[str, str]] = {}
+    spellings: dict[tuple[str, str], str] = {}
     for raw_key, value in env.items():
         match = _SEED_PATTERN.match(raw_key)
         if not match or not value.strip():
@@ -359,32 +361,38 @@ def parse_instance_seeds(env: dict[str, str]) -> list[InstanceSeed]:
             match.group(2).upper(),
             match.group(3).upper(),
         )
+        spellings.setdefault((kind, slot), match.group(2))
         groups.setdefault((kind, slot), {})[field] = value.strip().strip("\"'")
 
     seeds: list[InstanceSeed] = []
     for (kind, slot), fields in sorted(groups.items()):
         url, api_key = fields.get("URL"), fields.get("API_KEY")
-        if not url or not api_key:
-            # Something was declared for this slot, so the operator meant to configure it.
-            # Naming the variables that are missing costs one line, where the silent
-            # `continue` left them with no instance and no reason.
-            absent = [
-                f"REAPER_{kind.upper()}_{slot}_{name}"
-                for name in ("URL", "API_KEY")
-                if not fields.get(name)
-            ]
+        if not url:
+            # A missing URL is never something Reaper asked for, so saying so costs one
+            # line where the silent `continue` left the operator with no instance and no
+            # reason. A missing API KEY is deliberately NOT warned on: `seed.complete`
+            # tells them the REAPER_*_API_KEY variables can be removed once the import
+            # lands, so that shape is the steady state of an install that worked, and
+            # warning on it would call a running service broken on every boot. Catching a
+            # genuinely forgotten key needs to know whether the instance already exists,
+            # which is `seed_instances`' knowledge and not this function's.
             log.warning(
                 "seed.incomplete",
                 kind=kind,
                 slot=slot,
-                detail=f"This service was not added. Set {' and '.join(absent)}, then restart.",
+                detail=(
+                    f"This service was not added. Set REAPER_{kind.upper()}_{slot}_URL, "
+                    "then restart."
+                ),
             )
+            continue
+        if not api_key:
             continue
         seeds.append(
             InstanceSeed(
                 kind=kind,
                 slot=slot,
-                name=fields.get("NAME") or slot,
+                name=fields.get("NAME") or spellings[(kind, slot)],
                 base_url=url,
                 api_key=SecretStr(api_key),
             )
