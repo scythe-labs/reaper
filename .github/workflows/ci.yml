@@ -14,8 +14,10 @@ name: CI
 # a prose-only commit is precisely when it has something to say.
 #
 # The third is the site: `manual/` and `website/` ship in neither the image nor the wheel, so
-# they need none of the above -- and they do need an .mdx build, or one that fails to compile
-# lands with nothing having tried.
+# they need neither the image build nor the Python suite -- and they do need an .mdx build, or
+# one that fails to compile lands with nothing having tried. They also need the guards that
+# READ those two trees, which live in `hygiene` and in `frontend`, so this lane runs those two
+# jobs as well as its own build (#783).
 #
 # This used to be two workflow files whose `paths` and `paths-ignore` lists had to stay exact
 # complements of each other, with a comment in each saying "edit one and you must edit the
@@ -148,9 +150,13 @@ jobs:
             [ -n "${f}" ] || continue
             case "${f}" in
               # The manual's words and the site that renders them. Neither ships in the
-              # image, so a docs-only commit does not need the backend, frontend or
-              # docker lanes -- but it DOES need a lane of its own, or a page that fails
-              # to compile lands with nothing having tried to build it.
+              # image, so a docs-only commit does not need the backend or docker lanes --
+              # but it DOES need a lane of its own, or a page that fails to compile lands
+              # with nothing having tried to build it.
+              #
+              # The lane names a tree, not a job list. `hygiene` and `frontend` each hold
+              # guards that READ these two directories, so both name `site` in their `if:`
+              # below alongside the lane they were written for (#783).
               #
               # First arm, ahead of prose, because `*.md` below matches at any depth: with
               # prose first, `manual/guide.md` classified as prose and the `site` job never
@@ -255,10 +261,14 @@ jobs:
           uv run alembic upgrade head
           uv run alembic check
 
+  # Also runs for the site lane, because `src/docs/manual.gen.test.ts` is the drift gate for
+  # the generated `manual/*.mdx` pages and it lives here. A commit that hand-edits one of
+  # those pages used to run the `site` build alone, which compiles a wrong page as happily
+  # as a right one (#783).
   frontend:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.site == 'true'
     defaults:
       run:
         working-directory: frontend
@@ -319,10 +329,15 @@ jobs:
   # commit did not touch. A commit that changes both prose and code runs this and the full
   # pytest in `check`, which is redundant and deliberate: the alternative is a conditional
   # that can silently fail to run.
+  #
+  # It runs for the site lane too. Four of these asserts read `manual/features.mdx`,
+  # `manual/**/*.mdx` and `website/src/css/custom.css`, and on a commit touching only those
+  # trees the whole suite skipped, so the one lane that could have caught a wrong page was
+  # the one that did not run (#783).
   hygiene:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.prose == 'true'
+    if: needs.changes.outputs.prose == 'true' || needs.changes.outputs.site == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -436,9 +451,12 @@ jobs:
   # never registered all fail the build here rather than on the published site. `onBrokenLinks`
   # is `throw` in the config, which is what makes a dead cross-reference a red run.
   #
-  # This lane does NOT check that the generated pages are current. That is the frontend lane's
-  # `manual.gen.test.ts`, which runs against the app's own blocks; a stale page reaching here
-  # would build perfectly well while saying the wrong thing.
+  # This job does NOT check that the generated pages are current. That is `manual.gen.test.ts`
+  # in the `frontend` job, which runs against the app's own blocks; a stale page reaching here
+  # would build perfectly well while saying the wrong thing. `frontend` and `hygiene` both name
+  # this lane in their `if:` above, so they run beside this build rather than only when code or
+  # prose changed -- which they did not, and a hand-edited `manual/` page therefore published
+  # with nothing having read it (#783).
   site:
     name: Manual site
     runs-on: ubuntu-latest
