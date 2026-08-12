@@ -46,7 +46,9 @@ function renderBackupPanel() {
           region is listening -- so without it here the card's sentences are dropped and a test
           about them passes against silence. */}
       <Announcer />
-      <Settings initialPanel="backup" />
+      {/* `App` owns which panel is open, so the address bar can name it (navUrl.ts).
+          Nothing here switches panel, so the owner does nothing. */}
+      <Settings panel="backup" onPanelChange={() => {}} />
     </>,
     { client: queryClient },
   );

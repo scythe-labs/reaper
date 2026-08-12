@@ -9,9 +9,14 @@
 // Review list wearing a search chip they never typed.
 //
 // The Review arm of that is pinned in `App.test.tsx`, end to end through the real queue. This
-// file is the other two, which had nothing: `App` used to hold three parallel focuses and drop
-// them by name, and the line doing it had already been wrong once, dropping only the one that
-// had been shown to replay. Each route is driven the same way:
+// file is Policy, which had nothing: `App` used to hold three parallel focuses and drop them by
+// name, and the line doing it had already been wrong once, dropping only the one that had been
+// shown to replay.
+//
+// Settings was the third and is not aimed any more: `App` owns its open panel so the address bar
+// can name it (navUrl.ts), and a panel you can come back to is a place rather than a one-shot
+// aim. What that walk proved about it now belongs to `AppUrl.test.tsx`, where the panel is read
+// off the URL. The route is driven the same way here:
 //
 //   jump in, leave by the section nav, press Back, land on the page unaimed
 //
@@ -20,7 +25,7 @@
 // old one, so the page reads unaimed whether or not anything drops it. And returning by the nav
 // proves nothing either, because the nav is the one route out that runs a handler. Only Back
 // restores `view` through the raw setter, which is the shape a leftover aim replays through.
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthUser, Safety, Snapshot } from "./api";
@@ -44,11 +49,6 @@ vi.mock("./api", async (importOriginal) => ({
 vi.mock("./components/PolicyEditor", () => ({
   PolicyEditor: ({ focus }: { focus?: { section: string } | null }) => (
     <p>policy aimed at: {focus?.section ?? "nothing"}</p>
-  ),
-}));
-vi.mock("./components/Settings", () => ({
-  Settings: ({ initialPanel }: { initialPanel?: string }) => (
-    <p>settings aimed at: {initialPanel ?? "nothing"}</p>
   ),
 }));
 
@@ -100,10 +100,7 @@ beforeEach(() => {
   });
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
-  // An update is on offer, because the user menu's "Update available" item is the app's one
-  // always-mounted jump into Settings. Every other route there (the stale-scan notice, the reap
-  // plan's Plex link) is rendered by a view this walk has already left.
-  apiMock.update.mockResolvedValue({ ...DEFAULT_UPDATE, update_available: true, latest: "0.2.0" });
+  apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
   apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: true, will_reap: 0, condemned_by: [] });
   // Nothing running, and the queue's two filter suggesters have nothing to suggest. These three
   // are rule 135's documented blind spot rather than its gate: all three reads go through an
@@ -123,8 +120,11 @@ beforeEach(() => {
 // do between their tests. There is one test below and it ends with two layers unpopped, so this
 // is here for the second one (rule 72, and the file's own shape invites it).
 beforeEach(async () => {
+  // The path is reset with it: `App` reads its section from it at mount (navUrl.ts), and those
+  // deferred steps land jsdom on whichever entry's URL, which is regularly another section's
+  // (rule 72 -- `App.test.tsx` carries the same reset for the same reason).
   for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
-  history.replaceState(null, "");
+  history.replaceState(null, "", "/");
 });
 
 /** A Back press, the way `backnav.test.tsx` drives one: the provider parks a sentinel entry per
@@ -163,33 +163,5 @@ describe("a jump's aim", () => {
     await settle();
     await back();
     expect(await screen.findByText("policy aimed at: nothing")).toBeInTheDocument();
-
-    // The Settings route, driven the same way rather than argued from the shape of the one
-    // above (rule 145). It reaches Settings through the user menu's update item, since the
-    // section nav is the affordance this walk needs to leave BY.
-    await settle();
-    await person.click(screen.getByRole("button", { name: /owner, update available/i }));
-    await person.click(await screen.findByRole("button", { name: /^update available$/i }));
-    expect(await screen.findByText("settings aimed at: about")).toBeInTheDocument();
-
-    // Clicking the tab you are ALREADY on is not a visit and must leave the aim alone (B-23).
-    // Settings is mounted under the aim's nonce, so dropping it here remounts the subtree and
-    // throws away whatever is typed into it. This used to be an `if (next !== view)` guard in the
-    // nav handler and is now the effect's `[view]` dep, which is a condition nothing states in
-    // words, so it is asserted rather than read: an unconditional drop on every tab click prints
-    // "nothing" here and is green everywhere else in the suite.
-    await settle();
-    await person.click(screen.getByRole("button", { name: "Settings" }));
-    expect(screen.getByText("settings aimed at: about")).toBeInTheDocument();
-
-    await settle();
-    await person.click(screen.getByRole("button", { name: "Review" }));
-    await screen.findByRole("searchbox", { name: /search titles/i });
-
-    await settle();
-    await back();
-    // Settings opens on its own default panel, not on About. It is keyed on the aim's nonce, so
-    // a leftover aim would also remount the whole subtree and throw away anything typed into it.
-    await waitFor(() => expect(screen.getByText("settings aimed at: nothing")).toBeInTheDocument());
   });
 });

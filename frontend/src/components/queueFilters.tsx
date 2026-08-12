@@ -76,25 +76,11 @@ export const DEFAULT_FILTERS: QueueFilters = {
 
 export const filtersKey = (verdict: string) => `reaper.queue.filters.${verdict}`;
 
-/** The remembered filters for one tab, sanitized field by field: an unknown or outgrown
- *  stored value falls back to that field's default instead of poisoning the whole set. */
-export function loadFilters(verdict: string): QueueFilters {
-  let raw: string | null;
-  try {
-    // window.localStorage, never the bare global: Node exposes an experimental global
-    // of the same name, so the bare name is the wrong object under the test runner.
-    raw = window.localStorage.getItem(filtersKey(verdict));
-  } catch {
-    return { ...DEFAULT_FILTERS };
-  }
-  if (!raw) return { ...DEFAULT_FILTERS };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ...DEFAULT_FILTERS };
-  }
-  const stored = (parsed ?? {}) as Partial<Record<keyof QueueFilters, unknown>>;
+/** One filter set from outside the app -- this device's storage, or a link -- sanitized field by
+ *  field: an unknown or outgrown value falls back to that field's default instead of poisoning
+ *  the whole set. Every fallback shows MORE than the value it rejected, which is the direction
+ *  an unreadable filter has to resolve in: a narrower list reads as the whole library. */
+function sanitize(stored: Partial<Record<keyof QueueFilters, unknown>>): QueueFilters {
   const pick = <T,>(value: unknown, allowed: readonly T[], fallback: T): T =>
     allowed.includes(value as T) ? (value as T) : fallback;
   return {
@@ -121,6 +107,74 @@ export function loadFilters(verdict: string): QueueFilters {
       DEFAULT_FILTERS.sort,
     ),
     order: pick(stored.order, ["asc", "desc"] as const, DEFAULT_FILTERS.order),
+  };
+}
+
+/** The remembered filters for one tab. */
+export function loadFilters(verdict: string): QueueFilters {
+  let raw: string | null;
+  try {
+    // window.localStorage, never the bare global: Node exposes an experimental global
+    // of the same name, so the bare name is the wrong object under the test runner.
+    raw = window.localStorage.getItem(filtersKey(verdict));
+  } catch {
+    return { ...DEFAULT_FILTERS };
+  }
+  if (!raw) return { ...DEFAULT_FILTERS };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ...DEFAULT_FILTERS };
+  }
+  return sanitize((parsed ?? {}) as Partial<Record<keyof QueueFilters, unknown>>);
+}
+
+/** The filters that travel in a link, keyed on `QueueFilters` so a new dimension has to answer
+ *  here before the app compiles. Sort is not one of them: it is not a dimension (it hides
+ *  nothing), and it stays with the device that chose it, the same way `clearFilters` keeps it. */
+const LINKED: Record<Exclude<keyof QueueFilters, "sort" | "order">, true> = {
+  mediaType: true,
+  library: true,
+  requested: true,
+  genre: true,
+  override: true,
+};
+const LINKED_KEYS = Object.keys(LINKED) as (keyof typeof LINKED)[];
+
+/** The queue's filters as a query string: `?q=` for the search, one parameter per active
+ *  dimension, named for the dimension itself. A dimension at its default is left out, so an
+ *  unfiltered lane has a bare path. */
+export function filtersToQuery(search: string, filters: QueueFilters): string {
+  const params = new URLSearchParams();
+  if (search) params.set("q", search);
+  for (const key of LINKED_KEYS) {
+    if (filters[key] !== DEFAULT_FILTERS[key]) params.set(key, filters[key]);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+/** The filter set a queue opens with, from the link it was opened by (`search` is
+ *  `location.search`) or from this device's storage.
+ *
+ *  A link naming ANY filter brings the whole set: the dimensions it does not name are off,
+ *  never filled in from what this browser had stored. Merging the two could only ever hide rows
+ *  the sender was looking at, and a link is an explicit request that outranks a remembered
+ *  preference. A link naming none leaves storage alone, so an ordinary visit is unchanged. */
+export function initialFilters(verdict: string, search: string): QueueFilters {
+  const stored = loadFilters(verdict);
+  const params = new URLSearchParams(search);
+  const named = LINKED_KEYS.filter((key) => params.has(key));
+  if (named.length === 0) return stored;
+  // A key given twice (`?requested=yes&requested=no`) takes neither. `get` would answer with the
+  // first, which is a value the sender may never have meant and is narrower than the default on
+  // every dimension here. Every other hostile shape in this function widens; so does this one.
+  const one = (key: string) => (params.getAll(key).length > 1 ? null : params.get(key));
+  return {
+    ...sanitize(Object.fromEntries(named.map((key) => [key, one(key)]))),
+    sort: stored.sort,
+    order: stored.order,
   };
 }
 

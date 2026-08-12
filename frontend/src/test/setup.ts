@@ -4,6 +4,8 @@ import "@testing-library/jest-dom/vitest";
 
 import { afterEach } from "vitest";
 
+import { forgetWrittenUrl } from "../navUrl";
+
 // This file is `setupFiles`, so it runs for EVERY test file, including the twelve carrying an
 // `@vitest-environment node` docblock. Those have no DOM at all rather than an empty one, so
 // the three writes below are guarded. The console guards further down are not: rule 135's mock
@@ -113,6 +115,16 @@ console.error = (...args: unknown[]) => {
 };
 
 afterEach(() => {
+  // The address bar is app state now (navUrl.ts): `App` reads its section from the path and the
+  // queue seeds its filters from the query string, both at mount. jsdom carries one location
+  // across a whole file, so a test that leaves `/review/limbo?genre=…` behind would silently
+  // open the next test's queue on that lane, filtered. Replaced, never pushed, so the file's
+  // session history is left as it was found (rule 133).
+  if (hasDom) history.replaceState(null, "", "/");
+  // ...and the module-level record of what was last written, or a pop in the next test
+  // re-asserts this one's URL over it (rule 133).
+  forgetWrittenUrl();
+
   const queries = missingQueryFn;
   const undefineds = undefinedData;
   const unacted = outsideAct;

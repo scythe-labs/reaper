@@ -24,6 +24,7 @@ import { ShowPanel } from "./components/ShowPanel";
 import { WhyPanel } from "./components/WhyPanel";
 import { DocsProvider } from "./docs/DocsContext";
 import type { Focus, NavIntent, Selection, View } from "./navIntent";
+import { readLanding, sectionUrl, writeUrl } from "./navUrl";
 import { usePageScrollLock } from "./pageScrollLock";
 import { useGeneralSettings } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
@@ -106,8 +107,23 @@ function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => voi
 }
 
 function Dashboard({ user }: { user: AuthUser }) {
-  const [view, setView] = useState<View>("review");
-  const [verdict, setVerdict] = useState<Verdict>("condemn");
+  // Where the URL says to land, read once at mount and nowhere else (navUrl.ts). The URL is the
+  // authority for a cold load and for nothing after it: `backnav` owns Back, and its undo
+  // restores these two setters directly, so re-deriving either from the URL would fight it.
+  const [view, setView] = useState<View>(() => readLanding().view);
+  const [verdict, setVerdict] = useState<Verdict>(() => readLanding().lane);
+  // The two sections with sub-navigation of their own. Held here for the same reason `verdict` is:
+  // the address bar names where you are inside them, and the URL is written from here. These three
+  // are the whole of it, so `Settings` and `PolicyEditor` render what they are handed and report a
+  // click back rather than keeping a second copy (rule 146).
+  const [settingsPanel, setSettingsPanel] = useState<Panel>(() => readLanding().panel);
+  // Policy takes two of them, because Movies and TV are separate policies with separate caps,
+  // byte budgets and weights. While this one lived in the editor, a reload on the section URL
+  // reopened the right section with the other media type's numbers on every control.
+  const [policyMedia, setPolicyMedia] = useState<"movie" | "tv">(() => readLanding().policyMedia);
+  const [policySection, setPolicySection] = useState<PolicySectionId>(
+    () => readLanding().policySection,
+  );
   const [selected, setSelected] = useState<Selection>(null);
   // Which Scales person has their panel open. Kept here (not in Fairness) so the panel is a
   // sibling of the list inside `main.split`, exactly as the why-panel sits beside the queue.
@@ -193,13 +209,23 @@ function Dashboard({ user }: { user: AuthUser }) {
   // the mount, so a jump can name a destination for a page that is not on screen yet. It is
   // acted on once, counted by its nonce: revisiting the page later must not replay the jump that
   // first brought you there.
-  const [focus, setFocus] = useState<Focus | null>(null);
+  //
+  // A cold load on `/policy/tv/deletion` seeds one, because the policy sections are places on one
+  // long page rather than panels: landing there means scrolling there, and the editor already
+  // knows how to do that for a jump. The media type needs no seed of its own -- it is a prop the
+  // editor reads, not a place on the page. Settings needs none either, since its panel is the
+  // whole of where it is.
+  const [focus, setFocus] = useState<Focus | null>(() => {
+    const landing = readLanding();
+    return landing.view === "policy"
+      ? { view: "policy", section: landing.policySection, nonce: Date.now() }
+      : null;
+  });
   // Each view reads only the aim that names it. The check is not a formality. `goTo` sets the
   // focus and the view in one commit and the effect below drops a stale one only after that
   // commit, so a single render can hold the previous view's aim while the new view is on screen.
   const reviewFocus = focus?.view === "review" ? focus : null;
   const policyFocus = focus?.view === "policy" ? focus : null;
-  const settingsFocus = focus?.view === "settings" ? focus : null;
 
   // A destination dies with the visit it aimed at, and a nav click is not the only way a view is
   // left: a Back press restores `view` through the raw setter and runs no handler at all. The
@@ -209,17 +235,35 @@ function Dashboard({ user }: { user: AuthUser }) {
   // typed. Dropping the aim as its view goes off screen also covers the search they cleared BY
   // HAND, which the box would otherwise refill on the way back.
   //
-  // Keyed on `view`, so clicking the tab you are already on still changes nothing (B-23):
-  // Settings is mounted under `settingsFocus.nonce`, and dropping the aim there would remount
-  // the whole subtree and throw away whatever is typed into it. Arriving from a
+  // Keyed on `view`, so clicking the tab you are already on still changes nothing (B-23). That
+  // was written for Settings, which used to be mounted under its aim's nonce, so a drop here
+  // remounted the whole subtree and threw away whatever was typed into it: arriving from a
   // "Settings → Jobs" link, typing a name, then clicking Settings in the nav used to discard it.
+  // Settings has no aim and no key now, so nothing there can be discarded from here. The guard
+  // stays for Review, where a re-aim replays a search the operator has since cleared by hand.
   //
-  // It names no view, so nothing here goes stale when a fourth destination is added. The line it
+  // It names no view, so nothing here goes stale when a third destination is added. The line it
   // replaced named all three by hand, and had to be corrected once already: it started out
   // dropping only the one focus that had been shown to replay.
   useEffect(() => {
     setFocus((f) => (f?.view === view ? f : null));
   }, [view]);
+
+  // The address bar names the section and, where the section has sub-navigation, the panel open
+  // inside it. Review is the one section not written here: its URL carries the lane and the
+  // filters, both of which live in `ReviewQueue`, so the queue writes the whole thing (one writer
+  // per URL).
+  //
+  // A side PANEL is still not in the URL. A candidate id belongs to one snapshot, and the next
+  // scan would leave the link pointing at a row that no longer exists (rule 79). Scales' person
+  // panel is keyed on a stable identity rather than a snapshot row, so that argument does not
+  // reach it, and it is left out for its own reason: a request handle is the one thing on these
+  // screens that names a person, and a URL is the part of the app that gets pasted into a chat.
+  useEffect(() => {
+    if (view !== "review") {
+      writeUrl(sectionUrl(view, { panel: settingsPanel, policyMedia, policySection }));
+    }
+  }, [view, settingsPanel, policyMedia, policySection]);
 
   // Every jump in the app, in one place. The caller names a whole destination (navIntent.ts) and
   // this applies it; nothing else calls the raw setters, so a new destination is a new call site
@@ -262,11 +306,22 @@ function Dashboard({ user }: { user: AuthUser }) {
       if (intent.search !== undefined)
         setFocus({ view: "review", search: intent.search, nonce: Date.now() });
     } else if (intent.view === "policy") {
-      if (intent.section !== undefined)
+      if (intent.section !== undefined) {
+        setPolicySection(intent.section);
+        // ...and the aim beside it, which is what scrolls the page there. The editor can already
+        // be mounted when this arrives (the safety banner's link is on every screen), so a
+        // one-shot nonce is the only thing that fires a second jump to the same section.
         setFocus({ view: "policy", section: intent.section, nonce: Date.now() });
+      } else {
+        // A plain nav click names no section, and the page it opens is scrolled to the top. The
+        // persisted one would put the rail's `aria-current` and the address bar on a section the
+        // operator is not looking at, until the scroll spy corrects it a draft-load later. Land
+        // where the page actually opens instead. Settings needs no equivalent: its panels do not
+        // share a scroll position, so the one it was left on is still the one it shows.
+        setPolicySection("flags");
+      }
     } else if (intent.view === "settings") {
-      if (intent.panel !== undefined)
-        setFocus({ view: "settings", panel: intent.panel, nonce: Date.now() });
+      if (intent.panel !== undefined) setSettingsPanel(intent.panel);
     }
     setView(intent.view);
   };
@@ -533,7 +588,13 @@ function Dashboard({ user }: { user: AuthUser }) {
                 ))}
             </>
           ) : view === "policy" ? (
-            <PolicyEditor focus={policyFocus} />
+            <PolicyEditor
+              focus={policyFocus}
+              mediaType={policyMedia}
+              onMediaTypeChange={setPolicyMedia}
+              section={policySection}
+              onSectionChange={setPolicySection}
+            />
           ) : view === "reap" ? (
             <ReapPlan
               onGoToDeletion={() => goToPolicySection("deletion")}
@@ -570,8 +631,8 @@ function Dashboard({ user }: { user: AuthUser }) {
             </>
           ) : (
             <Settings
-              key={settingsFocus?.nonce ?? "settings"}
-              initialPanel={settingsFocus?.panel}
+              panel={settingsPanel}
+              onPanelChange={setSettingsPanel}
               // The Lists rows' policy-use links land on the keep-rules card's section.
               onGoToPolicy={() => goToPolicySection("kept")}
             />

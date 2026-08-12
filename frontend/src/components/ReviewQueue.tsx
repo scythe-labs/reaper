@@ -46,6 +46,7 @@ import { announce } from "../announce";
 import { useBackGuard } from "../backnav";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
+import { reviewUrl, writeUrl } from "../navUrl";
 import { useGeneralSettings } from "../useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
@@ -74,6 +75,8 @@ import {
 } from "./queueIcons";
 import {
   DEFAULT_FILTERS,
+  filtersToQuery,
+  initialFilters,
   loadFilters,
   MEDIA_FILTERS,
   OVERRIDE_FILTERS,
@@ -1371,12 +1374,27 @@ export function ReviewQueue({
   // would let one unfiltered request for the whole lane go out before the seeded one replaced
   // it. `search` is seeded alongside `searchInput` for the same reason -- it is the debounced
   // copy the query is keyed on, and waiting 250 ms for it would draw the lane first.
-  const [searchInput, setSearchInput] = useState(focus?.search ?? "");
-  const [search, setSearch] = useState(focus?.search ?? "");
+  //
+  // A link is the other thing the box can be seeded from, read once here at mount and never
+  // again (navUrl.ts): re-reading the URL later would fight the state `backnav`'s undo restores
+  // on a Back press. A jump wins over it -- a jump is happening now, and the query string
+  // belongs to the section the operator is leaving.
+  const [linked] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      // A key given twice takes neither, the same answer `initialFilters` gives its five
+      // dimensions: the first of `?q=x&q=y` is a value the sender may never have meant, and it
+      // is narrower than the empty default. Every hostile shape in this file widens (rule 72).
+      search: (params.getAll("q").length > 1 ? null : params.get("q")) ?? "",
+      filters: initialFilters(verdict, window.location.search),
+    };
+  });
+  const [searchInput, setSearchInput] = useState(focus?.search ?? linked.search);
+  const [search, setSearch] = useState(focus?.search ?? linked.search);
   // The last jump this queue has already acted on. Seeded with the one it mounted under, so the
   // effect below only ever handles a jump that arrives while it is already on screen.
   const handledFocus = useRef<number | null>(focus?.nonce ?? null);
-  const [filters, setFilters] = useState<QueueFilters>(() => loadFilters(verdict));
+  const [filters, setFilters] = useState<QueueFilters>(linked.filters);
   // Each tab remembers its own filters, and the new tab's set is adopted DURING the render
   // that brings the new verdict in -- React's supported "adjust state when a prop changes"
   // pattern. Doing it in an effect instead paired the new verdict with the old tab's filters
@@ -1494,6 +1512,25 @@ export function ReviewQueue({
   useEffect(() => {
     saveFilters(verdict, filters);
   }, [verdict, filters]);
+
+  // ...and the address bar follows the lane and its filters, so a reload lands back on this
+  // list and the link is worth sending. Written here rather than in `App`, which writes every
+  // other section's: the lane's filters live in this component, and one writer per URL is what
+  // stops a section change and a filter change racing each other in one commit.
+  //
+  // The debounced `search`, not the box's text: it is the value the list is actually filtered
+  // by, and it spares the URL a write per keystroke on top of the `replaceState` in `writeUrl`.
+  //
+  // Every open panel parks its own history entry (backnav.tsx) and this write lands on the
+  // newest one, so a close that steps that entry back would leave the address bar on an older
+  // URL. That is repaired where it happens, in `backnav`'s own self-pop branch (navUrl.
+  // `reassertUrl`), not here: three of the four close routes traverse AFTER this effect has
+  // already run, so no dependency list and no re-assert from a render can reach them. It is one
+  // direction either way: state is written to the URL, never read back from it (navUrl.ts), and
+  // `writeUrl` returns without touching history when the two already agree.
+  useEffect(() => {
+    writeUrl(reviewUrl(verdict, filtersToQuery(search, filters)));
+  }, [verdict, search, filters]);
 
   // Start over from the top whenever the list itself changes (a new tab, filter or sort), and
   // drop any selection -- a key picked on one tab is not visible on another.

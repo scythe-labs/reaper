@@ -18,7 +18,8 @@ import {
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { PANELS as DECLARED_PANELS, Settings } from "./Settings";
+import { useState } from "react";
+import { PANELS as DECLARED_PANELS, type Panel, Settings } from "./Settings";
 
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
@@ -118,13 +119,21 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** `App` owns which panel is open, so the address bar can name it (`/settings/logs`, navUrl.ts).
+ *  This is that owner, so a rail click moves here the way it moves in the app. A test rendering
+ *  `Settings` with a fixed `panel` would sit still through every click and prove nothing. */
+function SettingsAt({ open }: { open: Panel }) {
+  const [panel, setPanel] = useState(open);
+  return <Settings panel={panel} onPanelChange={setPanel} />;
+}
+
 function renderSettings(
   initialPanel: "about" | "general" | "plex" | "notifications" | "security" | "backup" = "about",
 ) {
   // Seeded, not just mocked: the General panel renders its fields from this read, and a mocked
   // answer lands a microtask later -- after a synchronous assertion, which would then be about
   // the "Loading…" panel rather than the one an operator types into (rule 136).
-  renderWithProviders(<Settings initialPanel={initialPanel} />, {
+  renderWithProviders(<SettingsAt open={initialPanel} />, {
     client: seedSettings(testQueryClient()),
   });
   return userEvent.setup();

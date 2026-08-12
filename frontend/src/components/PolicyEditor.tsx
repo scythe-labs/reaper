@@ -1230,10 +1230,31 @@ export function anchorClaims(anchor: WarningAnchor, field: string): boolean {
 
 export function PolicyEditor({
   focus,
+  mediaType,
+  onMediaTypeChange,
+  section,
+  onSectionChange,
 }: {
   /** A cross-page jump target ("Turn it on in Policy → Deletion" lands on the Deletion
-   *  section). The nonce makes each jump fire once, however often the caller re-renders. */
+   *  section). The nonce makes each jump fire once, however often the caller re-renders, and it
+   *  is what separates an instruction to SCROLL from the report of where the page is scrolled to.
+   *  A jump can arrive with this page already mounted: the safety banner is on every screen. */
   focus?: { section: PolicySectionId; nonce: number } | null;
+  /** Which policy is being edited. Movies and TV are tuned separately -- keep-last-N seasons and
+   *  season rank only make sense for TV -- so this decides both the controls the page draws and
+   *  the numbers in them. Owned by `App` for the same reason `section` is: it is half of where
+   *  the operator is, and a URL naming only the other half reopens the page with the wrong
+   *  numbers on it. */
+  mediaType: "movie" | "tv";
+  /** Reported when the Movies/TV switch goes through, which is after the unsaved-edits confirm
+   *  where there is one. */
+  onMediaTypeChange: (next: "movie" | "tv") => void;
+  /** Which section is being read. Owned by `App`, not here: the rail's `aria-current` and the
+   *  address bar (`/policy/tv/deletion`) are one fact, and the URL is written where every other
+   *  nav is written. */
+  section: PolicySectionId;
+  /** Reported on a rail click, on a jump, and as the page is scrolled past a heading. */
+  onSectionChange: (next: PolicySectionId) => void;
 }) {
   const queryClient = useQueryClient();
   // Save and Discard both unmount the bar holding the pressed button (#173). Declared here,
@@ -1251,9 +1272,6 @@ export function PolicyEditor({
   // leftover always arrives with a repair, and `dirty` counts repairs.
   const saveRef = useRef<HTMLButtonElement>(null);
   const protections = useRemovalFocus(saveRef);
-  // Movies and TV are tuned separately -- keep-last-N seasons and season rank only make
-  // sense for TV -- so this toggle picks which policy you are editing.
-  const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
   const { data: saved, isError: policyFailed } = useQuery({
     queryKey: ["policy", mediaType],
     queryFn: () => api.policy(mediaType),
@@ -1518,7 +1536,12 @@ export function PolicyEditor({
   // Switching re-seeds the draft from the other saved policy, which would silently throw
   // those edits away, so it waits for the same two-step confirm the rest of the app uses
   // (never a native confirm()). `useSwitchConfirm` is the shared caller half.
-  const confirmSwitch = useSwitchConfirm(mediaType, dirty, setMediaType);
+  //
+  // The confirm stays HERE while the value it commits lives in `App`: `dirty` is this
+  // component's, and the draft it guards is too. `App` is handed the switch only once the
+  // operator has said the edits can go, so the address bar cannot name a policy that is not on
+  // screen (rule 146).
+  const confirmSwitch = useSwitchConfirm(mediaType, dirty, onMediaTypeChange);
 
   // Section jump targets for the rail. Memoized (the refs themselves are stable) so the
   // cross-page-jump effect below can depend on the record without refiring every render.
@@ -1530,11 +1553,11 @@ export function PolicyEditor({
     () => ({ flags: flagsRef, kept: keptRef, pace: paceRef, deletion: deletionRef }),
     [],
   );
-  const [activeSection, setActiveSection] = useState<SectionId>("flags");
-
-  // A cross-page jump lands on a specific section. The editor may still be loading when
-  // the jump arrives (the headings do not exist until the draft renders), so the draft is
-  // a dependency: once it loads, this refires and consumes the nonce exactly once.
+  // A cross-page jump lands on a specific section, and so does a cold load on a URL naming one
+  // (`/policy/tv/deletion`). `App` seeds the same aim from both, so they scroll through one path.
+  // The editor may still be loading when the aim arrives (the headings do not exist until the
+  // draft renders), so the draft is a dependency: once it loads, this refires and consumes the
+  // nonce exactly once.
   const handledFocus = useRef(0);
   useEffect(() => {
     if (!focus || draft === null || focus.nonce === handledFocus.current) return;
@@ -1542,8 +1565,8 @@ export function PolicyEditor({
     if (!target) return;
     handledFocus.current = focus.nonce;
     target.scrollIntoView({ block: "start" });
-    setActiveSection(focus.section);
-  }, [focus, sectionRefs, draft]);
+    onSectionChange(focus.section);
+  }, [focus, sectionRefs, draft, onSectionChange]);
 
   // The rail states the section being READ, which is what its aria-current="page" claims.
   // Until this effect existed that claim only held for someone who had clicked the rail:
@@ -1560,7 +1583,13 @@ export function PolicyEditor({
   // document ends first, so Deletion -- the section that arms a removal, and the one this
   // finding named -- would have stayed unmarkable. Measuring from positions has no such
   // dead zone. The cost is four rect reads, at most once a frame, and only while this page
-  // is mounted; an unchanged section is a React state bail-out, not a re-render.
+  // is mounted; an unchanged section is a React state bail-out, not a re-render. That still
+  // holds now the section lives in `App`: a scroll frame that reports the section already on
+  // screen hands the same value to the same setter, and React drops it without rendering.
+  //
+  // `section` is deliberately not a dependency below. A dependency re-registers the listeners,
+  // and registering runs `pick` again, which on a page too short to scroll answers "the first
+  // section" and would take a rail click straight back off the section it just landed on.
   const ready = draft !== null;
   useEffect(() => {
     if (!ready) return;
@@ -1575,7 +1604,7 @@ export function PolicyEditor({
       // on; there is no "further down" to have reached.
       const scrollable = document.documentElement.scrollHeight > window.innerHeight + 1;
       if (!scrollable) {
-        setActiveSection(first[0]);
+        onSectionChange(first[0]);
         return;
       }
       // At the very bottom nothing more can reach the line, so the last heading on screen
@@ -1588,7 +1617,7 @@ export function PolicyEditor({
         const top = el.getBoundingClientRect().top;
         if (atBottom ? top < window.innerHeight : top <= line + 1) current = id;
       }
-      setActiveSection(current);
+      onSectionChange(current);
     };
 
     let frame = 0;
@@ -1609,7 +1638,7 @@ export function PolicyEditor({
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
     };
-  }, [ready, sectionRefs]);
+  }, [ready, sectionRefs, onSectionChange]);
 
   // The draft only ever seeds from a successful read, so a failed one would otherwise
   // leave the whole workspace saying "Loading…" for good. Say what happened instead.
@@ -1833,20 +1862,20 @@ export function PolicyEditor({
           {SECTIONS.map((s) => (
             <button
               key={s.id}
-              className={activeSection === s.id ? "settings-tab active" : "settings-tab"}
+              className={section === s.id ? "settings-tab active" : "settings-tab"}
               // Reserve the bold (active) width so switching sections never shifts the rail.
               data-label={s.label}
               // The section being read is stated, not just colored, the same as the
               // masthead and the settings rail. True on a scroll as well as a click: the
               // observer above keeps activeSection on whatever heading has reached the
               // read line.
-              aria-current={activeSection === s.id ? "page" : undefined}
+              aria-current={section === s.id ? "page" : undefined}
               onClick={() => {
                 // Instant, not smooth: smooth scrolling silently no-ops in some
                 // environments, and a jump that always lands beats an animation that
                 // sometimes doesn't happen at all.
                 sectionRefs[s.id].current?.scrollIntoView({ block: "start" });
-                setActiveSection(s.id);
+                onSectionChange(s.id);
               }}
             >
               {s.label}

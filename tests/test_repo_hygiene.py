@@ -4646,6 +4646,9 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "components/PlexPin.test.tsx": "the poll's state machine; it mounts the announcer, no screen",
     "focus.test.tsx": "focus moves, not a screen",
     "AppFocus.test.tsx": "which view holds a jump's aim; both routes it drives to are stubs",
+    "AppUrl.test.tsx": (
+        "which section a URL lands on; its Settings rail is audited in SettingsNav.test.tsx"
+    ),
 }
 
 # The population the walk itself collects: every `*.test.tsx` under frontend/src that mounts
@@ -4665,7 +4668,10 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # which view is holding a jump's aim, and the two routes it drives to are stubs printing a prop.
 # +1 for `artFallback.test.tsx`, which mounts `WhyHero` to drive the art-then-poster ladder the
 # hook now declares once. It audits the banner on both rungs, the fallback included.
-_EXPECTED_RENDERING_TEST_FILES = 58
+# +1 for `AppUrl.test.tsx`, exempt for `AppFocus.test.tsx`'s reason: it mounts the shell to ask
+# which section a URL lands on. Three of the five it drives to are stubs; the two that are real,
+# the queue and the settings rail, are audited in their own files.
+_EXPECTED_RENDERING_TEST_FILES = 59
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5742,7 +5748,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 215
+_EXPECTED_FRONTEND_MODULES = 217
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
