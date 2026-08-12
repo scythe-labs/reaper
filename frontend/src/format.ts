@@ -43,6 +43,22 @@ export function count(value: number): string {
   return value.toLocaleString();
 }
 
+/** A count sharing a line with a number the server already wrote into a sentence.
+ *
+ *  The server groups with a literal comma (Python's `:,`) and cannot know the browser's
+ *  locale; `count` above follows that locale. Put the two in one sentence and a `de-DE`
+ *  browser reads "1,234 added, 5,678 cleared. Last updated 5 minutes ago, 1.234 movies …" --
+ *  two thousands separators in one line, neither of them wrong on its own. Every number on
+ *  such a line goes through here instead, so the line agrees with itself. `en-US` is the
+ *  grouping this pins to because the app's copy is American English throughout.
+ *
+ *  One caller today: `PlexPanel`'s shelf status line, whose leading sentence is
+ *  `LeavingSoonResult.summary`. Reach for it wherever server-formatted text and a local count
+ *  land in the same string, and prefer removing the mix over adding a second caller. */
+export function countBesideServerText(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
 /** The Reaper's tally, singular-aware: "1 soul", "7 souls". Every reap surface counts in
  *  souls, not items, so the count and its noun stay together in one place. */
 export function souls(value: number): string {
@@ -74,8 +90,9 @@ export function coverage(bp: number): string {
  *  accounting.
  *
  *  Lives here rather than in `PolicyEditor`, which is where it started, because
- *  `signalRamp` needs it too and the editor imports `signalRamp`. Re-exported there so the
- *  existing callers keep their import. */
+ *  `signalRamp` needs it too and the editor imports `signalRamp`. The editor re-exported it
+ *  for a while so its old callers could keep their import, and that re-export was one half of
+ *  the `PolicyEditor` / `PolicyRuleEditors` cycle. Import it from here. */
 export function humanDays(days: number): string {
   const whole = Math.round(days);
   if (whole <= 0) return "less than a day";
@@ -227,7 +244,7 @@ export function carriesYear(title: string, year: number | null | undefined): boo
  *
  *  Spelled the way the QUEUE prints it ("Example Alpha 1979"), because the queue is where the
  *  jump lands and the seeded text sits above its cards. Scales prints the same fact in
- *  parentheses, and `list_candidates` (api/routes.py) understands either, so the two spellings
+ *  parentheses, and `list_candidates` (api/review.py) understands either, so the two spellings
  *  are a display choice rather than something that has to be reconciled. */
 export function titleWithYear(title: string, year: number | null | undefined): string {
   const name = title.trim();

@@ -32,10 +32,12 @@ its schema.
 
 The schema gate is the load-bearing safety check. A backup carries the Alembic
 revision it was cut at. This build knows a fixed set of revisions (the migration
-scripts shipped in the image). If the backup's revision is one we know, boot's
-``alembic upgrade head`` can carry it forward. If it is unknown, the backup came
-from a *newer* Reaper with migrations this build does not have -- restoring it would
-serve a schema the code cannot understand, so it is refused.
+scripts shipped in the image, :func:`reaper.db.schema_gate.known_revisions`). If the
+backup's revision is one we know, boot's ``alembic upgrade head`` can carry it
+forward. If it is unknown, the backup came from a *newer* Reaper with migrations this
+build does not have -- restoring it would serve a schema the code cannot understand,
+so it is refused. The same set answers the same question about the LIVE database at
+boot, which is why it is declared once, over there.
 """
 
 from __future__ import annotations
@@ -57,9 +59,9 @@ from typing import Any
 import structlog
 
 from reaper.clock import utcnow
-from reaper.config import Settings
+from reaper.config import LAUNCHER_CONF_NAME, Settings
+from reaper.db import schema_gate
 from reaper.db.models import AUTH_BEARING_TABLES
-from reaper.launcher import LAUNCHER_CONF_NAME
 from reaper.secrets import KEY_FILENAME, SALT_FILENAME
 from reaper.services.app_settings import DESTRUCTIVE_KEY
 from reaper.services.backup import (
@@ -166,67 +168,27 @@ class RestoreSummary:
 # ---------------------------------------------------------------------------
 
 
-def _alembic_dir() -> Path:
-    """Locate the shipped ``alembic/`` directory in both dev and the container.
-
-    It sits at the project root beside ``src/`` (dev) or is copied to the image
-    workdir (``/app/alembic``). Walk up from this module until the migration
-    environment is found, so the gate never depends on the current directory.
-    """
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "alembic" / "env.py").is_file():
-            return parent / "alembic"
-    raise RestoreError(
-        "Reaper couldn't check this backup against its own version. Try again.",
-        status=500,
-    )
+#: The one set of revisions this build can serve, shared with the boot gate that refuses a
+#: LIVE database at an unknown revision (:mod:`reaper.db.schema_gate`, #565). Both refusals
+#: answer the same question about the same build, so they read one declaration rather than
+#: two copies that can drift apart (rule 104). Re-exported under this module's name because
+#: the restore side is where the question was first asked and where callers look for it.
+known_revisions = schema_gate.known_revisions
 
 
-def known_revisions() -> frozenset[str]:
-    """Every Alembic revision id this build ships, from the migration scripts.
-
-    The migration modules import only Alembic and SQLAlchemy, so walking them is
-    side-effect free. A backup whose revision is in this set can be carried forward
-    by ``alembic upgrade head``; one that is not came from a newer Reaper.
-    """
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    config = Config()
-    config.set_main_option("script_location", str(_alembic_dir()))
-    script = ScriptDirectory.from_config(config)
-    return frozenset(revision.revision for revision in script.walk_revisions())
-
-
-def _current_head() -> str | None:
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    config = Config()
-    config.set_main_option("script_location", str(_alembic_dir()))
-    try:
-        return ScriptDirectory.from_config(config).get_current_head()
-    except Exception:  # head is cosmetic; a miss just reads as "older"
-        return None
-
-
-def _check_schema(revision: str | None) -> str:
+def _check_schema(revision: str) -> str:
     """Refuse a backup this build cannot serve; return the verdict for one it can.
 
-    ``None`` means the snapshot carried no ``alembic_version`` row -- a corrupt or
-    foreign database, refused. A revision this build does not know came from a newer
-    Reaper, also refused (409). Otherwise it is ``"current"`` (matches head) or
-    ``"older"`` (an ancestor this build will upgrade on boot).
+    A revision this build does not know came from a newer Reaper, refused (409).
+    Otherwise it is ``"current"`` (matches head) or ``"older"`` (an ancestor this build
+    will upgrade on boot).
+
+    A database carrying no ``alembic_version`` row is refused by :func:`_summarize`, which
+    needs the revision for its manifest cross-check and so asks first. ``str`` keeps that
+    the only copy of the refusal: a caller that skipped it cannot type-check.
     """
-    if revision is None:
-        raise RestoreError(
-            "The database in this backup couldn't be verified. "
-            "It may be damaged, or not a Reaper backup."
-        )
     try:
         known = known_revisions()
-    except RestoreError:
-        raise
     except Exception as exc:  # any failure to read the migrations fails closed
         log.warning("restore.schema_unverifiable", error=str(exc))
         raise RestoreError(
@@ -239,7 +201,7 @@ def _check_schema(revision: str | None) -> str:
             "Update Reaper to that version or later, then restore.",
             status=409,
         )
-    return "current" if revision == _current_head() else "older"
+    return "current" if revision == schema_gate.current_head() else "older"
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +408,16 @@ def stage_upload(settings: Settings, archive_path: Path) -> RestoreSummary:
 # ---------------------------------------------------------------------------
 
 
+#: What every failure in the three prepare steps below answers with, declared once so the
+#: four raise sites cannot drift into four different sentences (rule 144).
+#:
+#: :func:`arm` clears :data:`READY_MARKER` before the first step and writes it after the last.
+#: A raise here therefore leaves the marker absent, and :func:`apply_pending_restore` returns
+#: on its absence having touched nothing. That order is what makes the second half of the
+#: sentence a fact about the code (rule 126).
+_PREPARE_FAILED = "Reaper couldn't prepare this backup. Nothing was restored."
+
+
 def _force_destructive_off(db_path: Path) -> None:
     """Set ``destructive_enabled = false`` in the staged database.
 
@@ -464,7 +436,7 @@ def _force_destructive_off(db_path: Path) -> None:
         )
         con.commit()
     except sqlite3.OperationalError as exc:
-        raise RestoreError("Reaper couldn't prepare this backup to restore.") from exc
+        raise RestoreError(_PREPARE_FAILED) from exc
     finally:
         con.close()
 
@@ -510,7 +482,7 @@ def _force_recovery_off(conf_path: Path) -> None:
     except OSError as exc:
         # Refuse rather than arm the target: this is the one failure here that would leave
         # the operator with a live way in they did not ask for (the prime directive).
-        raise RestoreError("Reaper couldn't prepare this backup to restore.") from exc
+        raise RestoreError(_PREPARE_FAILED) from exc
     log.warning("restore.recovery_disarmed")
 
 
@@ -539,7 +511,7 @@ def _purge_auth_state(db_path: Path) -> None:
     try:
         for table in AUTH_BEARING_TABLES:
             if not _TABLE_NAME.match(table):  # pragma: no cover -- guards the f-string below
-                raise RestoreError("Reaper couldn't prepare this backup to restore.")
+                raise RestoreError(_PREPARE_FAILED)
             present = con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
             ).fetchone()
@@ -547,7 +519,7 @@ def _purge_auth_state(db_path: Path) -> None:
                 con.execute(f"DELETE FROM {table}")  # noqa: S608 -- identifier checked above
         con.commit()
     except sqlite3.OperationalError as exc:
-        raise RestoreError("Reaper couldn't prepare this backup to restore.") from exc
+        raise RestoreError(_PREPARE_FAILED) from exc
     finally:
         con.close()
 
@@ -577,6 +549,13 @@ def arm(settings: Settings, token: str | None) -> None:
     so the password can only ever arm the content that was actually reviewed (rule 73). The
     ``READY`` marker is written last, so a crash between preparing the database and arming
     leaves the staging inert rather than half-armed.
+
+    It is also cleared FIRST, which is what makes :data:`_PREPARE_FAILED`'s "nothing was
+    restored" true rather than nearly true. Neither check above rejects an arm over a staging
+    that is already armed: the token file survives an arm, so a confirm retried after a
+    client-side timeout runs the three steps again with ``READY`` on disk, and a raise there
+    used to leave the swap armed while the operator read that nothing had happened. Clearing
+    it first means a failed arm disarms, which is the keep direction.
     """
     pending = settings.data_dir / PENDING_DIR
     staged_db = pending / DB_ARCNAME
@@ -587,6 +566,7 @@ def arm(settings: Settings, token: str | None) -> None:
             "The staged backup changed since you reviewed it. Check it again before restoring.",
             status=409,
         )
+    (pending / READY_MARKER).unlink(missing_ok=True)
     _force_destructive_off(staged_db)
     _force_recovery_off(pending / LAUNCHER_CONF_NAME)
     _purge_auth_state(staged_db)

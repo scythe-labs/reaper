@@ -33,15 +33,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
 from reaper.db.models import ListConfig
-from reaper.engine.policy import (
-    DEFAULT_IMDB_LIST_NAME,
-    DEFAULT_IMDB_PRESET,
-    DEFAULT_KEEP_TAG,
-    DEFAULT_TAG_LIST_NAME,
-)
+from reaper.engine.policy import DEFAULT_IMDB_LIST_NAME, DEFAULT_TAG_LIST_NAME
+from reaper.engine.policy_migrations import DEFAULT_IMDB_PRESET, DEFAULT_KEEP_TAG
 from reaper.services import app_settings
 from reaper.services import lists as lists_service
 from reaper.services.lists import ListSource
+from reaper.text import fold
 
 log = structlog.get_logger(__name__)
 
@@ -90,7 +87,7 @@ class ListDefinition:
         out: list[str] = []
         for entry in raw:
             tag = str(entry)
-            key = tag.strip().casefold()
+            key = fold(tag)
             if key in seen:
                 continue
             seen.add(key)
@@ -193,7 +190,7 @@ async def current_fingerprint(session: AsyncSession) -> str | None:
     to compare**, and a caller must not: a snapshot that degraded for the same unreadable
     registry recorded ``None`` too, so ``stored != current`` reads two unknowns as agreement
     and passes. Every caller tests each side for ``None`` first and refuses on either
-    (``api.routes.simulate``, ``services.executor``).
+    (``api.simulate.simulate``, ``services.executor``).
     """
     try:
         return fingerprint(await definitions(session, strict=True))
@@ -225,7 +222,6 @@ async def ensure_defaults(session: AsyncSession) -> None:
                 source=source.value,
                 config_json=json.dumps(config),
                 enabled=True,
-                built_in=False,
                 created_at=utcnow(),
             )
         )
@@ -277,8 +273,15 @@ async def _refuse_name_twice(session: AsyncSession, name: str, *, this_row: int 
 
     Case-folded on both sides (rule 88), the comparison every reader of a list name makes:
     two lists whose names differ only in case are one list to a keep rule naming either.
+
+    **This is the one comparison that crosses into SQL, and the two halves are not the same
+    function.** ``func.lower()`` runs in SQLite and is ASCII-only; ``text.fold`` is Python's
+    ``casefold``. They agree on every ASCII name and part on the rest, so a German list named
+    ``STRASSE`` is not refused against one named ``Straße``. The ``NOCASE`` collation behind
+    this check is ASCII-only as well, so both layers already answer the same way and the
+    refusal is consistent with what the column will actually enforce.
     """
-    stmt = select(ListConfig.id).where(func.lower(ListConfig.name) == name.strip().casefold())
+    stmt = select(ListConfig.id).where(func.lower(ListConfig.name) == fold(name))
     if this_row is not None:
         stmt = stmt.where(ListConfig.id != this_row)
     if (await session.execute(stmt)).first() is not None:
@@ -357,7 +360,6 @@ async def create(
         source=kind.value,
         config_json=_clean_config(kind, config),
         enabled=True,
-        built_in=False,
         created_at=utcnow(),
     )
     session.add(row)

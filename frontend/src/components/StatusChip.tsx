@@ -33,7 +33,7 @@ export function CondemnedChip() {
  *  A reap is refused in two different lanes, and their chips read nothing alike -- a
  *  structural protection that fired ("Kept, playing right now") and a row Reaper cannot
  *  identify ("it couldn't be found in Plex") -- so the server words the clause for both
- *  beside the chip text itself (`_chip` in `api/routes.py`). A check that merely could not
+ *  beside the chip text itself (`_chip` in `api/review.py`). A check that merely could not
  *  RUN is no longer one of the lanes: it stopped refusing a reap (`engine/verdict.py`). This used to slice the "Kept, " prefix
  *  off and look the rest up in a map of the backend's exact prose: rewording one chip
  *  server-side dropped every held-reap explanation to the generic fallback below, with

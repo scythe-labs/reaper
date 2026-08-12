@@ -73,14 +73,11 @@ import {
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
-import { usePolicyProbe } from "../usePolicyProbe";
+import { SETTLE_MS, usePolicyProbe } from "../usePolicyProbe";
+import { useScanStatus } from "../useScanStatus";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
-import { SwitchConfirm } from "./SwitchConfirm";
-
-/** Re-exported from `format`, where it moved so `signalRamp` could read it without a cycle
- *  back through this module. Several sites import it from here. */
-export { humanDays };
+import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
 
 /** The DOM id of the `i`th warning rendered at one anchor. Both ends of the association are
  *  named by this one function, so the control's `aria-describedby` and the notice's `id` cannot
@@ -162,7 +159,8 @@ function WarnBlock({
 }
 
 /** The field name the server gives a warning about ONE setting of ONE protection.
- *  `engine/policy.py` builds every member of this family as `f"gates.{gate}.{setting}"`, where
+ *  `engine/policy_warnings.py` builds every member of this family as
+ *  `f"gates.{gate}.{setting}"`, where
  *  the setting is a field of the gate row itself -- which is why the suffix is typed off
  *  `GateSetting` rather than spelled out here: the shape both ends already share is the
  *  declaration, so a suffix the server cannot send does not compile (rule 144).
@@ -179,15 +177,30 @@ function gateWarningField(gate: string, setting: keyof Omit<GateSetting, "gate">
 function GateRow({
   gate,
   onChange,
+  onRemove,
   warnings,
 }: {
   gate: GateSetting;
   onChange: (g: GateSetting) => void;
+  /** Take the row out of the body entirely. What "off" means for a retired id: there is no
+   *  such protection to store in either position, and the save boundary refuses the id
+   *  whether it is on or off (`GateSettingIn._must_be_authorable`). */
+  onRemove: () => void;
   /** Every warning rendered at the `gates` anchor, unfiltered. `warningsDescribing` numbers
    *  ids by position within THAT list, so narrowing before handing it over would point each
    *  box at the wrong notice. */
   warnings: PolicyWarning[];
 }) {
+  // Sibling of the simulator's spared-by row (rule 72), and the two fallbacks deliberately
+  // DIFFER. There, an id appears once in a tally, so `UNNAMED_GATE_LABEL` reads correctly:
+  // "Another protection, 7". Here it names a switch, and two ids this build has no copy for
+  // would draw two controls carrying one name and no help, leaving the operator unable to
+  // tell which protection they were turning off -- so the label stays per-id. Prefer a
+  // title-cased slug the operator can at least tell apart over rule 21's nicer sentence,
+  // because a control has to be identifiable before it can be plain.
+  // Unreachable for every id the engine has (`GATE_META` covers all of `GateId`), and the SPA
+  // ships inside the server's own image, so reaching this at all needs a browser holding a
+  // stale bundle against a newer server. Rule 66's fallback, not a surface anyone should meet.
   const meta = GATE_META[gate.gate] ?? { label: titleCase(gate.gate), help: "" };
   // What this row's boxes point `aria-describedby` at. The block rendering these sits under
   // the whole list, so reaching one meant browsing the page in document order: a keyboard
@@ -202,7 +215,22 @@ function GateRow({
       <label className="toggle rule-toggle">
         <Switch
           checked={gate.enabled}
-          onChange={(enabled) => onChange({ ...gate, enabled })}
+          // The only switch in the product that removes its own row, so it is the only one
+          // that has to say where focus goes afterwards. Sibling of `RatingFloorRow`'s bar
+          // removal 280 lines below, which wears the same marker for the same reason
+          // (rule 72): activating a control that unmounts itself drops focus to `<body>` and
+          // the next Tab restarts at the top of a form this long (#173).
+          removesRow={meta.retired}
+          // Turning a RETIRED row off takes it out of the body rather than storing it off,
+          // because there is nothing to store: the save boundary refuses the id in either
+          // position, so `{...gate, enabled: false}` left the page unsavable and the notice
+          // below naming an exit that did not work (#627). Every live protection keeps the
+          // ordinary two-position switch, and `meta.retired` is exactly the server's
+          // "no policy row can carry this id" -- `tests/test_api_type_mirror.py` pins the two
+          // sets against each other, both directions.
+          onChange={(enabled) =>
+            meta.retired && !enabled ? onRemove() : onChange({ ...gate, enabled })
+          }
           describedBy={describes("enabled")}
         />
         <span className="rule-name">{meta.label}</span>
@@ -214,11 +242,12 @@ function GateRow({
           (`ScanConfigError`). The row rendered through the ordinary path with a live-sounding
           label and no warning, so the one switch that was stopping every scan looked like an
           ordinary healthy protection. Said beside that switch, which is what fixes it
-          (rules 25, 42). */}
+          (rules 25, 42). The sentence says what the switch now does, since the row leaves the
+          page on that click and nothing else on screen would account for it. */}
       {meta.retired && gate.enabled && (
         <Notice tone="warn" inline>
           A leftover from an older version, and Reaper won&apos;t scan while it is on. Add its list
-          again on Settings → Lists, or turn this off to stop protecting those titles.
+          again on Settings → Lists, or turn it off to remove it and stop protecting those titles.
         </Notice>
       )}
 
@@ -323,7 +352,7 @@ function describeBar(rule: RatingRule): string {
 }
 
 /** The field name the server gives a warning about ONE setting of ONE rating bar.
- *  `engine/policy.py` builds every member of this family as
+ *  `engine/policy_warnings.py` builds every member of this family as
  *  `f"keep_rating_rules.{source}.{setting}"`, the same shape as the `gates.` family above and
  *  for the same reason: the source keys the row uniquely, because `PolicyBody` refuses two
  *  rules on one source. The suffix is typed off `RatingRule` so a setting the server cannot
@@ -971,42 +1000,6 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
   );
 }
 
-// ---------------------------------------------------------------------------
-// The owner's own rules: sentences in, sentences out.
-// ---------------------------------------------------------------------------
-
-export const OP_LABELS: Record<string, string> = {
-  gte: "is at least",
-  lte: "is at most",
-  eq: "is",
-  in: "is one of",
-  contains: "contains",
-};
-
-// A vocabulary field already handled by a built-in protection above -> not offered as a
-// custom rule, so the two never say the same thing twice. Only fields with no built-in gate
-// (size, all-time watchers, vote count, season rank) remain to be authored here.
-export const FIELD_TO_GATE: Record<string, string> = {
-  days_unwatched: "min_dormancy",
-  recent_watchers: "server_popularity",
-  imdb_rating: "rating_floor",
-  streaming_now: "streaming_now",
-  // `whitelisted` and `on_curated_list` were here, mapped to the two list gates. Both gates
-  // are retired -- every list now protects through an `on_list` keep rule the operator
-  // authors -- so their fields stay authorable and nothing filters them.
-};
-
-// The built-in signals already cover these fields, so they are not offered as custom
-// "remove" rules -- the two never say the same thing twice. That leaves the new metadata
-// fields (genre, requested, quality, release age, show ended) to be authored here.
-export const FIELD_TO_SIGNAL: Record<string, string> = {
-  days_unwatched: "unwatched",
-  recent_watchers: "few_watchers",
-  imdb_rating: "low_rating",
-  season_rank: "season_rank",
-  size_bytes: "size",
-};
-
 /** Live advisory beside the keep-last input: how many shows a keep-last-N value fully
  *  protects, computed from the last scan's season shape -- no re-scan, since the shape does
  *  not depend on the keep-last value.
@@ -1247,6 +1240,17 @@ export function PolicyEditor({
   // above the `if (!draft)` return further down, because a hook below an early return is a
   // different hook order on the renders that take it (rule 146).
   const bar = useSavebarFocus();
+  // Where focus lands when a leftover protection's switch removes its own row. Declared with
+  // the other focus hooks for rule 146's reason, and the fallback is Save because it is the
+  // only place it CAN be: `useRemovalFocus` looks for the marked control that took the removed
+  // one's index, and only a retired row wears the marker, so the marked set is always empty
+  // afterwards and the fallback is the whole answer here rather than an edge case. Save is the
+  // right target anyway -- the removal is a draft edit and pressing it is what makes the edit
+  // real, which is the same "stable neighbour and the only thing left to do" the hook's own
+  // add-a-row fallbacks are. It is mounted whenever this can fire: the body that carries a
+  // leftover always arrives with a repair, and `dirty` counts repairs.
+  const saveRef = useRef<HTMLButtonElement>(null);
+  const protections = useRemovalFocus(saveRef);
   // Movies and TV are tuned separately -- keep-last-N seasons and season rank only make
   // sense for TV -- so this toggle picks which policy you are editing.
   const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
@@ -1323,7 +1327,7 @@ export function PolicyEditor({
     const id = setTimeout(() => {
       setDebounced(draft);
       setDebouncedUnmeasured(draftedUnmeasured);
-    }, 250);
+    }, SETTLE_MS);
     return () => clearTimeout(id);
   }, [draft, draftedUnmeasured]);
 
@@ -1409,11 +1413,7 @@ export function PolicyEditor({
   const gateWarnings = warningsAt("gates");
 
   // A background scan, so the "Scan now" button in the stale notice actually does something.
-  const { data: scanState } = useQuery({
-    queryKey: ["scanStatus"],
-    queryFn: api.scanStatus,
-    refetchInterval: (query) => (query.state.data?.running ? 1000 : false),
-  });
+  const scanState = useScanStatus();
   const scanning = scanState?.running ?? false;
   // No running->stopped effect here. This panel used to carry its own copy, invalidating
   // `simulate`, `snapshot` and `validate` off its own ref -- the first two already refreshed by
@@ -1516,22 +1516,9 @@ export function PolicyEditor({
 
   // The Movies/TV switch the owner asked for while the draft still holds unsaved edits.
   // Switching re-seeds the draft from the other saved policy, which would silently throw
-  // those edits away -- so it waits here for the same two-step confirm the rest of the
-  // app uses (never a native confirm()).
-  const [pendingSwitch, setPendingSwitch] = useState<"movie" | "tv" | null>(null);
-  // See SwitchConfirm.tsx: a repeat press of the same segment changes no state, so focus is
-  // keyed on this rather than on `pendingSwitch`.
-  const [switchNonce, setSwitchNonce] = useState(0);
-
-  // The notice only exists because there are edits to lose, so it goes when they do -- by
-  // Discard, or by a Save that stores them. It used to survive both, still warning that a
-  // switch "discards them" and still offering a red "Discard and switch" for changes that
-  // no longer existed (B-31). Keyed on `dirty` rather than on the Discard handler so the
-  // save path is covered too; the switch itself is left to the operator, who asked to
-  // discard, not to discard and go.
-  useEffect(() => {
-    if (!dirty) setPendingSwitch(null);
-  }, [dirty]);
+  // those edits away, so it waits for the same two-step confirm the rest of the app uses
+  // (never a native confirm()). `useSwitchConfirm` is the shared caller half.
+  const confirmSwitch = useSwitchConfirm(mediaType, dirty, setMediaType);
 
   // Section jump targets for the rail. Memoized (the refs themselves are stable) so the
   // cross-page-jump effect below can depend on the record without refiring every render.
@@ -1681,17 +1668,6 @@ export function PolicyEditor({
   const policyHeldBecause =
     pointsLeft !== 0 ? "the points add up to 100" : 'the "Can\'t save this" problem is fixed';
 
-  const switchMediaType = (next: "movie" | "tv") => {
-    if (next === mediaType) return;
-    if (dirty) {
-      setPendingSwitch(next);
-      setSwitchNonce((n) => n + 1);
-    } else {
-      setPendingSwitch(null);
-      setMediaType(next);
-    }
-  };
-
   const kind = mediaType === "tv" ? "TV" : "movie";
   const otherKind = mediaType === "tv" ? "movie" : "TV";
   const preset = activePreset(draft);
@@ -1796,11 +1772,11 @@ export function PolicyEditor({
             </p>
           </div>
           <div className="policy-head-actions">
-            {/* switchMediaType holds the two-step confirm when the draft has unsaved edits. */}
+            {/* The request is refused into the two-step confirm when the draft has edits. */}
             <Segmented
               fill
               value={mediaType}
-              onChange={switchMediaType}
+              onChange={confirmSwitch.request}
               label="Which policy"
               options={[
                 ["movie", "Movies"],
@@ -1842,17 +1818,14 @@ export function PolicyEditor({
             {notice.text}
           </Notice>
         ))}
-        {pendingSwitch !== null && (
+        {confirmSwitch.pending !== null && (
           <SwitchConfirm
-            nonce={switchNonce}
+            nonce={confirmSwitch.nonce}
             message={`You have unsaved ${kind} policy changes. Switching to ${
-              pendingSwitch === "tv" ? "TV" : "Movies"
+              confirmSwitch.pending === "tv" ? "TV" : "Movies"
             } discards them.`}
-            onDiscard={() => {
-              setPendingSwitch(null);
-              setMediaType(pendingSwitch);
-            }}
-            onKeep={() => setPendingSwitch(null)}
+            onDiscard={confirmSwitch.discard}
+            onKeep={confirmSwitch.keep}
           />
         )}
 
@@ -2048,19 +2021,37 @@ export function PolicyEditor({
           only ever <em>keep</em> a file, never mark one for removal.
         </p>
 
-        <ul className="rule-list">
+        <ul className="rule-list" ref={protections.ref as RefObject<HTMLUListElement>}>
           {draft.gates.map((gate, i) => {
             const setGate = (g: GateSetting) => {
               const gates = [...draft.gates];
               gates[i] = g;
               update({ gates });
             };
+            // Only a retired row reaches this, and it is the one edit that is a REMOVAL: the
+            // id cannot be saved in either switch position, so taking it off means taking it
+            // out. By index rather than by id, like `setGate` above.
+            //
+            // `removing(0)`, never `removing(i)`: the index is into the MARKED controls, and
+            // only a retired row wears the marker, so its position among all the protections
+            // is not its position among the removable ones. That mismatch is the hazard
+            // `useRemovalFocus`'s other call sites avoid by marking every row.
+            const dropGate = () => {
+              protections.removing(0);
+              update({ gates: draft.gates.filter((_, j) => j !== i) });
+            };
             // A protection that carries its own settings renders as a card below the plain
             // rows (the rating card), so the visual weight says which protections have more
             // to configure. It is skipped here.
             if (gate.gate === "rating_floor") return null;
             return (
-              <GateRow key={gate.gate} gate={gate} onChange={setGate} warnings={gateWarnings} />
+              <GateRow
+                key={gate.gate}
+                gate={gate}
+                onChange={setGate}
+                onRemove={dropGate}
+                warnings={gateWarnings}
+              />
             );
           })}
         </ul>
@@ -2296,7 +2287,7 @@ export function PolicyEditor({
         />
         {/* Both lanes of this card, because both can be warned about and the card is the
             one surface either can be fixed from. `protect_conditions` carries the
-            gate-off popularity window (`engine/policy.py:inspect`), which has nowhere
+            gate-off popularity window (`engine/policy_warnings.py inspect`), which has nowhere
             else to go: with that protection off its window control is not rendered. */}
         <WarnBlock anchor="keep_rules" warnings={warningsAt("keep_rules")} />
 
@@ -2572,6 +2563,7 @@ export function PolicyEditor({
             </button>
             <button
               className="primary"
+              ref={saveRef}
               // Enabled when EITHER half can be written. A blocked policy no longer holds
               // pace and limits hostage (PR-7); the line above says which half is waiting.
               disabled={(!willSavePolicy && !willSavePace) || saving}

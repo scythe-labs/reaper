@@ -17,9 +17,10 @@
 //
 // Keyed on a NONCE, not on the pending value. A second press of the same section produces no
 // state change at all, so an effect watching `pendingSwitch` would not re-fire and the second
-// press would stay the no-op it always was. The caller bumps the nonce on every refused press.
+// press would stay the no-op it always was. `useSwitchConfirm` below bumps the nonce on every
+// refused press, so no caller has to know that.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Notice } from "./Notice";
 
 export function SwitchConfirm({
@@ -68,4 +69,51 @@ export function SwitchConfirm({
       </button>
     </Notice>
   );
+}
+
+/** The caller half of the two-step confirm: refuse the switch while there are edits to lose,
+ *  hold the destination, and clear itself once there is nothing left to warn about.
+ *
+ *  Settings and the policy editor each wrote this out. The policy editor found B-31 on its own,
+ *  a notice keyed to the Discard handler surviving a Save and still offering "Discard and
+ *  switch" for changes that no longer existed. Settings' copy then carried a comment pointing
+ *  at that fix rather than sharing it.
+ *
+ *  Three things have to be right together here, and none of them is local to a caller: the
+ *  nonce bumps on every refused press, the pending destination clears on `dirty` going false,
+ *  and a press of the section already open is not a switch at all.
+ *
+ *  `commit` is what actually moves: `setPanel` in Settings, `setMediaType` in the policy editor.
+ *  It is called only from `discard`, or from `request` when there was nothing to lose. */
+export function useSwitchConfirm<T>(current: T, dirty: boolean, commit: (next: T) => void) {
+  const [pending, setPending] = useState<T | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  // The notice exists only because there are edits to lose, so it goes when they do, by Discard
+  // or by a Save that stores them. Keyed on the draft rather than on the Discard handler so the
+  // save path is covered too. A Save clears the notice and switches nothing.
+  useEffect(() => {
+    if (!dirty) setPending(null);
+  }, [dirty]);
+
+  return {
+    pending,
+    nonce,
+    /** Ask to switch. Goes straight through when there is nothing to lose. */
+    request: (next: T) => {
+      if (next === current) return;
+      if (dirty) {
+        setPending(next);
+        setNonce((n) => n + 1);
+        return;
+      }
+      setPending(null);
+      commit(next);
+    },
+    discard: () => {
+      setPending(null);
+      if (pending !== null) commit(pending);
+    },
+    keep: () => setPending(null),
+  };
 }

@@ -56,7 +56,7 @@ JOB_LAST_RUN_PREFIX = "job_last_run:"
 DISCORD_WEBHOOK_KEY = "discord_webhook_enc"
 #: The set of rating keys already announced as "leaving soon". Persisted so the heads-up is
 #: idempotent across repeated syncs even when the Plex label write never lands (preview /
-#: unarmed) -- see :func:`reaper.services.leaving_soon.sync`.
+#: unarmed) -- see :func:`reaper.services.leaving_soon.announce_new`.
 LEAVING_SOON_ANNOUNCED_KEY = "leaving_soon_announced"
 #: Whether the "Leaving Soon" shelf in Plex is on at all. Off (the default) means Reaper
 #: never touches the shelf and never runs the reconcile on its own.
@@ -168,6 +168,36 @@ async def _set(session: AsyncSession, key: str, value: Any) -> None:
     await session.flush()
 
 
+def _env_seeded_switch(stored: Any, seed: bool) -> bool:
+    """An on/off switch the environment only seeds: the stored value wins, and a missing row
+    falls back to ``seed``.
+
+    Only a missing row is "nothing stored". A stored ``false`` is the operator turning the switch
+    off. Reading it as unset hands the answer back to an environment variable that is usually
+    still set, so the switch re-arms itself on the next restart with nothing said (rule 1's shape
+    for a seed). Written here rather than at each getter, so the next env-seeded switch inherits
+    the order. ``tests/test_app_settings_precedence.py`` fails until that switch also has a case,
+    as long as it reads its row through ``_get``, which is the only call its walk can see.
+    """
+    return seed if stored is None else bool(stored)
+
+
+def _decrypted_or_absent(box: SecretBox, stored: Any) -> str | None:
+    """A stored credential under the current key, or ``None`` when it will not decrypt.
+
+    A credential written under a secret key that has since rotated reads as ABSENT rather than
+    raising. A broken webhook must not break a scan, a plan or a run, and a broken API key must
+    not break a request path; re-entering either in the UI heals it. Every caller has to agree
+    on that reading, because a send that skips the credential and a panel calling it connected
+    are the same credential described two ways. ``GeneralSettingsOut.api_key_set`` resolves
+    through ``get_api_key`` for that reason, having read the row until 2026-08-10 (rule 76).
+    """
+    try:
+        return box.decrypt(str(stored))
+    except ValueError:
+        return None
+
+
 # --- deletion enabled ------------------------------------------------------
 
 
@@ -190,9 +220,7 @@ async def destructive_enabled(session: AsyncSession, settings: Settings) -> bool
     a normal install starts read-only until someone turns it on.
     """
     stored = await _get(session, DESTRUCTIVE_KEY, default=None)
-    if stored is None:
-        return settings.destructive_actions_enabled
-    return bool(stored)
+    return _env_seeded_switch(stored, settings.destructive_actions_enabled)
 
 
 async def set_destructive_enabled(session: AsyncSession, *, enabled: bool) -> None:
@@ -379,10 +407,7 @@ async def get_api_key(session: AsyncSession, box: SecretBox) -> str | None:
     stored = await _get(session, API_KEY_KEY, default=None)
     if stored is None:
         return None
-    try:
-        return box.decrypt(str(stored))
-    except ValueError:
-        return None
+    return _decrypted_or_absent(box, stored)
 
 
 async def set_api_key(session: AsyncSession, box: SecretBox, key: str) -> None:
@@ -403,13 +428,10 @@ async def proxy_trust_enabled(session: AsyncSession, settings: Settings) -> bool
     """Whether forwarded headers are honored at all. Off by default: fail closed.
 
     The stored value wins; ``REAPER_PROXY_TRUST_ENABLED`` is only the first-boot seed,
-    like every other env-seeded switch. Never-stored (a fresh install) falls back to the
-    seed; a stored ``false`` is a real choice and stays off.
+    like every other env-seeded switch.
     """
     stored = await _get(session, PROXY_TRUST_ENABLED_KEY, default=None)
-    if stored is None:
-        return settings.proxy_trust_enabled
-    return bool(stored)
+    return _env_seeded_switch(stored, settings.proxy_trust_enabled)
 
 
 async def set_proxy_trust_enabled(session: AsyncSession, *, enabled: bool) -> None:
@@ -561,10 +583,14 @@ async def get_discord_webhook(
     """
     stored = await _get(session, DISCORD_WEBHOOK_KEY, default=None)
     if stored is not None:
-        try:
-            return box.decrypt(str(stored))
-        except ValueError:
-            return None
+        # `or None`: a stored value decrypting to empty is nothing configured, the same
+        # answer the seed branch below gives an empty seed. Without it the two branches
+        # spelled "no webhook" two ways, every consumer tests `is None`, and an empty
+        # string would have built a `DiscordNotifier("")` that posts nowhere while the
+        # panel said connected (#729). The clause is here rather than in
+        # `_decrypted_or_absent`, which answers a decrypt FAILURE and is also read by
+        # `get_api_key`, where nothing measured an empty key.
+        return (_decrypted_or_absent(box, stored) or "").strip() or None
     seed = settings.discord_webhook
     if seed is None:
         return None
@@ -603,11 +629,10 @@ async def has_discord_webhook(
     """
     stored = await _get(session, DISCORD_WEBHOOK_KEY, default=None)
     if stored is not None:
-        try:
-            box.decrypt(str(stored))
-        except ValueError:
-            return False
-        return True
+        # Same clause as `get_discord_webhook`'s stored branch, and it has to be: this
+        # answers whether the panel says connected and that one answers whether a send
+        # happens, so the two disagreeing is the whole of #729.
+        return bool((_decrypted_or_absent(box, stored) or "").strip())
     if settings is not None and settings.discord_webhook is not None:
         return bool(settings.discord_webhook.get_secret_value().strip())
     return False
@@ -648,9 +673,7 @@ async def leaving_soon_unarmed(session: AsyncSession, settings: Settings) -> boo
     shelf writes (collection + label); file deletions are untouched by it.
     """
     stored = await _get(session, LEAVING_SOON_UNARMED_KEY, default=None)
-    if stored is None:
-        return settings.allow_unarmed_leaving_soon
-    return bool(stored)
+    return _env_seeded_switch(stored, settings.allow_unarmed_leaving_soon)
 
 
 async def set_leaving_soon_unarmed(session: AsyncSession, *, allowed: bool) -> None:

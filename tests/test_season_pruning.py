@@ -15,13 +15,8 @@ import pytest
 
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine.gates import GateId, progress_is_establishable
-from reaper.engine.policy import (
-    GateSetting,
-    PolicyBody,
-    ProfileSettings,
-    SignalSetting,
-    inspect,
-)
+from reaper.engine.policy import GateSetting, PolicyBody, ProfileSettings, SignalSetting
+from reaper.engine.policy_warnings import inspect
 from reaper.engine.signals import SignalId
 from reaper.services.season_pruning import (
     UNANSWERABLE_REASONS,
@@ -659,7 +654,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
         a lower bound and more history can always lift it above the others. Nothing is
         auto-approvable, so TV pruning is inert on such a show until the mirror catches up
         or a human decides -- and because every conflict carries ``shortfall``,
-        ``season_scan.guard_result`` marks all of them as comparisons it did not make, which
+        ``season_evidence.guard_result`` marks all of them as comparisons it did not make, which
         is what the operator's chip says on the card.
 
         This is the prime directive's answer, not a defect -- but the docstring of
@@ -701,7 +696,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
         of #224: an operator saw an empty automatic lane, no warning, and no way to learn their
         watch history was the cause.
 
-        ``policy.inspect``'s warning asserts a behavior of THIS module, across a module
+        ``policy_warnings.inspect``'s warning asserts a behavior of THIS module, across a module
         boundary, so it is the shape rule 144 warns about: a sentence that reads as
         demonstrably correct while vouching for a consistency nothing checks. If
         ``_detect_conflicts`` ever stops degenerating this way, the sibling above goes red and
@@ -1096,7 +1091,7 @@ class TestTheMirrorMustSpanTheHold:
 
         A season kept because a protection *fired* is a definite keep. A season kept because
         the guard could not be ANSWERED is Unknown (rule 93), and only the second may hold a
-        hand reap -- `season_scan.guard_result` reads this flag to mark the result blocked.
+        hand reap -- `season_evidence.guard_result` reads this flag to mark the result blocked.
         Pinned on a plan carrying both, so a fix that flags every protected season fails.
         """
         plan = plan_series_prune(
@@ -1278,14 +1273,14 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
                 # widest holding cause beside it. Classified rather than skipped (rule 103):
                 # the reason it names still has to be one UNANSWERABLE_REASONS knows, or the
                 # hold it re-words renders green.
-                **({"progress_established": False} if name in _HOLDS_NOTHING_ALONE else {}),
-                **{name: not default},
+                **({"progress_established": False} if name in _HOLDS_NOTHING_ALONE else {}),  # type: ignore[arg-type]
+                **{name: not default},  # type: ignore[arg-type]
             )
             assert plan.prunable == [], f"{name} did not hold the seasons"
             held = _reasons(plan)[1]
             assert held in UNANSWERABLE_REASONS, (
                 f"{name} holds seasons with {held!r}, which UNANSWERABLE_REASONS does not "
-                "name, so season_scan.guard_result renders that hold as a definite keep"
+                "name, so season_evidence.guard_result renders that hold as a definite keep"
             )
 
 

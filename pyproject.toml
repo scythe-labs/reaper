@@ -60,6 +60,7 @@ dev = [
     "pytest-xdist>=3.8.0",
     "pytest-httpx2>=1.0.0",      # httpx2 mocking; respx cannot (see docs/history/PLAN-narrative.md httpx2 scope)
     "pyyaml>=6.0.3",             # imported directly (test_repo_hygiene reads the CI config), not only via uvicorn[standard]
+    "types-pyyaml>=6.0.12",      # its stubs, so the hygiene test type-checks with everything else in tests/
 ]
 
 [project.scripts]
@@ -159,8 +160,8 @@ branch = true
 # SQLAlchemy's async bridge runs the body of every session-using coroutine inside a
 # greenlet, and coverage does not trace one unless it is named here. Without it the
 # report was blind to most route and service bodies -- it recorded a line carrying an
-# `await` and dropped its neighbors, so `record_password_failure` read as unreached in
-# all four password gates that in fact have tests asserting the exact 403 each one
+# `await` and dropped its neighbors, so `deps._record_password_failure` read as unreached
+# in all four password gates that in fact have tests asserting the exact 403 each one
 # raises. It understated the suite by 2.8 points and, worse, made the codecov patch
 # gate unusable: a genuinely untested line was indistinguishable from an artifact.
 concurrency = ["thread", "greenlet"]

@@ -19,17 +19,22 @@ has logged in. Everything here is exempt from the session requirement (see
 
 from __future__ import annotations
 
-import math
-from collections.abc import Sequence
-
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
-from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
+from reaper.api.deps import (
+    client_ip,
+    refuse_if_waiting,
+    runtime_settings,
+    secret_box,
+    session_factory,
+    throttled,
+)
+from reaper.api.schemas import NO_PLEX_FORWARD, OkOut, PlexServerChoiceOut, PlexStartIn
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
     clear_session_cookie,
@@ -37,10 +42,8 @@ from reaper.auth.cookie import (
     read_session_tokens,
     set_session_cookie,
 )
-from reaper.auth.proxy import client_ip
 from reaper.auth.ratelimit import (
     RateLimiter,
-    Throttle,
     argon2_gate,
     login_throttle,
     plex_poll_limit,
@@ -54,32 +57,23 @@ from reaper.auth.sessions import (
     resolve_session_from_cookies,
     session_via_recovery,
 )
-from reaper.config import RuntimeSafety, Settings
-from reaper.crypto import SecretBox
+from reaper.config import RuntimeSafety
 from reaper.db.models import AppUser, AuthProvider, PlexServer
-from reaper.services import admin_password
 from reaper.services.login import (
     LoginError,
     UserView,
     login_local,
     poll_plex_login,
-    start_plex_login,
 )
-from reaper.services.plex_link import PlexLinkRetryableError, PlexServerChoiceNeededError
+from reaper.services.plex_link import (
+    PlexLinkRetryableError,
+    PlexServerChoiceNeededError,
+    start_pin,
+)
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=[api_tags.SIGN_IN])
-
-
-def _factory(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
-
-
-def _settings(request: Request) -> Settings:
-    settings: Settings = request.app.state.settings
-    return settings
 
 
 def _safety(request: Request) -> RuntimeSafety:
@@ -88,98 +82,15 @@ def _safety(request: Request) -> RuntimeSafety:
     return RuntimeSafety(destructive_enabled=False)
 
 
-def _box(request: Request) -> SecretBox:
-    box: SecretBox = request.app.state.secret_box
-    return box
-
-
-def _client_ip(request: Request) -> str:
-    # The peer address, with one deliberate carve-out: when the operator turned on
-    # reverse-proxy trust (Settings -> General) and the peer IS a listed proxy,
-    # X-Forwarded-For is honored -- see auth.proxy.client_ip for the walk. From any
-    # other peer that header is attacker-controlled and ignored, because trusting it
-    # would let a single host dodge the per-IP lockout by rotating a spoofed value.
-    # The per-username lock (below) still runs alongside either way.
-    return client_ip(request)
-
-
-def _throttled(throttle: Throttle, *keys: str) -> None:
-    """Raise 429 if any of ``keys`` is currently locked out, else return.
-
-    Checked *before* any password work happens, so a locked-out attacker never
-    reaches the expensive Argon2 verify -- that is what the throttle is for.
-    """
-    retry = max((throttle.retry_after(k) for k in keys), default=0.0)
-    _refuse_if_waiting(retry)
-
-
 def _rate_limited(limiter: RateLimiter, key: str) -> None:
     """Count this call against ``key``'s window and raise 429 once it is over the cap.
 
-    The Plex sign-in pair has no password to get wrong, so :func:`_throttled` above never
-    fires on it -- a flood there is made of calls that all *succeed*. This is the bound
-    that does apply: it counts every call, not just refused ones (S-1).
+    The Plex sign-in pair has no password to get wrong, so
+    :func:`reaper.api.deps.throttled` never fires on it -- a flood there is made of calls
+    that all *succeed*. This is the bound that does apply: it counts every call, not just
+    refused ones (S-1).
     """
-    _refuse_if_waiting(limiter.retry_after(key))
-
-
-def _refuse_if_waiting(retry: float) -> None:
-    """Turn a positive wait into the one 429 both limits answer with."""
-    if retry > 0.0:
-        seconds = max(1, math.ceil(retry))
-        raise HTTPException(
-            429,
-            "Too many attempts. Please wait and try again.",
-            headers={"Retry-After": str(seconds)},
-        )
-
-
-def record_password_failure(throttle: Throttle, keys: Sequence[str], *, gate: str) -> None:
-    """Count a wrong password against every key, and say which interlock it was.
-
-    Four routes are gated on the admin password -- arming deletion, changing that
-    password, forgetting the watch record, and confirming a restore -- and each recorded
-    the failure silently. So a hundred attempts to arm deletion from a borrowed session
-    left no trace whatever, while the one that eventually succeeded logged
-    ``safety.destructive_set``. The local login has warned on its lockout crossing all
-    along (``auth.local_locked_out``); this is that same line for its four siblings
-    (rule 72).
-
-    The throttle KEY and the gate, never ``payload.password``: an attempted password is
-    of no use to anyone reading this and is the one thing here that must never be
-    written down (rule 13).
-    """
-    locked_for = 0.0
-    for key in keys:
-        locked_for = max(locked_for, throttle.record_failure(key))
-    if locked_for > 0:
-        log.warning("auth.password_locked_out", gate=gate, retry_after=math.ceil(locked_for))
-    else:
-        log.debug("auth.password_rejected", gate=gate)
-
-
-def _busy_hashing() -> HTTPException:
-    """The one 503 every password-hashing route sheds load with."""
-    return HTTPException(
-        503,
-        "The server is busy checking passwords. Please try again shortly.",
-        headers={"Retry-After": "2"},
-    )
-
-
-async def _verify_admin_password(session: AsyncSession, password: str) -> bool:
-    """Check the admin password, turning a full Argon2 gate into a 503 rather than a
-    "wrong password".
-
-    The distinction matters: a capacity refusal must never reach the lockout counters, or
-    a server under load would lock out the operator who typed the right password. The gate
-    itself is taken inside ``admin_password.verify``, which is the only place that knows
-    how many hashes the call will run (S-4).
-    """
-    try:
-        return await admin_password.verify(session, password)
-    except admin_password.PasswordVerificationBusyError as exc:
-        raise _busy_hashing() from exc
+    refuse_if_waiting(limiter.retry_after(key))
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +110,6 @@ class UserOut(BaseModel):
     id: int
     username: str
     provider: str
-    email: str | None = None
     thumb_url: str | None = None
     #: This session was opened with a recovery code, so Settings -> Security lets it set a
     #: new admin password without the current one. False on every ordinary sign-in, which
@@ -212,7 +122,6 @@ class UserOut(BaseModel):
             id=view.id,
             username=view.username,
             provider=view.provider,
-            email=view.email,
             thumb_url=view.thumb_url,
         )
 
@@ -227,11 +136,6 @@ class PlexPollIn(BaseModel):
     # First-run setup, multi-server accounts only: the machine identifier of the owned
     # server the user picked, echoed back from a "choose_server" response.
     machine_identifier: str | None = None
-
-
-class PlexServerChoiceOut(BaseModel):
-    name: str
-    machine_identifier: str
 
 
 class PlexPollOut(BaseModel):
@@ -269,7 +173,7 @@ async def context(request: Request) -> AuthContext:
     Deliberately low-detail. It reveals only whether setup is still pending and
     which sign-in methods can succeed -- nothing about *who* the admins are.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         user_count = int(
             (await session.execute(select(func.count()).select_from(AppUser))).scalar_one()
         )
@@ -288,7 +192,7 @@ async def context(request: Request) -> AuthContext:
 @router.get("/me")
 async def me(request: Request) -> UserOut:
     """The signed-in admin, or 401. The SPA calls this to decide login vs app."""
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         user, token = await resolve_session_from_cookies(session, request.cookies)
         # Read the mark before the commit: this is the same answer the password route will
         # act on, and the Security panel grays out its current-password box from it.
@@ -300,7 +204,6 @@ async def me(request: Request) -> UserOut:
             id=user.id,
             username=user.username,
             provider=str(user.provider),
-            email=user.email,
             thumb_url=user.thumb_url,
             via_recovery=via_recovery,
         )
@@ -320,9 +223,12 @@ async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -
     install's egress address into plex.tv's own rate limiting -- which would lock the real
     operator out of Plex sign-in entirely (S-1).
     """
-    _rate_limited(plex_start_limit, _client_ip(request))
-    start = await start_plex_login(
-        _factory(request), safety=_safety(request), forward_url=payload.forward_url()
+    _rate_limited(plex_start_limit, client_ip(request))
+    start = await start_pin(
+        session_factory(request),
+        purpose="login",
+        safety=_safety(request),
+        forward_url=payload.forward_url(),
     )
     return PlexStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
 
@@ -331,11 +237,11 @@ async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -
 async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -> PlexPollOut:
     # Far looser than /plex/start: one real sign-in polls every two seconds for up to five
     # minutes, so the cap has to clear ~150 calls without touching an honest browser.
-    _rate_limited(plex_poll_limit, _client_ip(request))
+    _rate_limited(plex_poll_limit, client_ip(request))
     try:
         result = await poll_plex_login(
-            _factory(request),
-            _box(request),
+            session_factory(request),
+            secret_box(request),
             pin_id=payload.pin_id,
             safety=_safety(request),
             user_agent=request.headers.get("user-agent"),
@@ -375,13 +281,13 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
 
 @router.post("/local")
 async def local(request: Request, payload: LocalLoginIn, response: Response) -> UserOut:
-    ip = _client_ip(request)
+    ip = client_ip(request)
     # Key the lockout on both the source IP and the attempted username, so neither
     # a single host hammering many names nor many hosts hammering one name slips
     # through. Truncated to bound the key length against a hostile username.
     user_key = f"user:{payload.username[:64]}"
     ip_key = f"ip:{ip}"
-    _throttled(login_throttle, ip_key, user_key)
+    throttled(login_throttle, ip_key, user_key)
 
     # Shed load before hashing: if too many Argon2 verifications are already in
     # flight, refuse quickly rather than adding to the CPU pile-up. This is a
@@ -395,7 +301,7 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
         )
     try:
         result = await login_local(
-            _factory(request),
+            session_factory(request),
             username=payload.username,
             password=payload.password,
             user_agent=request.headers.get("user-agent"),
@@ -428,17 +334,17 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response) -> dict[str, bool]:
+async def logout(request: Request, response: Response) -> OkOut:
     # Revoke every session the jar can present, not just the first name carrying a cookie.
     # With two names in play a stale cookie used to absorb the logout -- its row was
     # already gone, so the delete was a no-op -- and the genuinely live session under the
     # other name stayed valid in the database after the operator had asked to sign out.
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         for token in read_session_tokens(request.cookies):
             await close_session(session, token)
         await session.commit()
     clear_session_cookie(response)
-    return {"ok": True}
+    return OkOut(ok=True)
 
 
 @router.post("/recover")
@@ -458,10 +364,10 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
     # No Argon2 here -- recovery redeems a random single-use token, so brute force
     # is already near-hopeless -- but a per-IP cap still stops a token-guessing
     # flood from tying up the endpoint.
-    ip_key = f"ip:{_client_ip(request)}"
-    _throttled(recover_throttle, ip_key)
+    ip_key = f"ip:{client_ip(request)}"
+    throttled(recover_throttle, ip_key)
 
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         if not await redeem_recovery_token(session, payload.token):
             await session.commit()
             recover_throttle.record_failure(ip_key)
@@ -501,7 +407,7 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
     # secret with no remaining use. Deleting it earlier would take the operator's only
     # written copy on a path that can still roll the redemption back (rule 125) -- the
     # no-admin 409 above does exactly that, and leaves the file where it was.
-    clear_recovery_file(_settings(request).data_dir)
+    clear_recovery_file(runtime_settings(request).data_dir)
 
     recover_throttle.record_success(ip_key)
     log.warning("auth.recovery_login", user=target.username)
@@ -510,7 +416,6 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
         id=target.id,
         username=target.username,
         provider=str(target.provider),
-        email=target.email,
         thumb_url=target.thumb_url,
         via_recovery=True,
     )

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The frozen "why" record: the stored explanation document and how to read it.
 
-Written by ``services.snapshot._explain``, served by ``api.routes`` as the why panel, and
+Written by ``services.snapshot._explain``, served by ``api.review`` as the why panel, and
 consulted by ``services.condemned`` before a hand reap is honored. It lives here, below both,
 because those two readers must agree on one question -- **can this document be read at all?**
 -- and they answer it by running the same validation rather than by each testing a different
@@ -18,6 +18,19 @@ consent to reasons the panel never rendered", and for that class of row they cou
 These are Pydantic models rather than plain dataclasses because the validation IS the readability
 test: what the panel can render is exactly what the model accepts. ``api.schemas`` re-exports them
 so the wire names and the published OpenAPI components are unchanged.
+
+**They declare the document; ``services.snapshot._explain`` writes it, and the two are held
+together by a test rather than by one of them generating the other.**
+``test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared`` walks every object the
+writer produces against the model that types it.
+
+Making the writer build these models instead was measured and refused. The three
+``mode="before"`` validators below keep an illegible STORED byte from blanking the panel. On the
+write side that same leniency turns a writer's own value into ``None``, with nothing raising:
+``Explanation(match=MatchOut(...))`` yields ``match=None`` today, because ``_thaw_match`` reads a
+submodel instance as "not a mapping". That drops the merged listing keys
+``executor._equivalent_keys`` hands the streaming veto, and clears the bad-match hold on a hand
+reap.
 """
 
 from __future__ import annotations
@@ -90,7 +103,7 @@ class GateOutcomeOut(BaseModel):
     defers_to_owner: bool | None = None
     """Whether the comparison behind this hold is one Reaper actually made.
 
-    Set only by the season keep-rule guard (``services.season_scan.guard_result``), where a
+    Set only by the season keep-rule guard (``services.season_evidence.guard_result``), where a
     conflict arrives in three shapes and only one of them is a comparison: the other two are
     a kept season's watcher count that could not be read, and a watch mirror too short to
     stand behind the counts it reports. All three send the item to the operator; only the
@@ -115,7 +128,7 @@ class GateOutcomeOut(BaseModel):
     carries the flag. Read this field off ``protections_unknown``, which is where the guard
     that sets it puts its blocked result.
 
-    Declared here because a wire schema must name every key the UI reads: ``api.routes._chip``
+    Declared here because a wire schema must name every key the UI reads: ``api.review._chip``
     already reads it off the stored row, and until this field existed the panel that opens
     beside that chip could not, so it went on running the retired wording test and asserted a
     comparison its own reason block denied (#86)."""
@@ -190,8 +203,8 @@ def thaw_threshold(value: object) -> int | None:
     """Read the stored score-to-beat, or nothing where the row carries no legible one.
 
     One derivation for all three readers of this byte (rule 104), which is the same shape #112
-    gave ``defers_to_owner`` and the twin rule 72 binds to it. ``routes._chip`` and
-    ``routes._primary_reason`` each tested it with ``isinstance(value, int)`` and coped with
+    gave ``defers_to_owner`` and the twin rule 72 binds to it. ``review._chip`` and
+    ``review._primary_reason`` each tested it with ``isinstance(value, int)`` and coped with
     anything else, while ``Explanation.threshold`` read it through pydantic's lax ``int | None``
     -- a different rule, which REFUSES ``70.5`` and ``"abc"``. A refusal does not degrade this
     one field: it fails the enclosing ``Explanation``, drops ``_explanation_out`` to its degraded
@@ -228,7 +241,7 @@ class Explanation(BaseModel):
     keep_discount: float | None = None
     threshold: int | None = None
     """The score an item had to beat. ``None`` only when the stored explanation could not
-    be read at all and the panel is showing the degraded fallback (routes._explanation_out):
+    be read at all and the panel is showing the degraded fallback (review._explanation_out):
     the panel omits its "your threshold is N" clause rather than print an invented figure."""
     coverage: float
     coverage_floor_bp: int | None = None
@@ -303,7 +316,7 @@ class Explanation(BaseModel):
     def _thaw_match(cls, value: object) -> object:
         """Read a match block that is not a mapping as absent, for the same reason (rule 72).
 
-        ``routes._match_status`` reads the stored match off the raw dict and copes with any
+        ``review._match_status`` reads the stored match off the raw dict and copes with any
         shape; refusing it here blanks every other block on the panel with it. ``None`` is a
         shape the panel already handles, being what a row scanned before the match block existed
         carries.
@@ -319,7 +332,7 @@ def read_explanation(decoded: object) -> Explanation | None:
     """One stored explanation as the panel renders it, or ``None`` where it cannot be read.
 
     **The single definition of "unreadable" for this document (rule 104).** Both readers that
-    must agree call it: ``api.routes._explanation_out``, which degrades the panel to an empty
+    must agree call it: ``api.review._explanation_out``, which degrades the panel to an empty
     body, and ``services.condemned.reap_override_verdict_decoded``, which holds the hand reap.
     Deriving it twice is what let them disagree, and the permissive copy was the one on the
     destructive path (#142).

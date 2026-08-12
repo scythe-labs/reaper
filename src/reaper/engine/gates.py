@@ -96,7 +96,7 @@ class GateId(enum.StrEnum):
 
     SEASON_PROGRESSION = "season_progression"
     """Not authorable in a policy. The engine emits it from the season judgment
-    (``season_scan.guard_result``); no policy row builds it."""
+    (``season_evidence.guard_result``); no policy row builds it."""
 
     CUSTOM = "custom"
     """Not authorable in a policy. Tags the result of an operator-authored custom rule,
@@ -158,12 +158,12 @@ class GateResult:
     docstring carries why.
 
     What it still does is tell two SHAPES of block apart for the operator's copy, which
-    was always the more honest use of it. ``season_scan.guard_result`` sets it when every
+    was always the more honest use of it. ``season_evidence.guard_result`` sets it when every
     ``season_pruning.PruneConflict`` naming the season was a comparison Reaper could
     actually make: a readable ``kept_watchers`` AND a ``shortfall`` of ``None``. The
     second is not implied by the first -- a count read off a mirror that does not reach
     back to when the season arrived is a number all the same, and settles nothing (#94).
-    ``api.routes._chip`` reads it to choose between "this was watched more than a season
+    ``api.review._chip`` reads it to choose between "this was watched more than a season
     your rule keeps" and "couldn't check who watched these seasons", which are genuinely
     different things to tell someone deciding what to delete.
 
@@ -178,7 +178,7 @@ class GateResult:
     """Only meaningful on a ``blocked`` result: this check never ran, as against one that ran
     and left its answer to the operator.
 
-    Set by the season guard alone (``services.season_scan.guard_result``), the one producer
+    Set by the season guard alone (``services.season_evidence.guard_result``), the one producer
     whose blocked results are not all of a kind, and read by ``WhyPanel.keepRuleConflict``.
     A keep-rule conflict made the comparison and found the rule fighting the evidence, which
     is a decision waiting for a person ("Needs a look"). The same guard on a show Plex never
@@ -210,7 +210,7 @@ class GateResult:
 def thaw_defers_to_owner(value: object) -> bool | None:
     """``defers_to_owner`` as it comes off a stored explanation: three states, no coercion.
 
-    The one derivation, because it had two and they disagreed (rule 104). ``api.routes._chip``
+    The one derivation, because it had two and they disagreed (rule 104). ``api.review._chip``
     read the raw dict with ``is True`` / ``is False``, so anything else fell to its
     vague-but-true chip; ``explanation.GateOutcomeOut`` read the same byte through Pydantic's
     lax bool coercion, which takes ``1`` and ``"true"`` as True, ``0`` as False, and REFUSES
@@ -308,8 +308,8 @@ class Facts:
     retired."""
 
     # --- fields authorable in custom rules (the weighting feature) --------------------
-    # Given fail-safe defaults so the non-production Facts builders (backtest
-    # reconstruction, calibration, test fixtures) need not enumerate them; the live scan
+    # Given fail-safe defaults so a Facts built outside the scan (a test fixture, a thawed
+    # snapshot) need not enumerate them; the live scan
     # builders set them explicitly, which they must -- ``Absent`` is fail-closed on the
     # condemn and gate lanes but not on the keep lane. See ``_UNSET``.
     requested: Observation[bool] = _UNSET
@@ -382,24 +382,28 @@ class Facts:
     """Every interpretable rating the scan froze for this item, one per source (IMDb,
     TMDb, Rotten Tomatoes critics/audience, Metacritic). Read only by the multi-source
     ``RatingFloorGate``, a protection, so a missing or unreadable source can only ever
-    fail to keep a title, never condemn one. Empty by default and for the historical
-    reconstruction (backtest/calibration have no rating source), which simply means the
+    fail to keep a title, never condemn one. Empty by default, which simply means the
     gate does not fire. Not hashed (Facts is evidence, not policy)."""
 
 
 @dataclass(frozen=True, slots=True)
 class GateConfig:
-    """The user-tunable part of a gate. Integers only -- see ``policy``."""
+    """The user-tunable part of a gate. Integers only -- see ``policy``.
 
-    gate: GateId
-    enabled: bool = True
+    No ``gate`` id and no ``enabled`` flag. Both were written at the one construction site
+    (``services.scan_runner.build_gates``) and read by no gate: each gate class carries its
+    own ``id``, and a gate the operator switched off is never built at all, so the flag was
+    only ever ``True``. A config that could say ``enabled=False`` invites a reader to think
+    something checks it.
+    """
+
     threshold: int = 0
     #: No ``secondary`` here. It carried the rating gate's vote floor until that bar moved to
     #: ``PolicyBody.keep_rating_rules``, where it is now ``RatingRule.min_votes``, read by
     #: ``RatingFloorGate.evaluate`` and the ``_miss_phrase`` helper it calls. After the move no
     #: gate read ``secondary``, and ``scan_runner`` was copying a dead number into every gate it
     #: built. The policy body has since dropped it too, via migration ``e6f708192a3b`` -- see
-    #: ``policy.drop_retired_gate_keys`` for the stored bodies that still carry the key.
+    #: ``policy_migrations.drop_retired_gate_keys`` for the stored bodies that still carry the key.
 
     window_days: int = 365
     """How far back "recently" reaches, for gates that count activity.
@@ -485,12 +489,9 @@ class RatingFloorGate:
         the "checked and did not fire, with the numbers" explainability the panel needs."""
         if rating is None:
             return f"no rating on {source_label(rule.source)} (you keep {rule.describe_bar()})"
-        too_few_votes = (
-            rule.min_votes > 0
-            and rating.has_meaningful_vote_count
-            and (rating.votes is None or rating.votes < rule.min_votes)
-        )
-        if too_few_votes:
+        # The same predicate `evaluate` decides the bar on, so the sentence cannot claim a
+        # vote floor was missed on a count `Rating.meets` counted as enough (rule 104).
+        if rating.short_of_vote_floor(rule.min_votes):
             return f"{rating.describe_for_user()}, too few to trust (you need {rule.min_votes:,})"
         return f"{rating.describe_for_user()}, below the {rule.threshold_text()} you keep"
 
@@ -643,7 +644,7 @@ def progress_is_establishable(*, reach_days: int, hold_days: int) -> bool:
 
     It lives here beside :func:`history_shortfall` and :func:`lifetime_shortfall` because it is
     the third member of one family -- a span the mirror is asked to cover, and what it means
-    when it cannot -- and because ``policy.inspect`` has to ask it to warn about this one
+    when it cannot -- and because ``policy_warnings.inspect`` has to ask it to warn about this one
     before a scan runs into it. An engine module may not import a service, and reimplementing
     the two-line predicate at the second caller is exactly what rule 104 forbids.
 
@@ -712,7 +713,7 @@ class ServerPopularityGate:
                 # reaps library-wide. It still forces ABSTAIN, which is its real job.
                 #
                 # The "could not check ..." prefix IS still load-bearing, for the two
-                # surfaces that read it: ``api.routes._chip`` sends a detail starting
+                # surfaces that read it: ``api.review._chip`` sends a detail starting
                 # with it to "Some checks couldn't run" instead of "left for you to
                 # decide", and ``WhyPanel`` splits it into check and cause. Reword it and a
                 # plumbing failure starts reading to the operator as their own decision.
@@ -740,8 +741,8 @@ class ServerPopularityGate:
 # never firing they were not simply retired: every list -- tag, collection, watchlist, IMDb
 # -- now protects through the operator's own keep rules on the ``on_list`` field, evaluated
 # by ``fields.CustomProtectGate``, so each list's strength is a per-list choice on Policy.
-# ``policy.convert_list_protections`` rewrites a stored body's gate rows into the equivalent
-# rules, and their `GateId`s survive above so a stored explanation still decodes.
+# ``policy_migrations.convert_list_protections`` rewrites a stored body's gate rows into the
+# equivalent rules, and their `GateId`s survive above so a stored explanation still decodes.
 
 
 @dataclass(frozen=True, slots=True)
@@ -755,22 +756,20 @@ class MinDormancyGate:
     The default threshold is not a guess; it comes from the shape of the rewatch
     curve. That probability **roughly halves at the one-year mark, then decays only
     slowly, and its tail never reaches zero** -- see ``docs/SIGNALS.md``, "There is no
-    cliff. Nothing is ever free to delete." Measured on one real library
-    (``backtest.FALLBACK_REWATCH_PRIOR``) it runs about 61% inside the first year, about
-    30% between two and three years, about 19% from three to five, and about 13% beyond
-    five. So a title one to three years dormant still has close to a one-in-three chance
-    of being played again within the year, and past 1,095 days the odds improve but never
-    reach free. Dormancy of a year or two means very little -- people circle back to
-    films on that timescale all the time.
+    cliff. Nothing is ever free to delete." Measured on one real library and tabulated
+    there under "Ground truth: rewatch probability by dormancy", it runs about 61% inside
+    the first year, about 30% between two and three years, about 19% from three to five,
+    and about 13% beyond five. So a title one to three years dormant still has close to a
+    one-in-three chance of being played again within the year, and past 1,095 days the odds
+    improve but never reach free. Dormancy of a year or two means very little -- people
+    circle back to films on that timescale all the time.
 
     That curve is a *property of an audience*, not a universal constant, and the figures
     above are documented defaults measured on one real library, not figures fitted to
-    this server. **The threshold this gate enforces is the operator's own stored number**
-    (``config.threshold``), read straight off the policy: nothing adjusts it.
-    ``engine.calibration`` derives a bucketed rewatch prior, which is the backtest's lift
-    baseline and not this threshold, and it has no caller in ``src/`` in any case (see the
-    note at the top of that module). The gate exists either way: the shallow tail is the
-    invariant, and the threshold is a default the operator may move.
+    this server. Nothing in Reaper fits one: **the threshold this gate enforces is the
+    operator's own stored number** (``config.threshold``), read straight off the policy,
+    and nothing adjusts it. The gate exists either way: the shallow tail is the invariant,
+    and the threshold is a default the operator may move.
     """
 
     config: GateConfig
@@ -829,8 +828,8 @@ class DataHorizonGate:
     lane, ``ServerPopularityGate`` refuses to report a protection as checked over a window
     its history does not span (``Facts.history_reach_days``). On the dormancy lane, which is
     the rest of this docstring, the defense lives in fact *derivation*:
-    dormancy is measured from ``max(added_at, horizon)`` (see ``services.snapshot.build_facts``,
-    ``engine.backtest.facts_as_of`` and ``engine.calibration.derive``), so a pre-horizon item
+    dormancy is measured from ``max(added_at, horizon)`` (``engine.dormancy.reference_instant``,
+    through ``services.snapshot.build_facts`` and its season twin), so a pre-horizon item
     is clamped to the horizon rather than read as decades dormant.
 
     This gate's only independent job, therefore, is to fail closed when dormancy is
@@ -857,10 +856,12 @@ class DataHorizonGate:
 # An `UnmanagedGate` ("if no *arr owns it, Reaper cannot delete it") lived here, enabled by
 # default in both shipped policies. It could not fire. Reaper builds its candidate list BY
 # asking Sonarr and Radarr what they hold, so a file neither owns can never reach the set this
-# gate filtered: every builder of ``Facts.is_managed`` writes a hardcoded ``Known(True)``
-# (`snapshot`, `season_scan`, `backtest`), and the only other place a `Facts` is constructed
-# is `facts_codec.facts_from_dict`, which can thaw only what a builder already wrote. The
-# PROTECT branch
+# gate filtered: both evidence builders of ``Facts.is_managed`` write a hardcoded ``Known(True)``
+# (`snapshot`, `season_scan`), and neither of the two other `Facts` constructors can reach a gate
+# with anything else -- `facts_codec.facts_from_dict` thaws only what a builder already wrote, and
+# `preview._bare_facts` does write ``Unknown`` here but is handed to `evaluate_signal` alone,
+# never to `evaluate_all`. That last one is the load-bearing half, so it is stated rather than
+# left to a count of construction sites. The PROTECT branch
 # and the gate's half of ``verdict.STRUCTURAL_GATES`` were both unreachable while the operator
 # saw a switch, on by default, warned in red if they turned it off (rule 38/117).
 #
@@ -875,15 +876,15 @@ class DataHorizonGate:
 # path that can find media NO *arr manages -- reading Plex directly rather than the *arrs --
 # so that the fact can be something other than True. Gate, builders and tests return together.
 # ``GateId.UNMANAGED`` survives so a stored explanation still decodes. Four surfaces read one
-# back, and all four stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.routes`' chip
+# back, and all four stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.review`' chip
 # phrasing, `WhyPanel.tsx`'s held-reap line, and `WhyPanel.tsx`'s ``CHECK_COPY`` entry for
 # "which *arr owns this", which was this gate's blocked branch and whose only producer was the
 # code deleted here.
 
 
 # An `OthersWatchingGate` ("the requester ignored it, but other people did not") lived here.
-# No fact builder ever produced a Known ``others_watching`` -- snapshot, season_scan and
-# backtest all wrote Absent -- so the count was always 0 against a floor of at least 1 and
+# No fact builder ever produced a Known ``others_watching`` -- every one wrote Absent -- so
+# the count was always 0 against a floor of at least 1 and
 # the gate could not PROTECT anything, while its ABSTAIN line read to the owner like a check
 # that ran. A protection that cannot fire is deleted, not stockpiled (rule 38): the evidence
 # it needs (per-user plays excluding the requester) is not gathered anywhere in the scan.

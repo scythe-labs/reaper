@@ -111,7 +111,7 @@ describe("what the panel says when it will not answer", () => {
   });
 
   it("renders the server's sentence rather than a copy of its own", () => {
-    // The reason lives in api/routes.py alone. It used to live in both, and the copy the
+    // The reason lives in api/simulate.py alone. It used to live in both, and the copy the
     // operator actually read was the one in this file -- so the sentence that was reviewed
     // and the sentence that shipped were different strings (rule 144).
     renderNotice({
@@ -186,25 +186,26 @@ describe("who is allowed to write the rescan sentences", () => {
 // the trap: they count threshold crossings, and the two rows beside them are absolute totals
 // with no before to read them against, so a protection edit that moves a title from spared to
 // not judged leaves every number on the panel holding still.
-describe("the outcome panel on an edit that changes no title", () => {
-  const BASE: Simulation = {
-    exact: true,
-    stale_kind: null,
-    stale_reason: null,
-    condemned: 412,
-    protected: 388,
-    abstained: 2669,
-    reclaimable_bytes: 2_090_000_000_000,
-    unknown_size_items: 0,
-    newly_condemned: 0,
-    no_longer_condemned: 0,
-    condemned_before: 412,
-    changed_titles: 0,
-    histogram: [180, 402, 611, 688, 590, 430, 292, 168, 78, 30],
-    examples_newly_condemned: [],
-    protected_by: [],
-  };
+/** One simulation payload, shared by the two panels below: what changed, and what spared. */
+const BASE: Simulation = {
+  exact: true,
+  stale_kind: null,
+  stale_reason: null,
+  condemned: 412,
+  protected: 388,
+  abstained: 2669,
+  reclaimable_bytes: 2_090_000_000_000,
+  unknown_size_items: 0,
+  newly_condemned: 0,
+  no_longer_condemned: 0,
+  condemned_before: 412,
+  changed_titles: 0,
+  histogram: [180, 402, 611, 688, 590, 430, 292, 168, 78, 30],
+  examples_newly_condemned: [],
+  protected_by: [],
+};
 
+describe("the outcome panel on an edit that changes no title", () => {
   const INERT = "Your changes leave every title as it is.";
 
   function renderOutcome(sim: Partial<Simulation>, edited: boolean) {
@@ -302,6 +303,71 @@ describe("the outcome panel on an edit that changes no title", () => {
 
   it("has no accessibility violations", async () => {
     const { container } = renderOutcome({ changed_titles: 0 }, true);
+    await expectNoA11yViolations(container);
+  });
+});
+
+// "Why titles were spared" is a tally of gate ids the server sends, rendered through the
+// browser's own copy for each one. Until #551 an id with no copy fell through to a title-cased
+// slug, so the two the engine emits on ordinary scans -- the season guard, and every keep rule
+// the operator wrote -- read as "Season Progression" and "Custom" beside their counts, in the
+// panel someone reads while deciding what to delete (rule 21).
+describe("what the spared-by list calls each protection", () => {
+  function renderSpared(protected_by: { gate: string; count: number }[]) {
+    return render(
+      <Outcome simulation={{ ...BASE, protected_by }} threshold={62} pace={null} edited={false} />,
+    );
+  }
+
+  /** The tally beside one reason, read through its row. Never by searching the page for the
+   *  number: the histogram's axis labels are numbers too, so a bare text query answers from
+   *  a bar chart that has nothing to do with this list. */
+  function tally(label: string): string {
+    const row = screen.getByText(label).parentElement;
+    return row?.querySelector("dd")?.textContent ?? "";
+  }
+
+  // The engine's id, then the words. Written from `GATE_META`'s intent rather than from its
+  // source, so a label edited into engine vocabulary fails here (rule 119).
+  //
+  // `season_progression` is deliberately vague and pinned that way: the same id tallies a
+  // season held because the guard could not be ANSWERED (a watch mirror shallower than the
+  // partway-through hold, the ordinary state of a new install), so a label naming the
+  // operator's season rules would send them to controls that cannot move the number.
+  // `api/review.py`'s `_kept_phrase` refuses the same sentence for the same rows.
+  it.each([
+    ["season_progression", "A season check", "Season Progression"],
+    ["custom", "A rule you wrote", "Custom"],
+    ["min_dormancy", "Give every title time to be rewatched", "Min Dormancy"],
+    ["hand_spare", "Spared by hand", "Hand Spare"],
+  ])("names %s in the operator's words", (gate, label, slug) => {
+    renderSpared([{ gate, count: 40 }]);
+
+    expect(screen.getByText(label)).toBeInTheDocument();
+    // Both spellings of the leak: the raw id, and the title-cased slug the old fallback made
+    // of it. Neither is a thing a person would say (rule 21).
+    expect(screen.queryByText(slug)).not.toBeInTheDocument();
+    expect(screen.queryByText(gate)).not.toBeInTheDocument();
+    expect(tally(label)).toBe("40");
+  });
+
+  it("still says something true about an id it has no copy for", () => {
+    // Rule 66's fallback, for a server newer than the browser. Those titles really were kept
+    // by something, so the row stays and says only what it can know -- never a blank, and
+    // never the id.
+    renderSpared([{ gate: "brand_new_gate", count: 7 }]);
+
+    expect(screen.getByText("Another protection")).toBeInTheDocument();
+    expect(tally("Another protection")).toBe("7");
+    expect(screen.queryByText("Brand New Gate")).not.toBeInTheDocument();
+    expect(screen.queryByText("brand_new_gate")).not.toBeInTheDocument();
+  });
+
+  it("has no accessibility violations", async () => {
+    const { container } = renderSpared([
+      { gate: "min_dormancy", count: 120 },
+      { gate: "season_progression", count: 40 },
+    ]);
     await expectNoA11yViolations(container);
   });
 });

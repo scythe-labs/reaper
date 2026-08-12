@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from typing import Any, ClassVar
 
+from reaper.api.schemas import LinksOut
 from reaper.clients.plex import PlexClient
 from reaper.config import RuntimeSafety
 from reaper.ratings import Rating, RatingSource
@@ -202,6 +203,28 @@ class TestBuildLinks:
 
     def test_an_ordinary_bind_offers_no_candidates(self) -> None:
         assert build_links("radarr:2:1542", **self.KWARGS).match_candidates == ()
+
+    def test_a_candidate_link_reaches_the_wire_as_its_own_object(self) -> None:
+        """``api/review.py``'s ``_deep_links`` builds ``LinksOut`` off the whole
+        ``DeepLinks`` record, so the nested tuple is converted by the model rather than by a
+        comprehension at the route. Nothing covered that: both places ``test_api.py``
+        asserts the served ``links`` dict whole are rows whose ``match_candidates`` is
+        empty, for two different reasons."""
+        kwargs = {**self.KWARGS, "plex_rating_key": None, "candidate_rating_keys": [555]}
+        links = build_links("radarr:2:1542", **kwargs)
+
+        served = LinksOut.model_validate(links, from_attributes=True).model_dump()
+
+        assert served["match_candidates"] == [
+            {
+                "rating_key": 555,
+                "plex": (
+                    "https://app.plex.tv/desktop/#!/server/abc123"
+                    "/details?key=%2Flibrary%2Fmetadata%2F555"
+                ),
+                "tautulli": "https://tautulli.example/info?rating_key=555",
+            }
+        ]
 
     def test_the_plex_link_uses_web_for_a_self_hosted_address(self) -> None:
         # The plex.tv-hosted app serves the client under /desktop, but a Plex Media

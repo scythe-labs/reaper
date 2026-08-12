@@ -12,8 +12,9 @@ import type { RefObject } from "react";
 import type { ProfileSettings, SimStale, Simulation } from "../api";
 import { useSuccessorFocus } from "../focus";
 import { bytes, count, totalBytes } from "../format";
-import { GATE_META, titleCase } from "./policyMeta";
+import { GATE_META, UNNAMED_GATE_LABEL } from "./policyMeta";
 import { Notice } from "./Notice";
+import { ProgressBar } from "./ProgressBar";
 
 /** The histogram, with the threshold drawn across it.
  *
@@ -76,7 +77,7 @@ export const APPLIES_ON_NEXT_SCAN =
  *
  *  A heading only. The paragraph under it is the server's own `stale_reason`, so the
  *  sentence the operator reads and the sentence a reviewer reads are one string
- *  (`api/routes.py`'s `_refused`, rule 144) -- they used to be two, and the frontend's copy
+ *  (`api/simulate.py`'s `_refused`, rule 144) -- they used to be two, and the frontend's copy
  *  was the only one anybody ever saw. An id this build does not know keeps the general
  *  heading and still renders that sentence, which is rule 66's "fallback handles unknown
  *  ids only": the server is always able to say what happened, even to an older browser. */
@@ -143,19 +144,7 @@ export function StaleNotice({
           <p className="muted">
             {detail || "Working"}, {percent}%
           </p>
-          {/* Same sweep as ScanBar's and the deletion path's (#177, rule 72). The visible
-              detail line above already says the phase and the percent, so `aria-valuetext`
-              would only repeat it. */}
-          <div
-            className="bar"
-            role="progressbar"
-            aria-label={RESCAN_HEADING}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={percent}
-          >
-            <div className="bar-fill" style={{ width: `${percent}%` }} />
-          </div>
+          <ProgressBar label={RESCAN_HEADING} percent={percent} />
         </>
       ) : (
         <>
@@ -165,7 +154,7 @@ export function StaleNotice({
               to the hashed body leaves the recorded hash unmatchable until the next scan.
 
               It used to be a hardcoded paragraph here that named a keep tag, a season rule
-              and the watch span all at once, beside a second copy in api/routes.py that
+              and the watch span all at once, beside a second copy in api/simulate.py that
               nothing ever rendered. Three refusals now, each with its own remedy, and a
               season rule previews rather than reaching any of them. Keeping that as two
               hand-synced copies would have meant the reviewed sentence and the read sentence
@@ -284,9 +273,14 @@ export function Outcome({
         <>
           <h3>Why titles were spared</h3>
           <dl className="sim-delta">
+            {/* Every id the server can send is named in `GATE_META`, which `satisfies` keeps
+                complete over `GateId`. The fallback is rule 66's, for an id from a server
+                newer than this browser: it used to be `titleCase`, which printed the engine's
+                own slug ("Season Progression", "Custom") as the reason a title was kept, in
+                the panel read while deciding what to delete (#551, rule 21). */}
             {simulation.protected_by.map((g) => (
               <div key={g.gate}>
-                <dt>{GATE_META[g.gate]?.label ?? titleCase(g.gate)}</dt>
+                <dt>{GATE_META[g.gate]?.label ?? UNNAMED_GATE_LABEL}</dt>
                 <dd>{count(g.count)}</dd>
               </div>
             ))}

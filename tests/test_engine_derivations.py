@@ -1,38 +1,50 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Things this codebase derived twice, or transcribed once and left to drift.
 
-Four of the same shape, each low severity on its own and each a way for two parts of the
+Five of the same shape, each low severity on its own and each a way for two parts of the
 engine to disagree about one number:
 
 * the frozen-evidence field list was hand-maintained beside the dataclass it mirrors (R-1);
-* "days dormant" was floored in the calibration and floated in the backtest, so an item
-  could bucket one side of a threshold and score the other (R-2);
+* "days dormant" was derived twice and the two disagreed at a boundary -- one floored, the
+  other floated -- so an item could bucket one side of a threshold and score the other (R-2);
+  both readers were the retired lab engines, and what R-2 left behind is the single
+  ``engine.dormancy`` derivation every surviving lane takes;
 * the streamed dataset download opted out of the retry every other read gets (I-5);
 * a whole second condemn/protect/abstain decision function sat in the engine, reachable
-  only from its own tests (H-2).
+  only from its own tests (H-2);
+* the stored why-panel document is written by hand in ``services.snapshot._explain`` and
+  declared as models in ``engine.explanation``, and the reader drops what it does not
+  name (W5-1).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import importlib.util
-from datetime import datetime, timedelta
+import json
+from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
+from typing import Any, get_args
 
 import httpx
 import httpx2
 import pytest
 import respx
+from pydantic import BaseModel
 
 from reaper.clients.base import IntegrationError
 from reaper.clients.public import PublicClient
 from reaper.clock import utcnow
-from reaper.engine import facts_codec
-from reaper.engine.backtest import Item, facts_as_of
+from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
-from reaper.engine.gates import Facts
+from reaper.engine.explanation import Explanation, read_explanation
+from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.signals import KeepResult, Score, SignalId, SignalResult, SignalState
 from reaper.services.fairness import WatchEvidence
+from reaper.services.snapshot import _explain
 
 NOW = utcnow()
 
@@ -104,8 +116,9 @@ class TestTheFrozenFieldListFollowsTheDataclass:
 
         thawed, _ = facts_codec.facts_from_dict(frozen)
 
+        # `Unknown` and `Absent` are disjoint, so this one assert carries both halves:
+        # a second `not isinstance(..., Absent)` beside it could never fail (rule 118).
         assert isinstance(thawed.requested, Unknown)
-        assert not isinstance(thawed.requested, Absent)
         # And the fields that ARE recorded still come back exactly as they went in.
         assert thawed.days_observed_unwatched == Known(value=400, source="tautulli")
 
@@ -179,54 +192,6 @@ class TestDormancyIsDerivedOnce:
         """A play after the cutoff means the evidence and the clock disagree. Callers treat
         that as "cannot be judged"; inventing a 0 would score an item on a contradiction."""
         assert dormancy_days(NOW + timedelta(days=2), now=NOW) < 0
-
-    def test_the_backtest_scores_the_same_number_the_calibration_buckets(self) -> None:
-        """The dual derivation this fixes: the backtest computed
-        ``total_seconds() / 86_400`` while the calibration used ``.days``, so at a bucket
-        boundary the same item bucketed one way and scored the other."""
-        cutoff = NOW - timedelta(days=365)
-        horizon = NOW - timedelta(days=3000)
-        added = cutoff - timedelta(days=9, hours=23)
-        item = Item(
-            rating_key=1,
-            title="A Film",
-            size_bytes=8_000_000_000,
-            added_at=added,
-            imdb_rating_tenths=73,
-            imdb_votes=500_000,
-        )
-
-        facts = facts_as_of(item, [], cutoff=cutoff, horizon=horizon)
-
-        assert facts is not None
-        assert isinstance(facts.days_observed_unwatched, Known)
-        scored = facts.days_observed_unwatched.value
-        assert scored == dormancy_days(
-            reference_instant(last_played=None, added_at=added, horizon=horizon), now=cutoff
-        )
-        assert scored == 9, "9.96 days must read as 9, the bound that argues for keeping"
-
-    def test_the_backtest_reads_plays_as_bare_id_and_instant(self) -> None:
-        """A guard, not a proof: ``_plays`` returned a third element documented as a friendly
-        name and populated with ``str(user_id)``, which ``run`` never used -- it resolves
-        names from the Tautulli user list. Dropping it is what mypy enforces; this pins that
-        the reader is happy with the two-element shape."""
-        plays: list[tuple[int, datetime]] = [(7, NOW - timedelta(days=30))]
-        facts = facts_as_of(
-            Item(
-                rating_key=1,
-                title="A Film",
-                size_bytes=1,
-                added_at=NOW - timedelta(days=900),
-                imdb_rating_tenths=None,
-                imdb_votes=None,
-            ),
-            plays,
-            cutoff=NOW,
-            horizon=NOW - timedelta(days=3000),
-        )
-        assert facts is not None
-        assert facts.days_observed_unwatched == Known(value=30, source="tautulli")
 
 
 # ---------------------------------------------------------------------------
@@ -321,3 +286,253 @@ class TestThereIsOnlyOneDecisionFunction:
         """A Seerr account with no Plex link has history Reaper cannot see. Every caller
         guards the ``None`` itself before acting; here it is simply zero."""
         assert WatchEvidence(plays_by_user={7: 3}, distinct_watchers=1).plays_by(None) == 0
+
+
+# ---------------------------------------------------------------------------
+# W5-1: the stored explanation, written by hand and declared elsewhere
+# ---------------------------------------------------------------------------
+
+
+#: The two keys ``_explain`` writes on ``protections_unknown`` and on neither of the other
+#: two protection lists. One model types all three, and ``GateOutcomeOut``'s own docstring
+#: rests on the asymmetry: an entry in the other two reads ``None`` for a reason that is not
+#: the third state, so a reader must take the flag off ``protections_unknown``. Stated here
+#: as the one exception to "the writer names what the reader declares", so the walk below
+#: has no hole in it.
+_UNKNOWN_ONLY_GATE_FLAGS = frozenset({"defers_to_owner", "unestablishable"})
+
+
+def _models_in(annotation: object) -> Iterator[type[BaseModel]]:
+    """Every model reachable inside one annotation, at any nesting depth.
+
+    Recursive rather than one level deep. This is rule 147's bound, read off an annotation
+    instead of source text: the tree spells these two ways today, ``MatchOut | None`` and
+    ``list[SignalContribution]``. Their combination ``list[X] | None`` is the natural spelling
+    for a block added to a document that must still read old rows. One ``get_args`` pass sees
+    ``(list[X], NoneType)``, and neither is a model, so that block would leave the walk in
+    silence and its entries would never be compared.
+    """
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        yield annotation
+    for arg in get_args(annotation):
+        yield from _models_in(arg)
+
+
+def _nested_models(model: type[BaseModel]) -> dict[str, type[BaseModel]]:
+    """Each field of ``model`` holding another model, or a list of one, as ``{key: model}``.
+
+    Derived off the declaration rather than listed, so a block added to ``Explanation``
+    enters the walk below without anyone extending it. A hand-written list is the failure
+    rule 145 names: a member the walk never collected is missing from the guard and from
+    the proof of the guard alike.
+    """
+    found: dict[str, type[BaseModel]] = {}
+    for name, field in model.model_fields.items():
+        for nested in _models_in(field.annotation):
+            found.setdefault(name, nested)
+    return found
+
+
+def _written_explanation() -> dict[str, Any]:
+    """One stored explanation from the real writer, with every block populated at once.
+
+    **A shape, not a scan.** No single item produces a merged bind *and* a list of
+    candidate rows *and* all three protection lists; the subject here is which keys are
+    written, and a realistic vector leaves half of them unexercised. Every optional
+    argument is passed a value that is not its default for the same reason (rule 141).
+    """
+    evaluation = Evaluation(
+        results=[
+            GateResult(
+                gate=GateId.STREAMING_NOW,
+                outcome=PROTECT,
+                detail="someone is watching it right now",
+            ),
+            GateResult(
+                gate=GateId.MIN_DORMANCY,
+                outcome=ABSTAIN,
+                detail="untouched for 5 years, past the 3 years it has to sit unwatched first",
+            ),
+            GateResult(
+                gate=GateId.SEASON_PROGRESSION,
+                outcome=ABSTAIN,
+                detail="watched more than a season your rule keeps",
+                blocked=True,
+                defers_to_owner=True,
+                unestablishable=False,
+            ),
+        ]
+    )
+    frozen = Score(
+        value=52.0,
+        coverage=0.875,
+        results=[
+            SignalResult(
+                signal=SignalId.UNWATCHED,
+                pressure=31.4,
+                weight=40,
+                detail="untouched for 5 years",
+                evaluated=True,
+                state=SignalState.ADDS,
+                floor=90,
+                saturate_at=730,
+            )
+        ],
+        base_value=67.0,
+        keep_discount=15.0,
+        keep_results=[
+            KeepResult(
+                name="Rated well",
+                discount=15.0,
+                max_discount=20,
+                detail="rated 8.1 by 40,000 people",
+                evaluated=True,
+            )
+        ],
+    )
+    document: dict[str, Any] = json.loads(
+        _explain(
+            evaluation,
+            frozen,
+            DEFAULT_MOVIE_POLICY,
+            plex_rating_key=4242,
+            matched_by=identity.MatchedBy.MERGED_LISTINGS,
+            match_detail="one file listed twice in Plex",
+            match_status=identity.MatchStatus.MATCHED,
+            merged_rating_keys=(4242, 4243),
+            match_candidates=(4242, 4243),
+            watch_blind=False,
+        )
+    )
+    return document
+
+
+def _blocks(document: dict[str, Any]) -> Iterator[tuple[str, set[str], type[BaseModel]]]:
+    """Every object in the written document, as ``(label, its keys, the model typing it)``.
+
+    A declared block the writer never wrote is skipped rather than raising here: the
+    top-level comparison already names it, and a ``KeyError`` mid-walk would fail the run
+    before the rest of the document was read.
+    """
+    yield "<top level>", set(document), Explanation
+    for key, model in _nested_models(Explanation).items():
+        value = document.get(key)
+        if isinstance(value, list):
+            for index, entry in enumerate(value):
+                yield f"{key}[{index}]", set(entry), model
+        elif isinstance(value, dict):
+            yield key, set(value), model
+
+
+#: The two lists the flags above are NOT written on. Matched against the whole block name
+#: rather than as a prefix, so a field spelled `protections_fired_since` cannot inherit the
+#: exemption by looking like one of these.
+_LISTS_WITHOUT_THE_GATE_FLAGS = frozenset({"protections_fired", "protections_checked"})
+
+
+def _declared(label: str, model: type[BaseModel]) -> set[str]:
+    """The keys the writer owes this block: its model's fields, less the stated exception."""
+    fields = set(model.model_fields)
+    if label.split("[")[0] in _LISTS_WITHOUT_THE_GATE_FLAGS:
+        return fields - _UNKNOWN_ONLY_GATE_FLAGS
+    return fields
+
+
+class TestTheStoredExplanationIsWrittenAsItIsDeclared:
+    """``snapshot._explain`` builds the why-panel document by hand; ``engine.explanation``
+    declares it as pydantic models. The declaration is the READ side, so it drops any key it
+    does not name -- pydantic's ``extra="ignore"`` -- and that is exactly how ``keeps`` and
+    ``match`` were written on every scan for months while the panel rendered neither.
+
+    Nothing pinned the key set before this class. The baseline fixture reads nine of the
+    thirteen top-level keys and four fields of a signal row (``tests/_policy_lab.py``). So a
+    key added on one side alone was invisible to the whole suite, in both directions: a field
+    declared and never written reads ``None`` forever.
+    """
+
+    def test_the_writer_and_the_declaration_name_the_same_keys(self) -> None:
+        """Every object in the document, against the model that types it. Collected rather
+        than asserted per block, so a failure names each disagreement instead of the first,
+        and the message names both files, since whichever one a reader is holding the fix is
+        usually in the other (rule 144)."""
+        document = _written_explanation()
+
+        wrong = [
+            f"{label}: written-only {sorted(keys - declared)}, "
+            f"declared-only {sorted(declared - keys)}"
+            for label, keys, model in _blocks(document)
+            if (declared := _declared(label, model)) != keys
+        ]
+
+        assert not wrong, (
+            "services/snapshot.py's _explain and engine/explanation.py's models describe one "
+            "document and disagree about it. A written-only key is DROPPED on read "
+            '(pydantic\'s extra="ignore"); a declared-only key reads None forever.\n'
+            + "\n".join(wrong)
+        )
+
+    def test_the_two_gate_flags_ride_on_the_unknown_list_alone(self) -> None:
+        """The exception above, stated positively. ``_explain`` writes ``defers_to_owner``
+        and ``unestablishable`` on every ``protections_unknown`` entry and on no other, which
+        is what lets ``api.review._chip`` read a missing key as "this row cannot say" instead
+        of as a gate with no opinion. One entry can appear in two lists -- an unestablishable
+        season PROTECT does -- and only the ``protections_unknown`` copy carries the flags."""
+        document = _written_explanation()
+
+        assert all(
+            set(entry) >= _UNKNOWN_ONLY_GATE_FLAGS for entry in document["protections_unknown"]
+        )
+        assert all(
+            _UNKNOWN_ONLY_GATE_FLAGS.isdisjoint(entry)
+            for key in _LISTS_WITHOUT_THE_GATE_FLAGS
+            for entry in document[key]
+        )
+
+    def test_the_walk_covers_every_block_the_declaration_holds(self) -> None:
+        """Rule 145: the assertions above can only fail on a block the walk collected, so the
+        population it collected is pinned rather than assumed. Seven objects over five models,
+        counted by hand against the fixture: the document, its ``match``, one signal, one keep,
+        and one entry in each of the three protection lists.
+
+        **Labels, never a total.** A fixture landing two entries in one protection list and
+        none in another also totals seven. An empty list makes the ``all(...)`` above true over
+        nothing, so the flags claim would go unproven with three tests green."""
+        document = _written_explanation()
+
+        assert set(_nested_models(Explanation)) == {
+            "match",
+            "signals",
+            "keeps",
+            "protections_fired",
+            "protections_checked",
+            "protections_unknown",
+        }
+        assert {label for label, _, _ in _blocks(document)} == {
+            "<top level>",
+            "match",
+            "signals[0]",
+            "keeps[0]",
+            "protections_fired[0]",
+            "protections_checked[0]",
+            "protections_unknown[0]",
+        }
+
+    def test_the_reader_reads_back_what_the_writer_wrote(self) -> None:
+        """The round trip the key sets exist to protect. ``read_explanation`` is the one
+        definition of "unreadable" for this document (rule 104) and both the panel and the
+        hand-reap path run it, so a writer the reader refuses holds every file. The two
+        blocks the reader used to drop are asserted by value, not by presence.
+
+        **The merged keys are asserted RAW as well, and that is the load-bearing half.**
+        ``MatchOut.merged_rating_keys`` is a lax ``list[int] | None``, so a stored
+        ``["4242", "4243"]`` reads back through it as ``[4242, 4243]`` and the model assertion
+        holds. ``executor._equivalent_keys`` filters the raw list on ``isinstance(value, int)``
+        and comes back with neither. That is the streaming veto and the played-since-approval
+        check losing the second listing of a merged bind."""
+        document = _written_explanation()
+        body = read_explanation(document)
+
+        assert document["match"]["merged_rating_keys"] == [4242, 4243]
+        assert body is not None
+        assert body.match is not None and body.match.merged_rating_keys == [4242, 4243]
+        assert [keep.name for keep in body.keeps] == ["Rated well"]

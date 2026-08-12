@@ -76,12 +76,11 @@ from reaper.clients.plex import PlexClient, PlexError, PlexSeasonRow
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
+from reaper.db import KEY_CHUNK
 from reaper.db.models import SizeSource
 from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
-from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
-from reaper.engine.gates import PROTECT as GATE_PROTECT
-from reaper.engine.gates import Facts, GateId, GateResult, lifetime_shortfall
+from reaper.engine.gates import Facts, GateResult, lifetime_shortfall
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource, merge_by_source
 from reaper.services import (
@@ -100,6 +99,7 @@ from reaper.services.display_meta import (
 )
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.season_pruning import SPECIALS_SEASON, SeriesPrunePlan, plan_series_prune
+from reaper.text import fold
 
 log = structlog.get_logger(__name__)
 
@@ -190,12 +190,12 @@ class SeasonJudgment:
     """Set when this season's watch history stopped being readable, and already applied to
     ``facts``. Carried so the caller can COUNT it without deciding it a second time: one
     decision, made where the marks are compared, read everywhere else."""
-    # Display fields, carried onto the candidate. A season's poster/blurb/year are the
-    # show's; ``group_key``/``group_title`` collapse every season under one show row in the
-    # review queue. None of them affect the verdict.
+    # Display fields, carried onto the candidate. A season's blurb and year are the show's;
+    # ``group_key``/``group_title`` collapse every season under one show row in the review
+    # queue. None of them affect the verdict. The poster comes off ``show_rating_key`` below
+    # at read time, never from a stored URL.
     year: int | None = None
     summary: str | None = None
-    poster_url: str | None = None
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
@@ -244,8 +244,9 @@ class PlexSeason:
 class _SeriesWork:
     """One series carried through the gather pipeline, accumulating what each pass learns.
 
-    The plan is recomputed once watch evidence is available (the sequential and
-    conflict guards need it); ``show_rating_key`` and ``seasons_in_plex`` are filled in by
+    Carries no plan: the first pass builds one to answer ``fully_protected``, and the plan
+    that decides anything is recomputed later, once watch evidence is in hand (the sequential
+    and conflict guards need it). ``show_rating_key`` and ``seasons_in_plex`` are filled in by
     the Plex resolution pass, and stay empty for a series Plex could not match -- which is
     what makes every one of its seasons abstain.
     """
@@ -253,7 +254,6 @@ class _SeriesWork:
     source: SonarrSource
     series: dict[str, Any]
     seasons: list[SeasonStats]
-    plan: SeriesPrunePlan
     # No season is prunable under THIS scan's policy -- every one is kept by a guard. Still
     # gathered and surfaced as kept (never hide content), and counted so the scan can say how
     # many shows have nothing reapable. It used to spare the show its episodes() read as
@@ -446,163 +446,10 @@ def series_genres(series: Mapping[str, Any]) -> Observation[str]:
     return Known(value=", ".join(genres), source="sonarr") if genres else Absent(source="sonarr")
 
 
-def guard_result(
-    plan: SeriesPrunePlan, season_number: int, *, progress_unknown_reason: str | None = None
-) -> GateResult:
-    """Translate the season-pruning verdict for one season into a gate result.
-
-    Four outcomes, mapped onto the gate vocabulary the why-panel already speaks:
-
-    * **Protected by a guard** -> ``PROTECT``. Beats the score, like any gate.
-    * **In a keep-rule conflict** (prunable by the rule, but more-watched than a season
-      the rule keeps) -> a *blocked* ABSTAIN. ``blocked`` forces the whole item to
-      abstain, which is exactly right: the rule is fighting the evidence, so a human must
-      look. It renders amber, not green.
-    * **Prunable, on a show that never bound to Plex** (``progress_unknown_reason``) -> a
-      *blocked*, ``unestablishable`` ABSTAIN. Nothing is held on it: with no rating key
-      anywhere every season already abstains on its own Unknown facts, and there is no
-      readable sibling to endanger, which is why #485 scoped the hold away from here. What
-      it corrects is the sentence. The mid-binge check asked nobody, and reporting that as
-      a pass sat one fold above four gates saying the opposite on the same season (#486).
-    * **Cleanly prunable** -> ABSTAIN, recorded so the panel shows the guard ran and had
-      nothing to protect here.
-
-    The conflict arm carries ``defers_to_owner``, and only where the comparison behind it
-    was one Reaper could actually make. ``_detect_conflicts`` raises a conflict in three
-    shapes:
-
-    * the kept season's count was read and the rule lost it -- a comparison Reaper made;
-    * that count could NOT be read (``kept_watchers is None`` -- on disk, but never resolved
-      in Plex), a plumbing failure;
-    * the watch mirror does not reach back to when one of the two seasons arrived
-      (``shortfall``), so the count it reports for that season is a lower bound and more
-      history could overturn the outcome either way.
-
-    All three are blocked and all three send the item to a human. The last two are
-    ``Unknown``, not a decision (rule 93): there is no comparison for the operator to
-    *settle*, only evidence too thin to make one.
-
-    **That distinction no longer decides a hand reap, and the flag is no longer an
-    interlock.** A blocked gate does not hold a reap at all now -- see ``engine.verdict``
-    -- so all three shapes are overrulable by hand, and the flag survives to pick what the
-    operator is TOLD: the card's chip (``api.routes._chip``) and, across the wire through
-    ``api.schemas.GateOutcomeOut``, the why panel's verdict note. Keeping the last two
-    un-overrulable is exactly what made a short watch mirror refuse every TV reap on the
-    server, which is the opposite of what "evidence too thin" should cost someone who can
-    see the library themselves. Read off typed fields, never the wording (rule 142).
-    """
-    for protected in plan.protected:
-        if protected.season_number == season_number:
-            return GateResult(
-                GateId.SEASON_PROGRESSION,
-                GATE_PROTECT,
-                detail=protected.reason,
-                # A season held because the guard could not be ANSWERED is blocked as well
-                # as protecting: `Evaluation.could_not_be_checked` selects on `blocked`
-                # independently of the outcome, so the result rides in `protections_unknown`
-                # and the panel shows it amber, "could not check", rather than green
-                # "checked and passed" (rule 93). That is what `blocked` buys here.
-                #
-                # It no longer buys anything against a hand reap -- no blocked gate does
-                # (`engine.verdict`) -- so the rule 143 argument this line was originally
-                # added for has lapsed: PROTECT and blocked are now equally overrulable, and
-                # only a FIRED structural gate refuses. The flag stays because the
-                # Known/Absent/Unknown distinction is true and the operator is entitled to
-                # see which one this is, which was always the better reason.
-                blocked=protected.unestablishable,
-                # The same fact, carried to the panel rather than left to be inferred from
-                # the verdict. This row reaches `protections_unknown` too, and the panel's
-                # conflict branch skipped it only because a fired protection makes the
-                # verdict `protect` and an earlier branch returns first (rule 142).
-                unestablishable=protected.unestablishable,
-            )
-
-    # EVERY conflict naming this season, not just the first. ``_detect_conflicts`` raises
-    # one per (pruned, kept) pair, so a single pruned season routinely carries more than one
-    # shape at once -- on shipped defaults, a kept newest season still resolving in Plex
-    # conflicts with every watched prunable season below it, while an older kept season's
-    # count reads fine. A short mirror mixes them the same way: it truncates the seasons
-    # that predate the horizon and leaves a recently-added one exact.
-    matching = [c for c in plan.conflicts if c.pruned_season == season_number]
-    if matching:
-        # A refused comparison wins, and it decides the message as well as the flag.
-        # Reading only the first conflict let a readable one mask an unread one, so the
-        # operator saw only the comparison that HAD been made and nothing ever told them
-        # one had not. That is now a reporting bug rather than a reap bug -- the reap is
-        # theirs either way -- but it is the same bug: the sentence and the flag must come
-        # from the same conflict (rule 92), and the season nobody could read is the one
-        # worth putting in front of them.
-        #
-        # Both non-comparisons count as refused, and for the same reason: a count nobody
-        # could take and a count taken over a mirror that cannot support it are equally
-        # unable to settle "is this watched more than the season you keep", so neither may
-        # be reported as a comparison Reaper made.
-        refused = next(
-            (c for c in matching if c.kept_watchers is None or c.shortfall is not None), None
-        )
-        conflict = refused or matching[0]
-        return GateResult(
-            GateId.SEASON_PROGRESSION,
-            GATE_ABSTAIN,
-            blocked=True,
-            detail=conflict.message,
-            defers_to_owner=refused is None,
-        )
-
-    if progress_unknown_reason is not None:
-        # Last, so a real protection and a real conflict both still win: this arm says only
-        # that nobody could be asked, and either of those is something Reaper found. Neither
-        # can co-occur with it in practice -- `_detect_conflicts` skips a season whose watcher
-        # count is None, and every count is None when no season carries a rating key -- but
-        # the order is what makes that safe rather than the coincidence.
-        #
-        # Worded as the `could not check {what}: {cause}` shape `engine.gates._blocked`
-        # produces, on the SAME cause string this season's four Plex-dependent gates carry, so
-        # the panel folds all five into one box naming the cause once instead of opening a
-        # second box that says it again (`WhyPanel.LeftForYou`, rule 144).
-        return GateResult(
-            GateId.SEASON_PROGRESSION,
-            GATE_ABSTAIN,
-            blocked=True,
-            unestablishable=True,
-            detail=f"could not check who is part-way through it: {progress_unknown_reason}",
-        )
-
-    return GateResult(
-        GateId.SEASON_PROGRESSION,
-        GATE_ABSTAIN,
-        detail="checked: prunable by the keep-last / keep-first season rules",
-    )
-
-
-#: The show-side twin of ``snapshot._NO_KEY_REASONS``: why this season has no Plex rating
-#: key, one entry per non-matched resolver outcome. Same contract -- each value is a key
-#: into ``WhyPanel``'s ``CAUSE_COPY``, and
-#: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one with no entry
-#: there. Kept beside its own builder rather than shared with the movie map because the
-#: subjects differ ("this season" against "this item", "this show" against "this title").
-_NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
-    identity.MatchStatus.UNMATCHED: "Plex has not matched this season",
-    identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this show",
-    identity.MatchStatus.CONFLICTED: "Plex and Sonarr describe this show differently",
-}
-
-
-def no_key_reason(show_match_status: identity.MatchStatus | None) -> str:
-    """Why this season has no Plex rating key, in the operator's words.
-
-    One derivation for both readers (rule 104): ``build_season_facts`` stamps it on every
-    Unknown observation, and ``_judge_series`` hands the same string to the mid-binge guard
-    so the panel groups all of them under one cause. Two ``.get`` calls with two fallbacks
-    is how the guard's sentence would come to name a different cause from the four gates
-    printed beside it.
-    """
-    return _NO_KEY_REASONS.get(show_match_status, "Plex has not matched this season")
-
-
 #: The season twin of ``snapshot.NO_ADDED_AT_REASON``, and the same contract: a key into
 #: ``CAUSE_COPY``, named so the drift test covers it (rule 144). Its own wording, for the
-#: reason the map above keeps its own -- the subject is "this season", not "this item".
+#: reason ``season_evidence._NO_KEY_REASONS`` keeps its own -- the subject is "this
+#: season", not "this item".
 NO_ADDED_AT_REASON = "no added-at date for this season"
 
 #: Why a season's size is unreadable: Sonarr reported no size on disk. Reaches the panel
@@ -665,8 +512,8 @@ def build_season_facts(
     (two Plex items share its id) is a different story from one Plex has no match for, and
     a CONFLICTED one (each kind of evidence named a different row, so Plex and Sonarr
     describe the show differently) is a third. The why-panel must not tell the owner the
-    wrong one, so the wording comes from :data:`_NO_KEY_REASONS` rather than a ternary that
-    lumps every new outcome in with "not matched".
+    wrong one, so the wording comes from :func:`season_evidence.no_key_reason` rather than a
+    ternary that lumps every new outcome in with "not matched".
     """
     dormancy: Observation[float]
     recent: Observation[int]
@@ -674,7 +521,7 @@ def build_season_facts(
     streaming: Observation[bool]
 
     if plex_rating_key is None:
-        reason = no_key_reason(show_match_status)
+        reason = season_evidence.no_key_reason(show_match_status)
         dormancy = Unknown(reason=reason, source="plex")
         recent = Unknown(reason=reason, source="plex")
         all_time = Unknown(reason=reason, source="plex")
@@ -703,8 +550,8 @@ def build_season_facts(
         # and using the show's date would read a just-added season as decades dormant and
         # condemn a file nobody has had a chance to watch. This mirrors the movie path,
         # which floors on each item's own added_at. Through the one shared derivation
-        # (engine/dormancy.py), the same one the movie scan, the backtest and the prior
-        # calibration use (rule 3); we never fabricate a Known dormancy from the horizon.
+        # (engine/dormancy.py), the same one the movie scan uses (rule 3); we never
+        # fabricate a Known dormancy from the horizon.
         #
         # A play is enough on its own: with no arrival date but a play in scope
         # `reference_instant` measures from that play and the season is judged. The movie path
@@ -959,12 +806,11 @@ async def season_watch_stats(
     # Every reader of this mirror that a scan can reach carries the guard (rule 72):
     # `snapshot._watch_stats` and `fairness._evidence_index` call it directly, and
     # `snapshot._fold_merged_watch_stats` / `fairness._distinct_episodes` inherit it by running
-    # after a guarded sibling over a subset of its keys. `backtest._plays` and
-    # `calibration.derive` do NOT have it, and have no route, CLI or schedule reaching them.
-    # Deferred rather than swept (rule 72, issue #283) for a reason worth writing down: both
-    # sit in `engine/`, which imports nothing from `services/`, so the one-line fix its four
-    # siblings took is not available there. Whoever wires a backtest route calls this from the
-    # route, where the layering allows it; docs/STATUS.md open item 3 carries that obligation.
+    # after a guarded sibling over a subset of its keys. The two readers that did NOT have it
+    # were the retired lab engines, and they left with the rest of #283's subject: both sat in
+    # `engine/`, which imports nothing from `services/`, so the one-line fix its four siblings
+    # took was not available there. Any future reader in `engine/` inherits that constraint and
+    # calls this from the route instead, where the layering allows it.
     # Today the season task also always runs after `scan()` has touched the mirror, so the
     # table exists; this does not depend on that ordering holding.
     await history_sync.ensure_schema(engine)
@@ -1025,7 +871,7 @@ async def season_watch_stats(
         # Chunked like imdb_dataset.lookup: the ``expanding`` bindparam turns every key
         # into one bound variable, and a very large library can exceed SQLite's limit.
         # Chunks are disjoint keys, so accumulating across them is exact.
-        for chunk in batched(keys, 500, strict=False):
+        for chunk in batched(keys, KEY_CHUNK, strict=False):
             key_chunk = list(chunk)
             rows = (await conn.execute(aggregate, {"keys": key_chunk, "since": since})).all()
             for row in rows:
@@ -1251,24 +1097,22 @@ async def gather(
     reach_days: int,
     active_rating_keys: set[int],
     activity_degraded: bool,
-    keep_last_seasons: int,
-    keep_first_season: bool,
+    # The nine season settings as the one carrier ``plan_from_frozen`` and ``_judge_series``
+    # already take, rather than nine loose fields this frame repacked into it. Required and
+    # defaultless, because ``SeasonPolicy`` declares no default for any of the nine, so a
+    # caller cannot omit one and plan against a value the operator never chose. Seven of the
+    # nine defaulted here, and what those defaults cost was rule 141's reading rather than a
+    # widening: five were the protective pole, so an omission overrode the operator's edit in
+    # the keeping direction, and the two that could widen are ``season_lookahead`` at 0 and
+    # ``in_progress_hold_days`` at 180. #499 brought the carrier into this frame as a local
+    # and ``_judge_series`` took it as a parameter; this signature kept the loose copy until
+    # now, which is what left two roads from a ``PolicyBody`` to the planner.
+    season_policy: season_evidence.SeasonPolicy,
     window_days: int,
     whitelisted: set[str],
     degrade: Any,
     requested: dict[str, str] | None = None,
     request_index: requested_by.RequestIndex | None = None,
-    keep_last_scope: str = "all",
-    season_lookahead: int = 0,
-    keep_in_progress: bool = True,
-    # Mirrors ``TvPolicy.in_progress_hold_days``'s own default, which is what the only
-    # production caller passes (``services.snapshot.scan``). It read 0 here, a value no
-    # shipped policy has, and 0 means the hold never expires -- so every caller that omitted
-    # it was exercising an unbounded claim the mirror cannot support (rule 141).
-    in_progress_hold_days: int = 180,
-    keep_specials: bool = True,
-    protect_incomplete_seasons: bool = True,
-    flag_keep_conflicts: bool = True,
     membership_index: lists.MembershipIndex | None = None,
     allowed_sections: set[int] | None = None,
     # The most watch evidence ever measured for each item, read once by the caller (which
@@ -1295,21 +1139,6 @@ async def gather(
     """
     if not sonarrs:
         return []
-
-    # The nine season settings, gathered into the carrier the plan derivation takes. Built
-    # once here so every show in this scan is judged against one object, and so the shape the
-    # scan plans with is the shape the simulator replays with (``services.season_evidence``).
-    season_policy = season_evidence.SeasonPolicy(
-        keep_last_seasons=keep_last_seasons,
-        keep_first_season=keep_first_season,
-        keep_last_scope=keep_last_scope,
-        season_lookahead=season_lookahead,
-        keep_in_progress=keep_in_progress,
-        in_progress_hold_days=in_progress_hold_days,
-        keep_specials=keep_specials,
-        protect_incomplete_seasons=protect_incomplete_seasons,
-        flag_keep_conflicts=flag_keep_conflicts,
-    )
 
     # The scan passes its already-loaded index so movies and seasons read the same
     # frozen list state; a direct caller (tests) gets a fresh load.
@@ -1382,18 +1211,20 @@ async def gather(
             plan = plan_series_prune(
                 series_title=str(series.get("title") or ""),
                 seasons=seasons,
-                keep_last=keep_last_seasons,
-                keep_first_season=keep_first_season,
-                apply_keep_last=_keep_last_applies(series, keep_last_scope, request_index),
+                keep_last=season_policy.keep_last_seasons,
+                keep_first_season=season_policy.keep_first_season,
+                apply_keep_last=_keep_last_applies(
+                    series, season_policy.keep_last_scope, request_index
+                ),
                 # keep_specials must reach this offline pass too: with it off, a show whose
                 # only removable season is Season 0 has something to act on and must not be
                 # counted fully-protected before the evidence pass ever sees it. The other
                 # toggles are passed for symmetry; without watch evidence the sequential
                 # guard and the conflict detector protect nothing here either way.
-                keep_in_progress=keep_in_progress,
-                keep_specials=keep_specials,
-                protect_incomplete=protect_incomplete_seasons,
-                flag_keep_conflicts=flag_keep_conflicts,
+                keep_in_progress=season_policy.keep_in_progress,
+                keep_specials=season_policy.keep_specials,
+                protect_incomplete=season_policy.protect_incomplete_seasons,
+                flag_keep_conflicts=season_policy.flag_keep_conflicts,
                 airing_seasons=airing_seasons(series, seasons),
             )
             fully = not plan.prunable
@@ -1413,9 +1244,7 @@ async def gather(
                 plan=plan,
             )
             work.append(
-                _SeriesWork(
-                    source=source, series=series, seasons=seasons, plan=plan, fully_protected=fully
-                )
+                _SeriesWork(source=source, series=series, seasons=seasons, fully_protected=fully)
             )
 
     # Every series above emitted one greppable DEBUG decision line (season_scan.series_decision)
@@ -1474,7 +1303,7 @@ async def gather(
         )
         if plex_library is not None:
             key = (item.source.instance_id, plex_library)
-            if plex_library.strip().casefold() in identity.libraries_for_ids(
+            if fold(plex_library) in identity.libraries_for_ids(
                 ids, tv_index, identity.SHOW_ID_PRIORITY
             ):
                 mapped_lib_hits.add(key)
@@ -1648,7 +1477,7 @@ async def gather(
     # payload is O(viewers x seasons), and the read side is measured in `docs/LEARNINGS.md`
     # under "What frozen season evidence costs".
     season_coros = [_seasons_for(rk) for rk in fallback_keys]
-    episode_coros = [_episodes_for(item) for item in work] if keep_in_progress else []
+    episode_coros = [_episodes_for(item) for item in work] if season_policy.keep_in_progress else []
     fanned = await gather_reaped(*season_coros, *episode_coros)
     for rk, seasons in fanned[: len(season_coros)]:
         resolved_shows[rk] = seasons
@@ -1826,10 +1655,11 @@ def _judge_series(
     # Scoped to a show that DID bind to Plex, because that is the population where the gap can
     # cost a file: some seasons resolved and some did not, so the resolved ones carry fully
     # readable facts and condemn at full confidence on a viewer the missing ones hid. Where the
-    # SHOW never bound, every season takes Unknown from its own branch (`_NO_KEY_REASONS`) and
-    # abstains, so there is no readable sibling to endanger. That case is answered below
-    # instead, by saying so rather than by holding: holding it would move every unmatched show
-    # out of the review queue and protect nothing further (#486).
+    # SHOW never bound, every season takes Unknown from its own branch
+    # (`season_evidence.no_key_reason`) and abstains, so there is no readable sibling to
+    # endanger. That case is answered below instead, by saying so rather than by holding:
+    # holding it would move every unmatched show out of the review queue and protect nothing
+    # further (#486).
     #
     # Content-bearing only: an announced season with no files is one nobody can be part way
     # through, and counting it would hold every show with a season Sonarr has listed and not
@@ -1845,7 +1675,7 @@ def _judge_series(
     # calling the check passed (rule 93). Same wording the season's other blocked gates carry,
     # so they group as one cause.
     progress_unknown_reason = (
-        no_key_reason(item.match_status) if item.show_rating_key is None else None
+        season_evidence.no_key_reason(item.match_status) if item.show_rating_key is None else None
     )
     # One clock read for this show, shared by the season ages below and by the mid-binge
     # expiry inside the plan. It is frozen onto the bundle, so a replay expires viewers
@@ -2038,7 +1868,9 @@ def _judge_series(
                 size_bytes=season.size_on_disk,
                 size_source=SizeSource.SONARR if season.size_on_disk is not None else None,
                 facts=facts,
-                guard_result=guard_result(plan, n, progress_unknown_reason=progress_unknown_reason),
+                guard_result=season_evidence.guard_result(
+                    plan, n, progress_unknown_reason=progress_unknown_reason
+                ),
                 prune_input=prune_input,
                 watch_reading=reading,
                 watch_blind_reason=season_blind,

@@ -44,7 +44,13 @@ from typing import Any, Literal
 
 import structlog
 
-from reaper.buildinfo import build_version, is_release, short_commit, version_number
+from reaper.buildinfo import (
+    build_version,
+    env_flag,
+    is_release,
+    short_commit,
+    version_number,
+)
 from reaper.clients.base import IntegrationError
 from reaper.clients.public import PublicClient
 from reaper.clock import utcnow
@@ -61,8 +67,6 @@ DEFAULT_REPO = "scythe-labs/reaper"
 #: non-dot character, or ``../..`` would pass the charset and normalize into a path
 #: escape before the request leaves.
 _REPO_SHAPE = re.compile(r"^[A-Za-z0-9-]+/(?=.*[^.])[A-Za-z0-9._-]+$")
-
-_FALSE = {"0", "false", "no", "off"}
 
 #: A successful answer holds for hours -- versions change daily at most, and the
 #: unauthenticated GitHub API allows 60 requests an hour for the whole host.
@@ -116,7 +120,7 @@ def _channel() -> Channel:
 
 
 def _enabled() -> bool:
-    return os.environ.get("REAPER_UPDATE_CHECK", "").strip().lower() not in _FALSE
+    return env_flag("REAPER_UPDATE_CHECK", default=True)
 
 
 def _repo() -> str:

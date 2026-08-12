@@ -25,7 +25,7 @@ from __future__ import annotations
 import contextlib
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, NoReturn, Self
 
 import httpx2
 import structlog
@@ -184,6 +184,30 @@ class SafetyViolationError(RuntimeError):
     """
 
 
+def refuse_mutation(event: str, method: str, path: str, *, reason: str, message: str) -> NoReturn:
+    """Record a blocked write, then raise it. Both guards refuse through here.
+
+    A refusal is the loudest thing either guard does and it was the quietest thing in the
+    log: nothing was written at the point of refusal, so the only trace was whatever the
+    caller made of the exception. The executor's ``_best_effort_refresh`` and
+    ``_finalize_plex`` catch ``Exception`` deliberately, because a reap must not fail on a
+    follow-up, and each logs the guard's own sentence under an event naming the wrong
+    cause. What was missing there is a discriminator, since rules 92/93 forbid reading the
+    sentence. ``sync_shelves._reconcile`` catches ``PlexError`` alone, so a shelf refusal
+    escapes it untouched -- what keeps it escaping is now ONE arm, in ``plex.PlexClient._call``,
+    where it was eight per-method copies when this line was written. C14 settled that collapse
+    and it landed; this line is the insurance that survived it, since it covers every write
+    either guard refuses rather than the eight that had thought put into them.
+
+    Raising from here rather than at each site is what makes that structural. A refusal
+    added later cannot arrive without its log line, and the ``reason`` is the discriminator
+    rules 92/93 ask for: something a reader matches on, never a sentence that will be
+    reworded. ``path`` is already token-free at both call sites (rule 13).
+    """
+    log.warning(event, method=method.upper(), path=path, reason=reason)
+    raise SafetyViolationError(message)
+
+
 class IntegrationError(RuntimeError):
     """An integration could not be reached, or returned an error."""
 
@@ -210,6 +234,83 @@ class IntegrationError(RuntimeError):
         re-entering keys for no reason.
         """
         return self.status in (401, 403)
+
+
+# Three transport and status failures, each worded once.
+#
+# Each sentence used to be written at the site that raised it: four in ``_send``, the same four
+# in ``_mutate``, and three of them again in ``PublicClient``, so four sentences stood as eleven
+# copies. Rule 144 is what that costs. The wording is what an operator reads when a service
+# stops answering, and rewording one copy leaves the others saying something else about the
+# same failure -- which is how ``public.py`` came to spell one of them with a hardcoded ``GET``
+# where ``base.py`` names the method.
+#
+# ``too many redirects`` is one more failure this layer raises and is NOT fenced here. It is
+# written once per file rather than twice, and the two spellings differ the same way: ``GET``
+# hardcoded in ``public.py``, which only ever issues one, against ``{method}`` here.
+# ``test_every_client_failure_sentence_is_worded_in_exactly_one_place`` fences the four below
+# and names this one as out.
+#
+# ``refuse_mutation`` above is the same move for the guard's refusal, for the same reason.
+
+
+def transport_failure(service: str, exc: httpx2.TransportError) -> IntegrationError:
+    """The request never got an answer: it timed out, or the host was not reachable.
+
+    Name the actual timeout kind. A ConnectTimeout (5s), WriteTimeout (10s) or PoolTimeout
+    (5s) is not the read timeout, so a fixed "30s" sends an operator to the wrong place. For a
+    mutation, "could not connect" and "the server was slow to answer" call for different next
+    steps (rule 10).
+
+    ``TimeoutException`` is itself a ``TransportError``, so callers catch the one type and the
+    split happens here, in the order the two ``except`` arms used to sit in.
+    """
+    if isinstance(exc, httpx2.TimeoutException):
+        return IntegrationError(service, f"timed out ({type(exc).__name__})")
+    return IntegrationError(service, f"unreachable ({exc})")
+
+
+def refused_redirect(
+    service: str, response: httpx2.Response, method: str, path: str
+) -> IntegrationError:
+    """A redirect Reaper will not follow. The caller decides which ones qualify."""
+    return IntegrationError(
+        service,
+        f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+        status=response.status_code,
+    )
+
+
+def http_failure(
+    service: str, response: httpx2.Response, method: str, path: str
+) -> IntegrationError:
+    """The service answered with a 4xx or 5xx, carrying its own Retry-After if it sent one.
+
+    Reading the header here is what makes it uniform: the streamed public download raised
+    this sentence without it, so a Retry-After from a mirror reached two of the three raise
+    sites.
+    """
+    return IntegrationError(
+        service,
+        f"HTTP {response.status_code} for {method} {path}",
+        status=response.status_code,
+        retry_after=_retry_after_seconds(response),
+    )
+
+
+def unexpected_body(service: str, response: httpx2.Response, path: str) -> IntegrationError:
+    """A 200 whose body would not parse as JSON, named by the content type that came back.
+
+    Naming the type is what makes it diagnosable: an auth proxy's HTML login page and a
+    gateway's text error read the same as "it did not work" without it.
+
+    Raised by ``get_json`` and by ``plextv._post``, which normalizes its own POST for the
+    reason its docstring gives (rule 72).
+    """
+    return IntegrationError(
+        service,
+        f"expected JSON from {path}, got {response.headers.get('content-type')}",
+    )
 
 
 class GuardedTransport(httpx2.AsyncBaseTransport):
@@ -259,14 +360,24 @@ class GuardedTransport(httpx2.AsyncBaseTransport):
                 intended = request.extensions.get("reaper_mutation_approved") is True
 
                 if not self._safety.destructive_allowed:
-                    raise SafetyViolationError(
-                        f"Blocked {request.method} {path}. {self._safety.why_blocked()}"
+                    refuse_mutation(
+                        "http.write_blocked",
+                        request.method,
+                        path,
+                        reason="not_armed",
+                        message=f"Blocked {request.method} {path}. {self._safety.why_blocked()}",
                     )
                 if not intended:
-                    raise SafetyViolationError(
-                        f"Blocked {request.method} {path}: this mutation was not declared "
-                        "to the action journal. Destructive calls must go through the "
-                        "action executor so that they are recorded before they are sent."
+                    refuse_mutation(
+                        "http.write_blocked",
+                        request.method,
+                        path,
+                        reason="not_declared",
+                        message=(
+                            f"Blocked {request.method} {path}: this mutation was not declared "
+                            "to the action journal. Destructive calls must go through the "
+                            "action executor so that they are recorded before they are sent."
+                        ),
                     )
 
         return await self._inner.handle_async_request(request)
@@ -379,26 +490,15 @@ class BaseClient:
                     response = await self._request(
                         method, target, params=send_params, json=json, headers=headers
                     )
-                except httpx2.TimeoutException as exc:
-                    # Name the actual timeout kind: a ConnectTimeout (5s), WriteTimeout (10s)
-                    # or PoolTimeout (5s) is not the read timeout, and reporting a fixed
-                    # "30s" would misdirect an operator diagnosing a connectivity problem.
-                    raise IntegrationError(
-                        self.service, f"timed out ({type(exc).__name__})"
-                    ) from exc
                 except httpx2.TransportError as exc:
-                    raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+                    raise transport_failure(self.service, exc) from exc
 
                 status = response.status_code
                 if response.status_code not in _REDIRECTS:
                     break
                 location = response.headers.get("location")
                 if method.upper() not in ("GET", "HEAD") or not location:
-                    raise IntegrationError(
-                        self.service,
-                        f"refused redirect (HTTP {response.status_code}) for {method} {path}",
-                        status=response.status_code,
-                    )
+                    raise refused_redirect(self.service, response, method, path)
                 next_url = response.request.url.join(location)
                 if not self._allow_cross_origin_redirects and _origin(next_url) != _origin(
                     httpx2.URL(self.base_url)
@@ -415,12 +515,7 @@ class BaseClient:
                 raise IntegrationError(self.service, f"too many redirects for {method} {path}")
 
             if response.status_code >= 400:
-                raise IntegrationError(
-                    self.service,
-                    f"HTTP {response.status_code} for {method} {path}",
-                    status=response.status_code,
-                    retry_after=_retry_after_seconds(response),
-                )
+                raise http_failure(self.service, response, method, path)
             return response
         finally:
             self._trace(method, path, status, started)
@@ -436,10 +531,45 @@ class BaseClient:
         try:
             return response.json()
         except ValueError as exc:
-            raise IntegrationError(
-                self.service,
-                f"expected JSON from {path}, got {response.headers.get('content-type')}",
-            ) from exc
+            raise unexpected_body(self.service, response, path) from exc
+
+    async def get_list(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> list[Any]:
+        """A GET whose body must be a JSON array. A body of any other shape raises.
+
+        A 200 carrying something else -- a reverse proxy's HTML error page, a schema
+        change -- is never "there are none of these". Coerced to ``[]``, an auth proxy's
+        JSON error page once read as an empty library: every movie on that Radarr
+        silently left the scan, the snapshot stayed executable, and the operator was told
+        a complete run over a partial library (rules 28 and 93).
+
+        There is deliberately no ``default=`` or ``coerce=`` parameter. That parameter is
+        the defect, and a helper that can be asked not to raise reopens it at every call
+        site at once. A genuinely empty array is still empty and still answers the
+        question.
+        """
+        data = await self.get_json(path, params=params, headers=headers)
+        if not isinstance(data, list):
+            raise IntegrationError(self.service, f"{path} did not return a list")
+        return list(data)
+
+    async def get_dict(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """A GET whose body must be a JSON object. See :meth:`get_list` for why."""
+        data = await self.get_json(path, params=params, headers=headers)
+        if not isinstance(data, dict):
+            raise IntegrationError(self.service, f"{path} did not return an object")
+        return data
 
     async def _mutate(
         self,
@@ -478,31 +608,18 @@ class BaseClient:
                     json=json,
                     extensions={"reaper_mutation_approved": True},
                 )
-            except httpx2.TimeoutException as exc:
-                # Report the actual timeout kind (connect/write/pool/read), not a fixed "30s":
-                # for a mutation especially, "could not connect" and "the server was slow to
-                # answer" call for different operator responses.
-                raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
             except httpx2.TransportError as exc:
-                raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+                raise transport_failure(self.service, exc) from exc
 
             status = response.status_code
             if response.status_code in _REDIRECTS:
-                # A redirected mutation is refused, never replayed: auto-following would
+                # EVERY redirect is refused here, never replayed: auto-following would
                 # re-issue the approved call -- credential headers, mutation approval and
-                # all -- at whatever URL the (possibly compromised) upstream chose.
-                raise IntegrationError(
-                    self.service,
-                    f"refused redirect (HTTP {response.status_code}) for {method} {path}",
-                    status=response.status_code,
-                )
+                # all -- at whatever URL the (possibly compromised) upstream chose. `_send`
+                # refuses a narrower set, since a read may follow a same-origin hop.
+                raise refused_redirect(self.service, response, method, path)
             if response.status_code >= 400:
-                raise IntegrationError(
-                    self.service,
-                    f"HTTP {response.status_code} for {method} {path}",
-                    status=response.status_code,
-                    retry_after=_retry_after_seconds(response),
-                )
+                raise http_failure(self.service, response, method, path)
             return response
         finally:
             self._trace(method, path, status, started, mutation=True)

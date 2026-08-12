@@ -49,6 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clients.public import PublicClient
 from reaper.clock import utcnow
+from reaper.db import KEY_CHUNK
 
 log = structlog.get_logger(__name__)
 
@@ -338,8 +339,8 @@ class ImdbRatings:
         out: dict[str, ImdbRating] = {}
         async with self._engine.connect() as conn:
             # Chunked to stay well under SQLite's variable limit.
-            for start in range(0, len(imdb_ids), 500):
-                chunk = imdb_ids[start : start + 500]
+            for start in range(0, len(imdb_ids), KEY_CHUNK):
+                chunk = imdb_ids[start : start + KEY_CHUNK]
                 placeholders = ", ".join(f":id{i}" for i in range(len(chunk)))
                 params = {f"id{i}": value for i, value in enumerate(chunk)}
                 # The interpolated fragment is ":id0, :id1, ..." -- generated here,

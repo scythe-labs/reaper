@@ -10,6 +10,7 @@ must not be relayed same-origin.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ import respx
 
 from reaper import logbuffer
 from reaper.clients.arr import RadarrClient, SonarrClient
-from reaper.clients.base import IntegrationError, SafetyViolationError
+from reaper.clients.base import BaseClient, IntegrationError, SafetyViolationError
 from reaper.clients.plex import GuardedSession
 from reaper.clients.plextv import PlexTvClient
 from reaper.clients.public import PublicClient
@@ -134,12 +135,13 @@ class TestEveryListReadRefusesANonListBody:
                 "/api/v3/importlistexclusion",
                 lambda c: c.exclusions(),
             ),
+            (SeerrClient, "seerr.test", "/api/v1/settings/sonarr", lambda c: c.services()),
         ],
     )
     async def test_a_non_list_200_raises(
         self,
         httpx2_mock: respx.Router,
-        client_cls: type[RadarrClient] | type[SonarrClient],
+        client_cls: type[RadarrClient] | type[SonarrClient] | type[SeerrClient],
         host: str,
         path: str,
         call: Any,
@@ -161,6 +163,80 @@ class TestEveryListReadRefusesANonListBody:
             assert await client.movies() == []
 
 
+class TestEveryObjectReadRefusesANonObjectBody:
+    """The list guards' other half, and the half nothing drove. Eleven shape guards were
+    written out by hand in ``arr.py``; the parametrize above reached seven of them and
+    ``tags`` had its own test, so the three object reads were the members missing from the
+    proof (rules 145, 147). They are now one helper with the eight list reads, which is
+    exactly why the population has to be pinned: a site quietly reverted to ``get_json``
+    coerces again, and only a per-site case says so.
+
+    Seerr's five sit here too, because the same helper serves them (rule 72)."""
+
+    @pytest.mark.parametrize(
+        ("client_cls", "host", "path", "call"),
+        [
+            (RadarrClient, "radarr.test", "/api/v3/system/status", lambda c: c.system_status()),
+            (RadarrClient, "radarr.test", "/api/v3/movie/7", lambda c: c.movie_by_id(7)),
+            (SonarrClient, "sonarr.test", "/api/v3/series/7", lambda c: c.series_by_id(7)),
+            (SeerrClient, "seerr.test", "/api/v1/status", lambda c: c.status()),
+            (SeerrClient, "seerr.test", "/api/v1/request", lambda c: c.requests()),
+            (SeerrClient, "seerr.test", "/api/v1/user", lambda c: c.users()),
+            (SeerrClient, "seerr.test", "/api/v1/user/7/quota", lambda c: c.quota(7)),
+            (
+                SeerrClient,
+                "seerr.test",
+                "/api/v1/movie/7",
+                lambda c: c.title(tmdb_id=7, media_type="movie"),
+            ),
+        ],
+    )
+    async def test_a_non_object_200_raises(
+        self,
+        httpx2_mock: respx.Router,
+        client_cls: type[RadarrClient] | type[SonarrClient] | type[SeerrClient],
+        host: str,
+        path: str,
+        call: Any,
+    ) -> None:
+        httpx2_mock.get(host=host, path=path).mock(
+            return_value=httpx.Response(200, json=["bad gateway"])
+        )
+        async with client_cls(f"https://{host}", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError, match="did not return an object"):
+                await call(client)
+
+    async def test_the_message_names_the_path_that_was_asked(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The three arr messages used to be hand-written and dropped the API prefix, so
+        an operator on a v5 Sonarr read "series/7 did not return an object" and could not
+        tell which API path had answered. Generating the message from the path fixes that,
+        and this is the assertion that would notice it going back."""
+        httpx2_mock.get(host="sonarr.test", path="/api/v5/series/7").mock(
+            return_value=httpx.Response(200, json=["bad gateway"])
+        )
+        async with SonarrClient(
+            "https://sonarr.test", "k", safety=READ_ONLY, api_path_prefix="/api/v5"
+        ) as client:
+            with pytest.raises(
+                IntegrationError, match=r"/api/v5/series/7 did not return an object"
+            ):
+                await client.series_by_id(7)
+
+    async def test_a_helper_cannot_be_asked_not_to_raise(self) -> None:
+        """The one property that makes the extraction safe rather than convenient: a
+        ``default=`` or ``coerce=`` parameter would reopen rules 28/93 at every call site
+        at once, from one line nobody reviews again."""
+        for helper in (BaseClient.get_list, BaseClient.get_dict):
+            assert set(inspect.signature(helper).parameters) == {
+                "self",
+                "path",
+                "params",
+                "headers",
+            }
+
+
 class TestAShortSeerrWalkRefusesRatherThanUndercounting:
     """``build_request_index`` sets ``available=True`` when every Seerr "was read in full",
     and its docstring says exactly why that matters: a confident ``Known(value=False)`` off
@@ -170,7 +246,9 @@ class TestAShortSeerrWalkRefusesRatherThanUndercounting:
     (rules 56/89, 7/24).
 
     The existing guard only fired on rows-without-a-total. The undetected case is its
-    mirror: a total that promises more, and a page that hands back none."""
+    mirror: a total that promises more, and a page that hands back none. A third way out
+    was missing entirely, and neither guard can see it: the walk's length is whatever the
+    server's reported total says it is, and nothing bounded that number."""
 
     @staticmethod
     def _page(mock: respx.Router, path: str, *responses: httpx.Response) -> None:
@@ -231,6 +309,64 @@ class TestAShortSeerrWalkRefusesRatherThanUndercounting:
         async with self._client() as client:
             with pytest.raises(IntegrationError, match="did not return a list of results"):
                 await client.users()
+
+    @staticmethod
+    def _endless(path: str, body: dict[str, Any], allowed: int, asked: list[str]) -> Any:
+        """A portal that answers every page in full and never lowers its total.
+
+        The mock REFUSES the page past the cap rather than serving it, so deleting the cap
+        fails this test in three round trips instead of wedging the suite on an unbounded
+        walk (rule 118). `AssertionError` is not caught anywhere on this path: the retry
+        predicate matches transport errors only."""
+
+        def _respond(request: httpx.Request) -> httpx.Response:
+            asked.append(request.url.params["skip"])
+            assert len(asked) <= allowed, f"the walk asked {path} for a page past the cap"
+            return httpx.Response(200, json=body)
+
+        return _respond
+
+    async def test_a_portal_that_never_stops_promising_more_is_bounded(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A total the walk cannot reach in any sane number of round trips, with every page
+        full so neither existing guard fires. The fixture's 10,000 would end on its own at
+        page 100, which is the point: the cap stops it at 3 and the count is what stops it,
+        never the total. The trip raises rather than returning short, because the caller's
+        `available=True` is a claim that this read finished (rules 56/89)."""
+        monkeypatch.setattr("reaper.clients.seerr.MAX_PAGES", 3)
+        rows = [{"id": i, "type": "movie", "media": {"tmdbId": i}} for i in range(2)]
+        asked: list[str] = []
+        httpx2_mock.get(host="seerr.test", path="/api/v1/request").mock(
+            side_effect=self._endless(
+                "/request", {"pageInfo": {"results": 10_000}, "results": rows}, 3, asked
+            )
+        )
+        async with self._client() as client:
+            with pytest.raises(IntegrationError, match="never finished, after 6 requests"):
+                await client.all_requests()
+        assert asked == ["0", "100", "200"]
+
+    async def test_the_user_walk_is_bounded_too(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rule 72 again, and a different cap value from the case above so neither test
+        rests on one number (rule 141). Production is 1,000, so nothing here can pass by
+        matching a hardcoded bound."""
+        monkeypatch.setattr("reaper.clients.seerr.MAX_PAGES", 2)
+        asked: list[str] = []
+        httpx2_mock.get(host="seerr.test", path="/api/v1/user").mock(
+            side_effect=self._endless(
+                "/user",
+                {"pageInfo": {"results": 10_000}, "results": [{"id": 1}, {"id": 2}]},
+                2,
+                asked,
+            )
+        )
+        async with self._client() as client:
+            with pytest.raises(IntegrationError, match="never finished, after 4 accounts"):
+                await client.users()
+        assert asked == ["0", "100"]
 
 
 class TestSendRetriesTransientTransportErrors:

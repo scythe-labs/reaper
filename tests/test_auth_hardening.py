@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -59,7 +60,7 @@ def _fresh_limits() -> Iterator[None]:
 
 
 def _settings(tmp_path: Path) -> Settings:
-    return Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    return Settings(data_dir=tmp_path, secret_key="k")
 
 
 class TestTheRateLimiter:
@@ -172,7 +173,7 @@ class TestForwardedHeadersNeedATrustedPeer:
             "query_string": b"",
             "app": _App(),
         }
-        return is_secure_request(Request(scope))  # type: ignore[arg-type]
+        return is_secure_request(Request(scope))
 
     def test_an_untrusted_peer_is_ignored(self) -> None:
         assert not self._request(proxies=(), peer="203.0.113.7", proto="https")
@@ -253,8 +254,8 @@ class TestTheServerDoesNotDecidePeerTrust:
             class state:  # noqa: N801 -- mimics Starlette's app.state
                 trusted_proxies = ()
 
-        async def endpoint(scope: dict, receive: object, send: object) -> None:
-            seen.append(client_ip(Request(scope)))  # type: ignore[arg-type]
+        async def endpoint(scope: dict[str, Any], receive: object, send: object) -> None:
+            seen.append(client_ip(Request(scope)))
 
         async def _noop(*_args: object) -> None:
             return None

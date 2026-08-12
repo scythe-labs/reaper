@@ -16,7 +16,9 @@ ones a fixture is least likely to exercise.
 
 from __future__ import annotations
 
+import inspect
 import json
+from dataclasses import MISSING, fields
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -24,7 +26,7 @@ import pytest
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import utcnow
 from reaper.engine.policy import DEFAULT_TV_POLICY
-from reaper.services import season_evidence
+from reaper.services import season_evidence, season_scan
 
 AT = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
 
@@ -179,7 +181,7 @@ class TestTheBundleSurvivesTheFreeze:
     def test_a_payload_missing_a_field_raises_rather_than_defaulting(self) -> None:
         """No safe default exists here: every member is evidence, so absence is a refusal.
 
-        The route catches this and declines to preview (``routes._SeasonReplay``). Defaulting
+        The route catches this and declines to preview (``simulate._SeasonReplay``). Defaulting
         even one member would let a partial bundle produce a confident plan.
         """
         payload = season_evidence.to_dict(_bundle())
@@ -290,4 +292,47 @@ class TestTheReplayExpiresAgainstTheScansOwnClock:
         assert 2 in plan.prunable, (
             "season 2 stayed protected with the hold set under the viewer's own idle gap, so "
             "the assertion above is not reading the mid-binge guard at all"
+        )
+
+
+class TestNoSeasonSettingCanBeOmitted:
+    """The nine season settings are required, and nothing else makes them so.
+
+    Seven of the nine defaulted on ``season_scan.gather`` until it took this carrier, so a
+    caller could leave one out and plan against a value the operator never chose. What
+    replaced those defaults is the carrier having none: an omission is a ``TypeError`` and a
+    mypy error. Adding one back breaks nothing on its own, because the sole builder
+    (``SeasonPolicy.from_body``, which the scan and the simulator both call) passes all nine,
+    so nothing downstream would notice (rules 118, 141).
+    """
+
+    def test_no_field_of_the_carrier_carries_a_default(self) -> None:
+        declared = fields(season_evidence.SeasonPolicy)
+        defaulted = sorted(
+            f.name for f in declared if f.default is not MISSING or f.default_factory is not MISSING
+        )
+
+        assert defaulted == [], (
+            f"{defaulted} now default on SeasonPolicy, so a caller can omit them and plan a "
+            "season against a value nobody configured. `from_body` passes all nine, so "
+            "nothing else in the suite fails when one gains a default."
+        )
+        # The count, because the walk above cannot see a field DELETED from the carrier: drop
+        # one along with its `from_body` line and both mypy and the assertion above still pass
+        # (rule 145). A tenth season setting moves this number deliberately.
+        assert len(declared) == 9, (
+            f"SeasonPolicy declares {len(declared)} fields, not 9. A season setting was added "
+            "or removed, so check `from_body`, `plan_from_frozen` and `PolicyBody`'s "
+            "`_EVIDENCE_REPLAYABLE_FIELDS` agree before moving this number."
+        )
+
+    def test_gather_requires_the_carrier(self) -> None:
+        """The other half: a default on the parameter would let the whole policy be omitted."""
+        # `.get`, never `[...]`: a renamed parameter must fail on the sentence below rather
+        # than on a KeyError, which pins that SOME parameter was found (rule 141).
+        param = inspect.signature(season_scan.gather).parameters.get("season_policy")
+
+        assert param is not None and param.default is inspect.Parameter.empty, (
+            f"season_scan.gather does not require a defaultless `season_policy` ({param!r}), "
+            "so a scan can run against a policy its caller never passed"
         )

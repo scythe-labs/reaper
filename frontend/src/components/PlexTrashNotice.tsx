@@ -13,15 +13,22 @@ import { Notice } from "./Notice";
  * Three shapes, and the unreadable one never reports a reassuring zero: a library Reaper
  * could not read is Unknown, never Absent, and "we could not look" is exactly when the
  * operator most needs telling.
+ *
+ * `autoEmpties` adds a sentence rather than a fourth shape. It never brings this notice up on
+ * its own: Plex ships that preference on and most servers leave it, so it would stand in front
+ * of every reap and train the operator past the warning that matters. Here it answers the
+ * question the warning above raises, which is who does the emptying.
  */
 export function PlexTrashNotice({
   known,
   unreadable,
+  autoEmpties,
   acked,
   onAck,
 }: {
   known: number;
   unreadable: boolean;
+  autoEmpties?: boolean;
   acked?: boolean;
   onAck?: (next: boolean) => void;
 }) {
@@ -43,6 +50,13 @@ export function PlexTrashNotice({
           <strong>Reaper couldn't read Plex's trash.</strong> It can't say what's in there, and
           emptying it removes the watch history, ratings, and collections of everything that is. No
           files are deleted.
+        </>
+      )}
+      {autoEmpties && (
+        <>
+          {" "}
+          Plex also empties its own trash after every scan, so Reaper's refresh clears it even when
+          Reaper's own checks would have left it alone.
         </>
       )}
       {onAck && (

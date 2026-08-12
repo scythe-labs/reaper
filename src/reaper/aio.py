@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Small asyncio helpers for the scan's concurrent fan-outs.
+"""Small asyncio helpers: the scan's concurrent fan-outs, and per-loop mutual exclusion.
 
 Bare ``asyncio.gather`` is the wrong tool where this codebase fans out against an
 operator's live services: on the first failure it re-raises immediately but leaves
@@ -14,7 +14,8 @@ so there is exactly one cancellation discipline to reason about.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Sequence
+import weakref
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import structlog
@@ -56,3 +57,45 @@ async def gather_reaped(*aws: Awaitable[Any]) -> list[Any]:
     except BaseException:
         await reap(tasks)
         raise
+
+
+def per_loop_lock() -> Callable[[], asyncio.Lock]:
+    """A getter returning this event loop's lock, created on first use.
+
+    A module-level ``asyncio.Lock`` binds to a loop and then raises on every other, and the
+    suite runs a fresh loop per test (rule 37). In production there is one loop, hence one
+    lock, which is what serializes a section across every concurrent caller in the process.
+
+    **The binding happens on a CONTENDED acquire, not on any acquire**, measured rather than
+    assumed: ``Lock.acquire`` returns on a fast path that never reads the running loop, so a
+    shared lock survives any number of uncontended ones and raises the first time two callers
+    actually meet on a second loop. That is why the shared version fails intermittently
+    instead of on the second test, and why the test for this drives the contended case.
+
+    **Weak-keyed with one bound, stated because it is not the obvious one**: a loop whose lock
+    was never contended is collected with its entry, and a contended one is not, since
+    ``asyncio.Lock`` stores the loop on itself and the value then keeps the key alive. That
+    costs one lock per loop that contended, which is nothing in a process with one loop and
+    bounded by the suite otherwise.
+
+    **It carries mutual exclusion and no schema policy**, deliberately. Three callers:
+    ``history_sync._rebuild_lock``, ``lists._widen_lock`` and ``leaving_soon._pass_lock``,
+    and only the first two guard schema at all. ``history_sync`` DROPS a stale ``watch_event``
+    under its lock and ``lists.ensure_schema`` must never do that, since dropping unprotects
+    every keep list until the next sync refills it. ``imdb_dataset`` takes no lock here and
+    needs none: it never drops a live table, it builds a staging copy and renames it in, and
+    a missing table degrades on the read side rather than reading as an empty one.
+    """
+    locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+        weakref.WeakKeyDictionary()
+    )
+
+    def get() -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = locks.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            locks[loop] = lock
+        return lock
+
+    return get

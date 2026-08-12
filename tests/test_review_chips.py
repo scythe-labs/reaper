@@ -18,13 +18,14 @@ from collections.abc import Iterator
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import (
+from reaper.api.review import (
     _chip,
     _decode_explanation,
     _explanation_out,
@@ -58,9 +59,9 @@ from reaper.services.condemned import (
     MATCH_UNREADABLE,
     reap_override_verdict_decoded,
 )
+from reaper.services.season_evidence import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
+from reaper.services.season_evidence import guard_result
 from reaper.services.season_pruning import PruneConflict, SeriesPrunePlan
-from reaper.services.season_scan import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
-from reaper.services.season_scan import guard_result
 from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
 from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
 
@@ -238,11 +239,11 @@ def _exp(
     score: float,
     *,
     threshold: int = 70,
-    fired: list[dict[str, str]] | None = None,
-    unknown: list[dict[str, str]] | None = None,
+    fired: list[dict[str, Any]] | None = None,
+    unknown: list[dict[str, Any]] | None = None,
     match_status: str | None = None,
-) -> dict[str, object]:
-    body: dict[str, object] = {
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
         "score": score,
         "threshold": threshold,
         "coverage": 1.0,
@@ -394,10 +395,9 @@ class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
             # horizon is not what is being measured here -- the arrival date is.
             horizon=now - timedelta(days=400),
         )
+        assert reference is not None
         facts = _never_played_facts(dormancy_days(reference, now=now))
-        result = MinDormancyGate(
-            GateConfig(GateId.MIN_DORMANCY, threshold=self.WAITS_DAYS)
-        ).evaluate(facts)
+        result = MinDormancyGate(GateConfig(threshold=self.WAITS_DAYS)).evaluate(facts)
 
         assert result.outcome == PROTECT, "the gate must fire for this chip to exist at all"
         return _kept_phrase("min_dormancy", result.detail)
@@ -715,7 +715,7 @@ class TestChip:
     def test_a_match_block_of_the_wrong_shape_reads_as_absent(self, junk: str) -> None:
         """The other twin on the same model, and the same trade (rule 72).
 
-        ``routes._match_status`` reads the stored match off the raw dict and copes with any
+        ``review._match_status`` reads the stored match off the raw dict and copes with any
         shape. Refusing it at the wire boundary took every other block on the panel with it.
         ``None`` is a shape the panel already renders: it is what a row scanned before the
         match block existed carries.
@@ -952,9 +952,9 @@ class TestChip:
         by the gate id -- so this chip and ``WhyPanel``'s check/cause split are the only
         places a reword shows up, which is why the assertion lives here.
         """
-        result = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-        ).evaluate(_popularity_short_history_facts())
+        result = ServerPopularityGate(GateConfig(threshold=3, window_days=365)).evaluate(
+            _popularity_short_history_facts()
+        )
         assert result.blocked is True
 
         chip = _chip(
@@ -1189,7 +1189,7 @@ class TestChipWhy:
         ],
     )
     def test_every_blocked_lane_words_its_own_clause(
-        self, explanation: str, verdict: str, score: int, why: str
+        self, explanation: dict[str, Any], verdict: str, score: int, why: str
     ) -> None:
         chip = _chip(explanation, verdict, score)
         assert chip is not None
@@ -1203,7 +1203,7 @@ class TestChipWhy:
         ],
     )
     def test_a_chip_about_the_score_names_no_refusal(
-        self, explanation: str, verdict: str, score: int
+        self, explanation: dict[str, Any], verdict: str, score: int
     ) -> None:
         """None is a real answer, not a gap. An item that merely scored low is reaped
         when the owner asks; nothing is holding it, so there is no clause to say."""
@@ -1251,7 +1251,9 @@ class TestChipWhy:
             ),
         ],
     )
-    def test_a_clause_reads_mid_sentence(self, explanation: str, verdict: str, score: int) -> None:
+    def test_a_clause_reads_mid_sentence(
+        self, explanation: dict[str, Any], verdict: str, score: int
+    ) -> None:
         """It follows a colon, so it starts lowercase and carries no chip furniture: no
         capital lead, and none of the chip's own lead riding along inside the clause.
 
@@ -1286,7 +1288,7 @@ class TestSeasonNumber:
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot holding one show whose three seasons landed in three different
     lanes, plus a movie -- the shape the group view exists to show whole."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 
@@ -1387,7 +1389,8 @@ class TestCandidatesCarryTheGroupShape:
         """A row in one lane still describes the WHOLE show's shape: its strip marks
         every season across every lane, so the card can show kept and condemned
         side by side."""
-        rows = client.get("/api/candidates", params={"verdict": "abstain"}).json()
+        page = client.get("/api/candidates", params={"verdict": "abstain"}).json()
+        rows = page["items"]
         assert len(rows) == 1
         row = rows[0]
         assert row["season_number"] == 3
@@ -1398,7 +1401,10 @@ class TestCandidatesCarryTheGroupShape:
             # without the frontend parsing the text back apart (H-1).
             "why": "watched more than a season your rule keeps",
         }
-        marks = row["group_seasons"]
+        # The strip rides the show's own rollup, sent once beside the rows rather than
+        # copied onto each of them.
+        rollup = next(g for g in page["groups"] if g["group_key"] == row["group_key"])
+        marks = rollup["seasons"]
         assert [(m["season"], m["verdict"]) for m in marks] == [
             (1, "protect"),
             (2, "condemn"),
@@ -1410,12 +1416,16 @@ class TestCandidatesCarryTheGroupShape:
         assert all(isinstance(m["id"], int) for m in marks)
         assert next(m["id"] for m in marks if m["season"] == 3) == row["id"]
 
-    def test_movie_rows_carry_no_strip(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()
-        movie = next(r for r in rows if r["media_type"] == "movie")
-        assert movie["group_seasons"] is None
+    def test_movie_rows_bring_no_rollup(self, client: TestClient) -> None:
+        page = client.get("/api/candidates", params={"verdict": "condemn"}).json()
+        movie = next(r for r in page["items"] if r["media_type"] == "movie")
+        assert movie["group_key"] is None
         assert movie["season_number"] is None
         assert movie["chip"] is None  # condemned cards keep the amber pill instead
+        # No show, so nothing to roll up. Asserted as the exact set the page carries: the
+        # rollup's own key is a required string, so "no entry is null" holds however many
+        # entries a movie contributed.
+        assert {g["group_key"] for g in page["groups"]} == {"sonarr:5:42"}
 
 
 class TestGroupDetail:
@@ -1442,7 +1452,7 @@ class TestGroupDetail:
     def test_the_group_view_is_behind_auth(self, tmp_path: Path) -> None:
         authless_dir = tmp_path / "authless"
         authless_dir.mkdir()
-        settings = Settings(data_dir=authless_dir, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=authless_dir, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()
@@ -1572,7 +1582,10 @@ class TestTheMatchStatusVocabulary:
         # assertion cannot tell that from a tree that complies. Bump it deliberately.
         # 42 -> 43: the placeholder a policy probe fills every unprobed fact with, so a
         # preview cannot quietly inherit a number from a fact it is not about.
-        assert walked == 43, (
+        # 43 -> 39: the retired replay engine's four, three of them its own copy of the
+        # watch-blind reason and one its no-arrival-date placeholder. Both reasons survive
+        # on the live lanes, so nothing lost its coverage with them.
+        assert walked == 39, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."
@@ -1634,9 +1647,12 @@ class TestTheMatchStatusVocabulary:
             for name, value in sorted(
                 {
                     **checked,
-                    **{f"_NO_KEY_REASONS[{s.name}]": r for s, r in MOVIE_NO_KEY_REASONS.items()},
                     **{
-                        f"season _NO_KEY_REASONS[{s.name}]": r
+                        f"_NO_KEY_REASONS[{s.name if s else None}]": r
+                        for s, r in MOVIE_NO_KEY_REASONS.items()
+                    },
+                    **{
+                        f"season _NO_KEY_REASONS[{s.name if s else None}]": r
                         for s, r in SEASON_NO_KEY_REASONS.items()
                     },
                 }.items()

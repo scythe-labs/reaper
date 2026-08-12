@@ -96,15 +96,16 @@ been watched by *someone*, eventually; only a fraction still have watchers this 
 A play shortly after condemnation is often a rescue rather than a failure, and counting
 rescues as failures slanders the policy.
 
-⇒ In `engine/backtest.py`, regrets and rescues are split at the grace boundary.
+⇒ The replay split regrets from rescues at the grace boundary.
 
-**Superseded in reasoning, not in split.** The justification above ("still in quarantine")
-described a hold that does not exist: nothing on the deletion path reads the grace window,
-so an item is deletable from the moment it is condemned. What actually spares a late play
-is the executor's live per-item vetoes, which fire on a play *after the plan was approved* —
-not on a boundary N days out. The backtest still splits on the boundary, so its `rescued`
-count is a best case; `BacktestResult.rescued` says so, and M3c must fix or label it before
-any of these figures reach an operator.
+**Superseded in reasoning, and the code is gone.** The justification above ("still in
+quarantine") described a hold that does not exist: nothing on the deletion path reads the
+grace window, so an item is deletable from the moment it is condemned. What actually spares
+a late play is the executor's live per-item vetoes, which fire on a play *after the plan was
+approved* — not on a boundary N days out. The replay never stopped splitting on the boundary,
+so every `rescued` figure it produced was a best case. It was deleted rather than corrected
+(M3c, dropped), so **the rescue split is not a number Reaper reports anywhere**; #553 is the
+successor and it weighs a returned title down instead of counting it.
 
 ### 6. SQLite stores timezones — **it does not**
 
@@ -117,11 +118,11 @@ any of these figures reach an operator.
 Shipping one library's rewatch rates as a hardcoded prior makes every lift number on
 every *other* library meaningless.
 
-⇒ **Intended, not shipped.** `engine/calibration.derive` can fit the prior from the
-operator's own history and `backtest.prior_is_derived` can label which prior was used, but
-neither has a caller in `src/`: every number in use is `backtest.FALLBACK_REWATCH_PRIOR`,
-one library's curve. Tracked as M3g in `docs/STATUS.md`, blocked behind the unwired
-backtest (M3c).
+⇒ **Intended, never shipped, and now not planned.** A module existed that could fit the
+prior from the operator's own history, and another that could label which prior was used;
+neither ever had a caller in `src/`, and both were deleted rather than wired (M3c and M3g,
+dropped). Every number in use is the one library's curve tabulated in `docs/SIGNALS.md`, and
+nothing in the app can tell you it is borrowed. #554 is the successor.
 
 ### 8. The simulator can re-decide a snapshot under any policy — **only what the frozen evidence still answers**
 
@@ -139,7 +140,7 @@ snapshot records it, and while it matches, re-comparing stored scores is exact.
 stale number was the danger, not re-scoring itself: once a scan froze each item's
 evidence (`Candidate.facts_json`), a weight edit could be answered *exactly* by replaying
 the real `score` / `evaluate_all` / `decide_verdict` over that frozen evidence, still with
-zero API calls. So `simulate` is now three tiers (`api.routes.simulate`): stored-score
+zero API calls. So `simulate` is now three tiers (`api.simulate.simulate`): stored-score
 re-compare while `scoring_hash` matches; **replay** while `evidence_hash` matches, which
 covers weights, rating bars, custom condemn rules, graded keeps and protect conditions —
 `PolicyBody._EVIDENCE_REPLAYABLE_FIELDS` is the authority, not this sentence; and only then
@@ -238,10 +239,14 @@ one; a combined edit was the first draft and it proved three of the nine, becaus
 mask each other (keep-last already holds the season `protect_incomplete_seasons` would).
 
 **23 mutations were re-run mechanically, and 22 of them failed.** Eighteen are one per setting
-on each of the two roads a `PolicyBody` takes to the planner — `SeasonPolicy.from_body` and
-`season_scan.gather`'s carrier — each pinned to its shipped default, which is exactly "this road
-drops the operator's edit". Every one reds its OWN parametrization, so the sweep discriminates
-all nine settings rather than catching them in a bundle. **Comparing guard reasons rather than
+on each of the two roads a `PolicyBody` then took to the planner, `SeasonPolicy.from_body` and
+`season_scan.gather`'s own repack of nine loose parameters, each pinned to its shipped default,
+which is exactly "this road drops the operator's edit". Every one reds its OWN parametrization,
+so the sweep discriminates all nine settings rather than catching them in a bundle. The repack
+is gone since and `gather` takes the carrier, so nine of the eighteen have no site left to
+mutate. What that costs the sweep is worth writing down: with one road, a value dropped in
+`from_body` is dropped on the scan and the replay alike, so the replay still reproduces the
+scan and the *scan-against-scan* assertion is the one that reds. **Comparing guard reasons rather than
 verdict tallies is what made that possible**: a setting routinely changes why a season is kept
 without changing whether it is. Four more fail too — restoring the skip, collapsing the
 three-state to `{}`, returning the frozen guard instead of re-deriving it, and dropping the
@@ -327,7 +332,7 @@ doc change.**
 
 Found on a live install, not in a test (measured 2026-07-26). Every policy edit showed
 "Needs a fresh scan", and **scanning did not clear it**. Both fast tiers of
-`api.routes.simulate` were unreachable, so the panel an operator tunes a deletion threshold
+`api.simulate.simulate` were unreachable, so the panel an operator tunes a deletion threshold
 with had been dead since the last `SCHEMA_VERSION` bump.
 
 `schema_version` is the *storage shape* of a policy body, and the wire schema does not carry
@@ -692,7 +697,7 @@ the new test does.
 ### An unused argument is invisible to the type checker
 
 `run(..., prior=prior)` accepted the argument and then never passed it into the result.
-`mypy --strict` was perfectly happy — an unused parameter is legal — and the backtest
+`mypy --strict` was perfectly happy — an unused parameter is legal — and the replay engine
 quietly kept using the hardcoded fallback while reporting a lift number that *looked*
 fine.
 
@@ -791,10 +796,10 @@ library looks like, and it is why the grace period and the human approval gate a
 decoration.
 
 ⇒ This curve is a property of *an audience*, not a constant, so never ship someone else's
-rewatch curve as if it were physics. **Reaper still does**: `engine/calibration.derive`
-exists to fit the curve per operator but has no caller in `src/`, so the hardcoded
-`backtest.FALLBACK_REWATCH_PRIOR` is what every number reads today. Wiring it is M3g in
-`docs/STATUS.md`.
+rewatch curve as if it were physics. **Reaper still does, and now deliberately**: the module
+that could have fitted one per operator never had a caller and was deleted with the replay it
+served (M3g, dropped). The curve in `docs/SIGNALS.md` is what every default reads, it is one
+library's, and #554 is the successor if a fitted answer is ever wanted.
 
 ---
 
@@ -991,8 +996,10 @@ The probe that *discovered* this was itself bitten by it — its cleanup step ma
 tags case-sensitively, found nothing, and left two labels on a real item.
 
 ⇒ Casefold every label comparison. `normalize_label()` in `clients/plex.py` is the only
-comparison form, and removal re-reads the item to remove the tag under the exact
-spelling Plex is using.
+comparison form for a label, and removal re-reads the item to remove the tag under the
+exact spelling Plex is using. It delegates to `reaper.text.fold` now, which is the same
+derivation for every name comparison in the tree and keeps its own docstring for the
+Plex-specific reason.
 
 ### `batchMultiEdits().addLabel()` PRESERVES existing labels (verified)
 
@@ -1335,7 +1342,8 @@ unnamed constraint; Alembic rebuilds the table but can only drop a constraint it
 
 ### Alembic will silently produce a migration that creates nothing
 
-Autogenerate rendered a custom type as `reaper.db.types.TZDateTime()` **without emitting
+Autogenerate rendered a custom type as `reaper.db.types.EpochDateTime()`, named `TZDateTime`
+at the time, **without emitting
 the import**. `alembic upgrade head` reported success and created **zero tables**. Use a
 `render_item` hook to emit a stdlib type.
 
@@ -1803,10 +1811,11 @@ it survives until you ask what `reference_instant` does with the horizon.
 
 ## A span passed to one consumer and defaulted at the next (2026-07-27)
 
-Measured while reviewing the rule 140 sweep. `backtest.run` computes the operator's popularity
-window once, hands it to `facts_as_of` to count `distinct_watchers` over, and then called
-`score()` without it — so the count was built over the operator's span and validated against
-the shipped 365-day default. On a 730-day window over a 400-day mirror:
+Measured while reviewing the rule 140 sweep, in the replay engine since deleted. It computed
+the operator's popularity window once, handed it to the fact builder to count
+`distinct_watchers` over, and then called `score()` without it — so the count was built over
+the operator's span and validated against the shipped 365-day default. The shape is what
+survives, and rule 141 is where it lives. On a 730-day window over a 400-day mirror:
 
 | policy weights | window passed | window defaulted |
 | --- | --- | --- |
@@ -1824,8 +1833,8 @@ withholding. A reviewer caught it by sweeping the value instead of reading the s
 Two general forms, both cheap to check and both missed by a green suite of 2,578 tests:
 
 - **A fixture that pins the same value as the production default cannot prove the value was
-  passed.** Every backtest fixture used 365, which is exactly `score()`'s default, so an omitted
-  argument and a correct one produced identical output. Now rule 141.
+  passed.** Every fixture on that path used 365, which is exactly `score()`'s default, so an
+  omitted argument and a correct one produced identical output. Now rule 141.
 - **One span with two consumers needs both pinned.** The first fix spied on `score` alone, which
   proved the repaired line and nothing about the sibling call four lines above it: hardcoding
   `facts_as_of(popularity_window_days=365)` left the entire suite green while withdrawing a
@@ -2044,7 +2053,7 @@ the wrong shape for this: it helps at most one site per file, the ~40 others are
 
 ## Mutation testing the two policy repair shims (2026-07-29)
 
-Sixty mutants over `policy.rebalance` and `policy.recover_rating_rules` — operator flips, ±1
+Sixty mutants over `policy_migrations.rebalance` and `policy_migrations.recover_rating_rules` — operator flips, ±1
 constants, dropped `not`s, `and`/`or` swaps, and ten single-statement deletions — run against
 `tests/test_policy.py` plus `tests/test_profiles.py`. Baseline 2.6 s, whole sweep about three
 minutes. **48 killed, 10 survived, 2 unparseable.** Scoping by *function* rather than by file
@@ -2943,6 +2952,74 @@ stacking `reaper-keep` into an eleven-row-tall cell.
   `nowrap` is a recorded rule-139 exemption in `index-outside-text.test.ts`, not a violation:
   scrolling is the remedy, where for a clipped container it would be the bug.
 
+## A verdict triple is a coarse reading of the conclusion it pins (2026-08-07)
+
+The policy lab pinned `(verdict, score, coverage_bp)` per vector, which reads as a complete
+engine trip-wire and is not: a great deal of what the scan concludes rounds away before it
+reaches those three numbers. Measured by mutating production and running the other 4,035 tests
+with the pinned baseline deselected:
+
+| mutation | what the triple saw | what the rest of the suite saw |
+| --- | --- | --- |
+| `checked_and_did_not_fire` truncated to one entry | **0 of 440 vectors moved** | one invariant test |
+| a below-floor `ARGUES_KEEP` folded to `NOT_APPLICABLE` | no move | one state test |
+| `checked_and_did_not_fire` **reordered**, membership identical | no move | **nothing** |
+
+The third is the one worth keeping. It is a legal-looking refactor, it changes the order the
+operator reads their protections in, and 4,035 tests are green through it. The first is worse in
+what it removes and only survived because a separate invariant happens to count gate reports:
+the block that carries the product promise — every protection that was checked and did *not*
+fire — is downstream of the why-panel, and nothing else asserted on it per real shape.
+
+⇒ **Pin the conclusion, not the decision.** The baseline block now carries the three gate lists
+by gate id, the explanation's `base_score`, `keep_discount`, `threshold`, `coverage_floor_bp`
+and `watch_blind`, and per signal its `id`, `contribution`, `state` and `evaluated`. 27 pinned
+leaves per block where there were 3.
+
+- **Read it off the serialized explanation, never off the score object.** Every number above
+  also exists on `Score` and the policy, and recomputing them in the lab would be a second
+  implementation of `_explain`'s rounding whose output the fixture then pins as ground truth
+  (rule 119). Reading production's own payload also makes the pin cover the serialization: a key
+  dropped from `_explain` raises rather than thawing to `None` and comparing equal.
+- **`detail` is deliberately not pinned, and that is a cost accepted.** It is roughly 60% of the
+  payload by bytes and it is rule 21 operator copy, so pinning it turns every wording edit into a
+  baseline stop — and a stop that fires on rewording is one that stops being read. The fixture
+  grew 754 KB → 1,574 KB without it.
+- **Report the diff leaf by leaf.** Twelve signal rows compared as one blob say only that
+  `signals` moved. The failure a reader can act on is
+  `v0007 baseline.signals[2].contribution: 12.0 -> 9.0`, and the comparison that produces it is
+  shared by the test and the regeneration script so the two cannot disagree about what a
+  baseline is.
+- **One field cannot move and is pinned anyway.** `watch_blind` comes from the watch mirror
+  going blind between scans, which is not a property of a fact vector — every replayed value is
+  `None`. It is pinned for the key's presence and nothing else; rule 141 governs the rest.
+
+## A plan is larger than the condemned set, and a real database is behind head (2026-08-07)
+
+Two findings from building the whole-library capture, which reads one stored snapshot and runs
+`build_plan` against a throwaway copy of it.
+
+- **The plan covered more items than the scan condemned**: 543 condemned, 592 planned. Not a
+  bug, and the direction is the surprising part. `effective_condemned` applies the operator's
+  overrides on top of the frozen verdicts, so hand reaps *add* to the set while spares subtract,
+  and on this library the reaps outnumbered the spares. ⇒ A baseline that pinned only the
+  scan's verdicts would miss the whole override layer, which is a live input to what gets
+  deleted. Capture the plan, not just the verdicts.
+- **The operator's own database was three migrations behind head**, because it was last written
+  by a build older than the checkout. Anything reading a real library through the ORM fails
+  outright on that — one missing column fails the whole select, since SQLAlchemy names every
+  mapped column. Raw SQL naming its own columns survives it, which is why the policy-lab
+  extractor never hit this. ⇒ A tool that reads a tester's database through models migrates its
+  own copy first and records the revision it reached, or it is answering under a schema it
+  cannot name.
+
+Also recorded: **`build_plan` writes**, so a read-only capture cannot call it in place. The
+source is opened `mode=ro` and `sqlite3`-backed up to a temp directory; the plan is built
+against the copy and rolled back on top of that. Verified by digesting the source file before
+and after — unchanged. A rollback alone would have been enough in theory and is not the trade
+to make here: a bug in a capture script must not be able to leave an approved run in the
+operator's database.
+
 ## On SQLite, the transaction a migration runs in is not the one env.py opens (2026-08-07)
 
 Fixing #564 (a failed batch recreate strands `_alembic_tmp_<table>` and wedges every later
@@ -2974,6 +3051,610 @@ trap in it.
   authoring slip rule 148 now warns about: dropping a column before the index sitting on it,
   which raises *after* the temp table is committed and is invisible against a fresh database,
   because a fresh database has no index to trip over.
+
+## Three survivors on one predicate, and not one of them a defect (2026-08-09)
+
+The `engine-gates` zone does not declare `RatingFloorGate._miss_phrase` (#598), so reaching it
+took a supplementary invocation of the same runner. It left **3 survivors out of 14 mutants**,
+all on one three-clause predicate: `min_votes > 0` widened to `>= 0`, the same token narrowed to
+`> 1`, and `votes < min_votes` widened to `<=`.
+
+**All three read as live operator-copy defects, and not one of them was.** Under the mutants the
+why-panel prints "too few to trust (you need 0)" for a bar with no vote floor, and drops the "too
+few" clause entirely under a floor of 1. Driven at those three states the shipped code prints
+neither: it returns the right sentence every time. A survivor describes what the *mutant* does,
+and where the mutated function returns an operator string, that string is unusually easy to read
+as a bug report about the original — it is fluent, specific, and exactly the kind of sentence
+rule 21 exists to stop. All three were carried into a fix task as defects to fix, and all three
+were cases to write. **Read a survivor as a missing case until the original has been driven and
+its output printed.**
+
+**The finding underneath was real, and it was rule 104.** `Rating.meets` decides whether a bar
+clears; `_miss_phrase` tells the operator why it did not. Each spelled out the same three clauses
+in a different clause order, and they agree on all 288 source/votes/floor combinations — which is
+the state the rule is about, because two copies that agree are not one derivation, and the next
+edit to either is what makes the panel contradict the decision. Hoisting both onto one
+`Rating.short_of_vote_floor` took `_miss_phrase` from 14 mutants to 2 and killed the three
+survivors by **deleting** them, the same trade `describe_bar` made against this zone in July.
+
+**Which re-opens the gap that trade opened last time.** Mutants hoisted out of a declared function
+land in a helper no zone names, so the `ratings` zone declares `short_of_vote_floor` beside
+`meets`. The general form is worth stating once: **a rule 104 hoist moves mutable surface, so the
+zone that owned it owes the helper a declaration in the same change.**
+
+**One of the three states cannot be reached from a saved policy at all.** `RatingRuleSpec` refuses
+a vote floor below 1 on a source that counts votes, so `min_votes=0` on an IMDb bar exists only as
+the `RatingRule` dataclass's own default. That argues for pinning the boundary rather than against
+it: the dataclass default is 0, every percentage bar carries 0, and one validator is the only
+thing standing between them.
+
+## Two frontend extractions saved no lines, and were worth building anyway (2026-08-10)
+
+Wave 11's W11-22 and W11-24 were both scoped as duplications with a line saving. Measured across
+the built diff, splitting comment lines from code: **W11-22 is code +29 / -29, W11-24 is
++54 / -52.** The plan's `-23` for W11-24 is wrong. W11-22 never carried a figure. Both were built
+regardless, for the same reason in each case: **what came out was a divergence.**
+
+W11-22 is three modals mirroring their `canClose` into a ref their parent's Back guard reads.
+Two mirrored the whole predicate. `ScheduleModal` mirrored one term of it, `save.isPending`,
+against a shell handed `!save.isPending`. Those agree, and agree only while `canClose` has one
+term. A second reason to stay open leaves browser Back the one dismissal ignoring a guard every
+other dismissal honors, which is rule 80. `ServiceModal` already has two reasons, having grown
+its second at this same shape once before. `useBackCloseMirror` takes the whole predicate as an
+argument, so the one-term spelling has nowhere to live.
+
+W11-24 is two panel fallbacks that were the same component twice, with three comments saying as
+much. The structure was identical and one string was not: the why panel's failure added "The item
+itself is unaffected" and the Scales panel's did not. Neither copy was wrong on its own, which is
+why it survived three passes.
+
+**The generalizable part is the search, not the two results.** A duplication found by counting
+lines is scored on the lines. A duplication found by *diffing the copies against each other*
+tells you which of them is wrong, and that is a defect whatever the extraction costs. Both of
+these came out of the second reading. So a wave row's line estimate is a locator, and a zero-net
+extraction is a kill only when the copies also agree.
+
+**W11-3's type found a fixture nobody had read.** `VocabField.type` was a bare `string`; it is now
+a six-member union in `api.ts`, pinned against `engine.fields.FieldType`. Typing it failed the
+build on `StaleReadSweep.test.tsx`, which composed a rule on a `runtime_minutes` field of type
+`"int"`. The server can serve neither. It compiled for as long as the field was a `string`, which
+is rule 119's invented expectation caught by the type system rather than by a test.
+
+## What the callee already enforces is not what the duplication costs (2026-08-10)
+
+Six hand-written `PlexClient(...)` constructions, four of them passing the same four arguments
+in the same order. The finding proposing a helper had already answered itself. `safety` is
+keyword-only and required, so no copy can drop the transport guard. Measured, the helper takes
+20 lines out and costs about 14, and it reaches four of the six sites. Six net lines against a
+new indirection on the client that reads a stored credential is the wrong trade.
+
+**The argument the signature cannot enforce is the one worth a gate.** `verify` carries the
+operator's per-instance TLS switch and defaults to `True`. An omission there widens nothing, so
+it reads as harmless. The cost is agreement: an operator whose server carries a self-signed
+certificate gets one surface that cannot reach it while every other surface can, with nothing
+announcing the difference. The same shape had already happened once in this tree with
+`api_path_prefix` on the *arr clients. **So when judging a "written N times" finding, sort the
+repeated arguments by what the callee can refuse on its own.** The required ones are already
+bound; the defaulted ones are the population a gate has to cover, and it should cover every class
+with that parameter, not the one class the finding named.
+
+## A module at 93% can have every failure arm of a safety step unreached (2026-08-10)
+
+`services/restore.py`'s arm step runs three prepare functions before it writes the marker that
+lets the next boot swap. Each maps its failure to one operator sentence. Behind 4,283 passing
+tests and 93% line coverage for the module, **no test drove any of the three**, and no test
+anywhere asserted the sentence. Line coverage said so plainly and nobody had read it: the three
+`except` bodies were sitting in the missing-line list.
+
+The reason generalizes past this file. A staging flow's happy path is heavily tested because
+every other test needs it as setup, and the happy path is what the percentage is measuring. The
+arms that only a failure reaches are cheap to leave, and they are also where the operator-facing
+sentence lives, so a reword lands with nothing to catch it. **Read the missing-line list, not the
+percentage, on any module whose job is to refuse.**
+
+The reword is also what found a second thing the arms were hiding. Saying "nothing was restored"
+forces the question of whether that is true at every raise, and at one of them it was not: a
+confirm retried after a client-side timeout re-ran the prepare steps over a staging that was
+already armed. **A claim about state is a cheap way to audit the states a function can be called
+in**, and it fails toward reassurance if nobody checks.
+
+## A staleness comparison is satisfied at either end, and only one of them is honest (2026-08-10)
+
+Four surfaces show a connection-test badge only while the result still describes what is on
+screen. Each stores `{ result, of }`, where `of` is a fingerprint of everything the test was sent,
+and each renders the badge on `test.of === testedWith()`. That is one derivation written four
+times, and it was measured for a dedup. The dedup is a kill. What the measurement found instead
+is that **three of the four computed the fingerprint at the wrong end, and the comparison cannot
+tell.**
+
+`testedWith()` called inside `onSuccess` runs after the response lands. It fingerprints whatever
+the operator typed while the request was out. The stored `of` and the live `testedWith()` then
+match **by construction**, whatever moved, and the badge vouches for an address that was never
+tried. Computed at issuance instead (React Query's `onMutate`, whose return reaches `onSuccess` as
+context) the two disagree and the badge withdraws, which is the honest answer.
+
+**The comparison is what made this invisible.** Three tests already drove the staleness direction
+at the one site that had it right. Two edit the host and the key after a pass and assert the badge
+goes; the third types back to the tested value and asserts it returns. All three pass with the
+fingerprint computed at either end, because they change the boxes while nothing is in flight. The
+discriminating case is the retype *during* the request, and no test in the suite drove it. So the
+one site written correctly was correct by its author's reasoning alone, and its three siblings
+copied the shape without it.
+
+**A gate over the family took three drafts, and the first two were fail-open.** The obvious
+question is "was a call evaluated here", and it is the wrong one twice over. A regex bounded at
+the first comma reads `of: [kind, baseUrl()].join(" ")` as innocent. Bounding it properly by
+bracket depth fixes that case and still passes the same fingerprint inlined as a template literal,
+which is the identical defect with no call in it at all. Both drafts read green over a working
+demonstration of the bug. The version that holds inverts the question: `of:` may be handed a name
+or a path of names, and everything else fails. **A gate that hunts for the shape of the defect is
+open by omission; one that allows the shape of the fix is closed by default.**
+
+## The five-times duplication with nothing behind it (2026-08-10)
+
+Five surfaces report a draft upward through the same four lines, three settings panels and two
+children of panels, and rule 146 is written about exactly that signal. The count was the only
+figure in its finding that needed no correction, and it was the sub-item worth the least: 20 lines
+out against 29 back, and what the rule asks is per-site anyway. The signal must be declared above
+every early return, and every early-return state re-read as one the report still fires in, which
+is a claim about each surface's own branches. All five satisfy it, and the five answers differ:
+two name the branches their report survives, two say they have no early return above it, and one
+has three returns that all sit below. **A hook cannot carry an obligation whose subject is the
+call site**, so the shared four lines are the part with no leverage in them.
+
+## A line count and a drift surface are two measurements, and a dedup usually pays in the second (2026-08-10)
+
+Phase 8 of the simplification plan killed fifteen findings. Ten of the kills rested on a line
+count, seven of them citing the plan's S5 ("a parameter object that nets to zero") by name. The
+arithmetic held everywhere it was re-measured. A dedup's usual payoff is that one declaration
+cannot drift from itself, and a line count does not measure that. The same phase found five fresh
+drifts inside the code those extractions would have covered.
+
+Thirteen of the fifteen were re-read with the second question added. Two moved and eleven stood,
+so the line test is incomplete rather than wrong. The two that moved:
+
+- **The measured shape was the wrong shape.** Two components carried the same image-fallback
+  ladder, and the kill measured extracting a shared *component*: 33 lines out, 35 back, because
+  the two sites share the ladder and share none of their markup, so a component takes the markup
+  as props. A **hook** takes the ladder alone and leaves the markup where it is: about zero on
+  total lines, about -8 on code lines, and two comments pointing at each other retired. Same
+  duplication, same arithmetic, different answer.
+- **The hazard survives the kill.** Collapsing two hand-written record packs into one carrier
+  removed no parameter and no line, which is a correct kill. Every field of the record defaults
+  to `None`, so a field packed on one lane and forgotten on the other raises nothing and the type
+  checker sees nothing. Three of the fifteen are cross-system join keys. A gate over the two packs
+  costs 60 test lines and no production risk, and closes what the carrier would have closed by
+  construction.
+
+**Two rejections, both measured.** Shared `Annotated` bound aliases would state a wire model's and
+its domain twin's seven validation bounds once. Rejected: these are the deletion caps, and moving
+a bound off the line that declares it costs a reader more than the second spelling costs an
+author. A test holding both to one answer and naming both files when they disagree was already
+there. The second image ladder of two lines per site stayed two lines per site, because a two-line
+ladder does not pay for a module.
+
+**A kill also has to ask whether the divergence it preserves is correct.** Measuring two copies to
+decide they are cheaper apart reads each copy for its size and neither for its behavior. One kill
+recorded a pair as "one with a reset effect and one with neither" and did not ask whether the
+absence is right. It is, and only because of a list key nothing had written down.
+
+## A cap on the work is not a bound on the burst (2026-08-10)
+
+`fairness._enrich_titles` looks bounded and is not. `_TITLE_LOOKUP_CAP = 80` caps how many
+not-in-scan titles get a live name lookup per Scales load, and the docstring said the calls were
+therefore bounded. They were bounded in total and unbounded in parallel: nothing bounded the
+burst. httpx2's default connection pool holds 100, which sits above the cap, so one page load
+could open 80 sockets to one portal.
+
+**The cap reads as the safeguard, which is why nobody looked.** A cap answers "how much". A
+semaphore answers "how much at once". A comment saying "bounded" without saying which one is
+what let this sit. Measured with a portal that counts what is in flight: 24 targets peaked at
+24 concurrent, and at 8 under `asyncio.Semaphore(8)`.
+
+**Bounding the burst lengthens the tail, and that needed fixing in the same change.** A portal
+that accepts connections and never answers costs one read timeout per wave. Unbounded that was
+one wave; at 8 it is ten, so the bound multiplied a stalled page load by ten. The enrichment had
+no deadline of its own because one wave never needed one. **A concurrency bound is a latency
+change, so the wave count is part of the fix.**
+
+**The load-shedder was the wrong tool, twice over.** The finding proposed reusing
+`auth/ratelimit.ConcurrencyGate` and called it unused. It has three production callers, and its
+`acquire` returns 0 when full so the caller sheds load rather than waiting, which for a page
+enriching titles would drop names instead of pacing the reads.
+
+## Removing a redundant parameter removes what its test could distinguish (2026-08-10)
+
+Five scheduler functions took `data_dir` beside the `settings` it came from, and every production
+call site passed `settings.data_dir`. Deleting the parameter is -14 lines for the parameter and
+-10 landed, and it leaves one source for the folder. It also costs a test its distinguishing
+power, and that is the part worth writing down.
+
+`test_the_snapshot_sweep_is_handed_the_folder_the_database_is_in` handed `build_scheduler` a
+folder that was *not* the engine's, on purpose, because the compaction opens
+`data_dir / "reaper.db"` with a raw sqlite3 connection: a wrong folder creates an empty second
+database and vacuums that while the real one is never compacted. Its docstring named rule 141
+outright, saying that pinning the engine's own path "would hold just as well if the job derived
+its own". Removing the parameter is exactly the change that makes the job derive its own, so the
+divergent value the test relied on stops existing.
+
+**The test's question was retired, not answered.** With one source the two cannot diverge. What
+is left to pin is what the old assertion took on trust: that the folder the sweep vacuums is the
+folder the engine opened. It is read back off the engine's own URL rather than recomputed from
+`settings`, which would only restate the derivation under test.
+
+**A test that pins a value's provenance is worth reading as an argument about the design.** The
+intermediate option here kept the parameter on `build_scheduler` alone, at -13 lines, and
+preserved the test verbatim. It was the worst of the three. It leaves the ratings download
+reading `settings.data_dir` while the sweep reads the argument: two sources for one folder, with
+a test proving only that one of them arrives.
+
+## An extraction can be larger than the duplication it removes (2026-08-10)
+
+`whitelist.overrides()` and `spare_expiries()` are two scans of one table, and a third function
+in the same file already reads all three columns in one statement, so folding the pair into one
+read looks like free subtraction. Built and measured: `whitelist.py` +14/-7, `review.py` +2/-4, a
+**net +5**.
+
+**The arithmetic is structural.** Each read being replaced is two statements, a `select` and a
+`dict()`. What replaces them is a loop that splits one result set into two maps, which is ten
+lines. Any extraction whose replacement must reshape data pays that. Collapsing N cheap reads
+into one richer read adds the projection code the cheap reads did not need.
+
+Two further figures in the finding were wrong. Only two of its four call sites are adjacent
+pairs; the other two sit 40 and about 150 lines apart, so collapsing them relocates a read
+instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
+filtered two-column select to an unfiltered three-column one.
+
+## A form control does not inherit its font, so five of six fields right looks right (2026-08-10)
+
+Rule 40's control standard is six declarations, and ten CSS blocks type them out. Two blocks set
+`font-size` and no `font: inherit`. A browser gives `<input>` and `<select>` their own
+font-family in its UA stylesheet, and that beats inheritance, so those boxes rendered in the
+browser's form font while every label beside them rendered in the app's. Measured in Chromium:
+15px Arial at the Logs search box, 13.76px Arial at every box and dropdown in the Settings
+control column, against system-ui everywhere else. On `dev` too.
+
+**The shape is what makes it survive review.** The block declares five of the six fields
+correctly, so a reader checking it against the standard finds four matches and a fifth line that
+mentions the right property. And the symptom is a typeface, which reads at a glance as a size
+difference and gets attributed to the `font-size` that IS there. Neither the diff nor the screen
+says the word "family".
+
+**The other five fields would have failed loudly, which is why only this one drifted.** A missing
+border, radius, fill or padding is visible in one look. A missing focus ring falls back to
+`01-base.css`'s `:focus-visible`, which draws a slightly different ring rather than none. The
+font is the only field in the standard whose absence is silent, and it is the one that drifted at
+two of ten sites.
+
+**The extraction the finding asked for was killed on measurement.** Hoisting the six declarations
+into one grouped base rule in `01-base.css` nets about -56 lines of 10,614, and it moves
+`.set-row .set-control input` (specificity 0,2,1) from file 27 to file 1, which inverts its tie
+with `.swatch-wrap input[type="color"]` at 27-settings-rows.css:218. That tie is decided by
+source order today and the later rule wins; the evidence is `:271`, a third rule written to
+re-override the pair inside `.hex-join`. Reachable only through one DOM shape at this tip, so
+latent. A gate landed instead, and it caught the drift the extraction was supposed to prevent.
+
+**Putting the standard back costs more than the family, because `font` is a shorthand.** A
+CSS-wide keyword sets every longhand it owns, so `font: inherit` also took the inherited 1.55
+line height, where those controls had the UA's `normal`. The boxes grew about 6px. That one is
+the standard arriving rather than a side effect: in a cluster row the box had been sitting
+8.25px shorter than the button beside it, and it now sits 1.92px off. The other two were
+regressions, and both were controls whose own rule declared one font detail at (0,1,0) under a
+(0,2,1) `font: inherit`: the API key's monospace and the accent hex field's tabular figures. A
+revealed API key came out in the app's sans, against a comment on its own rule saying monospace
+is there so the key reads unambiguously.
+
+**A block declaring only `font-size` hides that hazard, which is why the repair is the risky
+half.** The old block set no family, so nothing it could outrank was at stake, and the two
+lower-specificity rules had been correct for as long as the drift existed. The fix is what put
+them under a shorthand. So the sweep after adding a CSS-wide keyword is not "what did this
+element look like before", it is **"what other rule declares any longhand this keyword owns, at
+lower specificity, on anything this selector matches"**. That is `font-family`,
+`font-variant-numeric`, `font-weight`, `font-style`, `font-stretch` and `line-height`, and a
+computed-style dump over the real markup is the only way to see it: the diff shows one added
+line and the failure is two files away.
+
+## Two counts of one diff, and only one of them belongs in the table (2026-08-10)
+
+**`SIMPLIFICATION_PLAN.md`'s line figures are code net: non-comment, non-blank, docstrings
+excluded.** That is the unit in every verdict cell and every *Landed* row. A total-line count put
+in the same column is not a rougher measurement of the same thing. It is a different quantity in
+the same units, and it is normally larger, because what a dedup adds back is mostly the docstring
+or comment carrying the rule the copies had split between them.
+
+Six wave 11 backend rows, measured both ways. **Total lines: -2, -2, +2, -1, +4 with a 42-line
+revision, +7. Code net: -3, -5, -3, -3, +4 with an 11-line revision, -2.** Stated in the plan:
+-3, -7, -5, -3, index-only, +2.
+
+**The two readings disagree about the outcome, not about the size.** On total lines, five of the
+six cost more than stated and none cost less, which reads as a systematic optimism in how the wave
+estimates. On code net, two are exact, two are short in the same direction, and one beats its
+estimate. The first reading was published, with a general claim built on it about estimates
+counting the deletion and never the declaration. **The claim was an artifact of the unit.**
+
+**This is the second time the same confusion moved a verdict, in the opposite direction.** One
+pull request earlier a getters row read at +2 by scoring a helper's docstring as code and was
+corrected to -6, which flipped it from a marginal build to a clear one. Here the flip ran the
+other way: W11-43 read as +7 against a stated +2, which is a row that overran, and it is actually
+-2, a row that beat its estimate.
+
+**So print the unit next to the number, and check the unit before writing the lesson.** A figure
+disagreeing with a document is the moment to ask what the document is counting, not the moment to
+explain why the document was optimistic. The write-up is the expensive half to get wrong: the six
+numbers are an instance a later reader can re-derive in a minute, and a wrong general claim about
+how the wave estimates is what they will take as settled and never re-measure.
+
+**The row that moved most is the one whose verdict depended on it.** W11-43 was offered as "build
+at +2, or write the gate", with the gate the better answer if the consolidation cost lines. It
+costs -2, so there was no trade. The gate loses on its own merits anyway: after the consolidation
+`src/` holds one multi-parent walk, so a ban would scan a population of one, and before it the
+ban would have to exempt the two sites it exists to catch.
+
+**The one item decided by something other than a line count was the only defect in the six.**
+`ActionStep.run_id` was unindexed and `EXPLAIN QUERY PLAN` returned `SCAN action_step` for the
+executor's own filter, against a table retention never sweeps. Its test asserts the query plan
+rather than the index's presence, so an index that exists and is not chosen still fails.
+
+## A rendering test cannot see a duplicate that renders identically (2026-08-10)
+
+A dedup replaced two byte-identical copies of one operator sentence with a declaration, and
+shipped a test asserting both routes answer with that declaration's halves. **The test cannot
+fail for the thing it was written to prevent.** The copies it replaced produced identical output,
+so an arm that re-inlines the sentence renders exactly what the declaration renders, and every
+assertion over the two responses stays green. Rule 144's gap is a source-text question, and only
+a source-text assertion closes it.
+
+**The same test was fail-open a second way, found by driving it rather than reading it.** Raising
+the template unformatted passes every check: the raw string starts with the prefix and ends with
+the suffix being compared, because those are literally its own halves, and the eight characters of
+`{reason}` satisfy a "longer than prefix plus suffix" bound. That ships `{reason}` to the operator,
+which is a rule 21 defect the gate was standing in front of.
+
+**Neither hole is visible from the assertions; both are visible from a mutation.** Three mutations
+were needed to cover one three-line change: reword an arm, re-inline an arm verbatim, drop the
+`.format()`. No single assertion catches more than one of them. **When a test's expectation is
+derived from the declaration it is testing, ask what the declaration and the code under test can
+be wrong about together** — a derived expectation moves with the thing it should be pinning.
+
+## A prop hand-off is not drift if the type checker sees it (2026-08-10)
+
+A finding said six navigation callbacks were drilled three to four levels through the React tree
+over a destination type that is already one value. Re-derived from `App.tsx`: **nine distinct
+prop names over ten hand-offs, seven consumed by `App`'s own child and three going exactly one
+level further.** Nothing goes past depth 2. The six was the `onGoTo*`-prefixed subset, and the
+plan leaves out the three cross-page jumps named `onOpen*`.
+
+**Depth is what the finding rested on, and it decides the answer.** A prop that stops being
+forwarded is a TypeScript error at the intermediary and again at the leaf, so the hand-off has no
+drift surface: it fails at build time or it is correct. Bundling the three depth-2 props into one
+destination prop trades about nine lines of pass-through for a bundle type and a second
+indirection, and removes no place a future author has to remember something. The part that could
+drift had already been fixed, in `navIntent.ts`: `goTo` is one entry point over one `NavIntent`
+union, replacing four per-destination setters that each had their own idea of what to reset.
+
+**The measurement that mattered was not the count.** Two earlier passes both got the count
+roughly right and neither wrote down the depth, which is the only figure the row's argument uses.
+
+## The cascade moves when a declaration moves to an earlier file (2026-08-10)
+
+Five controls draw one bare, pill-shaped ✕, and three of them carried the same thirteen
+declarations in three stylesheets. Sharing them means moving the declarations to a file that loads
+**earlier**, which is a cascade change: any rule of equal specificity in between now wins where it
+used to lose. Nothing in the diff shows it and no existing test reads it.
+
+**Read the shape back off the cascade rather than arguing it.** jsdom parses the concatenated
+stylesheet and does the cascade, so `getComputedStyle` on each control, rendered in the ancestry
+it really has, answers which declaration won. The values were captured **before** the shared rule
+existed, so a green run is the claim that nothing moved. Two limits are worth knowing: `var()` is
+left unresolved, which is what a test like this wants because it is asking which declaration won
+rather than what pixels it became; and `border-width` is reported from the keyword rather than
+from `border-style: none`, so `border: none` and `border: 0` disagree there and agree on screen.
+
+**Doing it found a control that was not the shape it claimed.** One of the five sizes itself
+`width: var(--tap-min)` and never resets the global `button` padding, so under `box-sizing:
+border-box` its used width is 29.2px against the 24px token it names. The `width` declaration does
+nothing. It was left as it renders and the shared rule excludes it, since folding it in would have
+needed a `padding` declaration whose only job was to cancel a shared one.
+
+## A shell gate can be green because the page is small (2026-08-10)
+
+`binaries.yml`'s boot probes check the packaged build serves the SPA and not a JSON 404:
+
+```
+if curl -s http://127.0.0.1:8461/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
+```
+
+Under `set -o pipefail` a pipeline reports its rightmost failing command. `head -c 200` exits
+after 200 bytes and `grep -q` exits on the first match, so curl can take SIGPIPE and the pipeline
+is non-zero with `grep` having matched. **Whether that happens depends on the page size.**
+Measured with the same one-liner: a 4 KB body passes, a 200 KB body fails. Under the pipe buffer
+curl writes the whole response and exits 0 before either reader closes.
+
+The page the probe reads is the BUILT `index.html`, not the source one, and today it is under
+5 KB. So all three copies of that line are green on a margin nobody chose, and it moves with
+every build. The build that trips it is a healthy one whose page grew, and the log says the
+bundle lost its SPA. Redirecting to a file and grepping the file removes the pipeline.
+
+`tests/test_repo_hygiene.py` now bans the shape in any pipefail'd workflow step, so this cannot
+come back in a workflow nobody thought to re-read.
+
+The general shape: **`| head` inside a pipefail gate makes the verdict a function of how much the
+writer produced**, not of what it produced. CLAUDE.md's rule 134 names `| head` for the sibling
+case, a command dying partway and reporting that as its own result; this is the same mechanism
+reaching the opposite conclusion, a command that succeeded reported as failed.
+
+## Four dedups, and the line count answered four different ways (2026-08-10)
+
+Wave 11's W11-42, W11-19, W11-18 and W11-10, built and measured in one pass. Code net,
+non-comment and non-blank: **-8, -8, -3 and -6**, so **-25** over the four. Stated: ~85 (~16
+believed removable), ~15, ~25, ~45. Only W11-19's -8 held exactly.
+
+**The raw diff over the same files is +21.** Two copies each carry half an explanation, or one
+carries it and the other carries a pointer to it; one shared declaration carries the whole
+thing, and this repository writes that out. So the code falls and the file grows, and which of
+those two numbers you quote decides the verdict.
+
+**Counting is where this went wrong first, and the error inverted a verdict.** W11-10 was first
+reported at **+2** because the counter scored the new helper's docstring body as code. Docstring
+lines are the one prose form with no comment marker on them, so a diff filter written for `#`,
+`//` and `*` reads them as source. It measures -6. The row would have concluded that the item
+buys nothing on lines when it is in fact the second-largest saver of the four.
+
+**What each one bought is a rule that had already been forgotten once.**
+
+- **W11-10**: "no `await` between the read and the write" stops two requests installing two
+  different per-app objects. It was written at one of four copies and depended on at three. A
+  plain `def` cannot acquire an await without every call site turning async first.
+- **W11-19**'s two copies had already cost a bug: one surface found that the notice must clear on
+  a Save and not only on Discard, and the other then carried a comment *pointing at* that fix
+  rather than sharing it. The extraction also found a fourth caller nobody had counted, by
+  breaking it.
+- **W11-18**'s no-clobber rule was unpinned across the whole suite, behind rule 141: the test set
+  the saved value and the suggested value both to the same string.
+- **W11-42**'s two copies shared the line above, so the defect would have had to be found and
+  fixed twice.
+
+The plan's S5 already carries the standing form, that a kill needs both halves said. What these
+four add is that the line half is not one number: it is -25 or +21 on the same change, and the
+question that did the work every time was **"is there a rule here that only one copy states"**.
+
+## A helper measured at zero lines was measured in the wrong shape (2026-08-10)
+
+Two settings findings were killed on "an extraction that nets to zero lines is not worth its
+risk". Both were re-measured. One was killed on the wrong shape and is now built. The other loses on
+every reading, including the partial nobody had priced.
+
+**The shape decides the arithmetic, and the first shape measured was the expensive one.** The
+helper priced for `app_settings.py`'s three identical switch getters swallowed the `await _get(...)`
+call, which is what put `leaving_soon_unarmed`'s call at 104 columns against a 100-column limit
+and made it wrap to three lines. A helper taking the value `_get` already returned is pure,
+synchronous, typed `-> bool`, and leaves every call site between 76 and 79 columns. Measured
+across both helpers: **+13 total lines, -9 code lines**, the difference being 18 docstring
+lines and six blanks. The rule those docstrings hold used to be implied at three sites and
+stated as prose at two of them.
+
+**A test walk that matches on a call stops seeing any function that hands that call to a
+helper.** `tests/test_app_settings_precedence.py` derives its population by AST: a function
+that calls `_get` and takes a `Settings`. The swallowing helper would have dropped all three
+switch getters out of it, leaving the count at four and the gate green while three sites went
+uncovered. The value-taking helper keeps every `_get` call where the walk can see it. **Before
+extracting anything, grep the tests for a walk that matches on the call you are about to move.**
+
+**One declaration turns three mutations into one, and that is the payoff a line count cannot
+show.** Swapping `stored is None` for `not stored` inside the shared helper fails three named
+cases at once; before, the same defect had to be introduced three times to be caught three times.
+The credential helper reaches a third caller the finding never counted, `get_api_key`, whose own
+decrypt-failure path is pinned by nothing of its own: it stayed green under the mutation across
+296 tests in `test_settings_api.py`, `test_general_and_logs.py`, `test_foundations.py` and
+`test_api.py`. It is covered transitively now, by the one Discord case that drives the shared
+declaration.
+
+**The scheduler decorator loses even as a partial, and the partial had never been priced.** The
+kill judged it over all seven jobs. Decorating only the four that fit was built for real,
+formatted, mypy-clean and green on every scheduler test, 37 of them at the commit it was measured on: **+21 total lines, +13 non-comment
+lines, +5 statements**, against an estimate of about zero. `inspect.signature().bind()` is still needed after the
+narrowing, because three distinct argument positions survive it. And the drift question answers the
+same way the line count does: each of the four still declares its own job id, log event and
+result string at the decoration, so the only thing centralized is `ok=False`.
+
+**Writing the rule down is what found the site that broke it.** The credential helper's docstring
+says every caller has to agree that an undecryptable credential is absent. A review lane checked
+that claim against the tree and found `GeneralSettingsOut.api_key_set` computing presence from row
+existence, so a key written under a rotated secret reported as set while the reveal route 404s and
+the header lane refuses it. Rule 76's shape, one level up from a file check, and it was on `dev`.
+Fixed rather than filed, because the claim is this branch's. **The sweep found no second site**:
+instance credentials have no absent-on-broken posture at all, every `decrypt` of one letting the
+`ValueError` propagate, so `InstanceView.has_key` reading `bool(row.api_key_enc)` agrees with its
+own runtime and is not the same defect.
+
+**The general form is now in the plan's S5.** "Nets to zero" is a line test. How many places a
+future author has to keep in step is a different question, and a kill that answers only the
+first one is not finished.
+
+## A gate's unit has to be the invariant's unit, and two gates got it wrong in opposite directions (2026-08-10)
+
+Two wave 11 kills each said "no shape rescues this, write the gate instead". Building both found
+the same mistake twice, from either side.
+
+**Counting a word cannot see the sentence around it.**
+`test_the_reload_advice_population_is_pinned_per_file` matches the bare word `reload`, case
+insensitively, per shipped `.tsx`. Its subject is the advice "Reload to try again.", which four
+panels print verbatim after a read never lands. Measured: rewriting one of the four as "Couldn't
+load your settings. Reload to try again." leaves the word count identical and the gate green.
+The word survives every rewording of its sentence, so a copy can leave the family and still
+reconcile. A per-sentence pin over the same walk fails on that mutation. It also surfaced what the
+finding had missed: the family is **25 distinct sentences at 32 sites**, five of them duplicated,
+where the finding named two.
+
+**Counting elements reads a ternary and a `.map()` backwards.** The rule behind `.field-sm` is
+runtime cardinality: a `<label>` names exactly one control, so it wraps one, and anything else is
+a `<div>`. Source text cannot answer that. Of 26 boxes, one holds a `<select>` and an `<input>` in
+the two arms of a ternary and renders **one**, and two hold a single `<select>` inside a `.map()`
+and render **many**. A gate counting control tags calls all three wrong, and each failure would be
+against correct code. So the gate pins the population per file and per tag and leaves the
+cardinality to the author, with the reason for each `<div>` written beside the pin.
+
+The general shape: **a text gate can only assert over the unit its matcher collects.** Pick the
+unit the invariant is stated in, or pin the population and say plainly what the walk cannot see.
+Rule 147 says a matcher is bounded by the syntax it can parse; this is the same bound one level
+up, at what the matcher is a matcher *of*.
+
+**A count is only an independent half of a ban while the two read different populations.** Both
+gates walked shipped `.tsx` and reconciled the members they read against the mentions they found
+in the same files. A class name or an operator sentence exported from a `.ts` module and used
+from a component is outside that walk, so it left the matcher and the count together and the two
+figures still agreed. Measured: a 27th `.field-sm` box with two controls and no name read green,
+and so did a 26th never-loaded sentence. Rule 145's failure with the count already in place.
+Two more from the same review pass, both about where a run of text begins. Matching forward from
+`could` left the front of the sentence open, so prepending a clause to one of a pinned pair moved
+nothing. And splitting a line at the first `//` truncated it at any URL, taking the rest of that
+line out of every walk in the file.
+
+## A committed fixture's indent is 34% of its bytes and 100% of its lines (2026-08-11)
+
+`policy_lab_vectors.json` and `whole_library_baseline.json` are written by their generators with
+`json.dumps(..., indent=1)`, which puts every scalar of every nested array on its own line. A
+season pair reads as four lines. Measured across both files: 133,690 lines and 748 KB of
+whitespace, against 1.55 MB of content.
+
+`separators=(",", ":")` in each generator and one re-dump of the files on disk. Both drop to a
+single line, the suite is unaffected because every reader parses rather than reads text, and
+`sort_keys=True` stays so a regenerated fixture still diffs deterministically.
+
+**What the indent was buying was not review.** A 42,000-line fixture diff is not read either
+way, and the two files are regenerated by a script rather than hand-edited, so the readable form
+is `git show <rev>:<path> | python -m json.tool` on the rare occasion someone wants one. The
+cost was carried by every clone, every checkout and every PR that touched a vector.
+
+## A mirror can be complete, stale, or short, and only two of those were asked about (2026-08-11)
+
+The scan tested the watch mirror for EMPTY (`horizon is None`) and for STALE (`last_synced_at`
+past `MIRROR_STALE_AFTER`). A mirror that is populated, synced an hour ago, and holding a third
+less than the source passed both and produced a snapshot marked `degraded = 0`.
+
+Measured on a 425,604-row history restored from another instance: the mirror held 274,992 rows,
+65%, and the missing rows were a clean cut at the old end rather than scattered gaps. Against the
+previous scan, with `policy_hash`, `scoring_hash` and `evidence_hash` all identical, 245 titles
+came off the condemned list, 2.17 TB. Coverage on them fell from 10000 bp to 1137 and 6408.
+
+**The engine was right and the snapshot was wrong.** An unsigned score over a fixed denominator
+can only fall as evidence goes missing, so a shorter mirror produces a smaller condemned set by
+construction. Nothing in the scoring needed fixing. What was missing was the snapshot saying it
+had judged on partial evidence.
+
+**Three things conspire, and each is individually correct.** Backups exclude the mirror on
+purpose (`backup.py` writes `"cache_db": False`), so a restore leaves it behind. Every sync after
+that is incremental, and an incremental walk's paging total is the size of its own increment, so
+it completes correctly against `of=266` while 150,604 older rows are absent. And `synced_at` is
+stamped by `_check_regression` BEFORE the walk, so the staleness clock reads fresh the whole
+time. No single component is at fault, which is why nothing caught it.
+
+**The tolerance is measured, not guessed, and an equality would have been wrong.** A play in
+progress is counted by the source and deliberately skipped by the ingest, so the mirror can never
+equal the total: the full sweep ended `inserted=425596` against `of=425604`, with
+`history.rows_skipped live=8`. The legitimate gap was 0.002% and the defect was 35%, three
+orders of magnitude apart. A percent with an absolute floor sits between them, and the floor is
+what keeps a handful of live plays from degrading a scan on a small history.
 
 ## Prior art
 

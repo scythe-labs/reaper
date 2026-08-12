@@ -57,6 +57,28 @@ class InstanceSeed(BaseModel):
         return v.strip().rstrip("/")
 
 
+#: The precious, migrated database, named once (rule 104). Both driver URLs and
+#: :attr:`Settings.database_path` read it, and so does every caller that holds a bare
+#: ``data_dir`` rather than a ``Settings``. It was spelled out at five sites before the boot
+#: schema gate wanted a sixth, which is when four of them disagreeing became a real risk
+#: rather than a tidiness argument.
+DATABASE_FILENAME = "reaper.db"
+
+#: The file an install that cannot receive environment variables is configured through,
+#: named once (rule 104). :mod:`reaper.launcher` owns it: it writes the template, reads the
+#: file into the environment, and rewrites keys a settings save changes. The backup carries
+#: it and the restore puts it back and disarms recovery inside it, so those three cannot
+#: drift onto different spellings of one filename.
+#:
+#: **It is declared here rather than in the launcher, and moving it back re-creates 7 import
+#: cycles.** `services/backup.py` and `services/restore.py` imported the process entry point
+#: for this string alone, and `launcher.main()` imports `reaper.preflight` and `reaper.main`
+#: to serve, which closes the ring. Both already import this module, whose own in-tree import
+#: closure is empty. `test_every_import_cycle_under_src_is_one_someone_declared` is what fails
+#: if the import comes back; nothing did before it.
+LAUNCHER_CONF_NAME = "launcher.conf"
+
+
 class DataDirError(RuntimeError):
     """The data directory is missing or not writable, so Reaper cannot start.
 
@@ -213,17 +235,29 @@ class Settings(BaseSettings):
         return self.data_dir
 
     @property
+    def database_path(self) -> Path:
+        """Where the precious database lives.
+
+        The two URLs below are two drivers reading this one file, and the boot schema gate
+        (``reaper.db.schema_gate``) opens it directly with ``sqlite3`` before either engine
+        exists. All three read :data:`DATABASE_FILENAME`, which is the one declaration of
+        the name (rule 104), so does every caller holding only a bare ``data_dir`` and no
+        ``Settings`` -- ``services/retention.py``'s compaction is the one of those.
+        """
+        return self.data_dir / DATABASE_FILENAME
+
+    @property
     def database_url(self) -> str:
         """Reaper's own state: policies, candidates, audit, credentials.
 
         Small, precious, migrated by Alembic. Losing it loses your decisions.
         """
-        return f"sqlite+aiosqlite:///{self.data_dir / 'reaper.db'}"
+        return f"sqlite+aiosqlite:///{self.database_path}"
 
     @property
     def sync_database_url(self) -> str:
         """Alembic runs migrations synchronously."""
-        return f"sqlite:///{self.data_dir / 'reaper.db'}"
+        return f"sqlite:///{self.database_path}"
 
     @property
     def cache_database_url(self) -> str:
@@ -242,20 +276,26 @@ class Settings(BaseSettings):
         return f"sqlite+aiosqlite:///{self.data_dir / 'cache.db'}"
 
 
-def load_raw_env(settings: Settings) -> dict[str, str]:
-    """The full environment, as the seeder sees it.
+def configured_env() -> dict[str, str]:
+    """The full environment, as ``Settings`` sees it: the dotenv files under ``os.environ``.
 
     Variables in a ``.env`` file are read by pydantic-settings into ``Settings``;
-    they are **not** exported into ``os.environ``. Since the seed keys are dynamic
-    (``REAPER_SONARR_4K_URL`` and friends) they never become ``Settings`` fields
-    either -- so reading ``os.environ`` alone silently finds nothing, and the
-    import quietly does no work. The dotenv files must be read directly.
+    they are **not** exported into ``os.environ``. So anything reading ``os.environ``
+    directly is blind to a ``.env.local``, and reads as configured while doing nothing --
+    which is what four documented desktop keys and the launcher's own port did (#558).
+    **Every reader of an operator-settable key goes through this or through a ``Settings``
+    field**, never through ``os.environ`` alone.
 
     Precedence matches pydantic-settings: a real environment variable wins over
     the file, and a later file wins over an earlier one.
+
+    ``Settings.model_config`` rather than an instance, because the env-file tuple is
+    declared on the class. That also keeps this honest under ``tests/conftest.py``'s
+    ``_hermetic``, which clears that key so no test reads the developer's dotenv: the same
+    clearing empties this, so the two cannot drift apart.
     """
     merged: dict[str, str] = {}
-    env_files = settings.model_config.get("env_file") or ()
+    env_files = Settings.model_config.get("env_file") or ()
     if isinstance(env_files, str | Path):
         env_files = (env_files,)
 
@@ -266,6 +306,17 @@ def load_raw_env(settings: Settings) -> dict[str, str]:
 
     merged.update(os.environ)
     return merged
+
+
+def load_raw_env(settings: Settings) -> dict[str, str]:
+    """The full environment, as the seeder sees it.
+
+    The seed keys are dynamic (``REAPER_SONARR_4K_URL`` and friends) so they never become
+    ``Settings`` fields, which is why the seeder needs the merged mapping rather than the
+    model. ``settings`` is kept in the signature because the seeding call site reads as a
+    function of the install it is seeding.
+    """
+    return configured_env()
 
 
 def parse_instance_seeds(env: dict[str, str]) -> list[InstanceSeed]:

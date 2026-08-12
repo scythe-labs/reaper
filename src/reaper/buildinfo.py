@@ -19,14 +19,50 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from reaper import __version__
+from reaper.config import configured_env
 
 _TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
 _SHORT = 7
+
+
+def env_flag(key: str, *, default: bool, env: Mapping[str, str] | None = None) -> bool:
+    """One environment value read as a boolean, for every env boolean Reaper has.
+
+    Eight tokens, four each way, case- and whitespace-insensitive. **Anything else falls
+    to ``default``**, which is the direction that matters: reading an unrecognized value
+    as False silently buys whatever False means at that key, and on a frozen macOS build
+    ``REAPER_TRAY=ture`` bought an app with no menu-bar icon, which is its only route to
+    Quit (``LSUIElement`` hides the Dock one).
+
+    ``env`` is for a caller holding a mapping rather than the process environment; the
+    launcher resolves both before it serves. **With no ``env``, the source is
+    ``config.configured_env()``, not ``os.environ``**: a ``.env.local`` is read by
+    pydantic-settings into ``Settings`` and never exported to the process environment, so
+    `REAPER_TRAY`, `REAPER_DOCK_ICON`, `REAPER_LAUNCH_BROWSER` and `REAPER_UPDATE_CHECK`
+    were documented in `.env.example` and did nothing when set there (#558).
+
+    The pydantic ``Settings`` booleans deliberately do NOT read through this. An
+    unrecognized value there raises and refuses the boot, which for
+    ``destructive_actions_enabled`` and ``recovery`` is the strongest answer available.
+    That tolerance is why these four stay here rather than becoming fields: promoting them
+    would turn ``REAPER_TRAY=ture`` from a default into a refused boot, on the build with
+    no stderr anyone reads. ``scan_runner``'s three-state token pair is likewise its own,
+    and says why in place.
+    """
+    raw = (configured_env() if env is None else env).get(key, "").strip().lower()
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+    return default
+
 
 InstallKind = Literal["container", "snap", "desktop", "source"]
 
@@ -71,12 +107,25 @@ def install_root() -> Path | None:
     """Where a packaged install keeps the pieces that live beside the code: the built
     SPA, the migrations, and ``buildinfo.json``. ``REAPER_HOME`` names it outright
     (the snap sets it to ``$SNAP``); a frozen (PyInstaller) build is its unpacked
-    bundle. A source checkout returns ``None`` and callers fall back to the repo
-    root, so development never needs either value set."""
+    bundle. A source checkout returns ``None``, and `project_root` is the fallback,
+    so development never needs either value set."""
     named = os.environ.get("REAPER_HOME", "").strip()
     if named:
         return Path(named)
     return frozen_bundle()
+
+
+def project_root() -> Path:
+    """Where the pieces beside the code are, in every install shape: `install_root`
+    when a packaged install names one, the repo root otherwise.
+
+    The walk counting levels up to the checkout root lives here and nowhere else. Two
+    callers inlined it from modules that happened to sit at the same depth, so moving either
+    one moved its answer silently. `db.schema_gate.alembic_dir` keeps its own shape on
+    purpose: it tries every parent for a directory that identifies itself, which answers for
+    shapes this cannot.
+    """
+    return install_root() or Path(__file__).resolve().parent.parent.parent
 
 
 def build_version() -> str:
@@ -91,7 +140,7 @@ def build_version() -> str:
 def is_release() -> bool:
     """Whether this build was cut from a release, which is also its update channel:
     a release follows published releases, everything else follows the dev branch."""
-    return os.environ.get("REAPER_RELEASE", "").strip().lower() in _TRUE
+    return env_flag("REAPER_RELEASE", default=False)
 
 
 def version_number() -> str:

@@ -44,6 +44,7 @@ from reaper.engine.gates import (
     lifetime_shortfall,
 )
 from reaper.engine.observation import Known, Observation, Unknown
+from reaper.text import fold
 
 
 class Lane(enum.StrEnum):
@@ -415,7 +416,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         # operator's names for every list holding the item, so a rule here is how ANY list
         # -- tag, collection, watchlist, IMDb -- comes to keep or lean. The stored rules
         # that used to spell this ``on_curated_list`` are re-spelled by
-        # ``policy.convert_list_protections``.
+        # ``policy_migrations.convert_list_protections``.
         label="On one of your lists",
         help_text="Matches a list by the name it has on Settings → Lists.",
         type=FieldType.TEXT,
@@ -733,7 +734,7 @@ def can_add_pressure_under_a_shortfall(op: Op) -> bool:
     stands -- blocked where it matched, and honestly zero where it did not.
 
     That is what makes the weight part of the score CEILING rather than a per-item
-    discount, and it is exactly the discrimination ``policy.inspect``'s condemn lane needs:
+    discount, and it is exactly the discrimination ``policy_warnings.inspect``'s condemn lane needs:
     under ``gte`` a matched item still earns the weight, so the list is not empty, while
     under ``lte`` no item can earn it at all. Asked here rather than restated at the caller,
     so there is one derivation of what a short mirror does to an outcome (rule 104).
@@ -801,7 +802,7 @@ def evaluate(
     # above are true of any deeper mirror, and blocking them would withhold a protection
     # the operator's own rule did fire (and, on the condemn lane, drop pressure that was
     # honestly measured). The other two are reported as unchecked, in the same amber
-    # "could not check" shape as an Unknown input, prefix included -- ``api.routes._chip``
+    # "could not check" shape as an Unknown input, prefix included -- ``api.review._chip``
     # and ``WhyPanel`` both read it.
     if not _survives_more_history(condition.op, matched=matched) and (
         (short := reach_shortfall(spec, facts, window_days=window_days)) is not None
@@ -839,8 +840,8 @@ def _compare(op: Op, value: object, target: object, *, multi: bool = False) -> b
                 # stores, and the owner types the target by hand. A multi-valued fact
                 # matches when ANY of its elements equals the target.
                 if multi:
-                    return target.strip().casefold() in _split_csv(value)
-                return value.strip().casefold() == target.strip().casefold()
+                    return fold(target) in _split_csv(value)
+                return fold(value) == fold(target)
             return bool(value == target)
         case Op.IN:
             if not isinstance(target, str):
@@ -851,7 +852,7 @@ def _compare(op: Op, value: object, target: object, *, multi: bool = False) -> b
             # nothing. A multi-valued fact matches on any shared element.
             if multi and isinstance(value, str):
                 return not targets.isdisjoint(_split_csv(value))
-            return str(value).strip().casefold() in targets
+            return fold(str(value)) in targets
         case Op.CONTAINS:
             return isinstance(target, str) and target.lower() in str(value).lower()
 
@@ -1013,34 +1014,6 @@ def _plural(phrase: str, count: float) -> str:
     return _ALTERNATIVES.sub(lambda m: m.group(1) if singular else m.group(2), phrase)
 
 
-Mode = Literal["all"]
-"""The condemn lane joins conditions with AND, and only AND.
-
-Not an oversight. OR is expressible by making a second profile, which forces the
-owner to name the second thing they mean -- and a named profile can be capped,
-approved and (once the backtest ships) backtested on its own terms. A nested OR cannot.
-"""
-
-
-@dataclass(frozen=True, slots=True)
-class RuleSet:
-    """A lane's conditions."""
-
-    lane: Lane
-    conditions: tuple[Condition, ...]
-
-    def __post_init__(self) -> None:
-        for condition in self.conditions:
-            condition.validate_for(self.lane)
-
-
-@dataclass(frozen=True, slots=True)
-class RuleSetResult:
-    matched: bool
-    blocked: bool
-    results: tuple[ConditionResult, ...]
-
-
 @dataclass(frozen=True, slots=True)
 class CustomProtectGate:
     """A single user-authored protection, wearing the built-in Gate interface.
@@ -1068,37 +1041,3 @@ class CustomProtectGate:
         if result.matched:
             return GateResult(self.id, PROTECT, detail=f"your rule: {result.detail}")
         return GateResult(self.id, ABSTAIN, detail=f"checked your rule: {result.detail}")
-
-
-def evaluate_rules(
-    rules: RuleSet, facts: Facts, *, window_days: int | None = None
-) -> RuleSetResult:
-    """Evaluate a lane.
-
-    CONDEMN is a flat AND: every condition must match, and a single blocked
-    condition means we cannot say the item qualifies -- so it does not.
-
-    PROTECT is an OR of conditions: *any* reason to keep a file is sufficient. That
-    is safe by construction, which is exactly why this lane may be user-authored.
-    """
-    results = tuple(
-        evaluate(condition, facts, window_days=window_days) for condition in rules.conditions
-    )
-    if not results:
-        return RuleSetResult(matched=False, blocked=False, results=())
-
-    blocked = any(r.blocked for r in results)
-
-    if rules.lane is Lane.CONDEMN:
-        # A blocked condition cannot be assumed true. Unknown never condemns.
-        return RuleSetResult(
-            matched=all(r.matched for r in results) and not blocked,
-            blocked=blocked,
-            results=results,
-        )
-
-    return RuleSetResult(
-        matched=any(r.matched for r in results),
-        blocked=blocked,
-        results=results,
-    )

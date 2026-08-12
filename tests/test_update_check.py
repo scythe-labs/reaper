@@ -8,22 +8,22 @@ error and never a guess. This surface informs; nothing may gate on it.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import httpx
 import pytest
 import respx
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine as sa_create_engine
 from structlog.testing import capture_logs
 
-from reaper.config import Settings
-from reaper.db.base import Base
-from reaper.main import create_app
-from reaper.services.update_check import _MAX_NOTES, DEFAULT_REPO, UpdateChecker, _newer
-
-from ._auth import login
+from reaper.services.update_check import (
+    _MAX_NOTES,
+    DEFAULT_REPO,
+    UpdateChecker,
+    _enabled,
+    _newer,
+)
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
@@ -343,7 +343,7 @@ class TestDebugNarration:
     """
 
     @staticmethod
-    def _mine(logs: list[dict[str, object]]) -> list[dict[str, object]]:
+    def _mine(logs: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
         return [entry for entry in logs if str(entry["event"]).startswith("update_check.")]
 
     @pytest.mark.usefixtures("_release_build")
@@ -473,16 +473,6 @@ class TestDevChannel:
 
 
 class TestRoute:
-    @pytest.fixture
-    def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-        engine = sa_create_engine(settings.sync_database_url)
-        Base.metadata.create_all(engine)
-        engine.dispose()
-        with TestClient(create_app(settings)) as c:
-            login(c, settings)
-            yield c
-
     @pytest.mark.usefixtures("_dev_build")
     def test_the_route_answers_from_the_shared_checker(
         self, client: TestClient, httpx2_mock: respx.Router
@@ -516,3 +506,40 @@ class TestRoute:
         body = response.json()
         assert body["update_available"] is None
         assert body["current"] == "dev (abc1234)"
+
+
+class TestOnlyAnExplicitFalseTurnsTheCheckOff:
+    """``update_check._enabled`` used to read ``raw not in _FALSE``, so anything the
+    vocabulary did not recognize left the check ON. It reads ``env_flag(default=True)``
+    now, and the table below is what says the two agree on every input -- written out
+    rather than re-deriving the retired expression (rule 119).
+
+    The same change moved the tray the other way: an unrecognized value there now falls to
+    its default instead of to False. This test is what keeps that widening from reaching a
+    check that leaves the operator's network.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            (None, True),  # nothing set: the check is on, as it shipped
+            ("", True),
+            ("   ", True),
+            ("false", False),
+            ("FALSE", False),
+            ("0", False),
+            ("no", False),
+            ("off", False),
+            ("true", True),
+            ("ture", True),  # a typo does not silently turn it off, and never did
+            ("2", True),
+        ],
+    )
+    def test_the_vocabulary_did_not_move(
+        self, monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: bool
+    ) -> None:
+        if raw is None:
+            monkeypatch.delenv("REAPER_UPDATE_CHECK", raising=False)
+        else:
+            monkeypatch.setenv("REAPER_UPDATE_CHECK", raw)
+        assert _enabled() is expected

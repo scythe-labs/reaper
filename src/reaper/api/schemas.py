@@ -27,13 +27,10 @@ from reaper.engine.explanation import (
 )
 from reaper.engine.fields import FieldType, Lane, Op
 from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
-from reaper.engine.policy import (
-    CustomCondemnSpec,
-    GradedKeepSpec,
-    PolicyRepair,
-    RatingRuleSpec,
-)
+from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
+from reaper.engine.policy_migrations import PolicyRepair
 from reaper.engine.signals import SignalId
+from reaper.engine.verdict import Override
 
 # The why-panel document moved to ``engine.explanation`` so the reap path could run the same
 # validation the panel does, which is the whole of #142; it may not import this layer. The
@@ -48,6 +45,45 @@ __all__ = [
     "SignalContribution",
     "thaw_threshold",
 ]
+
+
+class OkOut(BaseModel):
+    """A route that either did the thing or raised. ``ok`` is always ``True``.
+
+    It carries no information and is not meant to: the routes below answer with a status code
+    and a refusal body when they refuse, so a caller reads the code. What this exists for is
+    the published document. A route annotated ``dict[str, bool]`` is typed there as a free-form
+    map with no title, which tells a script author to expect keys nobody sends."""
+
+    ok: bool
+
+
+class RemovedOut(BaseModel):
+    """Whether a record existed to remove. ``False`` is a normal answer, not a failure."""
+
+    removed: bool
+
+
+class RestoreCancelOut(BaseModel):
+    """Clearing a staged restore. Its own model rather than :class:`OkOut`, because it answers
+    a second question and a shared model would drop the answer off the wire."""
+
+    ok: bool
+    cleared: bool = Field(
+        description=(
+            "Whether a staging was actually removed. An ownership refusal and a call that "
+            "found nothing both report false, and neither is an error."
+        )
+    )
+
+
+class JobRunOut(BaseModel):
+    """A maintenance job accepted for a run. ``status`` is always ``started``: the job is
+    handed to the scheduler and this returns before it finishes, so this is an
+    acknowledgement rather than a result."""
+
+    status: str
+    job: str
 
 
 class CandidateLinkOut(BaseModel):
@@ -183,18 +219,6 @@ class CandidateOut(BaseModel):
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
-    group_condemned_count: int | None = None
-    """How many seasons "Reap now" on this show group would actually plan: its actable
-    seasons across the WHOLE snapshot (condemned minus hand-spares, plus effective hand
-    reaps) -- not just the fetched pages, which on a long sorted list can hold only some
-    of a show's seasons. None for movies."""
-    group_condemned_bytes: int | None = None
-    """The byte total over that same set. The show card must show the number the planner
-    will act on, never a partial page sum."""
-    group_unknown_size: int | None = None
-    """How many of the show's actable seasons have no size. They are excluded from both
-    numbers above, because the planner will not plan them, so the card can say what it is
-    leaving out rather than appearing to shrink. None for movies, and hidden at zero."""
     video_resolution: str | None = None
     """Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality
     badge. None hides the badge (TV seasons, unmatched items, pre-rescan rows)."""
@@ -210,9 +234,6 @@ class CandidateOut(BaseModel):
     """The one-line "why", drawn from the explanation: the protection that keeps a spared
     item, or the top reason a reaped one scored. It is what the card shows in place of a plot
     synopsis -- on the review queue you want to know why Reaper judged it, not what it is."""
-    spared: bool = False
-    """True if the owner has hand-spared this media_key (or its show). Lets the queue strike it
-    through before the next scan moves it to the Spared list for real."""
     override: str | None = None
     """The owner's manual decision *in effect* on this item -- ``"spare"``, ``"reap"``, or
     ``None``. Set the moment they click, so the card can show the pending intent before the
@@ -265,9 +286,6 @@ class CandidateOut(BaseModel):
     season_number: int | None = None
     """The season this row is (from its media_key), for season rows. None for movies and
     for a key that did not parse -- display only, never identity."""
-    group_seasons: list[GroupSeasonMarkOut] | None = None
-    """The whole show's per-season verdict marks (every lane, whole snapshot), for the
-    show card's season strip. Set on rows that belong to a group; None for movies."""
     show_status: str | None = None
     """Whether the show is finished: ``"ended"``, ``"continuing"`` or ``"unknown"``. None
     for a movie, where the question does not apply. Three states, not a bool, so "the
@@ -287,6 +305,64 @@ class CandidateDetail(CandidateOut):
     content_rating: str | None = None
     runtime_minutes: int | None = None
     genres: list[str] = Field(default_factory=list)
+
+
+class GroupRollupOut(BaseModel):
+    """What one show on this page looks like across the WHOLE snapshot.
+
+    Sent once per show rather than stamped onto each of its season rows. It used to be four
+    fields on ``CandidateOut``, so a show with twelve seasons on a page shipped its whole
+    season strip twelve times.
+
+    Every figure here spans the whole snapshot, never the fetched page: on a long sorted
+    list a page can hold some of a show's seasons and not the rest, and the card's numbers
+    sit beside "Reap now" (rule 5/30).
+    """
+
+    group_key: str
+    condemned_count: int
+    """How many seasons "Reap now" on this show would actually plan: its actable seasons,
+    condemned minus hand-spares, plus hand reaps the engine honors. The count the planner's
+    expansion produces, so the number beside the button is the number of files."""
+    condemned_bytes: int
+    """The byte total over that same set."""
+    unknown_size: int
+    """How many of those actable seasons have no size. The planner holds each one back, so
+    they are left out of both figures above and counted here instead -- the card says what
+    it is leaving out rather than quietly shrinking."""
+    seasons: list[GroupSeasonMarkOut]
+    """Every season of the show, all lanes, sorted by season number (unnumbered last). The
+    card's season strip, and what a whole-show Reap is judged against."""
+
+
+class CandidatePageOut(BaseModel):
+    """One page of the review queue, plus the size of the whole filtered set.
+
+    The totals are measured over every row the filters keep, *before* the page window, so
+    the queue can head the list with a count and a byte total it has not loaded. They rode
+    in four custom response headers until this model existed, which meant the one thing a
+    reader of the published document could not see was the shape of the answer.
+    """
+
+    items: list[CandidateOut]
+    groups: list[GroupRollupOut]
+    """One entry per show with a row on this page. A show whose seasons straddle two pages
+    appears in both, carrying the same whole-snapshot figures either time, so a client that
+    merges pages by ``group_key`` cannot end up with a partial rollup."""
+    total: int
+    """How many rows the filters keep, across every page."""
+    total_bytes: int
+    """Summed over the rows that have a size. ``unknown_size`` counts the rest."""
+    unknown_size: int
+    """How many of those rows have no size at all. A SUM skips them without saying so, so
+    the count is taken in the same query and reported beside the total -- otherwise an
+    unmeasured library is indistinguishable from an empty one."""
+    offset: int
+    """Where this page starts. The queue asks for ``offset + len(items)`` next."""
+    snapshot_id: int | None = None
+    """Which snapshot the page was drawn from, or None before any scan has run. The queue
+    compares it against the newest completed scan to notice when a fresher snapshot has
+    landed under an open review."""
 
 
 class GroupOut(BaseModel):
@@ -417,7 +493,6 @@ class RunOut(BaseModel):
 
     id: int
     snapshot_id: int
-    policy_hash: str
     state: str
 
     item_count: int
@@ -431,11 +506,39 @@ class RunOut(BaseModel):
     size. Zero for a healthy library, and every surface hides it at zero, so an operator
     whose sources all answer never sees a new number anywhere."""
 
-    approved_manifest_hash: str
-    approved_by: str
-    approved_at: str
+    step_count: int
+    """How many journal rows this run holds in total. ``steps`` below carries a window of them,
+    so this is what a surface counting them must read: ``len(steps)`` is the size of the page,
+    never the size of the plan. It is NOT ``item_count`` either, which counts deduplicated
+    candidates: a season is three steps sharing one key, so the two differ by 3x on a show."""
+
+    # The approval audit -- ``policy_hash``, ``approved_manifest_hash``, ``approved_by`` and
+    # ``approved_at`` -- is deliberately NOT on this response. Every interlock reads the stored
+    # row rather than the wire model, so nothing enforcing an approval loses anything: the
+    # manifest re-check and the policy re-check both read ``run.`` off the ORM object, and
+    # ``approved_at`` reaches ``_watched_since_approval`` the same way. ``approved_by`` was the
+    # constant string "api" on every response an operator could obtain.
+    steps: list[ActionStepOut]
+    """The first :data:`api.runs.STEP_PAGE` rows of the journal, not all of them. A plan of 500
+    seasons is 1,500 rows carrying a path and a request body each, and the table draws 50.
+    ``GET /api/runs/{id}/steps`` serves any window, and ``step_count`` above says how many there
+    are, so a surface can say how many it is not showing."""
+
+
+class RunStepsOut(BaseModel):
+    """One window of a run's journal.
+
+    Its own route rather than query parameters on the run detail, for two reasons. Building a
+    ``RunOut`` re-reads the whole effective condemned set and re-derives the confirmation
+    phrase, so paging through it would pay that per page. And the browser holds the run detail
+    under one cache key with an infinite stale time, which is what lets the confirmation sheet
+    keep the exact plan it opened with; an offset in that key would move the object under it.
+    """
 
     steps: list[ActionStepOut]
+    step_count: int
+    """The whole journal's size, so a caller can page without a second request."""
+    offset: int
 
 
 class RunSummaryOut(BaseModel):
@@ -453,12 +556,9 @@ class RunSummaryOut(BaseModel):
     """
 
     id: int
-    snapshot_id: int
     state: str
-    approved_by: str
     approved_at: str
     aborted_reason: str | None = None
-    held_back_unknown_size: int = 0
 
 
 class RunCheckOut(BaseModel):
@@ -544,11 +644,26 @@ class ExecuteRunIn(BaseModel):
     confirmation_phrase: str
 
 
-class GateSettingIn(BaseModel):
+class GateSettingOut(BaseModel):
+    """One protection's row as it is SERVED, which is every id a stored body can hold.
+
+    Wider than ``GateSettingIn`` below by exactly one thing: it does not ask whether the id
+    is authorable. A stored body may carry ``whitelisted`` or ``curated_list`` long after
+    both stopped being switches, because ``policy_migrations.convert_list_protections``
+    leaves an ENABLED one in place when its replacement keep rule cannot be named -- keeping
+    the cover and letting ``scan_runner.build_gates`` refuse the scan loudly, rather than
+    withdrawing a live protection in silence (rule 38). That row has to reach the editor, or
+    the one page that can clear it 500s on the way to rendering (#627).
+    """
+
     gate: GateId
     enabled: bool = True
     threshold: int = 0
     window_days: int = Field(default=365, ge=1)
+
+
+class GateSettingIn(GateSettingOut):
+    """The same row on the way IN, where the id must be one a policy may carry."""
 
     @field_validator("gate")
     @classmethod
@@ -568,11 +683,25 @@ class GateSettingIn(BaseModel):
         dropping an id from a *stored* body is safe only for a gate that could never keep a
         file, and widening that would put a real protection one typo away from vanishing
         (rule 38/117).
+
+        **Input only, which is why the served body is typed off the parent.** This ran on
+        the way out too, since ``PolicyOut.body`` was a ``PolicyIn``, so a stored row this
+        refuses took ``GET /api/policy`` down with it -- and the operator's one exit is that
+        page (#627). The refusal itself is unchanged: nothing may WRITE one of these ids.
         """
         if v not in POLICY_AUTHORABLE_GATES:
+            # No gate id in the sentence. An operator reads this as "Can't save this: ..." on
+            # the policy page, where the row it is about is labeled in their own words ("On a
+            # list you curate yourself"), so the slug names nothing on screen (rule 21).
+            # ``scan_runner.build_gates`` already refuses to print the same id for the same
+            # state and says why; this is that decision applied to its sibling (rule 144).
+            # It went from unreachable to routine when the response stopped being validated
+            # through here: the editor re-validates the loaded draft on mount, so an upgraded
+            # install meets this before touching anything. The 422's ``loc`` still carries
+            # ``body.gates.<i>.gate``, so an API caller can still tell which row.
             raise ValueError(
-                f'There is no "{v.value}" protection to switch on. '
-                "Remove it from the policy and save again."
+                "That protection is left over from an older version and can't be saved. "
+                "Turn it off, then save."
             )
         return v
 
@@ -600,11 +729,6 @@ class SignalProbeIn(SignalSettingIn):
     one (rule 95) -- above any file anyone has, and below where a float stops counting whole
     numbers."""
 
-    window_days: int = Field(default=365, ge=1, le=36_500)
-    """The policy's popularity window. It reaches only ``detail``'s wording, which nothing
-    renders yet, so the editor does not send it and the default stands in. A client that
-    starts rendering ``detail`` sends its policy's own window with it."""
-
 
 #: What ``POST /api/policy/probe`` accepts.
 #:
@@ -627,11 +751,12 @@ class PolicyProbeOut(BaseModel):
 
     points: float
     """What this rule would move the score by, in the rule's own direction: pressure for a
-    signal, and a discount for a keep rule when one is added."""
+    signal, and a discount for a keep rule when one is added.
 
-    detail: str
-    """The engine's own words for it. Carried for a client that wants the engine's phrasing;
-    the editor words its own sentence, so nothing reads this today."""
+    The only field. The engine's own wording for the answer used to ride beside it and no
+    client ever rendered it: ``signalRamp.ts`` words both the editor's sentence and the
+    panel's row, which is where those two are held in step, so a second wording arriving
+    over the wire would have been a third copy rather than the thing reconciling them."""
 
 
 class ConditionIn(BaseModel):
@@ -642,7 +767,22 @@ class ConditionIn(BaseModel):
     value: int | str | bool
 
 
-class PolicyIn(BaseModel):
+class PolicyBodyOut(BaseModel):
+    """A policy body as it is SERVED: exactly what is loaded, gate rows included.
+
+    ``PolicyIn`` below is this model with the gate ids narrowed to the ones a save may
+    write, and that is the only difference between the two. The split exists because the
+    response used to be typed as the request: ``_policy_out`` rebuilt every loaded row as a
+    ``GateSettingIn``, so the one stored shape the loader deliberately preserves -- an
+    enabled ``whitelisted`` or ``curated_list`` whose replacement keep rule cannot be named
+    -- raised out of ``GET /api/policy`` and locked the operator out of the editor that
+    clears it (#627). Serving it is what makes ``PolicyEditor``'s leftover-row notice
+    reachable.
+
+    Widening on the way out only. Saving that body back is still refused, so the row can
+    leave a stored policy only by the operator's own act.
+    """
+
     name: str = "default"
     media_type: str = "movie"
     condemn_at: int = Field(ge=1, le=100)
@@ -663,7 +803,7 @@ class PolicyIn(BaseModel):
     keep_specials: bool = True
     protect_incomplete_seasons: bool = True
     flag_keep_conflicts: bool = True
-    gates: list[GateSettingIn]
+    gates: list[GateSettingOut]
     signals: list[SignalSettingIn]
     protect_conditions: list[ConditionIn] = Field(default_factory=list)
     # The engine spec is reused directly (not a parallel *In model) so its lane/numeric
@@ -674,6 +814,18 @@ class PolicyIn(BaseModel):
     # per-source vote-floor validation runs on the wire.
     keep_rating_rules: list[RatingRuleSpec] = Field(default_factory=list)
     keep_rating_match: Literal["any", "all"] = "any"
+
+
+class PolicyIn(PolicyBodyOut):
+    """A policy body on the way IN: every field above, with the gate ids narrowed.
+
+    Narrowing, never widening, so anything that accepts a served body accepts this one and
+    the save boundary is the strict end of the pair. ``list`` is invariant, which is the
+    whole of the ignore below -- ``GateSettingIn`` is a subclass of ``GateSettingOut``, and
+    a redeclaration is how Pydantic is told to run the stricter row model here.
+    """
+
+    gates: list[GateSettingIn]  # type: ignore[assignment]
 
 
 class PolicyValidateIn(PolicyIn):
@@ -712,7 +864,13 @@ class SeasonShapeOut(BaseModel):
 class PolicyOut(BaseModel):
     policy_hash: str
     name: str
-    body: PolicyIn
+    body: PolicyBodyOut
+    """The body the editor opens on, which is what was LOADED and not what a save accepts.
+
+    Typed off the served model rather than the request one: a stored gate row the loader
+    kept on purpose has to reach the page that removes it, and typing this as ``PolicyIn``
+    made the response validate through the save boundary and 500 instead (#627).
+    """
 
     default_signals: list[SignalSettingIn] = []
     """The SHIPPED bounds for this media type's signals, so the editor can offer a way back.
@@ -800,9 +958,9 @@ class SimStale(enum.StrEnum):
 
     Reached only *after* a scan that wrote the table: a snapshot older than it cannot match
     the re-scoped ``evidence_hash`` either, so it refuses one tier earlier as
-    :attr:`GATHERS_DIFFERENTLY` (``api.routes.simulate`` states the same thing at length).
+    :attr:`GATHERS_DIFFERENTLY` (``api.simulate.simulate`` states the same thing at length).
     Like every refusal it zeroes the whole lane rather than the season card alone --
-    ``routes._SeasonEvidenceMissingError`` says why holding the rest at their scan-time
+    ``simulate._SeasonEvidenceMissingError`` says why holding the rest at their scan-time
     verdicts would be worse."""
 
     IN_PROGRESS_NOT_READ = "in_progress_not_read"
@@ -939,41 +1097,43 @@ class VocabularyOut(BaseModel):
 class LeavingSoonOut(BaseModel):
     """The result of one shelf pass across every enabled library."""
 
-    added_count: int
-    cleared_count: int
-    applied: bool
-    """Whether the shelf writes landed everywhere. False in read-only mode (the pass is
-    computed and announced but not written), and false when any library failed."""
-    notified: bool
-    movies_on_shelves: int
-    seasons_on_shelves: int
-    problems: list[str]
-    """Per-library failures, in plain words. One unreachable library never hides the
-    rest of the pass."""
+    ok: bool
+    """Whether the pass did what it set out to do. Preview is not a failure; no library
+    turned on, or one that failed, is."""
+    result: str
+    """The one plain sentence describing this pass, worded by the service
+    (``LeavingSoonResult.summary``) and stored on the Jobs row in the same breath. The
+    browser renders it and never composes its own, which is how the row and this response
+    came to say different things about one pass (#555)."""
+    # `problems` used to ride here as a per-library list. It was only ever read as
+    # `problems.length > 0`, never rendered, and the split that moved the wording into the
+    # service took even that reader away -- so it shipped a field no operator could reach,
+    # describing itself as "in plain words" while carrying `str(exc)`. `result` now names the
+    # failing libraries, which is the part they needed; the raw cause stays in the
+    # `leaving_soon.problems` log event, where a stack-shaped sentence belongs (rule 64).
 
 
 class SignalCountOut(BaseModel):
-    """How many condemned titles one signal pushed toward removal, and their measured size.
-    ``id`` is a built-in signal id or a custom rule's name; the UI maps the built-ins to
-    plain labels and shows a custom rule under its own name."""
+    """How many condemned titles one signal pushed toward removal. ``id`` is a built-in signal
+    id or a custom rule's name; the UI maps the built-ins to plain labels and shows a custom rule
+    under its own name."""
 
     id: str
     count: int
-    bytes: int
-    unknown_size: int
 
 
 class ReapBreakdownOut(BaseModel):
     """What a reap built right now would remove, and why. Read-only; deletes nothing.
 
     Counts are the reap decision (measured and unmeasured together); the byte figures sum
-    only what has a size, with the unmeasured carried as a separate count. ``has_snapshot``
-    is false before the first scan, when every figure is zero."""
+    only what has a size. Three of them say how much they left out, in ``will_reap_unknown``,
+    ``movies_unknown`` and ``seasons_unknown``; the others do not, so a byte total beside a
+    count is not a claim that the count is fully measured. ``has_snapshot`` is false before the
+    first scan, when every figure is zero."""
 
     has_snapshot: bool
     policy_condemned: int
     policy_condemned_bytes: int
-    policy_condemned_unknown: int
     hand_spared: int
     spares_expired: int = 0
     """The share of ``hand_spared`` a scan would hand back to policy: titles kept out of this
@@ -986,7 +1146,6 @@ class ReapBreakdownOut(BaseModel):
     counted, because a scan would not release it."""
     hand_reaped: int
     hand_reaped_bytes: int
-    hand_reaped_unknown: int
     hand_reaped_held: int = 0
     """Hand reaps the engine won't honor yet, so they are not in ``will_reap``. The page shows
     one line when nonzero so the operator's held marks are not silently dropped."""
@@ -1154,7 +1313,12 @@ class PersonDetailOut(BaseModel):
 
 
 class WhitelistEntryOut(BaseModel):
-    """One hand-overridden item, as the "Spared" / overrides list shows it."""
+    """One hand-overridden item, as ``POST /api/override`` hands it back.
+
+    Pydantic ships a class docstring as the schema ``description``, so this renders in the
+    API reference. It used to say "as the Spared / overrides list shows it", naming a list
+    surface that retired with ``GET /api/whitelist`` -- a reference telling a script author
+    to go looking for a view that is not there (rules 25, 64)."""
 
     media_key: str
     title: str
@@ -1167,20 +1331,12 @@ class WhitelistEntryOut(BaseModel):
     created_at: str
 
 
-#: The most days a hand-spare may be set for -- ten years, a floor-and-ceiling so a typo can
-#: neither reap the file tomorrow (``ge=1``, below) nor set a nonsense century-long clock.
+#: The most days a hand-spare may be set for -- ten years, so a typo cannot set a nonsense
+#: century-long clock. A ceiling only: the floor is ``ge=0`` below, and ``0`` is the default
+#: and means forever, which is the keep direction. This used to claim a ``ge=1`` floor
+#: "so a typo cannot reap the file tomorrow" -- never implemented, and it would not have done
+#: that anyway, since ``ge=1`` admits the one-day spare it describes (rule 7/24).
 _MAX_SPARE_DAYS = 3650
-
-
-class SpareIn(BaseModel):
-    """Spare an item. The title is looked up server-side from the latest snapshot, so
-    the client sends only what identifies the file and, optionally, why."""
-
-    media_key: str = Field(max_length=_MAX_MEDIA_KEY)
-    note: str | None = Field(default=None, max_length=500)
-    spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)
-    """How long to keep it: ``0`` (default) keeps it forever, a positive count keeps it that
-    many days and then the next scan re-judges it."""
 
 
 class OverrideIn(BaseModel):
@@ -1191,7 +1347,7 @@ class OverrideIn(BaseModel):
     show's, in which case the decision applies to every one of its seasons."""
 
     media_key: str = Field(max_length=_MAX_MEDIA_KEY)
-    decision: Literal["spare", "reap"]
+    decision: Override
     note: str | None = Field(default=None, max_length=500)
     spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)
     """For a spare, how long to keep it: ``0`` (default) forever, a positive count that many
@@ -1211,6 +1367,20 @@ A script-opened window may still close *itself*, so the close moves into the win
 it and against the two callers that ask for it, because a rename here is silent: the
 sign-in still works, the window just stops closing.
 """
+
+
+# Declared once because it was declared twice, under one name, in two routers. Pydantic
+# collapsed them into a single published component only while they stayed structurally
+# identical; the moment either gained a field, BOTH operations got module-qualified component
+# names, including the one nobody edited. This is a comment rather than a second docstring
+# paragraph because Pydantic publishes the docstring as the component's ``description``, and
+# an operator reading the API reference does not want this repository's change history
+# (rule 21).
+class PlexServerChoiceOut(BaseModel):
+    """One owned server the account could link. Both Plex poll routes answer with it."""
+
+    name: str
+    machine_identifier: str
 
 
 class PlexStartIn(BaseModel):
@@ -1255,13 +1425,6 @@ NO_PLEX_FORWARD = PlexStartIn()
 Both start routes default to it, so the sign-in works with the window left open rather
 than 422-ing on a missing body. Shared safely because the model is frozen.
 """
-
-
-class HealthOut(BaseModel):
-    status: str
-    version: str
-    destructive_actions_enabled: bool
-    safety_note: str | None = None
 
 
 class AboutOut(BaseModel):
@@ -1432,3 +1595,10 @@ class ListConfigOut(BaseModel):
     """How the policies use this list right now: one entry per keep rule naming it
     (``services.list_rules.usage``). Empty means no rule does, which the screen renders as
     a warning -- a defined list that protects nothing."""
+
+    authorable_media: list[Literal["movie", "tv"]] = Field(default_factory=list)
+    """The media types a keep rule on this list can be authored for -- the set the Policy
+    editor's list picker offers it on (``policy_migrations.authorable_media_scope``). A Plex
+    collection takes its library's kind and a watchlist both, known before any sync; a tag or
+    IMDb list is known only once a sync has read it. Empty means offer on neither: the type is
+    not known, so a rule could keep nothing (rule 38, #549)."""

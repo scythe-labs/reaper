@@ -21,15 +21,7 @@
 // that only explains its deletions cannot be trusted about its keeps.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  type ReactNode,
-  type RefObject,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, type RefObject, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   api,
   type CandidateDetail,
@@ -44,7 +36,9 @@ import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
 import { coverage, itemBytes, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
+import { useArtFallback } from "./artFallback";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
+import { ExternalMark } from "./queueIcons";
 import { useHoldsBackUnmeasured } from "./queueSettings";
 import { reapIsNoop } from "./reviewFate";
 import { rowRampSentence } from "./signalRamp";
@@ -75,6 +69,75 @@ export function JumpPill({ href, label }: { href: string | null; label: string }
     <a className="jump-pill" href={href} target="_blank" rel="noopener noreferrer">
       {label} <span aria-hidden="true">↗</span>
     </a>
+  );
+}
+
+/** The head every title panel wears: the title as its Plex jump, then one line of the panel's
+ *  own facts and chips, then the pills into the tools that manage the file.
+ *
+ *  It is one component because it was two, and the two had drifted in exactly the places a
+ *  copy drifts: the item panel's title carried the outbound arrow and the show panel's did
+ *  not, and the two spelled the pill row in different orders. Both are settled here, so
+ *  neither can drift again. What legitimately differs between the panels is `sub`, which is
+ *  each panel's own content: an item states its size and media type, a show states how many
+ *  seasons it has.
+ *
+ *  `ScalesPanel`'s `.scales-head-id` is NOT a sibling of this and keeps its own markup: a
+ *  person is not a title, its link wraps the heading rather than sitting inside it, and it
+ *  already carries the arrow. */
+export function PanelHead({
+  headingId,
+  title,
+  year,
+  links,
+  sub,
+}: {
+  headingId: string;
+  title: string;
+  year: number | null;
+  links: Links;
+  /** The facts and chips this panel puts under its title, ahead of the jump pills. */
+  sub: ReactNode;
+}) {
+  const name = (
+    <>
+      {title}
+      {year && <span className="card-year"> {year}</span>}
+    </>
+  );
+  return (
+    <div className="why-head">
+      <div>
+        <h2 id={headingId}>
+          {/* The title itself opens the item in Plex when it can; a title Reaper couldn't
+              match stays plain text rather than linking somewhere wrong. */}
+          {links.plex ? (
+            <a
+              className="title-link"
+              href={links.plex}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open in Plex"
+            >
+              {name}
+              <ExternalMark className="title-ext" />
+            </a>
+          ) : (
+            name
+          )}
+        </h2>
+        <p className="muted why-sub">
+          {sub}
+          {/* One order, read the way the panel is: what was played, who asked for it, then
+              the app to go change it. At most one of radarr/sonarr is ever set (LinksOut),
+              so the row always ends on the app that manages the file. */}
+          <JumpPill href={links.tautulli} label="Tautulli" />
+          <JumpPill href={links.seerr} label="Seerr" />
+          <JumpPill href={links.radarr} label="Radarr" />
+          <JumpPill href={links.sonarr} label="Sonarr" />
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -253,35 +316,12 @@ export function Synopsis({ text }: { text: string }) {
  *  a title has no separate art, and to nothing at all when it has neither. Shared with the
  *  show panel. */
 export function WhyHero({ posterUrl }: { posterUrl: string }) {
-  const [src, setSrc] = useState(`${posterUrl}?kind=art`);
-  const fellBack = useRef(false);
-
-  // When the selected item changes without an unmount in between (the new item's detail was
-  // already cached, so `detail` goes A -> B directly), this component is reused rather than
-  // remounted. Reset the art to the new item's, or the hero keeps showing the previous
-  // item's backdrop under the new title/score -- exactly the kind of mismatch this panel
-  // exists to avoid. Mirrors ReviewQueue's Backdrop.
-  useEffect(() => {
-    fellBack.current = false;
-    setSrc(`${posterUrl}?kind=art`);
-  }, [posterUrl]);
+  const { src, onError } = useArtFallback(posterUrl);
 
   if (!src) return null;
   return (
     <div className="why-hero">
-      <img
-        src={src}
-        alt=""
-        aria-hidden="true"
-        onError={() => {
-          if (!fellBack.current) {
-            fellBack.current = true;
-            setSrc(posterUrl); // no wide art -> the poster still fills the banner
-          } else {
-            setSrc(""); // neither -> drop the banner
-          }
-        }}
-      />
+      <img src={src} alt="" aria-hidden="true" onError={onError} />
       <div className="why-hero-fade" aria-hidden="true" />
     </div>
   );
@@ -303,7 +343,7 @@ function KeptNotice({
   links,
   mediaType,
 }: {
-  match: Match | undefined;
+  match: Match | null | undefined;
   links: Links;
   mediaType: string;
 }) {
@@ -349,7 +389,7 @@ function KeptNotice({
  *  there. Carrying it over is a backend change (a merged count on the group payload) and is
  *  deferred rather than half-done -- a season panel silently omitting a fact the movie panel
  *  states would be worse than both being quiet. */
-export function MergedListingChip({ match }: { match: Match | undefined }) {
+export function MergedListingChip({ match }: { match: Match | null | undefined }) {
   const listings = match?.merged_rating_keys?.length ?? 0;
   if (listings < 2) return null;
   return (
@@ -409,7 +449,7 @@ export function MatchCandidates({ links }: { links: Links }) {
  *  **Read the gate, never the sentence (rule 142).** This was a wording test until #86:
  *  `!detail.startsWith("could not check")`, which passed for all three conflict shapes and so
  *  told the caller nothing about which one it had. The producer has recorded the answer as a
- *  typed flag since `defers_to_owner` shipped, and `api.routes._chip` has read it since; the
+ *  typed flag since `defers_to_owner` shipped, and `api.review._chip` has read it since; the
  *  panel could not, because `GateOutcomeOut` did not serve it. Now it does, and the flag rides
  *  on the outcome for `verdictLook` to branch on.
  *
@@ -478,7 +518,7 @@ function conflictNote(defersToOwner: boolean | null | undefined): string {
  *  It used to come first and was wrong every time it fired: an unmatched item has no rating
  *  key, so every Plex-dependent gate blocks, and the branch shadowed the real cause, sending
  *  the operator after watch-history depth when they needed a re-match. The card chip beside
- *  it tests the match first (`api.routes._chip`). These branches are mutually reachable and
+ *  it tests the match first (`api.review._chip`). These branches are mutually reachable and
  *  the first true one wins, so the order is load-bearing. */
 /** The FIRED protection a hand reap cannot overrule, if one fired: `verdict.STRUCTURAL_GATES`,
  *  which is something playing right now and the retired `unmanaged`. Neither is a judgment about
@@ -498,7 +538,7 @@ function structuralStop(item: CandidateDetail): "streaming_now" | "unmanaged" | 
   // Reads a STORED explanation, so it outlives the gate that wrote it. That gate is retired
   // (`engine/gates.py`) and no new scan can produce this, but a snapshot on disk is read back
   // by whatever version is running, and a wrong-but-specific sentence is worse than a right
-  // one. Kept for the same reason `api/routes.py` keeps its phrase for `others_watching`.
+  // one. Kept for the same reason `api/review.py` keeps its phrase for `others_watching`.
   if (fired.has("unmanaged")) return "unmanaged";
   return undefined;
 }
@@ -1122,10 +1162,13 @@ function Gates({
  *  (engine/gates.py `_blocked` and the custom-rule evaluator). Both vocabularies are
  *  closed and colon-free, so the first ": " splits them reliably; anything that doesn't
  *  parse (a season-order conflict, a named custom rule's wrapped detail) keeps its own
- *  row with the raw sentence, exactly as before. */
+ *  row with the raw sentence, exactly as before.
+ *
+ *  Only the phrases that CHANGE are listed. The lookup below falls back to the backend's own
+ *  words, so an entry mapping a phrase to itself ("watch history", "when it was last watched",
+ *  "who else watched it") reads as a translation and produces the fallback's string. Add an
+ *  entry when the backend's phrase is not what the operator should read. */
 const CHECK_COPY: Record<string, string> = {
-  "watch history": "watch history",
-  "when it was last watched": "when it was last watched",
   "the watch horizon": "how far back its history goes",
   "active streams": "whether anyone is watching",
   "the IMDb rating": "its IMDb rating",
@@ -1133,7 +1176,6 @@ const CHECK_COPY: Record<string, string> = {
   "the whitelist": "your keep list",
   "curated lists": "protected lists",
   "which *arr owns this": "which app manages it",
-  "who else watched it": "who else watched it",
   // The season guard, where it could not run at all. Its other outcomes are whole sentences
   // that do not parse as `could not check {what}: {cause}` and keep their own row.
   "who is part-way through it": "who's part-way through it",
@@ -1145,7 +1187,7 @@ const CAUSE_COPY: Record<string, string> = {
   "more than one Plex item matches this title": "This looks like more than one thing in Plex.",
   "more than one Plex item matches this show": "This show looks like more than one thing in Plex.",
   // The disagreement pair. Generated nowhere: these are the exact strings snapshot.py and
-  // season_scan.py put in `_NO_KEY_REASONS`, and
+  // season_evidence.py put in `_NO_KEY_REASONS`, and
   // tests/test_review_chips.py::TestTheMatchStatusVocabulary fails when one of those has no
   // entry here -- without which the box prints the backend's raw phrasing (rule 144).
   "Plex and Radarr describe this file differently":
@@ -1274,7 +1316,7 @@ export function WhyPanel({
   // Accept what Reaper can see today for THIS title, the narrow twin of Settings' global
   // Forget. It discards the high-water record and nothing else: no file is deleted and no
   // removal is approved, the title simply goes back to being judged on its current plays
-  // (`api.settings.forget_watch_evidence_for`).
+  // (`api.plex.forget_watch_evidence_for`).
   const queryClient = useQueryClient();
   // The same handoff the global Forget makes, through the same hook (rule 72): that one is this
   // control's whole-library twin and already pairs the sentence with a place to stand.
@@ -1313,46 +1355,13 @@ export function WhyPanel({
         </button>
       )}
 
-      <div className="why-head">
-        <div>
-          <h2 id={headingId}>
-            {/* The title itself opens the item in Plex when it can; a title Reaper
-                couldn't match stays plain text rather than linking somewhere wrong. */}
-            {item.links.plex ? (
-              <a
-                className="title-link"
-                href={item.links.plex}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Open in Plex"
-              >
-                {item.title}
-                {item.year && <span className="card-year"> {item.year}</span>}
-                <svg
-                  className="title-ext"
-                  viewBox="0 0 16 16"
-                  width="13"
-                  height="13"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M6 3h7v7M13 3L4 12"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </a>
-            ) : (
-              <>
-                {item.title}
-                {item.year && <span className="card-year"> {item.year}</span>}
-              </>
-            )}
-          </h2>
-          <p className="muted why-sub">
+      <PanelHead
+        headingId={headingId}
+        title={item.title}
+        year={item.year}
+        links={item.links}
+        sub={
+          <>
             {itemBytes(item.size_bytes)}, {mediaLabel}
             {/* The Plex library the file lives in -- same quiet chip as the cards, so movies
                 and seasons read the same. */}
@@ -1363,13 +1372,9 @@ export function WhyPanel({
             {/* All three states here: the panel is where you came to find out. The card
                 stays quiet about a show that is still going. */}
             <ShowStatusChip status={item.show_status} />
-            <JumpPill href={item.links.tautulli} label="Tautulli" />
-            <JumpPill href={item.links.seerr} label="Seerr" />
-            <JumpPill href={item.links.radarr} label="Radarr" />
-            <JumpPill href={item.links.sonarr} label="Sonarr" />
-          </p>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <MetaLine item={item} />
       <RatingsRow ratings={item.ratings} links={item.links} />

@@ -20,6 +20,7 @@ The rules pinned here:
 
 from __future__ import annotations
 
+import inspect
 import json
 import time
 from collections.abc import Iterator
@@ -30,12 +31,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import structlog
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session as SyncSession
 from starlette.requests import Request
 
 from reaper import logbuffer
+from reaper.api import settings as settings_api
 from reaper.api.middleware import (
     _API_KEY_READS_DENIED,
     _API_KEY_WRITES,
@@ -51,11 +54,20 @@ from reaper.api.middleware import (
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import client_ip, parse_proxy_networks
 from reaper.config import Settings, parse_trusted_proxies
+from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import AppSetting
 from reaper.main import create_app
 from reaper.services import app_settings
 from tests._auth import login
+
+#: How many served operations are fenced to the signed-in browser, hand-reconciled. Every
+#: irreversible authority plus every setting and credential write; an API key gets scanning,
+#: planning, the policy and the reap profile. The number is here rather than in a docstring
+#: because it was in one for two releases, drifting once per route added while
+#: ``test_the_session_scheme_is_declared`` said "counted, not remembered" and asserted
+#: nothing (rule 144).
+FENCED_OPERATIONS = 48
 
 
 class TestScanProgressPercent:
@@ -96,7 +108,7 @@ class TestScanProgressPercent:
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in client over an empty database: exactly a fresh install."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -109,7 +121,7 @@ def _store_raw(tmp_path: Path, key: str, value: object) -> None:
     """Put an app-setting row straight into the database the ``client`` fixture is on,
     holding whatever shape an older build left there. Goes around the API deliberately: the
     point is a stored value today's request models would never let through."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with SyncSession(engine) as session:
         session.merge(
@@ -121,7 +133,7 @@ def _store_raw(tmp_path: Path, key: str, value: object) -> None:
 
 def _bare(client: TestClient) -> TestClient:
     """A second client over the SAME app: no cookies, no CSRF header, no session."""
-    return TestClient(client.app)  # type: ignore[arg-type]
+    return TestClient(client.app)
 
 
 class TestGeneralSettings:
@@ -291,6 +303,63 @@ class TestGeneralSettings:
         client.put("/api/settings/general", json={"proxy_trust_enabled": False})
         assert client.app.state.trusted_proxies == ()  # type: ignore[attr-defined]
 
+    def test_every_general_field_is_a_row_or_a_declared_exception(self) -> None:
+        """The route walks ``_GENERAL_FIELDS`` twice, so a field added to the request model
+        and forgotten there is accepted, echoed back unchanged, and silently never stored.
+        That is the shape issue #90 had, and no route test can see it: a field nobody wrote
+        a case for is a field nobody sends.
+
+        Derived from the model rather than listed here (rule 103), so the reconciliation is
+        with the declaration and not with a second copy of it. A field that genuinely
+        cannot be a row joins ``_GENERAL_FIELD_EXCEPTIONS`` with the reason, which is what
+        makes this fail *loudly* rather than invite a silencing edit.
+        """
+        covered = {field.name for field in settings_api._GENERAL_FIELDS}
+        declared = covered | set(settings_api._GENERAL_FIELD_EXCEPTIONS)
+        assert declared == set(settings_api.GeneralSettingsIn.model_fields), (
+            "every GeneralSettingsIn field is either an app-settings row in _GENERAL_FIELDS "
+            "or carries its reason in _GENERAL_FIELD_EXCEPTIONS."
+        )
+        assert not covered & set(settings_api._GENERAL_FIELD_EXCEPTIONS), (
+            "a field cannot be both a row and an exception to being one."
+        )
+        assert all(why.strip() for why in settings_api._GENERAL_FIELD_EXCEPTIONS.values()), (
+            "an exception with an empty reason is a silenced gate."
+        )
+
+    def test_the_checking_pass_refuses_with_no_session_in_hand(self) -> None:
+        """The no-partial-write promise rests on two independent layers, and the route tests
+        cannot tell them apart. ``test_one_bad_field_writes_none_of_the_others`` above and
+        ``test_a_refused_tray_writes_none_of_the_settings_beside_it`` below both hold whether
+        the checks run before the writes or after them, because the single commit at the end
+        of the route rolls a half-applied save back either way. Measured, not argued: the
+        desktop checks were moved back below the write loop and both stayed green. So neither
+        one discriminates the layers, and neither is named as if it did (rule 118).
+
+        This is the half that can be pinned. The checking pass takes the payload and nothing
+        else, so it holds no session and cannot write through one. Thread a session into
+        either signature and this fails.
+        """
+        assert list(inspect.signature(settings_api._cleaned_general_values).parameters) == [
+            "payload"
+        ]
+        assert list(inspect.signature(settings_api._validated_desktop_values).parameters) == [
+            "payload"
+        ]
+
+        with pytest.raises(HTTPException) as bad_zone:
+            settings_api._cleaned_general_values(
+                settings_api.GeneralSettingsIn(
+                    application_name="Media Reaper", timezone="Nowhere/Nothing"
+                )
+            )
+        assert "time zone" in bad_zone.value.detail
+        # The suite runs from source, so `desktop_platform()` is None and this is the
+        # container operator's refusal, reached with no session and nothing written.
+        with pytest.raises(HTTPException) as bad_platform:
+            settings_api._validated_desktop_values(settings_api.GeneralSettingsIn(tray=False))
+        assert "Windows and macOS apps" in bad_platform.value.detail
+
 
 class TestDesktopSettings:
     """The Desktop app group's lane: present only on a frozen desktop build, saved to
@@ -313,6 +382,25 @@ class TestDesktopSettings:
         response = client.put("/api/settings/general", json={"tray": False})
         assert response.status_code == 422
         assert "Windows and macOS apps" in response.json()["detail"]
+
+    def test_a_refused_tray_writes_none_of_the_settings_beside_it(self, client: TestClient) -> None:
+        """The other half of ``test_one_bad_field_writes_none_of_the_others``, for the one
+        refusal that is not a settings row. The save bar sends every unsaved field at once,
+        so a container operator with the Desktop group somehow on screen sends this shape,
+        and nothing pinned it: that test's body carries no ``tray``.
+
+        Named for what it pins, which is the operator-visible promise that a refusal changes
+        nothing. It does not discriminate the two layers that deliver it, and
+        ``test_the_checking_pass_refuses_with_no_session_in_hand`` above says why."""
+        before = client.get("/api/settings/general").json()
+
+        response = client.put(
+            "/api/settings/general",
+            json={"application_name": "Media Reaper", "accent_color": "#4f46e5", "tray": False},
+        )
+        assert response.status_code == 422
+        assert "Windows and macOS apps" in response.json()["detail"]
+        assert client.get("/api/settings/general").json() == before
 
     def test_a_desktop_save_lands_in_launcher_conf_and_the_next_read(
         self,
@@ -338,6 +426,63 @@ class TestDesktopSettings:
         # A later read answers from what was just accepted, not the boot-time value.
         again = client.get("/api/settings/general").json()["desktop"]
         assert again == {"platform": "macos", "tray": False, "dock_icon": True}
+
+    def test_a_failed_commit_leaves_launcher_conf_alone(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        desktop_env: None,
+    ) -> None:
+        """The route promises that a refusal changes nothing, and one write was outside the
+        transaction that delivers it (#748).
+
+        `launcher.conf` is a file and `os.environ` is process state, so neither rolls back.
+        Written before the commit, a commit that then failed left the switch on in the file
+        and echoed back by `_desktop_out` from the environment, while the five settings rows
+        saved beside it went back and the operator was told the save failed.
+
+        The commit is broken at the session rather than at the disk, because the window this
+        is about is the commit failing for any reason at all. The three things the failure
+        must leave untouched are asserted separately: the file, the environment, and the
+        rows. A test reading only the response would pass with all three still moved.
+
+        **Only the route's own commit is broken**, found by frame name. A blanket patch on
+        ``AsyncSession.commit`` takes the auth middleware's commit down first, so the
+        request dies before ``put_general`` runs at all and the test passes against the
+        broken order it was written to catch (which is how it was written first, and it
+        passed).
+        """
+        import os
+        import traceback
+
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from reaper import launcher
+
+        monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "macos")
+        before = client.get("/api/settings/general").json()
+        real_commit = AsyncSession.commit
+
+        async def _fails(session: AsyncSession) -> None:
+            if any(frame.name == "put_general" for frame in traceback.extract_stack()):
+                raise RuntimeError("the database is locked")
+            await real_commit(session)
+
+        monkeypatch.setattr(AsyncSession, "commit", _fails)
+
+        with pytest.raises(RuntimeError, match="locked"):
+            client.put(
+                "/api/settings/general",
+                json={"application_name": "Media Reaper", "tray": False, "dock_icon": True},
+            )
+
+        monkeypatch.undo()
+        monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "macos")
+        assert not (tmp_path / "launcher.conf").exists()
+        assert "REAPER_TRAY" not in os.environ
+        assert "REAPER_DOCK_ICON" not in os.environ
+        assert client.get("/api/settings/general").json() == before
 
     def test_the_dock_icon_is_refused_off_the_mac_app(
         self,
@@ -389,7 +534,7 @@ class TestReverseProxyEnvSeed:
     switch. A declarative deployment can ship trust configured with no UI visit."""
 
     def _seeded(self, tmp_path: Path) -> Settings:
-        settings = Settings(  # type: ignore[call-arg]
+        settings = Settings(
             data_dir=tmp_path,
             secret_key="k",
             proxy_trust_enabled=True,
@@ -481,6 +626,23 @@ class TestTheApiKeyLane:
         assert bare.get("/api/settings/general", headers={"X-Api-Key": key}).status_code == 401
         assert client.get("/api/settings/general/api-key").status_code == 404
         assert client.get("/api/settings/general").json()["api_key_set"] is False
+
+    def test_a_key_under_a_rotated_secret_reads_as_not_set(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """The flag answers for a key this install can use, not for a row.
+
+        A key encrypted under a secret that has since rotated cannot be decrypted, so nothing
+        can authenticate with it and the reveal route 404s. Reading the row instead left the
+        General panel offering Show and Delete over a credential the operator's scripts were
+        already being refused on, and no screen said why. Rule 76: the flag resolves the way
+        the runtime does.
+        """
+        rotated_away = SecretBox("a-secret-key-this-install-no-longer-holds")
+        _store_raw(tmp_path, app_settings.API_KEY_KEY, rotated_away.encrypt("unreadable"))
+
+        assert client.get("/api/settings/general").json()["api_key_set"] is False
+        assert client.get("/api/settings/general/api-key").status_code == 404
 
     def test_removing_a_key_that_is_not_there_is_not_an_error(self, client: TestClient) -> None:
         assert client.delete("/api/settings/general/api-key").status_code == 200
@@ -621,7 +783,7 @@ class TestTheApiKeyLane:
         headers = {"X-Api-Key": key}
         twin = (
             "the fairness reads are open to a key again, so the hand-written refusal in "
-            "frontend/src/components/Settings.tsx ('it cannot ... see who watched what') "
+            "frontend/src/components/GeneralPanel.tsx ('it cannot ... see who watched what') "
             "and the generated one in middleware.api_key_scope_description are both false. "
             "Fix the fence or change BOTH sentences"
         )
@@ -692,14 +854,15 @@ class TestTheApiKeyLane:
         assert _api_key_allowed("PUT", "/api/settings/safety") is False
         assert _api_key_allowed("PUT", "/api/settings/general") is False
         assert _api_key_allowed("PUT", "/api/settings/plex/connection") is False
-        # Recording a decision by hand is a signed-in act, not an automation one, and the
-        # read is the only part of the keep list a key gets. Pinned because #326 rests on
-        # it: the 404 those two writes can raise is reachable from no script, which is what
-        # settled it as a wording fix rather than a behavior one.
-        assert _api_key_allowed("GET", "/api/whitelist") is True
-        assert _api_key_allowed("POST", "/api/whitelist") is False
+        # Recording a decision by hand is a signed-in act, not an automation one. Pinned
+        # because #326 rests on it: the 404 these writes can raise is reachable from no
+        # script, which is what settled it as a wording fix rather than a behavior one.
+        # There used to be a third line here, `GET /api/whitelist` allowed, pinning that the
+        # read was the one part of the keep list a key got. That route is gone and so is the
+        # behavior, so the case retires rather than being handed a stand-in: `/api/candidates`
+        # is already asserted above, and it is not the same question anyway -- an override on
+        # an item the latest snapshot does not hold appears in neither.
         assert _api_key_allowed("POST", "/api/override") is False
-        assert _api_key_allowed("DELETE", "/api/whitelist/{media_key}") is False
         assert _api_key_allowed("DELETE", "/api/override/{media_key}") is False
 
 
@@ -808,7 +971,7 @@ class TestTheAuthBoxDescribesTheFence:
         """
         twin = (
             "the fence moved, so the hand-written twin in "
-            "frontend/src/components/Settings.tsx has to move with it"
+            "frontend/src/components/GeneralPanel.tsx has to move with it"
         )
         description = api_key_scope_description()
         assert (
@@ -824,9 +987,9 @@ class TestTheAuthBoxDescribesTheFence:
 
 class TestEveryOperationSaysWhichCredentialReachesIt:
     """The auth box tells the truth once; these put it on the operation the reader is
-    looking at. A scheme applied document-wide renders a working auth box over all 87,
-    so try-it-out looked available on routes that answer 403 -- the reader had no way to
-    tell which without sending the request.
+    looking at. A scheme applied document-wide renders a working auth box over every
+    operation in the document, so try-it-out looked available on routes that answer 403 --
+    the reader had no way to tell which without sending the request.
     """
 
     def _operations(self, client: TestClient) -> list[tuple[str, str, dict[str, Any]]]:
@@ -838,11 +1001,13 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         ]
 
     def test_the_session_scheme_is_declared(self, client: TestClient) -> None:
-        """A fenced operation narrows to this scheme, so a missing declaration would
-        leave 42 operations pointing at a credential the document never defines.
+        """A fenced operation narrows to this scheme, so a missing declaration would leave
+        every fenced operation pointing at a credential the document never defines.
 
-        Counted, not remembered: #117 moved the two fairness reads behind the browser,
-        which took the number from 40 to 42.
+        **Counted here, not remembered.** This docstring used to name the figure (42, then
+        40 before #117 moved the two fairness reads behind the browser) and nothing asserted
+        it, so it read as measured while drifting once per route added: it was 42 against a
+        real 48. The count moved into the assertion below, where a wrong one fails.
         """
         schema = client.get("/api/openapi.json").json()
         schemes = schema["components"]["securitySchemes"]
@@ -855,6 +1020,19 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         # script, so leading with Session is what leaves try-it-out working signed in.
         assert schema["security"] == [{"Session": []}, {"ApiKey": []}]
 
+        # The figure this docstring used to carry, now where a wrong one fails. Reconcile it
+        # by hand when a route is fenced or unfenced (rule 145): the walk below counts what
+        # the document declares, and a fence that never reached the schema is missing from
+        # both the count and the flag-shaped assertions above it.
+        fenced = sum(
+            1 for _, _, op in self._operations(client) if op.get("security") == [{"Session": []}]
+        )
+        assert fenced == FENCED_OPERATIONS, (
+            f"{fenced} operations are fenced to the browser, not {FENCED_OPERATIONS}. If a "
+            "route was deliberately fenced or unfenced, update FENCED_OPERATIONS; if not, a "
+            "write just became reachable by an API key."
+        )
+
     def test_the_routes_a_live_key_was_refused_on_are_marked(self, client: TestClient) -> None:
         """Rule 119: the expectation is the evidence from issue #104, driven with a real
         key against a real install, not a re-reading of the allowlist. Each of these
@@ -866,7 +1044,6 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
             if op.get("security") == [{"Session": []}]
         }
         for refused in (
-            ("POST", "/api/whitelist"),
             ("POST", "/api/override"),
             ("DELETE", "/api/override/{media_key}"),
             ("PUT", "/api/settings/plex"),
@@ -921,7 +1098,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         # The half a bare cookie is enough for.
         assert panel.get("/api/candidates").status_code == 200
         # The same credential, one unsafe method, no header.
-        refused = panel.post("/api/whitelist", json={})
+        refused = panel.post("/api/override", json={})
         assert refused.status_code == 403
         assert "CSRF" in refused.json()["detail"]
 
@@ -1044,13 +1221,13 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
     def test_the_note_does_not_displace_what_the_route_does(self, client: TestClient) -> None:
         """Prepended, never substituted: a route's own description is the reason someone
         is reading the entry at all."""
-        _, _, spare = next(
+        _, _, override = next(
             (m, p, op)
             for m, p, op in self._operations(client)
-            if (m, p) == ("POST", "/api/whitelist")
+            if (m, p) == ("POST", "/api/override")
         )
-        assert "Spare an item" in spare["description"]
-        assert "—" not in spare["description"]  # rule 21
+        assert "Override an item's verdict by hand" in override["description"]
+        assert "—" not in override["description"]  # rule 21
 
 
 def _request(

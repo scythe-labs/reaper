@@ -52,8 +52,8 @@ import structlog
 
 from reaper.buildinfo import build_version
 from reaper.clock import utcnow
-from reaper.config import Settings
-from reaper.launcher import LAUNCHER_CONF_NAME
+from reaper.config import LAUNCHER_CONF_NAME, Settings
+from reaper.db import schema_gate
 from reaper.secrets import (
     KEY_FILENAME,
     SALT_FILENAME,
@@ -134,21 +134,13 @@ def db_size_on_disk(base: Path) -> int:
     return total
 
 
-def _read_revision(db_path: Path) -> str | None:
-    """The Alembic revision a snapshot sits at, or ``None`` when the table is absent.
-
-    Production always has an ``alembic_version`` row; a database built straight from
-    the models in a test carries none. The restore side treats a missing revision
-    conservatively, so reporting ``None`` here is safe rather than a hard error.
-    """
-    con = sqlite3.connect(db_path)
-    try:
-        row = con.execute("SELECT version_num FROM alembic_version").fetchone()
-    except sqlite3.OperationalError:
-        return None
-    finally:
-        con.close()
-    return str(row[0]) if row and row[0] else None
+#: The Alembic revision a database file sits at, for the manifest this writes and for the
+#: gate the restore side runs against it. One reader, in ``reaper.db.schema_gate``, because
+#: the boot gate asks the same question of the LIVE database and a second copy of the query
+#: is a second answer to drift from (rule 104). ``None`` means no ``alembic_version`` row:
+#: production always has one, a database built straight from the models in a test has none,
+#: and the restore side treats a missing revision conservatively.
+_read_revision = schema_gate.stored_revision
 
 
 def _build_sync(settings: Settings, created_at: str) -> BackupArchive:
@@ -161,7 +153,7 @@ def _build_sync(settings: Settings, created_at: str) -> BackupArchive:
     data_dir = settings.data_dir
     tmp_dir = Path(tempfile.mkdtemp(prefix=BACKUP_TMP_PREFIX, dir=data_dir))
     # Anything past mkdtemp that raises (VACUUM INTO failing on a full disk, a locked
-    # database past the busy timeout, a gzip write error) must not strand the temp dir
+    # database past the 5s busy timeout, a gzip write error) must not strand the temp dir
     # and its partial multi-GB snapshot -- that would make a disk-full worse (PR-3).
     try:
         return _build_into(settings, created_at, tmp_dir)
@@ -172,13 +164,13 @@ def _build_sync(settings: Settings, created_at: str) -> BackupArchive:
 
 def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArchive:
     """Build the archive inside an already-created temp dir (see :func:`_build_sync`)."""
-    data_dir = settings.data_dir
     snapshot = tmp_dir / DB_ARCNAME
 
     # A consistent, compacted copy of the live database. VACUUM INTO reads inside a
-    # transaction, so a concurrent scan write cannot tear the snapshot; the short
-    # busy timeout lets it wait out an in-flight write rather than failing at once.
-    con = sqlite3.connect(data_dir / "reaper.db")
+    # transaction, so a concurrent scan write cannot tear the snapshot; the 5s busy
+    # timeout this connection sets lets it wait out an in-flight write rather than
+    # failing at once. The figure is this connection's own, not the app engine's.
+    con = sqlite3.connect(settings.database_path)
     try:
         con.execute("PRAGMA busy_timeout=5000")
         con.execute("VACUUM INTO ?", (str(snapshot),))

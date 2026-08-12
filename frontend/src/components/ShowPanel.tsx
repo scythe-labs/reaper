@@ -15,7 +15,7 @@ import { useOverrideMutations } from "../useOverrideMutations";
 import { LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { handFate, laneOf, showReapIsNoop } from "./reviewFate";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
-import { JumpPill, MatchCandidates, Synopsis, WhyHero } from "./WhyPanel";
+import { MatchCandidates, PanelHead, Synopsis, WhyHero } from "./WhyPanel";
 import { WhyShell } from "./WhyShell";
 
 /** The one pill a season row wears. The owner's hand decision replaces the scan chip
@@ -66,28 +66,13 @@ export function ShowPanel({
     <WhyShell headingId={headingId} onClose={onClose}>
       {group.poster_url && <WhyHero posterUrl={group.poster_url} />}
 
-      <div className="why-head">
-        <div>
-          <h2 id={headingId}>
-            {group.links.plex ? (
-              <a
-                className="title-link"
-                href={group.links.plex}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Open in Plex"
-              >
-                {group.title}
-                {group.year && <span className="card-year"> {group.year}</span>}
-              </a>
-            ) : (
-              <>
-                {group.title}
-                {group.year && <span className="card-year"> {group.year}</span>}
-              </>
-            )}
-          </h2>
-          <p className="muted why-sub">
+      <PanelHead
+        headingId={headingId}
+        title={group.title}
+        year={group.year}
+        links={group.links}
+        sub={
+          <>
             TV show, {seasonLabel}, {totalBytes(group.size_bytes, group.unknown_size_seasons)}
             {/* The Plex library the show lives in -- the same quiet chip the card carries. */}
             <LibraryChip library={group.library} />
@@ -95,12 +80,9 @@ export function ShowPanel({
                 ended, this is where you came to find out. A panel that dropped the status
                 the card just showed would read as a contradiction. */}
             <ShowStatusChip status={group.show_status} />
-            <JumpPill href={group.links.sonarr} label="Sonarr" />
-            <JumpPill href={group.links.tautulli} label="Tautulli" />
-            <JumpPill href={group.links.seerr} label="Seerr" />
-          </p>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {group.summary && <Synopsis text={group.summary} />}
 

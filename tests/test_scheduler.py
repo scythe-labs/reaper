@@ -31,13 +31,14 @@ from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 from reaper.secrets import resolve_secret_key
 from reaper.services import app_settings, imdb_dataset, retention, scan_runner, scheduler
+from reaper.services import snapshot as snapshot_service
 from reaper.services.imdb_dataset import ImdbRatings
 from reaper.services.update_check import UpdateChecker, UpdateStatus
 
 
 @pytest.fixture
 async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
 
@@ -143,7 +144,7 @@ class TestRatingsRefreshFreshnessGuard:
             called.append("downloaded")
             return 0
 
-        monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
+        monkeypatch.setattr(imdb_dataset, "refresh", fake_download)
         await scheduler.refresh_ratings(cache_engine, tmp_path)
         assert called == []  # synced an hour ago, well within the window
 
@@ -157,7 +158,7 @@ class TestRatingsRefreshFreshnessGuard:
             called.append("downloaded")
             return 7
 
-        monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
+        monkeypatch.setattr(imdb_dataset, "refresh", fake_download)
         await scheduler.refresh_ratings(cache_engine, tmp_path)
         assert called == ["downloaded"]  # 25h old, past the 20h window
 
@@ -167,11 +168,10 @@ class TestTheSchedulerIsUpkeepOnly:
         """A timer must never be able to trigger a reap. Automated deletion is gated
         behind an earned autonomy grant, not a cron entry -- so the scheduler's whole job
         list is refreshes."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -220,11 +220,10 @@ class TestTheSchedulerIsUpkeepOnly:
         mostly dead weight now, so an interval trigger's default first fire -- a whole
         twelve hours in -- is the wrong answer. Pinned against the interval rather than a
         literal, so raising one cannot quietly turn the delay back into a full period."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -255,11 +254,10 @@ class TestTheSchedulerIsUpkeepOnly:
         must land at different offsets within the interval, and each gap must still sit
         inside one interval plus the spread, so a jitter large enough to reorder firings or
         small enough to round away would both fail."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -299,17 +297,24 @@ class TestTheSchedulerIsUpkeepOnly:
         vacuums that, while the real one is never compacted. The arity is the same either
         way, so APScheduler's own argument check cannot see it.
 
-        The scheduler is given a folder that is not the engine's (rule 141) -- pinning the
-        path the engine was built from would hold just as well if the job derived its own.
+        The sweep folder used to arrive beside ``settings`` as its own argument, and this test
+        passed a different folder to prove the job read the argument (rule 141). It is derived
+        from ``settings`` now, so there is no second source to diverge from and no divergent
+        value to pass. What is left to pin is the thing the old assertion took on trust: that
+        the folder the sweep vacuums is the folder the ENGINE opened. So it is read back off
+        the engine's own URL rather than recomputed from ``settings``, which would only restate
+        the derivation under test.
+
+        The folder is nested a level under ``tmp_path`` and is not the shipped default, so a
+        wiring that reached for either would fail (rule 141).
         """
-        db_dir, sweep_dir = tmp_path / "db", tmp_path / "swept"
+        db_dir = tmp_path / "db"
         db_dir.mkdir()
-        settings = Settings(data_dir=db_dir, secret_key="k")  # type: ignore[call-arg]
-        engine = create_engine(settings)
-        factory = create_session_factory(engine)
+        settings = Settings(data_dir=db_dir, secret_key="k")
+        db_engine = create_engine(settings)
+        factory = create_session_factory(db_engine)
         sched = scheduler.build_scheduler(
-            engine,
-            sweep_dir,
+            db_engine,
             session_factory=factory,
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -320,8 +325,46 @@ class TestTheSchedulerIsUpkeepOnly:
 
         job = next(j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID)
 
-        assert list(job.args)[:2] == [factory, sweep_dir]
-        await engine.dispose()
+        assert db_engine.url.database is not None
+        assert list(job.args)[:2] == [factory, Path(db_engine.url.database).parent]
+        # `Settings` resolves `data_dir` to an absolute path, so the shipped default is the
+        # resolved one and not the bare `Path("data")` a hardcoded wiring would carry.
+        assert Path(db_engine.url.database).parent not in (
+            tmp_path,
+            Settings(secret_key="k").data_dir,
+        )
+        await db_engine.dispose()
+
+    async def test_the_ratings_refresh_is_handed_that_same_folder(self, tmp_path: Path) -> None:
+        """`refresh_ratings` downloads the IMDb dataset into ``data_dir`` and is wired from the
+        same `settings` the sweep now reads, so it is the sibling of the assertion above (rule
+        72) and had nothing pinning its wired arguments at all.
+
+        A wrong folder here is quiet in the same way: the download lands somewhere the loader
+        never looks and the dataset reads as permanently stale, degrading every scan. Both jobs
+        are checked against the engine's own folder, so a change that moves one and not the
+        other fails on whichever it left behind."""
+        db_dir = tmp_path / "db"
+        db_dir.mkdir()
+        settings = Settings(data_dir=db_dir, secret_key="k")
+        db_engine = create_engine(settings)
+        factory = create_session_factory(db_engine)
+        sched = scheduler.build_scheduler(
+            db_engine,
+            session_factory=factory,
+            secret_box=SecretBox(resolve_secret_key(settings)),
+            settings=settings,
+            update_checker=UpdateChecker(),
+            timezone=ZoneInfo("UTC"),
+            reap_running=lambda: False,
+        )
+
+        job = next(j for j in sched.get_jobs() if j.id == "refresh_ratings")
+
+        assert db_engine.url.database is not None
+        # `refresh_ratings(cache_engine, data_dir, session_factory)`: the folder is second.
+        assert list(job.args)[1] == Path(db_engine.url.database).parent
+        await db_engine.dispose()
 
     async def test_the_snapshot_sweep_is_handed_a_way_to_ask_whether_a_reap_is_live(
         self, tmp_path: Path
@@ -332,11 +375,10 @@ class TestTheSchedulerIsUpkeepOnly:
 
         The predicate is passed answering True, which no default could produce -- a job wired
         to a placeholder would read False here (rule 141)."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
-            tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             settings=settings,
@@ -358,7 +400,7 @@ class TestTheSchedulerIsUpkeepOnly:
 
         Driven in both states off one predicate object, because a lambda captured before the
         status existed would answer False forever and read as correct in the False case."""
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         sync_engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(sync_engine)
         sync_engine.dispose()
@@ -430,9 +472,8 @@ class TestTheSchedulerIsUpkeepOnly:
         monkeypatch.setattr(retention, "compact_if_fragmented", _compact)
         monkeypatch.setattr(scan_runner, "_scan_running", live == "scan")
 
-        await scheduler.sweep_old_snapshots(  # type: ignore[arg-type]
-            None, tmp_path, lambda: live == "reap"
-        )
+        # None on purpose: the case is that the sweep refuses before it touches a session.
+        await scheduler.sweep_old_snapshots(None, tmp_path, lambda: live == "reap")  # type: ignore[arg-type]
 
         assert swept == [True]
         assert attempted == []
@@ -465,7 +506,7 @@ async def main_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Async
     can record its last run. Its own file, kept apart from the cache engine above."""
     data_dir = tmp_path / "main"
     data_dir.mkdir()
-    settings = Settings(data_dir=data_dir, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=data_dir, secret_key="k")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -498,8 +539,8 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def no_sources(*args: object, **kwargs: object) -> tuple[object, ...]:
             return ([], [], None, [], None)
 
-        monkeypatch.setattr(scheduler.scan_runner, "build_sources", no_sources)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        monkeypatch.setattr(scan_runner, "build_sources", no_sources)
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         return settings, SecretBox(resolve_secret_key(settings))
 
     async def test_a_successful_list_refresh_records_ok(
@@ -514,7 +555,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def fake_sync(*args: object, **kwargs: object) -> dict[str, int]:
             return {"imdb-top250-list1": 250}
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", fake_sync)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -538,7 +579,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def all_bad(*args: object, **kwargs: object) -> dict[str, str]:
             return {"imdb-top250-list1": "error: source down"}
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", all_bad)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", all_bad)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -565,7 +606,7 @@ class TestUpkeepJobsRecordTheirLastRun:
                 "plex-collection-never-reap-list3": 12,
             }
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", one_bad)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", one_bad)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -593,7 +634,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def boom(*args: object, **kwargs: object) -> dict[str, int]:
             raise RuntimeError("the cache database is locked")
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", boom)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", boom)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -611,7 +652,6 @@ class TestUpkeepJobsRecordTheirLastRun:
                     source="plex_collection",
                     config_json='{"library": "Films", "collection": "Keep these"}',
                     enabled=True,
-                    built_in=False,
                     created_at=utcnow(),
                 )
             )
@@ -638,7 +678,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def only_the_others(*args: object, **kwargs: object) -> dict[str, int]:
             return {"imdb-top250-list1": 250}
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", only_the_others)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", only_the_others)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -661,7 +701,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def fine(*args: object, **kwargs: object) -> dict[str, int]:
             return {"imdb-top250-list1": 250}
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", fine)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fine)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -679,15 +719,62 @@ class TestUpkeepJobsRecordTheirLastRun:
         """A misconfigured install cannot build clients at all, and that is a refusal the job
         records rather than an exception escaping into the scheduler unrecorded."""
 
-        # Its own stub, not `_wire_lists`: this one is about `build_sources` REFUSING.
+        # `_wire_lists` for the config it hands back; its `build_sources` stub is replaced
+        # below, because this one is about `build_sources` REFUSING.
         settings, box = self._wire_lists(monkeypatch, tmp_path)
 
         async def refuse(*args: object, **kwargs: object) -> tuple[object, ...]:
-            raise scheduler.scan_runner.ScanConfigError("no sources configured")
+            raise scan_runner.ScanConfigError("no sources configured")
 
-        monkeypatch.setattr(scheduler.scan_runner, "build_sources", refuse)
+        monkeypatch.setattr(scan_runner, "build_sources", refuse)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't refresh lists"
+
+    async def test_an_unreadable_list_registry_records_not_ok(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A stored row whose body will not parse stops the pass, and the stop is recorded.
+
+        ``strict=True`` is what stops it: this pass retires, so a row read as absent would
+        disable the membership it is still protecting with (rules 65/91, 115). The stop used
+        to be recorded by a handler wrapped around that one read, spelling the same log
+        event, the same ``ok=False`` and the same result the job's own catch-all writes. What
+        this pins is the row landing, not which arm wrote it.
+        """
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
+        async with main_factory() as session:
+            session.add(
+                # The source is not load-bearing: the raise is at `json.loads`, one line above
+                # where `definitions` would construct a `ListSource` at all.
+                ListConfig(
+                    name="Keep these",
+                    source="imdb",
+                    config_json="{not json",
+                    enabled=True,
+                    created_at=utcnow(),
+                )
+            )
+            await session.commit()
+
+        synced = False
+
+        async def fine(*args: object, **kwargs: object) -> dict[str, int]:
+            nonlocal synced
+            synced = True
+            return {}
+
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fine)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
+
+        assert synced is False, "an unreadable registry must stop the pass before it syncs"
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
         assert last["ok"] is False
@@ -721,7 +808,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def fake_download(engine: AsyncEngine, data_dir: Path) -> imdb_dataset.LoadResult:
             return imdb_dataset.LoadResult(rows=7, skipped=0)
 
-        monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
+        monkeypatch.setattr(imdb_dataset, "refresh", fake_download)
         await scheduler.refresh_ratings(cache_engine, tmp_path, main_factory)
 
         last = await self._last(main_factory, "refresh_ratings")
@@ -976,7 +1063,7 @@ class TestScheduledScanRecordsOnlyItsFailure:
             raise RuntimeError("radarr unreachable")
 
         monkeypatch.setattr(scan_runner, "run_scan", boom)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         await scheduler.scheduled_scan(settings, main_factory, cache_engine, None)  # type: ignore[arg-type]
 
         last = await self._last(main_factory, scheduler.SCAN_JOB_ID)
@@ -997,7 +1084,7 @@ class TestScheduledScanRecordsOnlyItsFailure:
             raise scan_runner.ScanConfigError("no Radarr configured yet")
 
         monkeypatch.setattr(scan_runner, "run_scan", config_error)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         await scheduler.scheduled_scan(settings, main_factory, cache_engine, None)  # type: ignore[arg-type]
 
         assert await self._last(main_factory, scheduler.SCAN_JOB_ID) is None
@@ -1015,7 +1102,7 @@ class TestScheduledScanRecordsOnlyItsFailure:
             raise scan_runner.ScanInProgressError("a scan is already running")
 
         monkeypatch.setattr(scan_runner, "run_scan", in_progress)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         await scheduler.scheduled_scan(settings, main_factory, cache_engine, None)  # type: ignore[arg-type]
 
         assert await self._last(main_factory, scheduler.SCAN_JOB_ID) is None

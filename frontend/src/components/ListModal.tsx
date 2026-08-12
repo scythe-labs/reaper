@@ -22,10 +22,10 @@
 // fires when the server's wording moves, so the copies cannot drift silently.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { api, type ListConfig, type ListConfigBody } from "../api";
-import { useBackGuard } from "../backnav";
+import { useBackCloseMirror, useBackGuard } from "../backnav";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { FilterMenu } from "./FilterMenu";
 import { ModalShell } from "./ModalShell";
@@ -126,8 +126,9 @@ export function ListModal({
    *  it. */
   onChanged?: ((rescore: boolean) => void) | undefined;
   /** The panel's mirror of `canClose`, so its Back guard refuses exactly what the scrim,
-   *  Escape and the ✕ refuse rather than a stale copy of one of the reasons (rule 80). */
-  blockCloseRef?: React.MutableRefObject<boolean> | undefined;
+   *  Escape and the ✕ refuse rather than a stale copy of one of the reasons (rule 80).
+   *  Written by `useBackCloseMirror`, which is the only writer of any of these. */
+  blockCloseRef?: RefObject<boolean> | undefined;
 }) {
   const queryClient = useQueryClient();
 
@@ -339,15 +340,8 @@ export function ListModal({
    *  ACCIDENTAL dismissals: scrim, Escape, ✕, Back. */
   const canClose = !save.isPending && !remove.isPending;
 
-  // Mirror it up to ListsPanel's Back guard, so browser Back honors the same predicate the
-  // scrim, Escape and the ✕ do (rule 80), and clear it on unmount so a stale true never
-  // lingers after the modal closes.
-  useEffect(() => {
-    if (blockCloseRef) blockCloseRef.current = !canClose;
-    return () => {
-      if (blockCloseRef) blockCloseRef.current = false;
-    };
-  }, [canClose, blockCloseRef]);
+  // Up to ListsPanel's Back guard, whole rather than by term (rule 80).
+  useBackCloseMirror(blockCloseRef, canClose);
 
   const title =
     view === "picker"

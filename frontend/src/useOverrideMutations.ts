@@ -61,7 +61,7 @@ export function useOverrideMutations() {
   // keeps the show in the lane the operator is looking at (a whole-show reap of an item sitting
   // in Limbo would otherwise re-bucket to Condemned and vanish mid-review), the same "don't
   // live-disappear" contract a per-item decision already gets. The per-season strip marks
-  // (`group_seasons`) and the honored-vs-held flag settle on the next fetch, exactly as a
+  // (the page's `groups` rollup) and the honored-vs-held flag settle on the next fetch, as a
   // per-item season decision's do. Only the show-level fields are touched: a whole-show decision
   // sets no season's OWN override, and the effective (inherited) resolution stays the server's,
   // never recomputed on the client (rule 50).
@@ -143,7 +143,6 @@ export function useOverrideMutations() {
         patchInPlace(key, {
           override: decision,
           override_own: decision,
-          spared: decision === "spare",
           override_effective: null,
           spare_expires_at: spareExpiresAt,
           // The fate field the colors read. Deliberately the spare just set, not the server's
@@ -167,7 +166,6 @@ export function useOverrideMutations() {
         patchInPlace(key, {
           override: null,
           override_own: null,
-          spared: false,
           override_effective: null,
           spare_expires_at: null,
           // Read only alongside a "spare" decision, and this clears the decision, so nothing

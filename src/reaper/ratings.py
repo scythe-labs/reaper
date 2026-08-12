@@ -126,6 +126,28 @@ class Rating:
         """A vote floor only applies to sources that actually count votes."""
         return self.source not in _PERCENTAGE_SOURCES
 
+    def short_of_vote_floor(self, min_votes: int) -> bool:
+        """Does a vote floor bite on this rating? The one derivation of that question.
+
+        Two readers ask it: ``meets``, which decides whether a bar is cleared, and
+        ``engine.gates.RatingFloorGate._miss_phrase``, which tells the operator why it was
+        not. Each used to spell out the same three clauses, and each spelling carried the same
+        three inclusive edges -- ``0`` is no floor at all, ``1`` is the smallest floor
+        ``engine.policy.RatingRuleSpec`` accepts on a source that counts votes, and a count
+        exactly AT the floor clears it. Two copies that merely agree are one edit away from a
+        panel telling the operator a bar was missed on votes the decision counted as enough
+        (rule 104).
+
+        A missing count is short of any floor. ``from_plex`` returns ``votes=None`` for every
+        Plex-sourced rating, so on a Plex-only library that is the ordinary case rather than an
+        edge, and it resolves toward not protecting.
+        """
+        return (
+            self.has_meaningful_vote_count
+            and min_votes > 0
+            and (self.votes is None or self.votes < min_votes)
+        )
+
     def meets(self, floor: float, *, min_votes: int = 0) -> bool:
         """Does this rating clear a protection threshold?
 
@@ -134,16 +156,17 @@ class Rating:
         """
         if self.source is RatingSource.UNKNOWN:
             return False
-        if (
-            self.has_meaningful_vote_count
-            and min_votes > 0
-            and (self.votes is None or self.votes < min_votes)
-        ):
+        if self.short_of_vote_floor(min_votes):
             return False
         return self.value >= floor
 
     def describe(self) -> str:
-        """The string the why-panel shows. Provenance is not optional."""
+        """Provenance-carrying form for a log line or a debugger. Nothing renders this.
+
+        It used to say the why-panel showed it, which no code has done: the panel's rating
+        strings come from ``describe_for_user`` and the stored projection from
+        ``services.display_meta.build_ratings_json`` (rule 7/24).
+        """
         votes = describe_votes(self.votes)
         return f"{self.source.value} {self.value:.1f}/10{votes} (via {self.provider})"
 

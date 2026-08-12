@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 from sqlalchemy import select
@@ -32,6 +32,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind, PlexServer, Snapshot
+from reaper.engine.fields import CustomProtectGate
 from reaper.engine.gates import (
     DataHorizonGate,
     Gate,
@@ -42,12 +43,8 @@ from reaper.engine.gates import (
     ServerPopularityGate,
     StreamingNowGate,
 )
-from reaper.engine.policy import (
-    LIST_GATES_NOW_KEEP_RULES,
-    PolicyBody,
-    PolicyRepair,
-    join_and,
-)
+from reaper.engine.policy import PolicyBody, join_and
+from reaper.engine.policy_migrations import LIST_GATES_NOW_KEEP_RULES, PolicyRepair
 from reaper.services import (
     app_settings,
     history_sync,
@@ -58,10 +55,9 @@ from reaper.services import (
     requested_by,
 )
 from reaper.services import snapshot as snapshot_service
+from reaper.services.executor import ReapGateway
 from reaper.services.snapshot import Progress, ProgressFn
-
-if TYPE_CHECKING:
-    from reaper.services.executor import ReapGateway
+from reaper.text import fold
 
 log = structlog.get_logger(__name__)
 
@@ -172,16 +168,28 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
             # The two list gates reach this by a different route and need their own sentence.
             # They are not unimplemented: they moved to Settings, Lists, and the loader leaves
             # the gate row in place exactly when it cannot find the list that gate was
-            # protecting (``policy.convert_list_protections``), so a scan stops rather than
-            # running a protection short. Telling that operator Reaper "has no implementation"
-            # for something called `whitelisted` names an id they have never seen on any
-            # screen and points at nothing they can do (rules 21, 25).
+            # protecting (``policy_migrations.convert_list_protections``), so a scan stops
+            # rather than running a protection short. Telling that operator Reaper "has no
+            # implementation" for something called `whitelisted` names an id they have never
+            # seen on any screen and points at nothing they can do (rules 21, 25).
             if setting.gate in LIST_GATES_NOW_KEEP_RULES:
+                # **The order in this sentence is the whole of it, and it used to be backwards.**
+                # It said to open Policy and save first, then add the list. Following that
+                # loses the protection for good: the editor cannot save while the row is
+                # there (the save boundary refuses the id, so Save is held), the only way to
+                # reach a save is to turn the row off, and that writes a body with neither the
+                # gate nor `keep_tags` -- so `has_legacy_list_protections` is False forever and
+                # the conversion can never fire again. Adding the list afterwards attaches no
+                # keep rule (`api/lists.py add_list` says so outright), so those titles end up
+                # covered by nothing. Adding it FIRST is what makes the next load convert the
+                # gate into an `on_list` rule naming it, which is the outcome this whole path
+                # exists to reach (rules 25, 144;
+                # `tests/test_api.py` drives both orders).
                 raise ScanConfigError(
                     "A protection you set up is pointing at a list that is no longer there, so "
-                    "the scan stopped instead of leaving titles unprotected. Open Policy and "
-                    "save to finish moving it, then add the list back on Settings, Lists if "
-                    "you still want it."
+                    "the scan stopped instead of leaving titles unprotected. Add the list back "
+                    "on Settings, Lists, then open Policy and save. Turning that protection off "
+                    "instead drops it for good."
                 )
             raise ScanConfigError(
                 f'Policy enables the "{setting.gate.value}" protection, but Reaper has no '
@@ -189,21 +197,13 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
                 "protection you asked for."
             )
         gates.append(
-            gate_type(
-                GateConfig(
-                    gate=setting.gate,
-                    enabled=True,
-                    threshold=setting.threshold,
-                    window_days=setting.window_days,
-                )
-            )
+            gate_type(GateConfig(threshold=setting.threshold, window_days=setting.window_days))
         )
 
     # The owner's own protections, on top of the built-in gates. Each condition is its own
     # gate (protect-only, evaluated through the field registry), so a matched one keeps the
     # title and shows up in the why-panel exactly like a stock protection.
-    from reaper.engine.fields import CustomProtectGate
-
+    #
     # The window rides along because a protect rule may be authored on a watcher count,
     # which the watch mirror only supports as far back as it reaches (rule 140,
     # ``fields.reach_shortfall``). It is the same window the fact was counted over
@@ -410,8 +410,6 @@ async def build_reap_gateway(
     two different switch states for one run. The guard still enforces armed-plus-declared
     independently of the executor's own check.
     """
-    from reaper.services.executor import ReapGateway
-
     async with session_factory() as session:
         rows = (
             (await session.execute(select(Instance).where(Instance.enabled.is_(True))))
@@ -514,7 +512,7 @@ def _flag(row: Any, name: str) -> bool | None:
     except (TypeError, ValueError):
         pass
     if isinstance(value, str):
-        token = value.strip().casefold()
+        token = fold(value)
         if token in _TRUE_TOKENS:
             return True
         if token in _FALSE_TOKENS:
@@ -735,7 +733,7 @@ async def _run_scan_locked(
         # "TV", not the raw `tv` media-type id: this lands verbatim in the incomplete-scan
         # notice on three screens, and the app spells it TV everywhere else, so lower case
         # read as a typo in the middle of a sentence telling the operator to go and fix
-        # something. `api/routes.py`'s simulator sentence already maps its own lane this way
+        # something. `api/simulate.py`'s simulator sentence already maps its own lane this way
         # (rules 21, 144).
         for label, active in (("movie", active_movie), ("TV", active_tv)):
             if active.repairs:

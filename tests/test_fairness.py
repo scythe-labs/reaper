@@ -11,10 +11,12 @@ Names and titles here are placeholders -- the aggregation does not care what the
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
 from typing import get_args
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select, text
@@ -46,6 +48,7 @@ from reaper.services.fairness import (
     WatchEvidence,
     roll_up,
 )
+from tests._fakes import FakeSeerr
 
 # The canonical stored-explanation shapes, kept in the suite that pins what a hand reap does
 # with each rather than transcribed here (rule 119).
@@ -72,7 +75,6 @@ def _req(
         request_id=request_id,
         media_type=media_type,
         is_4k=False,
-        status=5,
         requested_at=NOW - timedelta(days=500),
         requester=Requester(
             seerr_user_id=seerr_id if seerr_id is not None else (plex_id or 0),
@@ -745,7 +747,7 @@ class TestUnmatched:
 
 @pytest.fixture
 async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_cache_engine(settings)
     await history_sync.ensure_schema(engine)
     yield engine
@@ -819,59 +821,13 @@ class TestEvidenceIndex:
 _UNLIMITED = QuotaStatus(limit=None, days=None, used=0, remaining=None, restricted=False)
 
 
-class _FakeSeerr:
-    def __init__(
-        self,
-        requests: list[MediaRequest],
-        users: list[SeerrUser] | None = None,
-        quotas: dict[int, UserQuota] | None = None,
-        titles: dict[int, TitleInfo] | None = None,
-        instance_key: str = "",
-        base_url: str = "https://seerr.example",
-        link_base_url: str | None = None,
-    ) -> None:
-        self._requests = requests
-        self._users = users or []
-        self._quotas = quotas or {}
-        self._titles = titles or {}
-        self.instance_key = instance_key
-        self.base_url = base_url
-        self.link_base_url = link_base_url
-
-    async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
-        return self._requests
-
-    async def users(self, *, take: int = 100) -> list[SeerrUser]:
-        return self._users
-
-    async def quota(self, user_id: int) -> UserQuota:
-        return self._quotas.get(user_id, UserQuota(movie=_UNLIMITED, tv=_UNLIMITED))
-
-    async def title(self, *, tmdb_id: int, media_type: str) -> TitleInfo:
-        info = self._titles.get(tmdb_id)
-        if info is None:
-            raise IntegrationError("seerr", f"no title for {tmdb_id}")
-        return info
-
-
-class _Broken:
-    async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
-        raise IntegrationError("seerr", "down")
-
-    async def users(self, *, take: int = 100) -> list[SeerrUser]:
-        raise IntegrationError("seerr", "down")
-
-    async def quota(self, user_id: int) -> UserQuota:
-        raise IntegrationError("seerr", "down")
-
-
 @pytest.fixture
 async def report_env(
     tmp_path: Path,
 ) -> AsyncIterator[tuple[async_sessionmaker[AsyncSession], AsyncEngine]]:
     """A session factory holding one snapshot with a single condemned movie at tmdb=1, plus
     a cache engine, so ``build_report`` has a real scan to sit on."""
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     main = create_engine(settings)
     async with main.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -913,11 +869,11 @@ class TestBuildReportMergesSeerrs:
     ) -> None:
         # Alice used portal one, Bob only ever used portal two. Both must land on the board.
         factory, cache = report_env
-        first = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
-        second = _FakeSeerr([_req(plex_id=2, name="Bob", tmdb=1, request_id=2)])
+        first = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        second = FakeSeerr([_req(plex_id=2, name="Bob", tmdb=1, request_id=2)])
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[first, second],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[first, second],
             cache_engine=cache,
         )
         assert {r.name for r in report.rows} == {"Alice", "Bob"}
@@ -930,13 +886,13 @@ class TestBuildReportMergesSeerrs:
         and reasoned. The snapshot clock here is NOW, and this request arrived NOW-400d, so it
         was present at scan time: set aside, not added since."""
         factory, cache = report_env
-        seerr = _FakeSeerr(
+        seerr = FakeSeerr(
             [_req(plex_id=1, name="Alice", tmdb=42, imdb=None)],
             titles={42: TitleInfo(title="Some Requested Film", year=2021)},
         )
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[seerr],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[seerr],
             cache_engine=cache,
         )
         assert report.not_in_scan == 1
@@ -951,10 +907,10 @@ class TestBuildReportMergesSeerrs:
         """A title lookup that fails leaves the row unnamed (the view shows a generic label),
         and the report is still built: naming is best-effort, exactly like quota enrichment."""
         factory, cache = report_env
-        seerr = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=77, imdb=None)])  # no titles
+        seerr = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=77, imdb=None)])  # no titles
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[seerr],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[seerr],
             cache_engine=cache,
         )
         (u,) = report.unmatched
@@ -967,11 +923,11 @@ class TestBuildReportMergesSeerrs:
         # A read-only report must 502 (propagate) rather than quietly drop a portal and look
         # complete: the endpoint maps this IntegrationError to a 502.
         factory, cache = report_env
-        good = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        good = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
         with pytest.raises(IntegrationError):
             await fairness.build_report(
-                session_factory=factory,  # type: ignore[arg-type]
-                seerrs=[good, _Broken()],  # type: ignore[list-item]
+                session_factory=factory,
+                seerrs=[good, FakeSeerr(unreachable=True)],
                 cache_engine=cache,
             )
 
@@ -994,8 +950,8 @@ class TestBuildReportMergesSeerrs:
             )
             await session.commit()
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[_FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])],
             cache_engine=cache,
         )
         (row,) = report.rows
@@ -1012,7 +968,7 @@ class TestBuildReportMergesSeerrs:
         the board's read."""
         factory, cache = report_env
 
-        class _CountingSeerr(_FakeSeerr):
+        class _CountingSeerr(FakeSeerr):
             reads = 0
 
             async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
@@ -1023,8 +979,8 @@ class TestBuildReportMergesSeerrs:
         shared = fairness.RequestCache()
         for _ in range(3):
             await fairness.build_report(
-                session_factory=factory,  # type: ignore[arg-type]
-                seerrs=[seerr],  # type: ignore[list-item]
+                session_factory=factory,
+                seerrs=[seerr],
                 cache_engine=cache,
                 cache=shared,
             )
@@ -1046,31 +1002,125 @@ class TestEnrichAccounts:
     async def test_sums_counts_and_ors_restriction_across_portals(self) -> None:
         # One person with an account on two portals: counts add, and each type's cap is the
         # tightest across portals with restriction OR-ed. Movie and TV stay independent.
-        a = _FakeSeerr(
+        a = FakeSeerr(
             [],
             users=[_user(seerr_id=10, plex_id=1, name="Alex", count=100)],
             quotas={10: UserQuota(movie=_q(1, 14, True), tv=_UNLIMITED)},
         )
-        b = _FakeSeerr(
+        b = FakeSeerr(
             [],
             users=[_user(seerr_id=20, plex_id=1, name="Alex", count=69)],
             quotas={20: UserQuota(movie=_UNLIMITED, tv=_q(1, 60, False))},
         )
-        out = await fairness._enrich_accounts([a, b], {1})  # type: ignore[list-item]
+        out = await fairness._enrich_accounts([a, b], {1})
         pq = out[1]
         assert pq.seerr_total == 169
         assert (pq.movie.limit, pq.movie.days, pq.movie.at_limit) == (1, 14, True)
         assert (pq.tv.limit, pq.tv.days, pq.tv.at_limit) == (1, 60, False)
 
     async def test_a_broken_portal_is_skipped_not_fatal(self) -> None:
-        good = _FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
-        out = await fairness._enrich_accounts([good, _Broken()], {1})  # type: ignore[list-item]
+        good = FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
+        out = await fairness._enrich_accounts([good, FakeSeerr(unreachable=True)], {1})
         assert out[1].seerr_total == 5
 
     async def test_an_unmatched_requester_has_no_seerr_account(self) -> None:
-        good = _FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
-        out = await fairness._enrich_accounts([good], {None})  # type: ignore[list-item]
+        good = FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
+        out = await fairness._enrich_accounts([good], {None})
         assert out == {}
+
+
+class TestEnrichTitles:
+    async def test_the_lookups_are_bounded_rather_than_all_starting_at_once(self) -> None:
+        """One Scales load must not open a socket per not-in-scan title. The per-report cap is
+        80 and httpx2's pool allows 100, so nothing below the semaphore bounds the burst.
+
+        Driven with more targets than the bound and a portal that counts what is in flight, so
+        an unbounded fan-out peaks at the target count instead. `targets` is a multiple of the
+        constant rather than a literal, so raising the constant cannot shrink the test into one
+        wave and make it vacuous."""
+        targets = fairness._TITLE_LOOKUP_CONCURRENCY * 3
+        in_flight = 0
+        peak = 0
+
+        class _WatchingSeerr(FakeSeerr):
+            async def title(self, *, tmdb_id: int, media_type: str) -> TitleInfo:
+                nonlocal in_flight, peak
+                in_flight += 1
+                peak = max(peak, in_flight)
+                # One yield is a full pass through the ready queue: every task that is not
+                # held at the semaphore reaches this point before the first one resumes.
+                await asyncio.sleep(0)
+                in_flight -= 1
+                return TitleInfo(title=f"Title {tmdb_id}", year=2020)
+
+        unmatched = [
+            fairness.UnmatchedTitle(
+                title=None,
+                year=None,
+                media_type="movie",
+                is_4k=False,
+                requested_at=None,
+                available_at=None,
+                reason=UNMATCHED_AFTER_SCAN,
+                requested_by=[],
+                request_count=1,
+                tmdb_id=i,
+                portal_key="p1",
+            )
+            for i in range(targets)
+        ]
+
+        await fairness._enrich_titles([_WatchingSeerr([], instance_key="p1")], unmatched)
+
+        assert peak <= fairness._TITLE_LOOKUP_CONCURRENCY
+        # Every row still gets its name: the bound throttles, it never drops a lookup.
+        assert [u.title for u in unmatched] == [f"Title {i}" for i in range(targets)]
+
+    async def test_a_portal_that_stops_answering_cannot_hold_the_page_open(self) -> None:
+        """The bound is what makes the deadline necessary. A portal that accepts connections
+        and never answers costs one read timeout per wave, so bounding the burst turns one
+        stalled wave into ten and the page has no deadline of its own.
+
+        The deadline is monkeypatched rather than waited out, and the portal hangs forever.
+        The outer guard is what turns "no deadline" into a failure instead of a hung job: it
+        is two orders of magnitude above the patched deadline, so it can only fire when
+        nothing under it bounds the wait. The rows the deadline cuts off keep ``title=None``,
+        which is what a failed lookup already leaves and what the generic label renders
+        from."""
+        started = 0
+
+        class _HangingSeerr(FakeSeerr):
+            async def title(self, *, tmdb_id: int, media_type: str) -> TitleInfo:
+                nonlocal started
+                started += 1
+                await asyncio.Event().wait()  # never set
+                raise AssertionError("unreachable")
+
+        unmatched = [
+            fairness.UnmatchedTitle(
+                title=None,
+                year=None,
+                media_type="movie",
+                is_4k=False,
+                requested_at=None,
+                available_at=None,
+                reason=UNMATCHED_AFTER_SCAN,
+                requested_by=[],
+                request_count=1,
+                tmdb_id=i,
+                portal_key="p1",
+            )
+            for i in range(fairness._TITLE_LOOKUP_CONCURRENCY * 2)
+        ]
+
+        async with asyncio.timeout(5):
+            with patch.object(fairness, "_TITLE_LOOKUP_DEADLINE_S", 0.05):
+                await fairness._enrich_titles([_HangingSeerr([], instance_key="p1")], unmatched)
+
+        # Returned rather than hung, with every row on its generic label.
+        assert [u.title for u in unmatched] == [None] * len(unmatched)
+        # The bound held while it hung: only the first wave ever reached the portal.
+        assert started == fairness._TITLE_LOOKUP_CONCURRENCY
 
 
 class TestBuildReportReadsNoAccounts:
@@ -1085,7 +1135,7 @@ class TestBuildReportReadsNoAccounts:
         factory, cache = report_env
         calls: list[str] = []
 
-        class _CountingSeerr(_FakeSeerr):
+        class _CountingSeerr(FakeSeerr):
             async def users(self, *, take: int = 100) -> list[SeerrUser]:
                 calls.append("users")
                 return await super().users(take=take)
@@ -1100,8 +1150,8 @@ class TestBuildReportReadsNoAccounts:
             quotas={1: UserQuota(movie=_q(1, 14, True), tv=_UNLIMITED)},
         )
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
         )
         assert len(report.rows) == 1
@@ -1113,14 +1163,14 @@ class TestBuildReportReadsNoAccounts:
         # Requests read fine; the user list is down. The board never asks it, so it renders.
         factory, cache = report_env
 
-        class _RequestsOnly(_FakeSeerr):
+        class _RequestsOnly(FakeSeerr):
             async def users(self, *, take: int = 100) -> list[SeerrUser]:
                 raise IntegrationError("seerr", "user list down")
 
         portal = _RequestsOnly([_req(plex_id=1, name="Alice", tmdb=1)])
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
         )
         (row,) = report.rows
@@ -1132,7 +1182,7 @@ class TestBuildPersonDetail:
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
         factory, cache = report_env
-        portal = _FakeSeerr(
+        portal = FakeSeerr(
             [
                 _req(plex_id=1, name="Alice", tmdb=1),
                 _req(plex_id=2, name="Bob", tmdb=1, request_id=2),
@@ -1140,8 +1190,8 @@ class TestBuildPersonDetail:
             users=[_user(seerr_id=1, plex_id=1, name="Alice", count=169)],
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1163,14 +1213,14 @@ class TestBuildPersonDetail:
         through ({base_url}/users/{id}), built from their own request so it needs no extra
         Seerr read."""
         factory, cache = report_env
-        portal = _FakeSeerr(
+        portal = FakeSeerr(
             [_req(plex_id=1, name="Alice", tmdb=1, seerr_id=7, portal_key="p1")],
             base_url="https://seerr.example",
             instance_key="p1",
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1184,15 +1234,15 @@ class TestBuildPersonDetail:
         address while Reaper connects over a LAN ip), the profile link opens that address, not
         the connect one, matching the why-panel jump links."""
         factory, cache = report_env
-        portal = _FakeSeerr(
+        portal = FakeSeerr(
             [_req(plex_id=1, name="Alice", tmdb=1, seerr_id=7, portal_key="p1")],
             base_url="https://seerr.lan",
             link_base_url="https://requests.example.com",
             instance_key="p1",
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1205,10 +1255,10 @@ class TestBuildPersonDetail:
         """No Seerr user id on the request means no page to link to: the name stays plain
         text rather than a dead link."""
         factory, cache = report_env
-        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1, seerr_id=0)])
+        portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1, seerr_id=0)])
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1219,10 +1269,10 @@ class TestBuildPersonDetail:
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
         factory, cache = report_env
-        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:999",
         )
@@ -1233,10 +1283,10 @@ class TestBuildPersonDetail:
     ) -> None:
         factory, cache = report_env
         await _insert_event(cache, rating_key=555, user_id=1)  # Alice (plex 1) played it
-        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1256,11 +1306,11 @@ class TestBuildPersonDetail:
         # accident is distinguishable from one that was carried (rule 141).
         await _insert_event(cache, rating_key=555, user_id=1, watched_at=1_700_000_000)
         await _insert_event(cache, rating_key=555, user_id=1, watched_at=1_800_000_000)
-        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
 
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1275,11 +1325,11 @@ class TestBuildPersonDetail:
         visible for anyone, so no figure here means anything. Null rather than a stand-in date,
         which the drawer would print as a real span and count a zero from."""
         factory, cache = report_env
-        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
 
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1297,11 +1347,11 @@ class TestBuildPersonDetail:
         ``test_the_board_puts_the_missing_plex_account_on_the_wire`` (rules 64, 72, 93)."""
         factory, cache = report_env
         await _insert_event(cache, rating_key=555, user_id=1, watched_at=1_700_000_000)
-        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
 
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1319,7 +1369,7 @@ class TestBuildPersonDetail:
         drawer lists the in-scan one as a title and the other in her not-in-scan panel, named
         from Seerr and counted -- so her panel reads as most of what she asked for, not all."""
         factory, cache = report_env
-        portal = _FakeSeerr(
+        portal = FakeSeerr(
             [
                 _req(plex_id=1, name="Alice", tmdb=1, imdb="tt1", request_id=1),
                 _req(plex_id=1, name="Alice", tmdb=2, imdb=None, request_id=2),
@@ -1327,8 +1377,8 @@ class TestBuildPersonDetail:
             titles={2: TitleInfo(title="A Title The Scan Missed", year=2020)},
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1356,7 +1406,7 @@ class TestBuildPersonDetail:
         """B-6 at the drawer: a show has two condemned seasons (S1=4 GiB key 770, S2=6 GiB key
         771). Alice asked for S1 ONLY. Her granted/reclaimable bytes and her watched figure must
         cover S1 alone -- never the whole show, and never S2 she played but never asked for."""
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         main = create_engine(settings)
         async with main.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -1392,7 +1442,7 @@ class TestBuildPersonDetail:
         # Alice played an episode under S1 (770) and one under S2 (771); she asked for S1 only.
         await _insert_event(cache, rating_key=9101, user_id=1, parent=770, gp=9001)
         await _insert_event(cache, rating_key=9201, user_id=1, parent=771, gp=9001)
-        portal = _FakeSeerr(
+        portal = FakeSeerr(
             [
                 _req(
                     plex_id=1,
@@ -1406,8 +1456,8 @@ class TestBuildPersonDetail:
             ]
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1427,7 +1477,7 @@ class TestBuildPersonDetail:
         it opens divides by ``requests_in_scan``. Alice asked for a season the scan has and a
         season of another show it does not, and watched the first. The two surfaces must reach
         the same number; they used to read 50% and 100% for the same person and the same scan."""
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         main = create_engine(settings)
         async with main.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -1462,7 +1512,7 @@ class TestBuildPersonDetail:
                 )
             await session.commit()
         await _insert_event(cache, rating_key=9101, user_id=1, parent=770, gp=9001)
-        portal = _FakeSeerr(
+        portal = FakeSeerr(
             [
                 # In the scan, and watched.
                 _req(
@@ -1489,13 +1539,13 @@ class TestBuildPersonDetail:
             ]
         )
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1552,10 +1602,10 @@ class TestTheDrawerFateMatchesTheQueueLane:
         cache: AsyncEngine,
     ) -> tuple[str, str]:
         """The drawer's word for the fixture's title, and the queue's lane for the same row."""
-        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )

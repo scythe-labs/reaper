@@ -24,7 +24,6 @@ been ignored for five months.
 
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, ClassVar
@@ -42,22 +41,17 @@ log = structlog.get_logger(__name__)
 # the rest do not exist.
 DEFAULT_PAGE_SIZE = 100
 
-
-class MediaStatus(enum.IntEnum):
-    """Seerr's media status.
-
-    The enum diverges between forks: ``DELETED`` is **7** on Seerr and Jellyseerr,
-    but **6** on Overseerr, where 6 is ``BLOCKLISTED``. Never hardcode the integer;
-    compare against this enum and detect the flavor from ``/status``.
-    """
-
-    UNKNOWN = 1
-    PENDING = 2
-    PROCESSING = 3
-    PARTIALLY_AVAILABLE = 4
-    AVAILABLE = 5
-    BLOCKLISTED = 6
-    DELETED = 7
+#: Hard stop on both walks below. ``skip >= total`` is their only normal exit and ``total`` is a
+#: number the portal re-picks on every page, so the walk's LENGTH is the server's to choose. A
+#: total that keeps rising by a page's worth is never caught at all; a merely absurd one is caught
+#: after millions of round trips against the operator's own Seerr. A total that is large but fixed
+#: terminates on its own, which is why the trip below reads the page count and not the total. At
+#: DEFAULT_PAGE_SIZE rows a page this cap is 100,000 requests, past any real Seerr, so it binds
+#: only on a server that is not advancing through the listing (rule 56;
+#: ``history_sync.MAX_HISTORY_PAGES`` is the model). Tripping it RAISES, where that model stops and
+#: warns: both walks here are complete-or-raise, and returning short would leave
+#: ``requested_by.build_request_index`` claiming it read every Seerr in full.
+MAX_PAGES = 1_000
 
 
 @dataclass(frozen=True)
@@ -70,15 +64,6 @@ class Requester:
     display_name: str | None
     email: str | None
 
-    @property
-    def is_mappable(self) -> bool:
-        """Can we tell whether this person watched the thing they asked for?
-
-        If not, the requester rule must abstain. An unmappable requester is a
-        *protection*, never evidence that nobody wanted it.
-        """
-        return self.plex_id is not None
-
 
 @dataclass(frozen=True)
 class MediaRequest:
@@ -87,7 +72,6 @@ class MediaRequest:
     request_id: int
     media_type: str  # "movie" | "tv"
     is_4k: bool
-    status: int
     requested_at: datetime | None
     requester: Requester
 
@@ -116,10 +100,6 @@ class MediaRequest:
     raw: dict[str, Any] | None = None
     """The full payload, archived before we ever call DELETE /media/{id}: that
     delete cascades and destroys the very request history that justified it."""
-
-    @property
-    def is_available(self) -> bool:
-        return self.status in (MediaStatus.AVAILABLE, MediaStatus.PARTIALLY_AVAILABLE)
 
 
 @dataclass(frozen=True)
@@ -195,15 +175,10 @@ def _parse_request(payload: dict[str, Any], portal_key: str = "") -> MediaReques
     user = payload.get("requestedBy") or {}
     is_4k = bool(payload.get("is4k"))
 
-    # A 4K request correlates to the parallel *4k fields. Reading the HD ones for a
-    # 4K request would check watch history against the wrong file entirely.
-    status = _as_int(media.get("status4k") if is_4k else media.get("status")) or 0
-
     return MediaRequest(
         request_id=_as_int(payload.get("id")) or 0,
         media_type=str(payload.get("type") or media.get("mediaType") or "movie"),
         is_4k=is_4k,
-        status=status,
         requested_at=from_iso(payload.get("createdAt")),
         requester=Requester(
             seerr_user_id=_as_int(user.get("id")) or 0,
@@ -328,10 +303,7 @@ class SeerrClient(BaseClient):
         self.link_base_url = link_base_url
 
     async def status(self) -> dict[str, Any]:
-        data = await self.get_json("/api/v1/status")
-        if not isinstance(data, dict):
-            raise IntegrationError(self.service, "/status did not return an object")
-        return data
+        return await self.get_dict("/api/v1/status")
 
     async def requests(
         self,
@@ -347,13 +319,10 @@ class SeerrClient(BaseClient):
         on it would quietly analyze the ten most recent requests and report the
         rest as non-existent.
         """
-        payload = await self.get_json(
+        payload = await self.get_dict(
             "/api/v1/request",
             params={"take": take, "skip": skip, "filter": filter_, "sort": sort},
         )
-        if not isinstance(payload, dict):
-            raise IntegrationError(self.service, "/request did not return an object")
-
         total = int((payload.get("pageInfo") or {}).get("results") or 0)
         rows = payload.get("results")
         if not isinstance(rows, list):
@@ -376,11 +345,15 @@ class SeerrClient(BaseClient):
         says why: a confident ``Known(value=False)`` off a partial view adds delete pressure
         to a title a blinded portal in fact holds a request for. Returning short and normal
         made that claim false without anything noticing (rules 56/89 and 7/24).
+
+        Bounded by :data:`MAX_PAGES`, which raises rather than returning short.
         """
         out: list[MediaRequest] = []
         skip = 0
+        pages = 0
         while True:
             page, total = await self.requests(take=DEFAULT_PAGE_SIZE, skip=skip, filter_=filter_)
+            pages += 1
             out.extend(page)
             skip += DEFAULT_PAGE_SIZE
             if skip >= total:
@@ -392,6 +365,12 @@ class SeerrClient(BaseClient):
                 raise IntegrationError(
                     self.service, f"/request stopped at {len(out)} of {total} requests"
                 )
+            if pages >= MAX_PAGES:
+                # Only reachable while the reported total keeps outrunning ``skip``, which is a
+                # portal that is not advancing through the listing.
+                raise IntegrationError(
+                    self.service, f"the request list never finished, after {len(out)} requests"
+                )
         log.info("seerr.requests_loaded", count=len(out), filter=filter_)
         return out
 
@@ -401,13 +380,15 @@ class SeerrClient(BaseClient):
         ``take`` is sent explicitly for the same reason as :meth:`requests`: the server
         default is small, and relying on it would read only the first page of users and
         report the rest as absent.
+
+        Bounded by :data:`MAX_PAGES`, which raises rather than returning short.
         """
         out: list[SeerrUser] = []
         skip = 0
+        pages = 0
         while True:
-            payload = await self.get_json("/api/v1/user", params={"take": take, "skip": skip})
-            if not isinstance(payload, dict):
-                raise IntegrationError(self.service, "/user did not return an object")
+            payload = await self.get_dict("/api/v1/user", params={"take": take, "skip": skip})
+            pages += 1
             results = payload.get("results")
             if not isinstance(results, list):
                 # Unreadable rows are not zero rows. Same defect as :meth:`requests`, and
@@ -426,6 +407,12 @@ class SeerrClient(BaseClient):
                 raise IntegrationError(
                     self.service, f"/user stopped at {len(out)} of {total} accounts"
                 )
+            if pages >= MAX_PAGES:
+                # The same loop, twenty lines up (rule 72). Also the only bound when a caller
+                # passes ``take=0``, where ``skip`` never advances at all.
+                raise IntegrationError(
+                    self.service, f"the account list never finished, after {len(out)} accounts"
+                )
         log.info("seerr.users_loaded", count=len(out))
         return out
 
@@ -436,9 +423,7 @@ class SeerrClient(BaseClient):
         override, or the global default). The ``restricted`` flag it carries is the only
         source of truth for "at their cap right now", computed live inside each type's
         window."""
-        payload = await self.get_json(f"/api/v1/user/{user_id}/quota")
-        if not isinstance(payload, dict):
-            raise IntegrationError(self.service, "/quota did not return an object")
+        payload = await self.get_dict(f"/api/v1/user/{user_id}/quota")
         return UserQuota(
             movie=_parse_quota(payload.get("movie")), tv=_parse_quota(payload.get("tv"))
         )
@@ -451,9 +436,7 @@ class SeerrClient(BaseClient):
         the page. The kind (movie vs tv) picks the endpoint and the title field, since the
         two id spaces overlap and each endpoint names the field differently."""
         kind = "movie" if media_type == "movie" else "tv"
-        payload = await self.get_json(f"/api/v1/{kind}/{tmdb_id}")
-        if not isinstance(payload, dict):
-            raise IntegrationError(self.service, f"/{kind}/{tmdb_id} did not return an object")
+        payload = await self.get_dict(f"/api/v1/{kind}/{tmdb_id}")
         if kind == "movie":
             name = payload.get("title") or payload.get("originalTitle")
             released = payload.get("releaseDate")
@@ -480,9 +463,7 @@ class SeerrClient(BaseClient):
             ("/api/v1/settings/sonarr", "sonarr"),
             ("/api/v1/settings/radarr", "radarr"),
         ):
-            payload = await self.get_json(path)
-            if not isinstance(payload, list):
-                raise IntegrationError(self.service, f"{path} did not return a list")
+            payload = await self.get_list(path)
             for row in payload:
                 if isinstance(row, dict) and (svc := _parse_service(row, kind)) is not None:
                     out.append(svc)

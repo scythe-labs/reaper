@@ -4,18 +4,18 @@
 //     kept, unlike a condemned movie where reap is a no-op -- but Reap falls away once every
 //     season is already condemned;
 //   - the decision acts on the show's group key, and a failed save says so.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Group, Links, Verdict } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { ShowPanel } from "./ShowPanel";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { override: vi.fn(), clearOverride: vi.fn(), general: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
@@ -50,14 +50,10 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     requested_by: null,
     group_key: "sonarr:show:1",
     group_title: "Example Show",
-    group_condemned_count: null,
-    group_condemned_bytes: null,
-    group_unknown_size: null,
     video_resolution: null,
     library: null,
     dormant_for: null,
     reason: null,
-    spared: false,
     override: null,
     override_own: null,
     show_override: null,
@@ -68,7 +64,6 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     chip: null,
     show_status: null,
     season_number: n,
-    group_seasons: null,
     ...extra,
   };
   if (extra.override_own === undefined) c.override_own = c.override;
@@ -97,10 +92,9 @@ function group(seasons: Candidate[]): Group {
 
 function renderPanel(g: Group, onOpenSeason: (id: number, lane: Verdict) => void = () => {}) {
   const queryClient = seedSettings(testQueryClient());
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <ShowPanel group={g} onOpenSeason={onOpenSeason} onClose={() => {}} />
-    </QueryClientProvider>,
+  return renderWithProviders(
+    <ShowPanel group={g} onOpenSeason={onOpenSeason} onClose={() => {}} />,
+    { client: queryClient },
   );
 }
 

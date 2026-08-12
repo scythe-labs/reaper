@@ -3,40 +3,19 @@
 // manual-address editor for an address they typed earlier, getting out of a sign-in whose
 // plex.tv tab never opened, seeing a failed sign-in as a failure, and -- for anyone driving
 // this panel by ear -- being able to tell one box on it from another.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlexResourceConnection, PlexStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { PlexPanel } from "./PlexPanel";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    plexStatus: vi.fn(),
-    plexResources: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-    setPlexLibraries: vi.fn(),
-    watchEvidence: vi.fn(),
-    resetWatchEvidence: vi.fn(),
-    // Read by `useSafety`, which the watch-history group consults for `has_password` before it
-    // offers the reset at all. A mock that omitted it would hand the hook `undefined` and the
-    // group would render its "couldn't check" branch in every test here (rule 135).
-    safety: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    setLeavingSoonSettings: vi.fn(),
-    syncLeavingSoon: vi.fn(),
-    setPlexSettings: vi.fn(),
-    plexSetConnection: vi.fn(),
-    plexSwitchServer: vi.fn(),
-    plexUnlink: vi.fn(),
-    plexLinkStart: vi.fn(),
-    plexLinkPoll: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
@@ -101,14 +80,15 @@ function renderPanel(
   });
   const queryClient = testQueryClient();
   if (cached) queryClient.setQueryData(["plex"], cached);
-  return render(
-    <QueryClientProvider client={queryClient}>
+  return renderWithProviders(
+    <>
       {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when no
           region is listening -- so without it here this panel's sentences are dropped and a test
           about them passes against silence. */}
       <Announcer />
       <PlexPanel onDirtyChange={onDirtyChange} />
-    </QueryClientProvider>,
+    </>,
+    { client: queryClient },
   );
 }
 
@@ -243,12 +223,7 @@ describe("when plex.tv's list comes back without the linked server", () => {
         },
       ],
     });
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />);
 
     // The row says what happened, and names the server Reaper is actually linked to.
     const notice = await screen.findByText(/came back without the server Reaper uses/);
@@ -314,10 +289,16 @@ describe("linking with Plex", () => {
 
 // Every read below the connection form means "of the currently LINKED server", and not one of the
 // four is qualified by a machine identifier, so a row cached against the old server answers for
-// the new one. All three paths that change which server that is therefore have to refresh the
-// whole set; two of them refreshed the status row alone, so unlinking and then linking a DIFFERENT
+// the new one. Every path that changes which server that is therefore has to refresh the whole
+// set; two of them refreshed the status row alone, so unlinking and then linking a DIFFERENT
 // server painted the previous server's libraries and their enabled flags -- and "Movies" and
 // "TV Shows" collide across servers, so the wrong list looked like the right one (#205).
+//
+// **Three of the five such paths are on this panel.** The setup wizard holds the other two, and
+// this file is where the claim used to be checked, which is how the wizard came to open-code a
+// three-key version of the set (W10-7). The keys now live in `plexServerQueries.ts` and
+// `plexServerQueries.test.ts` bans any handler from restating them; these stay because they drive
+// the panel's three paths through the UI, which a source scan cannot do.
 //
 // **These pin the invalidation, not the symptom, and the symptom is not reachable from here.** It
 // needs a cached row to still be FRESH when the query re-enables, and freshness is the one thing
@@ -361,11 +342,7 @@ describe("changing which server is linked", () => {
       invalidated.push(JSON.stringify(filters?.queryKey));
       return passThrough(filters);
     });
-    render(
-      <QueryClientProvider client={client}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />, { client });
     return invalidated;
   }
 
@@ -440,12 +417,7 @@ describe("the signed-in account label", () => {
           resolveResources = resolve;
         }),
     );
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />);
 
     // Past the fast, local status query, the account row is up, but the live plex.tv
     // account lookup is still in flight.
@@ -753,11 +725,7 @@ describe("the groups below the form, through a failed refetch", () => {
       ],
     });
     const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />, { client: queryClient });
     return queryClient;
   }
 
@@ -775,8 +743,10 @@ describe("the groups below the form, through a failed refetch", () => {
   const WHAT_HINT =
     "The stale line's noun is the `what` prop of StaleReadNotice.tsx, which owns the sentence. " +
     'Sibling call sites: PlexPanel\'s own status read (the default, "these settings"), the ' +
-    'library grid ("the library list"), the Leaving Soon group ("the Leaving Soon settings"); ' +
-    "AboutPanel, JobsPanel, LeavingSoonRow and NotificationsPanel in Settings.tsx.";
+    'library grid ("the library list"), the watch history record, the Leaving Soon group ("the ' +
+    'Leaving Soon settings"); ' +
+    "AboutPanel.tsx, JobsPanel.tsx (the panel and LeavingSoonRow), NotificationsPanel.tsx and " +
+    "ServicesPanel.tsx.";
 
   it("keeps the library grid and its switches when the refetch fails", async () => {
     const queryClient = renderWithClient();
@@ -926,13 +896,14 @@ describe("forgetting the recorded watch history", () => {
       ],
     });
     const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
+    renderWithProviders(
+      <>
         {/* `announce()` returns early when no region is listening, so without this the
             sentence below is dropped and the test passes against silence. */}
         <Announcer />
         <PlexPanel />
-      </QueryClientProvider>,
+      </>,
+      { client: queryClient },
     );
     return queryClient;
   }
@@ -1219,5 +1190,139 @@ describe("saving the Plex web address", () => {
     const { address } = await typeAndSave();
 
     await waitFor(() => expect(address).toHaveFocus());
+  });
+});
+
+describe("the shelf status line", () => {
+  // The one sentence on this screen that says how the Leaving Soon shelf is doing, and until
+  // now the only one of the four copies of that answer with no test on it -- which is how it
+  // went on wording its own preview caveat while the other three were fixed (#555), and how
+  // it went on answering for a shelf a later scan had skipped.
+  const PASS = {
+    at: "2026-08-03T02:00:00+00:00",
+    movies: 280,
+    seasons: 311,
+    applied: true,
+    ok: true,
+    result: "4 added, 1 cleared",
+  };
+  /** After `PASS`, since the whole decision is which record is newer (rule 141). */
+  const SKIP = { at: "2026-08-04T20:06:00+00:00", result: "Reaper couldn't reach Plex" };
+
+  async function statusLine(over: Record<string, unknown>): Promise<string> {
+    apiMock.leavingSoonSettings.mockResolvedValue({
+      enabled: true,
+      allow_unarmed: false,
+      last: PASS,
+      last_skip: null,
+      ...over,
+    });
+    const { container } = renderPanel();
+    const line = await waitFor(() => {
+      const found = [...container.querySelectorAll(".set-status")].find((n) =>
+        n.textContent?.includes("on the shelves"),
+      );
+      expect(found, "the shelf status line is not on the panel").toBeDefined();
+      return found as HTMLElement;
+    });
+    return line.textContent ?? "";
+  }
+
+  /** The whole line bar the elapsed phrase, which is the wall clock and not a claim this
+   *  panel makes (rule 133). Anchored at both ends, so a stray lead is a failure. */
+  const LINE = (lead: string) =>
+    new RegExp(
+      `^${lead}Last updated .+, 280 movies and 311 seasons on the shelves, ` +
+        "next update after the next scan\\.$",
+    );
+
+  it("leads with the pass's own sentence, never one worded here", async () => {
+    expect(await statusLine({})).toMatch(LINE("4 added, 1 cleared\\. "));
+  });
+
+  it("says nothing at all while the shelf is switched off", async () => {
+    // The line promised "next update after the next scan" for a scan coded to skip the
+    // shelf, and named counts a switch-off cleanup had already cleared from Plex (#624). The
+    // switch is asserted alongside, because the fix is a line that disappears and the whole
+    // group disappearing would look the same from a query for the text (rule 118).
+    apiMock.leavingSoonSettings.mockResolvedValue({
+      enabled: false,
+      allow_unarmed: false,
+      last: PASS,
+      last_skip: null,
+    });
+    const { container } = renderPanel();
+
+    const shelf = await screen.findByRole("switch", { name: 'Show "Leaving Soon" in Plex' });
+    expect(shelf).not.toBeChecked();
+    // The watch-history record has a `.set-status` row of its own on this panel, so the
+    // predicate is `statusLine`'s: the shelf line is the one naming the shelves.
+    const shelfLine = [...container.querySelectorAll(".set-status")].find((n) =>
+      n.textContent?.includes("on the shelves"),
+    );
+    expect(shelfLine).toBeUndefined();
+    expect(screen.queryByText(/next update after the next scan/)).toBeNull();
+  });
+
+  it("says a later scan skipped the shelves, and past-tenses the counts it left behind", async () => {
+    // Without this the panel answered with the completed pass alone: a green, confident
+    // verdict about a shelf that has stopped updating, on the screen an operator comes to
+    // when they suspect exactly that.
+    const line = await statusLine({ last_skip: SKIP });
+
+    expect(line).toContain("A later scan didn't update the shelves. The Jobs page says why.");
+    expect(line).toContain("were on the shelves at the last update");
+    expect(line).not.toContain("4 added, 1 cleared");
+  });
+
+  it("goes back to the pass once a later one lands", async () => {
+    // The direction that proves it COMPARES the two. Nothing clears a skip, so without this
+    // the panel would report a recovered shelf as broken forever.
+    const line = await statusLine({
+      last: { ...PASS, at: "2026-08-04T22:30:00+00:00" },
+      last_skip: SKIP,
+    });
+
+    expect(line).toContain("4 added, 1 cleared.");
+    expect(line).not.toContain("didn't update the shelves");
+  });
+
+  it("opens with the date, not a stray period, for a row stored before summaries existed", async () => {
+    // `ok` and `result` were added to the stored row after the shelf shipped, and the JSON
+    // is never migrated, so a tester's row can thaw as `result: ""`.
+    expect(await statusLine({ last: { ...PASS, result: "" } })).toMatch(LINE(""));
+  });
+
+  it("groups every number on the line the one way, whatever the browser's locale", async () => {
+    // The lead sentence is the service's, comma-grouped by Python's `:,`, and the server
+    // cannot know the browser's locale. `count` follows that locale, so the two together read
+    // "1,234 added, 5,678 cleared. Last updated …, 1.234 movies" in a de-DE browser -- two
+    // thousands separators in one sentence, neither wrong alone.
+    //
+    // Driving the locale is what makes this fail on reverting to `count` (rule 118): under
+    // en-US both formatters agree and the assertion cannot discriminate. The default locale
+    // is stubbed at `Number.prototype.toLocaleString`, which is the call both formatters
+    // actually make -- spying on `Intl.NumberFormat` does NOT reach it, and a version of this
+    // test that did read green against the very revert it was written to catch.
+    const original = Number.prototype.toLocaleString;
+    vi.spyOn(Number.prototype, "toLocaleString").mockImplementation(function (
+      this: number,
+      locales?: Intl.LocalesArgument,
+      options?: Intl.NumberFormatOptions,
+    ) {
+      return original.call(this, locales ?? "de-DE", options);
+    });
+    try {
+      const line = await statusLine({
+        last: { ...PASS, movies: 1234, seasons: 5678, result: "1,234 added, 5,678 cleared" },
+      });
+
+      expect(line).toContain("1,234 added, 5,678 cleared");
+      expect(line).toContain("1,234 movies and 5,678 seasons");
+      expect(line).not.toContain("1.234");
+      expect(line).not.toContain("5.678");
+    } finally {
+      vi.mocked(Number.prototype.toLocaleString).mockRestore();
+    }
   });
 });

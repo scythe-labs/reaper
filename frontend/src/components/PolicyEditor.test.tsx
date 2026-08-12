@@ -5,38 +5,18 @@
 // to fix them: a policy that could not be read showed no way to replace it, and a preset
 // click left the removal lane over budget with Save disabled. Each test here fails if
 // either fix is reverted.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import type { WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
 import { PolicyEditor, REPAIR_NOTICES, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    policy: vi.fn(),
-    probePolicy: vi.fn(),
-    profile: vi.fn(),
-    safety: vi.fn(),
-    scanStatus: vi.fn(),
-    seasonShape: vi.fn(),
-    simulate: vi.fn(),
-    validatePolicy: vi.fn(),
-    vocabulary: vi.fn(),
-    vocabularyValues: vi.fn(),
-    // Read by the keep-rules composer's list picker, but only while the protect vocabulary
-    // offers `on_list`; answered anyway so a fixture that adds the field cannot render a
-    // failed read (rule 135).
-    listConfigs: vi.fn(),
-    savePolicy: vi.fn(),
-    saveProfile: vi.fn(),
-    setDeletion: vi.fn(),
-    startScan: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => {
@@ -49,7 +29,7 @@ vi.mock("../api", async (importOriginal) => {
 // an unmocked one would sit silent until the first test that waits long enough. Seeded HERE
 // rather than inside `renderEditor`, which runs after a test's own mock and would overwrite it.
 beforeEach(() => {
-  apiMock.probePolicy.mockResolvedValue({ points: 0.8, detail: "a value" });
+  apiMock.probePolicy.mockResolvedValue({ points: 0.8 });
 });
 
 function body(custom: CustomCondemn[] = []): PolicyBody {
@@ -180,13 +160,10 @@ function renderEditor(
     examples_newly_condemned: [],
     protected_by: [],
   });
-  const queryClient = testQueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <DocsProvider>
-        <PolicyEditor />
-      </DocsProvider>
-    </QueryClientProvider>,
+  return renderWithProviders(
+    <DocsProvider>
+      <PolicyEditor />
+    </DocsProvider>,
   );
 }
 
@@ -608,6 +585,34 @@ describe("the keep-last advisory", () => {
   });
 });
 
+describe("a protection this build has no copy for", () => {
+  it("gives each unknown gate a switch the operator can tell apart", async () => {
+    // The simulator's fallback is one shared string, and there it is right: an id appears
+    // once in a tally, where "Another protection, 7" reads correctly. A switch is the other
+    // case. Two unknown ids sharing that string would draw two controls with one name and no
+    // help, and turning a protection off is not a choice anyone can make blind.
+    //
+    // This is the assertion that fails on reverting to the shared constant (rule 118): the
+    // labels have to differ from EACH OTHER, so a per-id fallback is the only thing that
+    // satisfies it. Reachable only from a stale bundle -- the SPA ships inside the server's
+    // own image -- which is why the bar is "distinguishable", not rule 21's nicer sentence.
+    renderEditor({
+      body: {
+        ...body(),
+        gates: [
+          { gate: "brand_new_gate", enabled: true, threshold: 1, window_days: 30 },
+          { gate: "another_new_gate", enabled: false, threshold: 1, window_days: 30 },
+        ],
+      },
+    });
+
+    const first = await screen.findByLabelText("Brand New Gate");
+    const second = await screen.findByLabelText("Another New Gate");
+    expect(first).not.toBe(second);
+    expect(screen.queryAllByLabelText("Another protection")).toHaveLength(0);
+  });
+});
+
 describe("the gate that counts recent watchers", () => {
   it("offers the window its own warning tells the operator to change", async () => {
     // The server warns on gates.server_popularity.window_days and advises a year; until
@@ -720,7 +725,7 @@ describe("the gate that counts recent watchers", () => {
         {
           field: "protect_conditions",
           severity: "warn",
-          // Verbatim from `policy.inspect`'s gate-off arm (rule 144): this is a payload the
+          // Verbatim from `policy_warnings.inspect`'s gate-off arm (rule 144): this is a payload the
           // anchor test hands in, so a drifted copy here reads as the shipped sentence
           // without failing anything.
           message:
@@ -959,7 +964,7 @@ describe("PolicyEditor warning anchors", () => {
     { anchor: "condemn_at", controls: { condemn_at: "Put a title on the list once it scores" } },
     {
       anchor: "gates",
-      // The four the server sends today, each named by `engine/policy.py` as
+      // The four the server sends today, each named by `engine/policy_warnings.py` as
       // `gates.<protection>.<setting>`. `PolicyEditor` binds them generically off the gate id
       // in the served body, so a fifth protection warning about one of these three settings
       // binds with no frontend change -- which is also why this list cannot prove the binding
@@ -1329,7 +1334,9 @@ describe("the controls a screen reader has to tell apart", () => {
   // protecting through an `on_list` keep rule. A stored draft can still carry the retired
   // gate, though -- the loader keeps an enabled row whose target list could not be created
   // rather than silently withdrawing cover -- so the editor renders it as a plain protection
-  // row by the `titleCase` fallback (rule 66) instead of dropping it or crashing.
+  // row from its `GATE_META` copy instead of dropping it or crashing. Rule 66's fallback
+  // beneath that no longer title-cases the id (#551): an id this build has no copy for reads
+  // "Another protection", never a slug.
   it("tolerates a stored draft still carrying the retired whitelisted gate", async () => {
     renderEditor({
       body: {
@@ -1352,6 +1359,42 @@ describe("the controls a screen reader has to tell apart", () => {
     // The card, its tag boxes and its own copy are gone with the feature.
     expect(screen.queryByText("Spare titles you've tagged")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Add a keep tag")).not.toBeInTheDocument();
+  });
+
+  // The other half of #627. The notice on that row tells the operator to turn the leftover
+  // off, and turning it off has to produce a body a save accepts -- the boundary refuses the
+  // id in EITHER switch position (`GateSettingIn._must_be_authorable`), so storing
+  // `enabled: false` would leave every validate, simulate and save 422-ing with the page
+  // still saying the switch is the way out. Off means the row leaves the body.
+  it("takes a leftover protection out of the body when it is turned off", async () => {
+    const user = userEvent.setup();
+    renderEditor({
+      body: {
+        ...body(),
+        gates: [{ gate: "whitelisted", enabled: true, threshold: 0, window_days: 0 }],
+      },
+    });
+
+    const leftover = await screen.findByRole("switch", { name: "On a list you curate yourself" });
+    expect(screen.getByText(/A leftover from an older version/)).toBeInTheDocument();
+
+    await user.click(leftover);
+
+    // The whole row goes, not just the switch: there is no such protection to show off.
+    expect(
+      screen.queryByRole("switch", { name: "On a list you curate yourself" }),
+    ).not.toBeInTheDocument();
+    // The control that was pressed went with the row, so focus has to be put somewhere or it
+    // falls to `<body>` and the next Tab restarts at the top of a ~1,900-line form (#173).
+    // Save, because the removal is a draft edit and pressing it is what makes it real.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Save changes" }));
+    });
+    // ...and the draft the page is now working against is one the server accepts. Read off
+    // the validate call because that is the same body the Save button posts.
+    await waitFor(() => {
+      expect(apiMock.validatePolicy.mock.calls.at(-1)?.[0].gates).toEqual([]);
+    });
   });
 
   it("gives two lean keep rules on one field Remove buttons that answer to different names", async () => {
@@ -1587,7 +1630,7 @@ describe("where a signal starts earning", () => {
 // only ever shows what the server said, and says so plainly when it has not said it yet.
 describe("trying a value against a signal's range", () => {
   it("shows what the engine answered, not a number worked out here", async () => {
-    apiMock.probePolicy.mockResolvedValue({ points: 3.5, detail: "IMDb 3.0" });
+    apiMock.probePolicy.mockResolvedValue({ points: 3.5 });
     renderEditor({ body: body() });
 
     await screen.findByText("How low it's rated");
@@ -1647,7 +1690,7 @@ describe("what the dormancy ramp can actually reach", () => {
   it("describes a title the history caps, when the history is the shorter of the two", async () => {
     // 200 days of history against a far end of 365: nothing can present more than 200, so
     // that is both a moving example and the ceiling the mirror imposes.
-    apiMock.probePolicy.mockResolvedValue({ points: 38.4, detail: "not watched in 6 months" });
+    apiMock.probePolicy.mockResolvedValue({ points: 38.4 });
     renderEditor({ body: body(), history_reach_days: 200 });
 
     await waitFor(() =>

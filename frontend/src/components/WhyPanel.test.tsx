@@ -7,7 +7,6 @@
 //      looked and it was fine", and a row with nothing recorded must never be drawn as if
 //      it argued for keeping the file.
 //   3. The rules that did not apply are tucked away, never dropped.
-import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +21,7 @@ import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { CSS } from "../test/stylesheet";
 import { Synopsis, WhyPanel, allocateShares } from "./WhyPanel";
 
@@ -97,14 +97,10 @@ function detail(
     requested_by: null,
     group_key: null,
     group_title: null,
-    group_condemned_count: null,
-    group_condemned_bytes: null,
-    group_unknown_size: null,
     video_resolution: null,
     library: null,
     dormant_for: null,
     reason: null,
-    spared: false,
     override: null,
     override_own: null,
     show_override: null,
@@ -114,7 +110,6 @@ function detail(
     show_spare_expires_at: null,
     chip: null,
     season_number: 3,
-    group_seasons: null,
     show_status: null,
     content_rating: null,
     runtime_minutes: null,
@@ -150,12 +145,9 @@ function detail(
 }
 
 function show(item: CandidateDetail) {
-  const client = seedSettings(testQueryClient());
-  return render(
-    <QueryClientProvider client={client}>
-      <WhyPanel item={item} onClose={() => {}} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<WhyPanel item={item} onClose={() => {}} />, {
+    client: seedSettings(testQueryClient()),
+  });
 }
 
 /** The group box a heading sits in, so a row's points can be read in context. */
@@ -904,7 +896,7 @@ describe("the verdict headline", () => {
     "seasons your rule keeps. Left for you to decide instead of removing it.";
 
   // The message and the flag come from the same conflict, exactly as the producer emits them
-  // (`season_scan.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
+  // (`season_evidence.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
   // refused one `false`. Passing them independently would let a test pin a pairing the backend
   // cannot produce.
   //
@@ -1011,7 +1003,7 @@ describe("the verdict headline", () => {
   it("does not read a mid-binge check that never ran as a conflict (#486)", () => {
     // A show Plex never resolved: no season carries a rating key, so the guard answered
     // "is anyone part-way through this" having asked nobody. Both details are verbatim
-    // producer output -- `season_scan.guard_result`'s unestablishable arm and
+    // producer output -- `season_evidence.guard_result`'s unestablishable arm and
     // `engine.gates._blocked` -- and they carry the SAME cause on purpose, which is what
     // makes them one box (rule 119).
     //
@@ -1123,6 +1115,22 @@ describe("the merged-listing count", () => {
     show(withMatch({ merged_rating_keys: [900] }));
     expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
   });
+
+  it("renders a row whose whole match block is null", () => {
+    // The third shape, and the one no fixture in this file carried: `ExplanationOut.match`
+    // defaults to `None` and nothing sets `exclude_none`, so a row that was never matched
+    // arrives with an explicit `null` rather than with the key missing. `api.ts` typed it
+    // `Match | undefined` until W4.2, so the compiler would have accepted a reader dropping
+    // the guard here, and the panel this feeds is the one an operator reads while deciding
+    // what to delete.
+    show(
+      detail(WORKED_ROWS, {
+        explanation: { ...detail(WORKED_ROWS).explanation, match: null },
+      }),
+    );
+    expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/couldn't find it in your Plex/i)).not.toBeInTheDocument();
+  });
 });
 
 // The per-title escape from a hold nothing else on this screen can lift (#275). Reaper keeps the
@@ -1211,11 +1219,12 @@ describe("the watch-record escape", () => {
    *  test would make `findByText` ambiguous in the one above that reads it off the page. Here
    *  the region is read as a region, which is the idiom the other announcement tests use. */
   function showSpeaking(item: CandidateDetail) {
-    return render(
-      <QueryClientProvider client={seedSettings(testQueryClient())}>
+    return renderWithProviders(
+      <>
         <Announcer />
         <WhyPanel item={item} onClose={() => {}} />
-      </QueryClientProvider>,
+      </>,
+      { client: seedSettings(testQueryClient()) },
     );
   }
 

@@ -22,22 +22,7 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-semi);
 }
-/* Same --tap-min sizing as .tag-chip (34-lists.css), the shape this one borrows. */
-.filter-chip button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--tap-min);
-  min-height: var(--tap-min);
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: var(--text-lg);
-  line-height: 1;
-  padding: 0;
-  border-radius: var(--radius-pill);
-}
+/* The ✕ itself is the shared chip-dismiss shape in 04-buttons.css; only its hover is local. */
 .filter-chip button:hover {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
@@ -132,23 +117,20 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+/* The shared chip-dismiss shape (04-buttons.css), faded at rest: this chip's body is the
+   control the eye should land on, and the ✕ comes up to full on hover. */
 .fchip-x {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--tap-min);
-  min-height: var(--tap-min);
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: var(--text-lg);
-  line-height: 1;
-  padding: 0;
-  border-radius: var(--radius-pill);
   opacity: 0.75;
 }
-.fchip-x:hover {
+/* Qualified by `.fchip`, which is what makes the tint paint at all (#740). Bare, this was
+   (0,2,0) against `04-buttons.css`'s `button:hover:not(:disabled)` at (0,2,1), so the generic
+   gray won on specificity whatever the load order and the accent line was dead. The two chips
+   beside it, `.filter-chip button:hover` above and `.tag-chip button:hover` in 34-lists, tie
+   the generic at (0,2,1) and win on order alone; this one wins on specificity, which is what
+   `.inst-chip .chip-x:hover` already does. Each chip's tint is its own tone -- accent here,
+   protect on the tag chip, condemn on the instance chip -- so there is no shared hover to fold
+   them into (rule 72: all four were read before this one moved). */
+.fchip .fchip-x:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }

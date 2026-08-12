@@ -59,11 +59,10 @@ one habit that reliably refills it, and it feels like diligence while it happens
   `(measured <date>)`, evidence as ratios and orders of magnitude, and a `⇒` consequence line.
   **Negative results count** — "we tried X and it was worse" stops the next person re-trying X.
 - **You learned what predicts that nobody will watch a title** → `SIGNALS.md`. It is cited from
-  five places in `src/` — `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py` and
-  `api/routes.py` — so read it before touching those, and before `engine/backtest.py`, which holds
-  the rewatch curve `SIGNALS.md` tabulates (`FALLBACK_REWATCH_PRIOR`). `engine/calibration.py`
-  cites it nowhere and holds only the machinery to fit a per-operator replacement, which has no
-  caller in `src/`.
+  six places in `src/` — `engine/signals.py`, `engine/policy.py` (three times), `engine/gates.py`
+  and `api/review.py` — so read it before touching those. It is also the only home of the rewatch
+  curve: the lab engines that measured and could have refitted it are deleted, so no constant in
+  the tree carries those numbers and this file is the record.
 - **A review pass, a migration, a finished remediation** → `docs/history/`, with a banner
   saying it is frozen and what supersedes it. Never edit an archived file to bring it up to
   date; that is what makes an archive lie.
@@ -115,6 +114,8 @@ auto-memory note to explain the product, move it here.
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
 | `CSS_SPLIT_PLAN.md` | state (one feature) | **live** — 3 of 7 stages landed; the last 4 are optional |
 | `I18N_PLAN.md` | state (one feature) | **live** — a proposal; nothing landed, no stage committed to |
+| `SIMPLIFICATION_PLAN.md` | state (one pass) | **live** — its own `Progress` table is the status; all work lands on `audit/simplification-plan` |
+| `ISSUE_LANDING_PLAN.md` | state (one branch) | **live** — which open issues land on `audit/simplification-plan`; delete when #552 merges |
 | `brand/README.md` | reference | stable; nothing here ships |
 | `../manual/` | the operator's manual | **live** — half generated from the app's help content |
 | `../website/` | the manual's site | **live** — Docusaurus; owns no words of its own |

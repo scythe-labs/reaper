@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The signal-quality corrections.
 
-Every case here comes from discovering, by backtest, that the first scorer was
-**worse than useless** -- it selected films *more* likely to be watched than a random
-film of the same age (-50% lift).
+Every case here comes from discovering, by replaying real watch history, that the first
+scorer was **worse than useless** -- it selected films *more* likely to be watched than a
+random film of the same age (-50% lift). The instrument that measured it is gone; the finding
+is in ``docs/SIGNALS.md`` and the corrections are here.
 
 See docs/SIGNALS.md and docs/LEARNINGS.md.
 """
@@ -15,8 +16,6 @@ from dataclasses import replace
 import pytest
 from pydantic import ValidationError
 
-from reaper.clock import utcnow
-from reaper.engine.backtest import BacktestResult, Regret, rewatch_prior
 from reaper.engine.gates import (
     ABSTAIN,
     PROTECT,
@@ -52,7 +51,7 @@ def _facts(days_dormant: float | None) -> Facts:
     )
 
 
-GATE = MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1095))
+GATE = MinDormancyGate(GateConfig(threshold=1095))
 
 SEASON_SIGNAL = SignalConfig(SignalId.SEASON_RANK, weight=15, saturate_at=5)
 
@@ -150,6 +149,31 @@ class TestTheMinDormancyGate:
 
         assert (result.outcome == PROTECT) is protects
 
+    def test_dormancy_that_is_genuinely_absent_keeps_the_file_rather_than_raising(self) -> None:
+        """The one arm of this gate no fact builder can currently reach, tested anyway.
+
+        Both builders emit ``Known`` or ``Unknown`` for this field, so nothing in a scan
+        produces the ``Absent`` below, and ``_facts(None)`` above yields ``Unknown``, which
+        ``_blocked`` answers first with a different hold. The guard is still load-bearing:
+        delete it and the gate falls through to ``dormant.value``, which raises
+        ``AttributeError`` on an ``Absent`` and takes the item's whole verdict with it. Rule 118
+        -- an unreachable tripwire with no test is one refactor from silently becoming a
+        permissive ABSTAIN -- and it is driven against the gate directly because the builders
+        offer no route to it.
+
+        PROTECT rather than blocked is the point of the assertion. ``Absent`` is "we looked and
+        there is genuinely no watch history", a state we can describe, where ``Unknown`` is "we
+        could not look" (rule 93); either way we cannot establish that it has sat long enough,
+        so the file stays.
+        """
+        facts = replace(_facts(400), days_observed_unwatched=Absent(source="tautulli"))
+
+        result = GATE.evaluate(facts)
+
+        assert result.outcome == PROTECT
+        assert result.blocked is False
+        assert "dormancy cannot be established" in result.detail
+
     def test_a_gigantic_low_rated_film_is_still_protected_if_it_is_too_recent(
         self,
     ) -> None:
@@ -209,86 +233,3 @@ class TestSizeIsNotInTheDefaultScore:
 
         assert gate.enabled
         assert gate.threshold == 1095
-
-
-class TestTheRewatchPrior:
-    """The measured ground truth. The most useful table in the project."""
-
-    @pytest.mark.parametrize(
-        ("days", "expected"),
-        [
-            (100, 0.61),
-            (400, 0.31),
-            (600, 0.32),
-            (900, 0.30),
-            (1200, 0.19),
-            (2000, 0.13),
-        ],
-    )
-    def test_the_curve(self, days: int, expected: float) -> None:
-        assert rewatch_prior(days) == expected
-
-    def test_it_falls_with_age(self) -> None:
-        """Older means less likely to be watched. If this ever inverts, the data has
-        changed and every default in the engine needs re-deriving."""
-        assert rewatch_prior(100) > rewatch_prior(1200) > rewatch_prior(2000)
-
-    def test_there_is_no_cliff(self) -> None:
-        """The finding that reframes the whole product: a film dormant for FIVE YEARS
-        still has a 13% chance of being watched next year, so deletion is never free
-        on an active library. This is why the grace period and the human approval
-        gate are not decoration."""
-        assert rewatch_prior(2000) > 0.10
-
-
-class TestLift:
-    """The number that decides a signal's fate.
-
-    Positive: the scorer beats an age-matched coin-flip.
-    Negative: the signals are WORSE THAN NOTHING and must not ship.
-    """
-
-    def _result(self, *, condemned: int, regrets: int, dormancy: float) -> BacktestResult:
-        result = BacktestResult(cutoff=utcnow(), condemn_at=60)
-        result.condemned = [(f"Film {i}", 80.0, 1) for i in range(condemned)]
-        result.condemned_dormancy = [dormancy] * condemned
-        result.regrets = [_regret(f"Film {i}") for i in range(regrets)]
-        return result
-
-    def test_a_scorer_that_beats_its_age_group_has_positive_lift(self) -> None:
-        # 1,200 days dormant => 19% expected. We regret only 5 of 100 => 5%.
-        result = self._result(condemned=100, regrets=5, dormancy=1200)
-
-        assert result.expected_regret_rate == pytest.approx(0.19)
-        assert result.regret_rate == pytest.approx(0.05)
-        assert result.lift > 0
-        assert result.beats_random is True
-
-    def test_a_scorer_worse_than_its_age_group_has_negative_lift(self) -> None:
-        """Selecting films MORE likely to be watched than their age implies. Not a
-        tuning problem -- a broken scorer, and it must not ship."""
-        result = self._result(condemned=100, regrets=30, dormancy=1200)  # 19% expected
-
-        assert result.lift < 0
-        assert result.beats_random is False
-
-    def test_the_summary_refuses_to_endorse_a_negative_lift_policy(self) -> None:
-        result = self._result(condemned=100, regrets=30, dormancy=1200)
-
-        assert "NOT BEATING AGE ALONE" in result.summary()
-
-    def test_the_summary_endorses_a_positive_lift_policy(self) -> None:
-        result = self._result(condemned=100, regrets=5, dormancy=1200)
-
-        assert "earns its keep" in result.summary()
-
-
-def _regret(title: str) -> Regret:
-    return Regret(
-        title=title,
-        watched_by="someone",
-        watched_at=utcnow(),
-        days_after_cutoff=100,
-        size_bytes=1,
-        score=80.0,
-    )

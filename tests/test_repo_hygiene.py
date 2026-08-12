@@ -5,20 +5,32 @@ loads them, or a human who never reads them, breaks the rule silently. Every rul
 is one that can be checked mechanically, so it costs nothing to enforce and catches humans
 and agents alike. A rule that needs judgment stays prose; only the greppable ones live here.
 
-These are filesystem checks -- no app boot, no fixtures, no network.
+These are filesystem checks over this checkout, and they reach no network. Two things they do
+reach: ``reaper.engine.gates`` is imported for the one guard that derives its expectation by
+running the gate, and ``git`` is run to list the files ``_repo_text_files`` walks.
 """
 
 from __future__ import annotations
 
+import ast
+import dataclasses
 import hashlib
 import json
+import os
 import re
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
+from collections import Counter
+from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, NamedTuple
 
 import pytest
 import yaml
+
+from reaper.api import settings as settings_api
 
 # The one guard here that reads the app rather than the tree: the documented example of a
 # checked protection is derived by running the gate that builds it, never transcribed
@@ -26,12 +38,14 @@ import yaml
 from reaper.engine.gates import (
     Facts,
     GateConfig,
-    GateId,
     MinDormancyGate,
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
+from reaper.services import app_settings, plex_link
 from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
+from reaper.services.season_scan import SeasonJudgment
+from reaper.services.snapshot import Display, RawItem
 
 REPO = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
@@ -57,7 +71,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
 # dropped out of the walk).
-DECISION_SECTIONS = 17
+DECISION_SECTIONS = 18
 
 
 def _live_docs() -> list[Path]:
@@ -79,6 +93,11 @@ _ALLOWED_CONTROL_BYTES = frozenset(b"\t\n\r")
 # change under the cache mid-session. Every caller builds a new list from the result and none
 # sorts or appends in place, so the cached value needs no defensive copy. Cost: the text walk
 # pins about 23 MiB per xdist worker for the session.
+#
+# One exception, and it is the reason it is written down. Both walks read the module global
+# ``REPO``, and ``test_the_repo_walk_never_reads_a_gitignored_file`` repoints it at a synthetic
+# tree, so there the cache CAN go stale. It calls ``cache_clear`` on both sides of the swap.
+# A later swap that skips the clear serves that two-file walk to every gate downstream.
 @lru_cache
 def _source_files_to_scan() -> list[Path]:
     """Every hand-written source and instruction file, for the byte-level scan below."""
@@ -473,6 +492,325 @@ def test_http_clients_are_only_constructed_in_clients() -> None:
     assert not offenders, "construct HTTP clients only in clients/:\n" + "\n".join(offenders)
 
 
+def test_the_admin_password_lockout_is_reached_through_one_function() -> None:
+    """Rules 11/98 as a gate: only ``api/deps.py`` reaches the lockout or the verify.
+
+    Four routes ask for the admin password before doing something consequential, and each
+    used to run the same four steps by hand: check the lockout, verify, record the failure,
+    clear both keys on success. Copying them is how a fifth gate arrives with three of the
+    four, and the step most easily dropped is the one no route-level test used to reach --
+    ``record_success``, whose absence makes a near-miss cost the operator a real lockout.
+
+    Prose cannot bind an author who never read it, so the ban is on the names instead: a route
+    that can reach neither the throttle nor the verify cannot get the ritual wrong. Two names
+    are banned rather than one, and the second is the one that matters. Banning
+    ``password_throttle`` alone stops a gate with three of the four steps; a gate calling
+    ``admin_password.verify`` straight is a gate with **none** of them, and every one of these
+    routers already imports that module, so it is the shorter mistake to make.
+
+    **Measured against the spellings, not assumed (rule 147).** The matcher is a substring test
+    over `_strip_prose`, so it catches the dotted form
+    (``ratelimit.password_throttle.record_failure(...)``), the fully qualified form, and an
+    ``import ... as`` rebinding, which is caught at the import line. What it does not catch is a
+    name assembled at runtime (``getattr(ratelimit, "password_" + "throttle")``). An earlier
+    version of this docstring named the first two as blind spots and both were already covered;
+    the escape it missed is the one now banned on the second line.
+    """
+    allowed = {
+        "password_throttle": {SRC / "auth" / "ratelimit.py", SRC / "api" / "deps.py"},
+        "admin_password.verify": {SRC / "api" / "deps.py"},
+    }
+    offenders = [
+        f"{p.relative_to(REPO)}:{n}  {banned}"
+        for banned, exempt in allowed.items()
+        for p in SRC.rglob("*.py")
+        if p not in exempt
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if banned in _strip_prose(line)
+    ]
+    assert not offenders, (
+        "reach the admin-password gate through reaper.api.deps.require_admin_password, "
+        "which is the whole ritual -- lockout check, verify, record the failure, clear both "
+        "keys on success -- rather than spelling any part of it again (rule 11/98):\n"
+        + "\n".join(sorted(offenders))
+    )
+
+
+def test_the_comparison_form_of_a_name_is_one_derivation() -> None:
+    """Rule 88, as a gate. ``reaper.text.fold`` is the trim-then-casefold every name
+    comparison takes, and it was spelled 37 times over 33 lines in 13 modules.
+
+    **It bans the composite only.** A bare ``.casefold()`` on a value a line above already
+    stripped is not an offender: ``fields._split_csv``, ``fields._shared`` and
+    ``list_config._clean_config`` all read input their caller stripped, so folding again
+    would be identical and an exemption entry for each would be a skip list nobody rereads.
+
+    **What it cannot catch, stated rather than implied**: a new site written as a bare
+    ``.casefold()`` on unstripped input, or as ``.strip().lower()``. Eleven of the latter
+    exist at this tip and every one is deliberate -- env tokens, hostnames, media types, hex
+    colors -- two of them folding PATHS (``identity.to_basename``, ``to_segments``), whose
+    docstrings say why lower is the right answer there. That figure is measured at the tip
+    rather than at ``dev``, where it is sixteen: #668 landed on this same branch and took
+    six of them.
+
+    ``alembic/`` is out of scope: those revisions are frozen and five of them carry the
+    idiom.
+    """
+    offenders = [
+        f"{p.relative_to(REPO)}:{n}"
+        for p in SRC.rglob("*.py")
+        if p != SRC / "text.py"
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if ".strip().casefold()" in _strip_prose(line)
+    ]
+    assert not offenders, (
+        "call reaper.text.fold instead of spelling .strip().casefold() again -- one "
+        "derivation, because a name folded on one side of a comparison and not the other "
+        "stops matching and says nothing (rule 88):\n" + "\n".join(offenders)
+    )
+
+
+# The set form, ``PRAGMA journal_mode=WAL``, never the read at db/session.py:49. The read is
+# how the boot log says which mode the database settled on; the set is what writes.
+_JOURNAL_MODE_SET = re.compile(r"PRAGMA\s+journal_mode\s*=", re.IGNORECASE)
+#: One site, ``db.session._configure_sqlite``. Pinned as a count as well as a file set, because
+#: a file set alone cannot tell a second site inside the same module from none (rule 145).
+_JOURNAL_MODE_SET_SITES = 1
+
+
+def test_the_journal_mode_pragma_is_set_in_exactly_one_module() -> None:
+    """``PRAGMA journal_mode=WAL`` WRITES the file it is pointed at.
+
+    Header bytes 18 and 19 flip and persist, so the app's pragma set may only ever reach a
+    database Reaper owns. Three sqlite connections in ``src/`` deliberately issue no journal
+    pragma, and each reads or writes a file nobody has vouched for yet:
+    ``db.schema_gate.stored_revision`` reads the database unpacked from an operator-supplied
+    ``.reaper`` inside the rule 74 artifact gate, before the schema is checked and before the
+    operator confirms, and ``restore``'s ``_force_destructive_off`` and ``_purge_auth_state``
+    run on that same staged file a moment later. Adding the set to any of them turns a read of
+    an unverified artifact into a write against it.
+
+    **What the matcher accepts and refuses** (rule 147). It takes any casing and any spacing
+    around the ``=``, and it reads the line with backticked spans stripped, so a comment
+    quoting the pragma is not an offender: ``db/session.py`` itself has two occurrences and
+    only one is code. It cannot see a pragma assembled at runtime (``"PRAGMA " + name``), and
+    nothing in the tree spells one that way. ``tests/`` is out of scope on purpose:
+    ``test_startup_log.py`` sets ``journal_mode=DELETE`` to drive the boot log's WAL check.
+    """
+    sites = [
+        f"{p.relative_to(REPO)}:{n}"
+        for root in (SRC, REPO / "alembic")
+        for p in sorted(root.rglob("*.py"))
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if _JOURNAL_MODE_SET.search(_strip_prose(line))
+    ]
+    files = {site.rsplit(":", 1)[0] for site in sites}
+    assert files == {"src/reaper/db/session.py"} and len(sites) == _JOURNAL_MODE_SET_SITES, (
+        "PRAGMA journal_mode=WAL writes the database it is pointed at, so only "
+        "db.session._configure_sqlite may issue it. Sites found:\n  "
+        + "\n  ".join(sites)
+        + "\n\nA connection that reads or writes an operator-supplied backup "
+        "(db/schema_gate.py, services/restore.py) must not adopt the app's pragma set: that "
+        "would write to an artifact the rule 74 gate has not verified yet."
+    )
+
+
+def _busy_timeout_files() -> list[Path]:
+    """The two roots both busy-timeout walks read, the same pair the journal-mode gate reads.
+
+    ``alembic/`` is in scope because the migration engine opens its own connections, and
+    ``env.py``'s connect hook is the obvious place to answer a migration that hit a locked
+    database. Scoped to ``src/`` alone, a declaration landing there passed both gates
+    (rule 72: the journal-mode gate 60 lines up already decided this).
+    """
+    return [p for root in (SRC, REPO / "alembic") for p in sorted(root.rglob("*.py"))]
+
+
+def _busy_timeout_prose(path: Path) -> str:
+    """One line of prose per file: comment markers dropped, then whitespace collapsed.
+
+    The markers come out first so a passage wrapped across two ``#`` lines still reads as one
+    sentence. Leaving them in turned ``backup._build_into``'s "the 5s busy timeout" into
+    "busy # timeout" and left that module one passage short of its count, which any reformat
+    can do to any of them (rule 147).
+    """
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^\s*#+:? ?", " ", path.read_text(encoding="utf-8")))
+
+
+#: A quotation of a busy timeout is a seconds figure and an anchor -- the pragma's name, or a
+#: ``db.session`` citation -- in either order, in the same sentence, within 120 characters. Both
+#: anchors are needed and neither is enough alone: two copies never name the pragma
+#: (``scan_runner.scan_running``, ``scheduler.sweep_old_snapshots``), and one never cites
+#: ``db.session`` (``imdb_dataset.load``, which is about ``cache.db``, whose engine listens to
+#: the same ``_configure_sqlite``).
+#:
+#: Spellings accepted, run and confirmed (rule 147). Six are forms the tree uses:
+#: ``5s ``busy_timeout```, ```busy_timeout`` (5s``, ``5s for it (``db.session``)``,
+#: ``5s busy timeout`` spaced, ``db/session.py`` as the citation, and a passage split across two
+#: ``#`` lines. Two more are accepted against no passage: ``5s BUSY_TIMEOUT`` is what
+#: ``re.IGNORECASE`` takes, the tree spelling it lowercase everywhere, and ``5-second`` is the
+#: adjectival form, which no busy-timeout passage uses but 39 other durations in ``src/`` do
+#: (``ratelimit``'s ``2-second``, and ``30-day`` 18 times over eight files) -- so it is the form
+#: a new passage is most likely to arrive in, and it was a quiet pass until it was accepted.
+#:
+#: Rejected, run and confirmed: ``five seconds`` in words, ``5 s`` with a space
+#: (``docs/LEARNINGS.md``'s), ``5000ms``, ``session.py`` without ``db``, a figure past 120
+#: characters, and a figure on the far side of a sentence boundary. That last one is the gap's
+#: own bound rather than a judgment, so it also rejects a period that ends no sentence: a passage
+#: writing ``the ``busy_timeout``, i.e. 5s`` goes unread, and ``src/reaper/services/`` carries 11
+#: ``e.g.``/``i.e.``/``vs.`` today.
+#:
+#: **The sentence bound is doing work the window alone did not.** The figure pattern reads every
+#: status-code plural in ``src/`` (``404s``, ``409s``, ``429s``, ``500s``, ``502s``) and every
+#: other seconds figure besides. Measured over every anchor in both roots: eleven figures fall
+#: inside a 120-character window, and exactly one of them carries a sentence break in its gap --
+#: ``scheduler``'s *measured* ``8s`` vacuum, 86 characters past a ``db.session`` it is not about.
+#: Deleting ``scheduler``'s real copy showed what that costs: the window alone then reports
+#: "quotes 8s", substituting an unrelated measurement for the passage that left, while the
+#: sentence bound reports "no longer quotes it", which is the truth. Nearest status-code plural
+#: to any anchor at this tip: 17,851 characters.
+#:
+#: It bounds proximity, not meaning, so a figure sharing a sentence with an anchor it is not
+#: about is still collected. That lands as a red gate naming the module **when the module's real
+#: passage is collected first**; where the spurious figure comes first and the module has one
+#: anchor, the real match is the one that loses, and a module already at its count reads green.
+#: ``scan_runner.scan_running`` is that shape today, one anchor with its figure before it.
+_BUSY_TIMEOUT_ANCHOR = r"(?:db[./]session|busy[_ ]timeout)"
+_BUSY_TIMEOUT_GAP = r"(?:(?!\.\s).){0,120}?"
+_BUSY_TIMEOUT_FIGURE = r"\b(\d+)(?:s|-seconds?)\b"
+_BUSY_TIMEOUT_QUOTED = re.compile(
+    rf"{_BUSY_TIMEOUT_ANCHOR}{_BUSY_TIMEOUT_GAP}{_BUSY_TIMEOUT_FIGURE}"
+    rf"|{_BUSY_TIMEOUT_FIGURE}{_BUSY_TIMEOUT_GAP}{_BUSY_TIMEOUT_ANCHOR}",
+    re.IGNORECASE,
+)
+_BUSY_TIMEOUT_PRAGMA = re.compile(r"PRAGMA\s+busy_timeout\s*=\s*(\d+)")
+
+#: Declaring file -> how many ``PRAGMA busy_timeout`` calls it makes. Pinned so a fourth
+#: declaration cannot arrive without someone deciding which passages describe it (rule 145).
+_BUSY_TIMEOUT_DECLARATIONS = {
+    "src/reaper/db/session.py": 1,
+    "src/reaper/services/backup.py": 1,
+    "src/reaper/services/retention.py": 1,
+}
+
+#: File -> which declaration each of its passages quotes -> how many quote it. **The second
+#: column is the point**: three declarations exist and they are not one fact.
+#: ``db.session._configure_sqlite`` sets 5000 for every app connection, ``retention._compact_sync``
+#: sets 30000 on the connection it opens for ``VACUUM``, and ``backup._build_into`` sets 5000 on
+#: its own for ``VACUUM INTO``. Backup's figure equals the app's by coincidence, so a single
+#: column would tie two values that have no reason to move together and read as a proof that
+#: they do. Every figure is read out of the declaration named here, never written here.
+#:
+#: Ten passages over seven files, reconciled by hand against both roots (rule 145): seven quote
+#: ``db/session.py``, two quote backup's own, one quotes retention's own. The count is the part a
+#: set of file names cannot hold, since the walk collects passages and a second copy inside an
+#: already-listed file would hide behind the first (rule 147).
+_BUSY_TIMEOUT_PROSE: dict[str, dict[str, int]] = {
+    "src/reaper/services/backup.py": {"src/reaper/services/backup.py": 2},
+    "src/reaper/services/executor.py": {"src/reaper/db/session.py": 1},
+    "src/reaper/services/imdb_dataset.py": {"src/reaper/db/session.py": 1},
+    "src/reaper/services/retention.py": {
+        "src/reaper/db/session.py": 2,
+        "src/reaper/services/retention.py": 1,
+    },
+    "src/reaper/services/scan_runner.py": {"src/reaper/db/session.py": 1},
+    "src/reaper/services/scheduler.py": {"src/reaper/db/session.py": 1},
+    "src/reaper/services/snapshot.py": {"src/reaper/db/session.py": 1},
+}
+
+
+def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> None:
+    """Rule 144: one fact in ten passages, and three declarations under them.
+
+    ``PRAGMA busy_timeout=5000`` in ``db.session._configure_sqlite`` is how long every app
+    connection waits for a write lock, and seven passages quote it as the reason something else
+    is the way it is. The one on the deletion path is load-bearing: ``executor._commit_journal``
+    gives the journal two attempts with no sleep between them *because* the timeout already
+    waited inside each. Move the pragma and that reasoning is silently wrong, on the write that
+    records what was deleted.
+
+    **Two more declarations sit beside it, and they are not the same fact.**
+    ``retention._compact_sync`` sets 30000 on the connection it opens for ``VACUUM``, and
+    ``backup._build_into`` sets 5000 on its own for ``VACUUM INTO``. Backup's figure equals the
+    app's by coincidence, so its two passages are checked against backup's own declaration.
+    Checking them against ``db.session``'s would make two unrelated values move together forever
+    and read as a proof that they must.
+
+    Every figure is read out of the declaration its passage is about, so no number is written
+    here, and the failure names each file so the sweep is the fix rather than a note asking the
+    next author to remember.
+
+    **What the walk cannot see, named rather than implied** (rule 147). A copy carrying no figure
+    at all is invisible, and one survives deliberately: ``imdb_dataset.load`` says "wait out the
+    timeout" three lines under its own "5s ``busy_timeout``", in the same sentence's subject, so
+    it restates the figure it was just given rather than holding a second one. A copy spelling
+    the value in words ("five seconds") is invisible the same way; the two roots hold none today,
+    and the per-file count is what turns a rewording into a failure rather than a quiet pass.
+    Within one file the comparison is a multiset, so two passages that swapped each other's
+    figures would still balance: ``retention.py`` is the only file quoting two declarations, and
+    its three sit apart, two docstrings and the ``SWEEP_BATCH`` comment.
+    ``docs/LEARNINGS.md`` quotes both timeouts as ``5 s`` and
+    ``30 s`` and is deliberately out of scope: it records what was measured on the tree of the
+    day, and rewriting a measurement to match a later default would falsify it.
+    """
+    declared: dict[str, list[str]] = {}
+    for path in _busy_timeout_files():
+        seconds = [
+            str(int(m.group(1)) // 1000)
+            for m in _BUSY_TIMEOUT_PRAGMA.finditer(path.read_text(encoding="utf-8"))
+        ]
+        if seconds:
+            declared[str(path.relative_to(REPO))] = seconds
+    assert {rel: len(s) for rel, s in declared.items()} == _BUSY_TIMEOUT_DECLARATIONS, (
+        "the busy timeout is declared in:\n  "
+        + "\n  ".join(f"{rel}, {len(s)}x" for rel, s in sorted(declared.items()))
+        + "\n\nEach declaration is its own value with its own prose, so add it to "
+        "_BUSY_TIMEOUT_DECLARATIONS and say in _BUSY_TIMEOUT_PROSE which passages quote it."
+    )
+
+    unknown = {src for cols in _BUSY_TIMEOUT_PROSE.values() for src in cols} - declared.keys()
+    assert not unknown, f"_BUSY_TIMEOUT_PROSE quotes declarations that do not exist: {unknown}"
+    expected = {
+        rel: sorted(declared[src][0] for src, count in cols.items() for _ in range(count))
+        for rel, cols in _BUSY_TIMEOUT_PROSE.items()
+    }
+
+    quoted: dict[str, list[str]] = {}
+    for path in _busy_timeout_files():
+        figures = [
+            before or after
+            for before, after in _BUSY_TIMEOUT_QUOTED.findall(_busy_timeout_prose(path))
+        ]
+        if figures:
+            quoted[str(path.relative_to(REPO))] = figures
+
+    offenders = [
+        f"{rel} quotes {', '.join(f + 's' for f in sorted(figures))}, expected "
+        + ", ".join(
+            f"{declared[src][0]}s x{count} from {src}"
+            for src, count in sorted(_BUSY_TIMEOUT_PROSE[rel].items())
+        )
+        for rel, figures in sorted(quoted.items())
+        if rel in _BUSY_TIMEOUT_PROSE and sorted(figures) != expected[rel]
+    ]
+    offenders += [
+        f"{rel} no longer quotes it" for rel in sorted(_BUSY_TIMEOUT_PROSE.keys() - quoted.keys())
+    ]
+    offenders += [
+        f"{rel} is a new copy" for rel in sorted(quoted.keys() - _BUSY_TIMEOUT_PROSE.keys())
+    ]
+    assert not offenders, (
+        f"{len(declared)} modules declare a busy timeout ("
+        + ", ".join(f"{rel} at {s[0]}s" for rel, s in sorted(declared.items()))
+        + ") and these files restate one of them in prose:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nCorrect every one in the same change, or give the new file its own row in "
+        "_BUSY_TIMEOUT_PROSE naming which declaration it quotes. "
+        "src/reaper/services/executor.py's copy is the reason the journal write takes two "
+        "attempts with no sleep between them."
+    )
+
+
 # Reaper-owned identifiers and prose are American English. The allowlist covers names owned
 # by someone else and spelled British at the source, which keep their real spelling.
 _BRITISH = re.compile(
@@ -639,7 +977,7 @@ def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
 
     from reaper.engine.policy import ProfileSettings
 
-    validator = inspect.getsource(ProfileSettings._run_cap_within_rolling_cap)
+    validator = inspect.getsource(ProfileSettings._run_cap_within_rolling_cap)  # type: ignore[arg-type]
     reads = {
         name
         for name in re.findall(r"self\.(\w+)", validator)
@@ -676,7 +1014,7 @@ def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
             caps[name] = raw == "true" if raw in ("true", "false") else int(raw.replace("_", ""))
         assert caps, f"parsed no fields out of a caps block in {_PRESETS_TS.relative_to(REPO)}"
         # A ValidationError here is the defect, stated by the server in its own words.
-        ProfileSettings(**caps)  # type: ignore[arg-type]
+        ProfileSettings(**caps)
 
 
 # ``pkill``/``killall`` select processes by PATTERN, which is machine-wide: nothing in the
@@ -898,50 +1236,118 @@ def test_the_log_path_matcher_reads_every_spelling_it_claims() -> None:
 # Cached for the reason stated above ``_source_files_to_scan``, and this is the walk that costs.
 @lru_cache
 def _repo_text_files() -> list[tuple[Path, str]]:
-    """Every readable text file in THIS checkout, with its contents.
+    """Every readable text file git considers part of THIS checkout, with its contents.
 
-    Scoped to this checkout on purpose. ``.claude/worktrees/`` is gitignored (``.gitignore``)
-    and holds agent worktrees, which are entire repo copies sitting inside the repo root -- and
-    ``rglob`` honors no ignore file, so walking into them judges other branches' files as if
-    they were ours. A worktree's ``.git`` is a *file*, so the skip entry below does not stop the
-    descent either. Left in, ``uv run pytest`` in the main checkout fails the moment any
-    worktree cut before this fix is still on disk, naming files the branch under test cannot
-    reach. A gate nobody can turn green from their own branch is a gate that gets deleted.
+    The population comes from git, not from ``rglob``, which honors no ignore file. Gitignored
+    directories sit inside the repo root and every gate below reads whatever this walk hands
+    it. Three of them are the ones that bit. ``.claude/worktrees/`` holds agent worktrees,
+    entire repo copies, so a raw walk judges other branches' files as if they were ours, and a
+    worktree's ``.git`` is a *file*, so skipping that name does not stop the descent.
+    ``.claude/review-findings/`` is session handoff scratch. ``.dev-logs/`` is whatever the dev
+    servers last printed, and a stack trace echoing a uvicorn command line is collected there
+    as a LAUNCH SITE. Each one fails ``uv run pytest`` in a checkout that has it on disk while
+    CI, which has none, stays green. A gate nobody can turn green from their own branch is a
+    gate that gets deleted.
 
-    The skip is matched on the REPO-RELATIVE path, which is the part that is easy to get
-    backwards: ``skip`` is tested against ``path.parts``, so putting ``"worktrees"`` in it
-    would match the ABSOLUTE path and skip every file in the tree whenever the suite runs
-    from inside a worktree -- which is where these sessions run it. The relative form also
-    stops an ancestor directory outside the repo that happens to be named ``dist`` from
-    silently emptying the walk.
+    This replaced a hand-kept skip set, a mirror of ``.gitignore`` that needed an edit every
+    time the ignore file grew (rule 103). It was four entries behind when it was deleted:
+    ``.claude/review-findings/``, ``.hypothesis/``, ``.pytest_cache/`` and
+    ``mutation-report-*.json``. Two of those four are created by running this very suite,
+    which is why the set could not stay current by anyone's diligence.
+    ``--others --exclude-standard`` keeps a file created but not yet staged, which is the
+    state a gate is most useful in.
+
+    ``cwd=REPO`` carries the weight, and it inherits a trap worth recording. The skip set was
+    matched on the repo-RELATIVE path, because matching ``path.parts`` of the absolute one
+    matches the worktree the suite is *running in* and skips every file in the tree.
+    ``git ls-files`` prints paths relative to the process's own directory, so running it
+    anywhere but ``REPO`` makes every ``REPO / name`` join name a file that does not exist,
+    ``is_file()`` drops all of them, and the walk comes back empty and green. Same failure,
+    one layer down.
     """
+    # stderr is left inherited, so git's own "not a git repository" reaches whoever ran this.
+    listing = subprocess.run(
+        # S607: git is resolved off PATH, the same trust as the runner that started this.
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],  # noqa: S607
+        cwd=REPO,
+        stdout=subprocess.PIPE,
+        check=True,
+        # ``-z`` was chosen so an odd filename survives the split; a strict decode would give
+        # that back, raising out of the walk and taking every gate built on it with it.
+    ).stdout.decode(errors="surrogateescape")
     found: list[tuple[Path, str]] = []
-    # ``.dev-logs`` is gitignored runtime output, like the rest of these: whatever the dev
-    # servers happened to print last is not this branch's source. It earns a place here because
-    # the walk reads it -- a stack trace echoing a uvicorn command line would be collected as a
-    # LAUNCH SITE and fail ``_EXPECTED_LAUNCHES`` in whichever checkout last ran the script,
-    # naming a file no branch can fix. One log file per port makes that likelier, not rarer.
-    skip = {
-        ".git",
-        "node_modules",
-        ".venv",
-        "dist",
-        "__pycache__",
-        ".ruff_cache",
-        ".mypy_cache",
-        ".dev-logs",
-    }
-    for path in REPO.rglob("*"):
-        if not path.is_file() or path.resolve() == SELF:
+    for name in listing.split("\0"):
+        if not name:
             continue
-        relative = path.relative_to(REPO)
-        if any(p in skip for p in relative.parts) or relative.parts[:2] == (".claude", "worktrees"):
+        path = REPO / name
+        # ``--cached`` also names a file deleted from the working tree but still in the index.
+        if not path.is_file() or path.resolve() == SELF:
             continue
         try:
             found.append((path, path.read_text(encoding="utf-8")))
         except (UnicodeDecodeError, OSError):
             continue
     return found
+
+
+def test_the_repo_walk_never_reads_a_gitignored_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 145: the count is pinned over a tree whose membership is controlled.
+
+    Counting the real checkout would pin a number that moves with every file added, so the
+    population is five files here, two of them ignored, reconciled by hand. The ignored pair
+    is shaped like what broke this: a directory of session scratch, and a log holding a line
+    a gate would read as a launch site. Neither is reachable from a branch, so a walk that
+    collects them is red in every checkout that has them and green in CI forever.
+
+    **Each argument owns one member of the expected set**, or one can be dropped and this
+    still reads green. ``kept.md`` is staged, so only ``--cached`` reaches it; ``.gitignore``
+    is untracked and not ignored, so only ``--others`` does; dropping ``--exclude-standard``
+    adds the ignored pair back; and the non-UTF8 name is what ``-z`` and the walk's
+    ``surrogateescape`` decode are for, a strict decode raising out of the walk instead.
+
+    **The git environment is scrubbed three ways, and each closes a hole that was measured
+    rather than imagined** (rule 119). ``GIT_DIR`` and ``GIT_WORK_TREE`` beat ``cwd=``, so an
+    inherited one makes ``git init`` a no-op against someone else's repository, ``git add``
+    write into that repository's index, and this test pass having proved nothing. Clearing
+    every ``GIT_*`` name is what stops that. ``GIT_CONFIG_GLOBAL`` and ``GIT_CONFIG_SYSTEM``
+    then keep a developer's ``init.templateDir`` from seeding ``.git/info/exclude``. And
+    ``core.excludesFile`` is pinned inside the repo, because its DEFAULT is
+    ``$XDG_CONFIG_HOME/git/ignore``, which ``--exclude-standard`` reads with no config file
+    involved and which a repo-level setting is the only thing that overrides.
+    """
+    for name in [key for key in os.environ if key.startswith("GIT_")]:
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "absent-global"))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "absent-system"))
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # noqa: S607
+    subprocess.run(  # noqa: S603 - the one non-literal argument is os.devnull
+        ["git", "config", "core.excludesFile", os.devnull],  # noqa: S607
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / ".gitignore").write_text("scratch/\n*.log\n", encoding="utf-8")
+    (tmp_path / "kept.md").write_text("source\n", encoding="utf-8")
+    (tmp_path / "scratch").mkdir()
+    (tmp_path / "scratch" / "handoff.md").write_text("session scratch\n", encoding="utf-8")
+    (tmp_path / "noisy.log").write_text(
+        'uvicorn reaper.main:create_app --factory --port "8420"\n', encoding="utf-8"
+    )
+    odd = os.fsdecode(b"caf\xe9.md")
+    (tmp_path / odd).write_text("a name git prints as raw bytes\n", encoding="utf-8")
+    subprocess.run(["git", "add", "kept.md"], cwd=tmp_path, check=True)  # noqa: S607
+
+    global REPO
+    real, REPO = REPO, tmp_path
+    _repo_text_files.cache_clear()
+    try:
+        found = {path.relative_to(tmp_path).as_posix() for path, _ in _repo_text_files()}
+    finally:
+        REPO = real
+        _repo_text_files.cache_clear()
+
+    assert found == {".gitignore", "kept.md", odd}, found
 
 
 # Every real invocation of the app carries ``--factory``, because ``create_app`` IS a factory
@@ -1382,7 +1788,7 @@ _EXPECTED_MANIFEST_KINDS = {
 }
 
 
-def _dependabot_updates() -> list[dict]:
+def _dependabot_updates() -> list[dict[str, Any]]:
     """Every ``updates:`` entry in ``.github/dependabot.yml``.
 
     A parsed list, not a text scan, so unlike the walks elsewhere in this file its population
@@ -1895,6 +2301,76 @@ def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> No
     )
 
 
+#: Every spelling of the typecheck invocation: the workflow step, CONTRIBUTING's gate list, and
+#: the review skill's apply-the-fixes list. Matched on the whole argument run rather than on a
+#: fixed prefix, because a matcher anchored on ``mypy src/reaper`` reads a site that has NOT been
+#: widened as agreeing (rule 147).
+_MYPY_INVOCATION = re.compile(r"uv run mypy ((?:[\w./\[\]*-]+ ?)+?)(?=\s*(?:#|`|$))", re.M)
+
+#: `.github/workflows/ci.yml`, `CONTRIBUTING.md`, `.claude/skills/reaper-review/SKILL.md`, and
+#: `tests/_fakes.py`'s own docstring -- which is the copy most likely to go stale, since it is
+#: the file arguing for its place on the gate. `docs/history/**` is frozen and records what the
+#: gate was at the time, so it is skipped rather than counted; `docs/I18N_PLAN.md` proposes a
+#: gate for a plan nothing has started, and `docs/SIMPLIFICATION_PLAN.md` records the command as
+#: it stood when a change landed and moves to `docs/history/` when it retires.
+_EXPECTED_MYPY_SITES = 4
+
+#: Files that quote the command as a record rather than as the instruction to follow. A record
+#: is pinned to its moment, so holding it to today's gate would ask a finished plan to be edited
+#: every time the gate moves.
+_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md", "docs/SIMPLIFICATION_PLAN.md")
+
+
+def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
+    """`tests/` rides on the mypy run, and four files say so independently.
+
+    Two things have to hold, and each is checked below. **`tests/` is named**, or nothing in
+    it is type-checked and the structural fakes that inherit their real client prove nothing
+    by doing so (#580). And **`src/reaper` is named alongside it**, or mypy resolves `reaper`
+    from site-packages, finds no py.typed marker, and reports 731 import errors while
+    silently checking almost none of the tree -- a run that looks like it did the work.
+
+    The invocation is written four times, by four authors reading each other. A developer
+    running CONTRIBUTING's list would otherwise get a narrower check than CI runs and see a
+    clean tree that CI rejects, or the reverse. Rule 144, and the direction is the dangerous
+    one: a stale copy reads as the shorter, safer-looking command, so nothing about it looks
+    wrong.
+    """
+    sites = [
+        (path.relative_to(REPO), lineno, " ".join(match.group(1).split()))
+        for path, text in _repo_text_files()
+        if not any(rec in path.relative_to(REPO).as_posix() for rec in _MYPY_RECORDS)
+        for lineno, line in enumerate(text.splitlines(), 1)
+        if (match := _MYPY_INVOCATION.search(line))
+    ]
+    assert len(sites) == _EXPECTED_MYPY_SITES, (
+        f"expected {_EXPECTED_MYPY_SITES} spellings of the typecheck gate, found "
+        f"{len(sites)}:\n" + "\n".join(f"  {p}:{n} -> {t}" for p, n, t in sites) + "\n\n"
+        "If you ADDED one, bump the number so it is covered. If you did not, one dropped out\n"
+        "of the walk and the agreement below no longer reads it."
+    )
+    targets = {t for _, _, t in sites}
+    assert len(targets) == 1, (
+        "the typecheck gate names different targets in different files:\n"
+        + "\n".join(f"  {p}:{n} -> {t}" for p, n, t in sites)
+        + "\n\nMove them together. A developer running the narrow one sees a clean tree that\n"
+        "CI rejects, or CI runs a check nobody can reproduce."
+    )
+    (targets_run,) = targets
+    named = targets_run.split()
+    assert any(target.startswith("tests") for target in named), (
+        f"the typecheck gate runs `{targets_run}`, which no longer covers tests/.\n"
+        "The structural fakes inherit their real client so that a signature change they stop\n"
+        "matching fails the build; off the gate they are unchecked, and inheriting proves\n"
+        "nothing (#580)."
+    )
+    assert "src/reaper" in named, (
+        f"the typecheck gate runs `{targets_run}`, which no longer names src/reaper.\n"
+        "Without it mypy resolves `reaper` from site-packages, finds no py.typed marker, and\n"
+        "answers with import errors instead of checking the tree -- green-looking, and blind."
+    )
+
+
 #: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand and
 #: **named, not counted**. `codeql.yml` filters both its triggers, `docs-deploy.yml` filters its
 #: one, and `ci.yml` has none deliberately -- it runs on everything and classifies the diff
@@ -1978,6 +2454,66 @@ def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
         "binaries.yml's Decide step no longer refuses to publish from a non-dev ref:\n"
         "a branch dispatch with publish ticked would replace the dev-build prerelease,\n"
         "the snap edge channel, and the ghcr :dev image with unmerged branch code."
+    )
+
+
+#: Every ``run:`` script under `.github/workflows/` that turns on `pipefail`, counted so a
+#: block leaving the walk is visible rather than silently dropping out of the ban below
+#: (rule 145). Reconciled against the walk: `binaries.yml` 8, `ci.yml` 3, `release.yml` 5,
+#: `virustotal.yml` 2. The other five workflows set it nowhere, and a block without it is
+#: out of scope on purpose: there the pipeline's status is the reader's, which is the answer
+#: the step wanted. A first hand count said 14, and the walk is what corrected it.
+_PIPEFAIL_RUN_BLOCKS = 18
+
+
+def test_no_pipefail_gate_reads_its_verdict_through_a_short_circuiting_pipe() -> None:
+    """Under `pipefail` a pipeline reports its rightmost failure, and `head` makes one.
+
+    `head -c N` and `grep -q` both exit as soon as they have their answer, which can kill the
+    writer with SIGPIPE. The pipeline's status is then the writer's, so the step fails while
+    the thing it was testing succeeded. **Whether it fires depends on how much the writer
+    produced**: under the pipe buffer the writer finishes and exits 0 before either reader
+    closes. `binaries.yml`'s three boot probes read the served page through
+    `curl … | head -c 200 | grep -qi`, and were measured passing on a 4 KB page and failing on
+    a 200 KB one, so a healthy build whose page grew would have read as a bundle that lost its
+    SPA. CLAUDE.md's rule 134 names the mechanism; this is the gate for it, because the prose
+    binds an author who read it and a workflow is edited by one who did not.
+
+    **Spellings accepted** (rule 147): `| head`, `|head`, and the same two for `tail`, anywhere
+    in a script that sets `pipefail`. A reader that short-circuits under another name is out of
+    reach and is named here rather than implied covered. Redirect to a file and read the file.
+    """
+    workflows = REPO / ".github" / "workflows"
+    scripts: list[tuple[str, str]] = []
+    for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_name, job in (workflow.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                script = step.get("run")
+                if isinstance(script, str) and "pipefail" in script:
+                    scripts.append((f"{path.name}:{job_name}:{step.get('name', 'run')}", script))
+
+    assert len(scripts) == _PIPEFAIL_RUN_BLOCKS, (
+        f"the pipefail run blocks moved: {len(scripts)} found, "
+        f"{_PIPEFAIL_RUN_BLOCKS} expected.\n"
+        "Reconcile the count above by hand, then update _PIPEFAIL_RUN_BLOCKS. A block that\n"
+        "left the walk is missing from the ban below as well as from this number.\n"
+        "  " + "\n  ".join(name for name, _ in scripts)
+    )
+
+    offenders = [
+        f"{name} -> {line.strip()}"
+        for name, script in scripts
+        for line in script.splitlines()
+        if "| head" in line or "|head" in line or "| tail" in line or "|tail" in line
+    ]
+    assert not offenders, (
+        "a pipefail'd workflow step decides on a pipeline whose reader short-circuits:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nThe writer takes SIGPIPE once its output outgrows the pipe buffer, so the step\n"
+        "fails on a healthy result. Redirect to a file and read the file instead:\n"
+        '  curl -s "$url" > out.html || true\n'
+        '  if grep -qi "<!doctype html>" out.html; then spa=true; fi'
     )
 
 
@@ -2135,6 +2671,56 @@ def test_the_documented_status_budget_matches_the_enforced_one() -> None:
     )
 
 
+#: The rewatch curve, as the two source comments quote it: dormancy band -> the percentage each
+#: states. Both are prose justifying a shipped default (the 1,095-day dormancy floor, and the
+#: 365/1825 UNWATCHED ramp), and the measurement behind them lives only in `docs/SIGNALS.md`.
+#: The constant that used to tie the three together went with the engine that measured it.
+_REWATCH_CURVE_CLAIMS = {
+    "engine/gates.py": ("61%", "30%", "19%", "13%"),
+    "engine/policy.py": ("61%", "13%"),
+}
+
+
+def test_the_rewatch_percentages_in_source_are_the_ones_signals_md_measured() -> None:
+    """Rule 144, for the file's most-quoted table.
+
+    Two docstrings in ``src/`` state percentages off the rewatch curve as the measured reason a
+    shipped default is what it is, and neither is generated from anything. Nothing else in the
+    tree carries those numbers: the constant that did was deleted with the replay engine, and
+    the test that pinned the constant went with it. So a re-measurement that edits
+    ``docs/SIGNALS.md`` alone leaves two confident sentences quoting the old curve as
+    justification for a floor derived from it -- and the operator reading the why-panel is
+    told a number nobody stands behind any more.
+
+    Checked against the "Ground truth" table rather than against a copy here, so this test
+    cannot drift from the measurement either. It names both source files in the failure, which
+    is the whole of rule 144's remedy: a comment asking the next author to remember does
+    nothing, and a failure message costs one line.
+    """
+    table = (DOCS / "SIGNALS.md").read_text(encoding="utf-8")
+    heading = "## Ground truth: rewatch probability by dormancy"
+    assert heading in table, f"{heading!r} is gone from docs/SIGNALS.md, so nothing anchors this"
+    ground_truth = table.split(heading, 1)[1].split("###", 1)[0]
+
+    offenders = []
+    for rel, percentages in _REWATCH_CURVE_CLAIMS.items():
+        source = (SRC / rel).read_text(encoding="utf-8")
+        for percent in percentages:
+            # `~61%` in the table, "about 61%" or "~61% of films" in the source.
+            if percent not in source:
+                offenders.append(f"{rel} no longer states {percent}")
+            elif percent not in ground_truth:
+                offenders.append(f"docs/SIGNALS.md's ground-truth table no longer states {percent}")
+    assert not offenders, (
+        "the rewatch curve is written in three places and they disagree:\n  "
+        + "\n  ".join(sorted(set(offenders)))
+        + "\n\nThe measurement is docs/SIGNALS.md's 'Ground truth' table. If it was re-measured, "
+        "correct src/reaper/engine/gates.py's MinDormancyGate docstring and "
+        "src/reaper/engine/policy.py's DEFAULT_MOVIE_POLICY signal comment in the same change -- "
+        "both quote it as the reason a shipped default is the number it is."
+    )
+
+
 def test_every_decisions_section_matches_a_locked_decision_row() -> None:
     """``docs/STATUS.md`` and ``docs/DECISIONS.md`` name the same decisions, both ways.
 
@@ -2188,10 +2774,8 @@ def _checked_examples() -> dict[str, list[Path]]:
     the docs do not all illustrate the same lane: the panel's own worked example is the
     dormancy sentence, and the manual's is the popularity one.
     """
-    dormancy = MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1_095))
-    popularity = ServerPopularityGate(
-        GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-    )
+    dormancy = MinDormancyGate(GateConfig(threshold=1_095))
+    popularity = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
     examples = {
         dormancy.evaluate(_worked_example_facts(watchers=0)).detail: [
             REPO / "README.md",
@@ -2392,6 +2976,158 @@ def test_docs_referenced_from_code_exist() -> None:
     assert not dangling, "these doc paths do not exist:\n" + "\n".join(dangling)
 
 
+#: A dotted citation of one of this repository's own symbols, as prose writes it:
+#: ``api.review._chip``, ``services.snapshot.build_facts``, ``engine.gates.PROTECT``. Anchored on
+#: the four layered packages plus ``db`` and ``auth``, because those are the names that appear
+#: bare in a comment; a fully-qualified ``reaper.api.review._chip`` matches too, since the
+#: pattern is not anchored at a word start on the left.
+#: A leading ``/`` is what tells a citation from a URL or a file path, and nothing else does:
+#: ``https://api.github.com``, ``https://api.radarr.video/v1/…`` and ``frontend/src/api.test.ts``
+#: are all shaped exactly like ``api.review._chip``, and two of the three sit in the same double
+#: backticks this repository cites code with. So the pattern refuses a match preceded by a slash.
+#: The lookbehind refuses `/` and a word character but NOT a dot, so a fully-qualified
+#: `reaper.api.review._chip` matches on its `api.` segment. Adding `.` to that class reads as
+#: tighter and silently drops every `:func:`reaper.…`` cross-reference in the tree, which is the
+#: spelling both pre-existing stale citations this guard first caught were written in.
+_DOTTED_SYMBOL = re.compile(
+    r"(?<![/\w])(api|services|clients|engine|db|auth)((?:\.[a-z_][\w]*)+)\.([A-Za-z_]\w{1,})\b"
+)
+
+
+def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
+    """A comment naming ``package.module.symbol`` names one that exists.
+
+    Rule 64's supply chain, for the citation form no other guard covers.
+    ``test_docs_referenced_from_code_exist`` above does this for a ``docs/`` path; nothing did it
+    for a symbol, so splitting a module left every comment pointing at its old address, and the
+    only thing that found them was `docs/SIMPLIFICATION_PLAN.md` happening to warn that they
+    existed. Splitting the API routes module into five moved **39** of these across 26 files, and
+    the plan's own first estimate of that population was "roughly ten".
+
+    **What it catches, stated as a bound rather than a boast.** A retired module named any of the
+    three ways prose names one (a path, a bare module name, a dotted package path), and a
+    symbol that is not reachable from the module cited. **What it does not catch: a symbol that
+    moved to a sibling while the old module still imports it.** ``api.simulate._replayed_evidence``
+    resolves green here, because `simulate` imports that name from `review` for its own use, and
+    the guard cannot tell an import kept for use from one kept by accident. A stricter
+    "defined here" test was written and withdrawn: it flags every monkeypatch target in the suite
+    (`services.snapshot.utcnow` is imported into `snapshot`, which is exactly why patching it
+    works), so it trades this hole for a much larger false-positive class.
+
+    Deliberately not a count (rule 145). The population is every comment in the tree and it moves
+    with ordinary writing, so a number here would be bumped without being read. What cannot drift
+    is whether each one resolves.
+    """
+    import importlib
+    import inspect
+
+    #: A dotted name ending in one of these is a filename, not a symbol: `api.types.gen.ts`.
+    suffixes = (".ts", ".tsx", ".py", ".md", ".mdx", ".json", ".css", ".html", ".yml", ".yaml")
+    #: `docs/SIMPLIFICATION_PLAN.md` is exempt, and it is the one document that has to be. Its
+    #: finding bodies quote the tree as it stood *before* each change, with `> Corrected:` and
+    #: `Landed` blocks layered on top rather than edited in — so a citation that no longer
+    #: resolves is often the record working, not rot. Re-pathing them against today's tree would
+    #: destroy the history the plan exists to keep (its own preamble says so of `refuted.md`).
+    exempt = {REPO / "docs" / "SIMPLIFICATION_PLAN.md"}
+    #: This file names the retired module to DECLARE it, in `retired_modules` and in the prose
+    #: explaining why the tombstone exists, so the tombstone check skips its own declaration.
+    #: Scoped to that check alone -- the dotted check below still reads this file.
+    declares_the_tombstone = REPO / "tests" / "test_repo_hygiene.py"
+
+    #: Every module under `src/reaper/`, to check the OTHER two spellings prose uses for one.
+    #: `api/routes.py` (a path) and `routes._chip` (a bare module name) are cited as often as the
+    #: dotted form, and both survived the sweep this test was written for: 25 citations across
+    #: `src/`, `tests/`, `frontend/src/`, a rules file and `CLAUDE.md`, found by a reviewer rather
+    #: than by the guard, because the pattern above requires a package prefix and refuses a
+    #: leading slash. A guard covering one spelling of three is rule 145's failure wearing the
+    #: shape of the thing it checks.
+    modules = {
+        str(q.relative_to(REPO / "src" / "reaper")) for q in (REPO / "src" / "reaper").rglob("*.py")
+    }
+    #: The retired module's OTHER two spellings, tombstoned rather than derived. A "does this
+    #: path exist" check cannot be general here: prose legitimately names files the tree does not
+    #: have -- `api/deps.py` is phase 8's planned module, `engine/requester.py` and
+    #: `engine/custom_gate.py` are proposals -- so a derived check flags the plan for planning.
+    #: What is NOT legitimate is naming a module that used to exist and does not, which is
+    #: exactly what a split leaves behind, and that is a list of one line per retirement.
+    #: The bare form is undecidable in prose on its own -- `routes._chip` and a local
+    #: `result._asdict` are the same shape, and one of the twelve real sites
+    #: (`engine/explanation.py`) was not even in backticks -- so this is keyed on the retired
+    #: name rather than derived. One entry per retirement: package, then module.
+    retired_modules = {"routes": "api"}
+    names = "|".join(retired_modules)
+    packages = "|".join(dict.fromkeys(retired_modules.values()))
+    cites = re.compile(rf"(?<![\w/.])(?:(?:{packages})/)?({names})\.(py\b|_?[A-Za-z]\w*)")
+    assert modules, "the module walk found nothing, so every check below passes vacuously"
+
+    dangling: list[str] = []
+    for path in [p for p in (*_code_files(), *_live_docs()) if p not in exempt]:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if path != declares_the_tombstone:
+                for m in cites.finditer(line):
+                    dangling.append(
+                        f"{path.relative_to(REPO)}:{lineno} -> {m.group(0)} "
+                        f"({m.group(1)}.py was retired; it is now several modules)"
+                    )
+            for match in _DOTTED_SYMBOL.finditer(line):
+                if match.group(0).endswith(suffixes):
+                    continue
+                package, middle, symbol = match.groups()
+                # Resolve by importing the longest prefix that IS a module, then walking what is
+                # left with getattr. A citation is not always module-then-symbol: `httpx2` in
+                # `clients.base.httpx2.AsyncHTTPTransport` is an alias bound inside a module, and
+                # a monkeypatch target reads the same way. Splitting on the last dot instead
+                # would flag every one of those as a missing module.
+                parts = f"reaper.{package}{middle}.{symbol}".split(".")
+                mod, depth = None, 0
+                for i in range(len(parts), 1, -1):
+                    try:
+                        mod = importlib.import_module(".".join(parts[:i]))
+                        depth = i
+                        break
+                    except ImportError:
+                        continue
+                if mod is None:
+                    dangling.append(
+                        f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)} "
+                        f"(no module under reaper.{package})"
+                    )
+                    continue
+                rest = parts[depth:]
+                if rest:
+                    target: object | None = mod
+                    for attr in rest:
+                        target = getattr(target, attr, None)
+                        if target is None:
+                            break
+                    if target is not None:
+                        continue
+                    symbol = rest[-1]
+                    module = ".".join(parts[:depth])
+                else:
+                    continue
+                # A method is cited as ``services.executor.execute``, without its class, because
+                # the module has one obvious owner and the prose reads better for it. Accept the
+                # symbol anywhere in the module's own classes.
+                on_class = any(
+                    inspect.isclass(member)
+                    and member.__module__ == module
+                    and hasattr(member, symbol)
+                    for member in vars(mod).values()
+                )
+                if not on_class:
+                    dangling.append(
+                        f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)} "
+                        f"({symbol} is not in {module})"
+                    )
+    assert not dangling, (
+        "these dotted citations do not resolve. A comment naming a symbol is part of that\n"
+        "symbol's supply chain (rule 64): when it moves, the citation moves with it in the same\n"
+        "change. Re-path each, or delete the citation if the thing it named is gone:\n  "
+        + "\n  ".join(dangling)
+    )
+
+
 def test_live_docs_do_not_restate_the_numbered_rules() -> None:
     """The numbered rules have exactly one home: ``CLAUDE.md`` and ``.claude/rules/``.
 
@@ -2466,8 +3202,11 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # over `REPAIR_NOTICES`, one per placement, so a repair kind added later gets its sentence from
 # the map instead of a fourth copy of the same JSX (#516). The population shrank; the number of
 # notices an operator can see did not.
+# Then 143 -> 142: the why panel's and the Scales panel's loading/error fallbacks became one
+# `PanelFallback` the two hand three strings (W11-24). One fewer call site, the same two notices
+# on screen.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 143
+_EXPECTED_NOTICES = 142
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2574,8 +3313,12 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # Then 36 -> 35: the policy editor's two standing recovery notices became one render over the
 # `top` half of `REPAIR_NOTICES`. Still standing, and for the same reason -- a repair is carried
 # by the fetch, so it is the state of the page from its first paint (#516).
+# Then 36: the setup wizard's password step, the second drawing of `AdminPasswordForm` and the
+# one place its live complaint was still announced. Same `{pw.length} so far` inside a live
+# region on every keystroke, on the form that sets the key arming deletion; the sibling above has
+# been standing since #394 and this copy was never swept (rule 72).
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 35
+_EXPECTED_STANDING = 36
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
@@ -2724,9 +3467,17 @@ def test_every_silent_notice_says_why_it_is_silent() -> None:
 # which argues the same thing in as many words. A ban would have to exempt all of them; a count
 # does not care which way a site resolved, only that nobody added one without deciding.
 _QUERY_FAILURE_HANDLES = {
-    "frontend/src/App.tsx": 8,
+    "frontend/src/App.tsx": 7,
+    # The seven settings panels below held one entry between them, ``Settings.tsx: 8``, until the
+    # file became a shell and each panel got its own module. Nothing about any branch changed:
+    # the 8 redistribute exactly, and Settings.tsx leaves the walk because the shell binds no
+    # read at all.
+    "frontend/src/components/AboutPanel.tsx": 1,
+    "frontend/src/components/BackupPanel.tsx": 1,
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
+    "frontend/src/components/GeneralPanel.tsx": 1,
+    "frontend/src/components/JobsPanel.tsx": 2,
     # Whether each protection list is still protecting anything (#475). Undivided on purpose,
     # like the safety reads above: this screen exists so an operator can tell a list that
     # stopped working from one that is simply not on a title's side, so an unreadable answer
@@ -2741,6 +3492,7 @@ _QUERY_FAILURE_HANDLES = {
     # for that reason, and each is driven into it on its own in the tests.
     "frontend/src/components/ListsPanel.tsx": 2,
     "frontend/src/components/LogsPanel.tsx": 1,
+    "frontend/src/components/NotificationsPanel.tsx": 1,
     # 5 -> 6 when the library list moved to ``usePlexLibraries``. No branch here changed: the
     # panel's JSX is untouched, and the extra handle is the walk seeing the bag's two members
     # where a directly-bound ``useQuery`` had been one. Counted rather than excused, because
@@ -2765,12 +3517,14 @@ _QUERY_FAILURE_HANDLES = {
     # "we could not look" branch is the same handle it always had, now in its own module so
     # the wizard states the regime from the same declaration.
     "frontend/src/components/SafetyBanner.tsx": 1,
+    "frontend/src/components/SectionNav.tsx": 1,
+    "frontend/src/components/SecurityPanel.tsx": 1,
     # 6 -> 7: the library pickers now consult the SYNC's failure as well as the query's. A read
     # that lands empty while the sync that would fill it fails is the ordinary answer when Plex
     # is not linked at all, and with only the query consulted the panel stated as fact that the
     # server holds no libraries of this kind -- about a server nobody reached.
     "frontend/src/components/ServiceModal.tsx": 7,
-    "frontend/src/components/Settings.tsx": 8,
+    "frontend/src/components/ServicesPanel.tsx": 1,
     "frontend/src/components/SetupConnectStep.tsx": 1,
     # 1 -> 2: the same sync failure, on the step that renders the Libraries grid. It drew an
     # empty grid and said nothing at all, so "no libraries" and "we never got to look" were one
@@ -2813,7 +3567,20 @@ _READ_HOOKS = {
     # half is not unclassified by omission: ``PlexPanel`` renders ``sync.error`` through the
     # action slot it already shared with ``saveLibraries``.
     "usePlexLibraries",
+    # Wraps the general-settings query and returns the whole result, so `GeneralPanel` still
+    # branches on `general.isError` and the number does not move.
+    "useGeneralSettings",
 }
+
+# The hooks that hand back PAYLOAD and no failure handle at all, so a member of their result
+# named ``error`` is the SERVER's word rather than a read that failed.
+#
+# ``ScanStatus.error`` is the case: the scan bar and the wizard both render "The scan hit a
+# problem: {status.error}", which is a finished scan reporting what went wrong. The walk already
+# refused to count that through ``_QUERY_PRIMITIVES``, while the query was declared inline and
+# destructured; hoisting it into ``useScanStatus`` moved the same expression onto an unknown hook
+# bound whole. Filing it as a read adds two handles for branches that do not exist (rule 141).
+_PAYLOAD_HOOKS = {"useScanStatus"}
 
 # The hooks whose failure is an action's, not a read's. Listed rather than assumed, so the walk
 # fails on a hook it has never seen instead of quietly filing it here.
@@ -2865,6 +3632,11 @@ def _query_failure_handles() -> tuple[dict[str, int], set[str]]:
         found = 0
         for match in _OBJECT_BINDING.finditer(text):
             binding, hook = match.group(1), match.group(2)
+            # A payload hook's ``.error`` is the server's message on the value, so it is neither
+            # counted nor left unclassified. Same exclusion the member branch below applies to
+            # React Query's own hooks, for the same reason.
+            if hook in _PAYLOAD_HOOKS:
+                continue
             reads = [
                 a
                 for a in ("isError", "error")
@@ -2895,7 +3667,7 @@ def _query_failure_handles() -> tuple[dict[str, int], set[str]]:
                 # lines rename it (``const { data: status } = useQuery``) and then read
                 # ``status.error`` -- the SERVER's error message on the payload, not a handle.
                 # Counting those would have moved the number for a read that does not exist.
-                if hook in _QUERY_PRIMITIVES:
+                if hook in _QUERY_PRIMITIVES or hook in _PAYLOAD_HOOKS:
                     continue
                 reads = [
                     a
@@ -2928,12 +3700,13 @@ def test_every_query_failure_branch_is_counted() -> None:
     itself while disagreeing with the tree (rule 145).
     """
     per_file, hooks = _query_failure_handles()
-    unknown = sorted(hooks - _READ_HOOKS - _ACTION_HOOKS)
+    unknown = sorted(hooks - _READ_HOOKS - _ACTION_HOOKS - _PAYLOAD_HOOKS)
     assert not unknown, (
         "these hooks hand back an `error`/`isError` the walk has never seen, so it cannot say\n"
         "whether they are reads or actions and will not guess:\n  " + "\n  ".join(unknown) + "\n"
-        "Add each to _READ_HOOKS (a read, whose failure leaves the last good value in hand) or\n"
-        "to _ACTION_HOOKS (a mutation, whose failure is an action's)."
+        "Add each to _READ_HOOKS (a read, whose failure leaves the last good value in hand),\n"
+        "to _ACTION_HOOKS (a mutation, whose failure is an action's), or to _PAYLOAD_HOOKS (it\n"
+        "returns the value alone, so `.error` on it is the server's message and not a handle)."
     )
     assert per_file == _QUERY_FAILURE_HANDLES, (
         "the query-failure population moved.\n"
@@ -2956,9 +3729,13 @@ def test_every_query_failure_branch_is_counted() -> None:
 # on screen. What is left is here so the next one has to be classified rather than typed.
 #
 # Per file, and every entry is a deliberate keep:
+#   AboutPanel.tsx (1)       the About read's never-loaded branch
+#   BackupPanel.tsx (1)      the backup summary's never-loaded branch
 #   Fairness.tsx (1)         NOT advice: the Refresh button's ``title``, "Reload requests and
 #                            watch history". It is in the walk because the walk is of a word, and
 #                            dropping it by hand is how a matcher starts lying about its own scope
+#   GeneralPanel.tsx (1)     the general settings' never-loaded branch
+#   JobsPanel.tsx (2)        two never-loaded branches, the upkeep jobs and the shelf status
 #   NotInScanPanel.tsx (1)   a read-only panel with no draft, and now only on the arm where the
 #                            list never landed (#190)
 #   PlexPanel.tsx (1)        the panel's own never-loaded status read
@@ -2974,7 +3751,13 @@ def test_every_query_failure_branch_is_counted() -> None:
 #                            staged summary and the password typed against it went at the confirm,
 #                            two states earlier -- and what comes back is a different database
 #                            anyway, which is the point of pressing it (#386)
-#   Settings.tsx (6)         six never-loaded branches, each above a form that never rendered
+#   SecurityPanel.tsx (1)    the security settings' never-loaded branch
+#
+# The five settings panels above were one entry, ``Settings.tsx (6)``, until that file became a
+# shell holding no read of its own. Same six branches, each on a read that never landed with
+# nothing on screen to lose; only the file rendering each one is now named. The single entry said
+# "above a form that never rendered", which was never true of all six -- About is read-only and
+# the shelf-status branch sits above a status row.
 #
 # **#195's enumeration was not the whole population**, which is why this counts rather than
 # trusting the issue: it named 8 to fix and 9 to leave, called that 15, and did not reach the reap
@@ -2988,7 +3771,11 @@ def test_every_query_failure_branch_is_counted() -> None:
 # construction. Its line now points at the close the modal already has, and ``App.tsx`` is gone
 # from this dict.
 _RELOAD_ADVICE = {
+    "frontend/src/components/AboutPanel.tsx": 1,
+    "frontend/src/components/BackupPanel.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
+    "frontend/src/components/GeneralPanel.tsx": 1,
+    "frontend/src/components/JobsPanel.tsx": 2,
     "frontend/src/components/NotInScanPanel.tsx": 1,
     "frontend/src/components/PlexPanel.tsx": 1,
     "frontend/src/components/PolicyEditor.tsx": 1,
@@ -2996,7 +3783,7 @@ _RELOAD_ADVICE = {
     "frontend/src/components/ReapConfirm.tsx": 1,
     "frontend/src/components/ReapPlan.tsx": 1,
     "frontend/src/components/RestoreCard.tsx": 3,
-    "frontend/src/components/Settings.tsx": 6,
+    "frontend/src/components/SecurityPanel.tsx": 1,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -3015,10 +3802,10 @@ def _without_comments(text: str) -> str:
 def test_the_reload_advice_population_is_pinned_per_file() -> None:
     """Telling an operator to reload throws away their draft, so each one is deliberate (#195).
 
-    Matches the bare word ``reload``, case-insensitively, in what is left of a shipped ``.tsx``
-    once comments are gone. Deliberately looser than the sentence it is about (rule 147): the tree
-    spells the advice three ways -- "Reload to try again.", "Reload the page to try again." and
-    "then reload this page." -- and the second of those WRAPS across two source lines in
+    Matches the bare word ``reload``, case-insensitively, in what is left of a shipped ``.tsx`` or
+    ``.ts`` once comments are gone. Deliberately looser than the sentence it is about (rule 147):
+    the tree spells the advice three ways -- "Reload to try again.", "Reload the page to try
+    again." and "then reload this page." -- and the second of those WRAPS across two source lines in
     ``NotInScanPanel``, so a per-line match on the full phrase would have missed it. A word cannot
     wrap. The cost is that the walk also collects a Refresh button's tooltip, which is listed
     above rather than filtered out, because a matcher that quietly drops what does not fit stops
@@ -3029,7 +3816,7 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     one reads green here: the per-branch claims are pinned in the component tests.
     """
     found: dict[str, int] = {}
-    for path in _shipped_tsx():
+    for path in _shipped_frontend_source():
         n = len(re.findall(r"(?i)\breload", _without_comments(path.read_text(encoding="utf-8"))))
         if n:
             found[str(path.relative_to(REPO))] = n
@@ -3043,6 +3830,395 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     )
 
 
+# Every "couldn't load" sentence the shipped tree renders, and the file rendering each one. The
+# count above matches the WORD `reload` per file, so it is blind to two panels drifting apart on
+# the sentence they print when a read never landed. That is what W11-36 is about: "Couldn't load
+# these settings. Reload to try again." is written at four sites and "Couldn't load this page.
+# Reload to try again." at two. Three more keys below hold two files each, and the finding named
+# none of them.
+#
+# `PolicyEditor`'s "Couldn't load these settings." is the deliberate fifth copy and holds a key of
+# its own. The distinction is per BRANCH rather than per panel, and that file carries both: at
+# `:1618` the whole draft failed to read, so the workspace never rendered and there is nothing to
+# lose, while `:2355` sits inside a mounted editor whose savebar may be holding unsaved edits, and
+# a reload takes them with no ask (#195; `frontend/src` has no `beforeunload` handler). So the two
+# keys differing by exactly that clause are both correct, and a sixth site dropping the advice
+# earns its own key here with the same reasoning written down.
+_NEVER_LOADED_COPY = {
+    "Couldn't load Scales.": ["frontend/src/components/Fairness.tsx"],
+    "Couldn't load new lines, and updates are paused.": ["frontend/src/components/LogsPanel.tsx"],
+    "Couldn't load new lines. Reaper is trying again.": ["frontend/src/components/LogsPanel.tsx"],
+    "Couldn't load the Leaving Soon settings.": ["frontend/src/components/PlexPanel.tsx"],
+    "Couldn't load the library list.": [
+        "frontend/src/components/PlexPanel.tsx",
+        "frontend/src/components/SetupPlexStep.tsx",
+    ],
+    "Couldn't load the library list. Try again.": ["frontend/src/components/SetupPlexStep.tsx"],
+    "Couldn't load the log.": ["frontend/src/components/LogsPanel.tsx"],
+    "Couldn't load the reasons for this item. Close this panel and click the item to try again.": [
+        "frontend/src/components/WhyPanelFallback.tsx"
+    ],
+    "Couldn't load the rest of the list, so nothing was selected. Your picks are as they were."
+    " Try again.": ["frontend/src/components/ReviewQueue.tsx"],
+    "Couldn't load the seasons. Collapse and expand to try again.": [
+        "frontend/src/components/ReviewQueue.tsx"
+    ],
+    "Couldn't load the shelf status. Reload to try again.": [
+        "frontend/src/components/JobsPanel.tsx"
+    ],
+    "Couldn't load the upkeep jobs. Reload to try again.": [
+        "frontend/src/components/JobsPanel.tsx"
+    ],
+    "Couldn't load the watch history record.": ["frontend/src/components/PlexPanel.tsx"],
+    "Couldn't load these settings.": ["frontend/src/components/PolicyEditor.tsx"],
+    "Couldn't load these settings. Reload to try again.": [
+        "frontend/src/components/GeneralPanel.tsx",
+        "frontend/src/components/PlexPanel.tsx",
+        "frontend/src/components/PolicyEditor.tsx",
+        "frontend/src/components/SecurityPanel.tsx",
+    ],
+    "Couldn't load this page. Reload to try again.": [
+        "frontend/src/components/AboutPanel.tsx",
+        "frontend/src/components/BackupPanel.tsx",
+    ],
+    "Couldn't load this person's requests. Close this panel and click the card to try again.": [
+        "frontend/src/components/ScalesPanel.tsx"
+    ],
+    "Couldn't load what a reap would remove. Reaper just can't show it right now."
+    " Reload to try again.": ["frontend/src/components/ReapBreakdown.tsx"],
+    "Couldn't load your connections.": [
+        "frontend/src/components/ServicesPanel.tsx",
+        "frontend/src/components/SetupConnectStep.tsx",
+    ],
+    "Couldn't load your lists, so there is no way to tell here whether they are working.": [
+        "frontend/src/components/ListsPanel.tsx"
+    ],
+    "Couldn't load your review queue.": ["frontend/src/components/ReviewQueue.tsx"],
+    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from right"
+    " now. The rules you've already added are still here.": [
+        "frontend/src/components/PolicyRuleEditors.tsx",
+        "frontend/src/components/PolicyRuleEditors.tsx",
+    ],
+    "Reaper couldn't load this plan. Reload the page to try again.": [
+        "frontend/src/components/ReapPlan.tsx"
+    ],
+    "Reaper couldn't load this reap. Close this and try View again.": ["frontend/src/App.tsx"],
+    "Reaper couldn't load your lists, so there's nothing to pick from right now.": [
+        "frontend/src/components/PolicyRuleEditors.tsx"
+    ],
+}
+
+#: What makes a run of text one of these. Accepts the spellings the tree uses plus the ones it
+#: could reach for without anyone noticing (rule 147): ``couldn't load``, ``could not load``, and
+#: the same with a typographic apostrophe (U+2019, which an editor substitutes on its own), in any
+#: casing and anywhere in the run.
+_NEVER_LOADED = re.compile("(?i)could(?:n['\\u2019]t| not) load")
+
+#: What bounds one. The key is the WHOLE run between two of these, not the sentence starting at
+#: the matched words, so a clause added at the FRONT of one copy moves that key: matching forward
+#: from ``could`` left the front open, and prepending "Something went wrong." to one of a pinned
+#: pair read green. These five are where JSX text, a string literal and a template all end.
+#: Everything is read off the file flattened to a single line, so a sentence that WRAPS across
+#: source lines is still one run, which four of them do. What this cannot see is a sentence
+#: interpolating a value, since the run ends at the brace, and one assembled in a local; both land
+#: as a shorter key rather than as a silent pass.
+_TEXT_RUN = re.compile(r"[<>\"`{}]")
+
+
+def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
+    """Five of these are written at more than one site, so they drift apart one copy at a time.
+
+    Rule 144's shape on failure copy. One fact, "this panel has nothing to show you", is written
+    32 times in 25 sentences, each by someone reading a different one. The reload-advice count
+    above cannot see it: a file keeps its ``reload`` count while the sentence around the word
+    changes.
+
+    Keyed by sentence rather than by file, because a copy moving between files is not what this
+    is about. A fifth panel picking up "Couldn't load these settings. Reload to try again." has to
+    add itself to that key's list, where the four already on it are in view.
+
+    Over ``.ts`` as well as ``.tsx``, because a sentence exported from a ``.ts`` module and
+    rendered from a component is invisible to a ``.tsx``-only walk. That was demonstrated: a 26th
+    sentence declared that way read green before the walk was widened.
+    """
+    found: dict[str, list[str]] = {}
+    for path in _shipped_frontend_source():
+        flat = " ".join(_without_comments(path.read_text(encoding="utf-8")).split())
+        for run in _TEXT_RUN.split(flat):
+            if _NEVER_LOADED.search(run):
+                found.setdefault(run.strip(), []).append(str(path.relative_to(REPO)))
+    assert {sentence: sorted(files) for sentence, files in found.items()} == _NEVER_LOADED_COPY, (
+        "the never-loaded copy moved.\n"
+        f"expected: {_NEVER_LOADED_COPY}\nfound:    {found}\n"
+        "A new sentence: check first whether one of the keys above already says it, and reuse\n"
+        "that rather than adding a 26th way to say the same thing. A new site on an existing\n"
+        "key: add the file to that key's list. Adding or dropping 'Reload to try again.' is a\n"
+        "separate decision, and _RELOAD_ADVICE above holds the reasoning behind it."
+    )
+
+
+#: Every `.field-sm` container the shipped tree writes, by file and by tag. `.field-sm` is a
+#: `<label>` wherever exactly one control renders inside it, which is what lets the box name its
+#: control with no `htmlFor`/`id` pair to keep in step, and a `<div>` wherever no single control
+#: does. The four `<div>` sites and why each one is not a label: `ListModal`'s tag editor holds a
+#: `TagsEditor` and a `Segmented`; `ServiceModal`'s library and instance pickers each render a
+#: `<select>` per row of a `.map()`; `SetupPlexStep`'s manual address holds a host box and a port
+#: box. That rule held at 26 sites across 9 files and was written down nowhere until this (W11-23).
+_FIELD_SM_CONTAINERS = {
+    "frontend/src/components/DiscordModal.tsx": {"label": 1},
+    "frontend/src/components/JobsPanel.tsx": {"label": 2},
+    "frontend/src/components/ListModal.tsx": {"div": 1, "label": 4},
+    "frontend/src/components/NotificationsPanel.tsx": {"label": 1},
+    "frontend/src/components/RestoreCard.tsx": {"label": 1},
+    "frontend/src/components/SecurityPanel.tsx": {"label": 3},
+    "frontend/src/components/ServiceModal.tsx": {"div": 2, "label": 6},
+    "frontend/src/components/SetupPasswordStep.tsx": {"label": 2},
+    "frontend/src/components/SetupPlexStep.tsx": {"div": 1, "label": 2},
+}
+
+#: One whole line: a `<label>` or `<div>` open tag whose `className` is the only attribute on it.
+#: Accepts the two spellings the tree uses, a string literal and any one-line braced expression,
+#: which covers `SecurityPanel`'s `viaRecovery ? "field-sm dim" : "field-sm"` and a template
+#: literal alike. Rejects a class list broken over several lines, a second attribute on the open
+#: tag, and any other tag. Those three leave the walk while `_FIELD_SM_WORD` still reads their
+#: line, so the assertion below names them rather than skipping them (rule 147).
+_FIELD_SM_OPEN = re.compile(r'^\s*<(label|div) className=(?:"[^"\n]*"|\{[^\n]*\})>\s*$')
+_FIELD_SM_WORD = re.compile(r"\bfield-sm\b")
+_FIELD_LABEL_SPAN = '<span className="field-label">'
+
+
+def test_every_field_sm_box_names_itself_and_the_population_holds_still() -> None:
+    """A `<label>` around two controls names the first one and leaves the second nameless.
+
+    26 boxes across 9 files ride that rule and nothing declared it, so the 27th would copy
+    whichever of the 26 its author had open. `.field-sm` is a `<label>` wherever exactly one
+    control renders inside it and a `<div>` wherever no single control does.
+
+    **This does not check the rule, and is named for what it does check** (rule 118). It pins two
+    things: that every box opens with one `span.field-label`, and the population per file and per
+    tag. What decides label-versus-div is invisible in source text, so a tag count would read the
+    tree backwards at three of the 26. `ListModal`'s Plex library box holds a `<select>` and an
+    `<input>` in the two arms of a ternary, so one renders. `ServiceModal`'s two pickers hold one
+    `<select>` inside a `.map()`, so many do. A label over two controls therefore reads green
+    here, and the per-file tag counts are what a wrong choice has to get past instead: a new
+    `<div className="field-sm">` cannot be added without editing the comment above that says why
+    each existing one is a div.
+
+    Over `.ts` as well as `.tsx`, because a box taking its class from a constant in a `.ts` module
+    leaves BOTH the matcher and the count at once, which is the shape rule 145 warns about. That
+    was demonstrated: a 27th box holding two controls and no name read green before the walk was
+    widened.
+    """
+    walked: dict[str, dict[str, int]] = {}
+    unnamed: list[str] = []
+    unread: list[str] = []
+    for path in _shipped_frontend_source():
+        lines = _without_comments(path.read_text(encoding="utf-8")).splitlines()
+        for number, line in enumerate(lines):
+            if not _FIELD_SM_WORD.search(line):
+                continue
+            name = str(path.relative_to(REPO))
+            match = _FIELD_SM_OPEN.match(line)
+            if not match:
+                unread.append(f"{name}:{number + 1} -> {line.strip()[:70]}")
+                continue
+            walked.setdefault(name, {}).setdefault(match.group(1), 0)
+            walked[name][match.group(1)] += 1
+            below = lines[number + 1].strip() if number + 1 < len(lines) else ""
+            if not below.startswith(_FIELD_LABEL_SPAN):
+                unnamed.append(f"{name}:{number + 1} -> {below[:60]}")
+    assert not unread, (
+        "`field-sm` is written where the box matcher cannot read it:\n  "
+        + "\n  ".join(unread)
+        + "\nEach of these is either a box spelled in a form `_FIELD_SM_OPEN` rejects, which is a\n"
+        "class list broken over several lines, a second attribute on the open tag, or a tag other\n"
+        "than `<label>`/`<div>`, or a mention of the class that is not a box at all. Widen the\n"
+        "matcher for the first. For the second, this walk needs a second population before it can\n"
+        "tell one from the other, since one of each cancels out."
+    )
+    assert not unnamed, (
+        "a `.field-sm` box whose first child is not its name:\n  " + "\n  ".join(unnamed) + "\n"
+        f"Every one of them opens with {_FIELD_LABEL_SPAN}, which is what a screen reader reads\n"
+        "out for the control inside. Put the span first, or say here why this box is different."
+    )
+    assert walked == _FIELD_SM_CONTAINERS, (
+        "the `.field-sm` population moved.\n"
+        f"expected: {_FIELD_SM_CONTAINERS}\nfound:    {walked}\n"
+        'A new `<label className="field-sm">`: check exactly one control renders inside it,\n'
+        "counting a `.map()` as many and a ternary as one, then bump the count here. If more\n"
+        "than one renders, or none does, it is a `<div>` and the comment above gains a clause\n"
+        "saying which of those it is."
+    )
+
+
+#: The surfaces that hold a connection-test verdict beside the fingerprint it was computed for,
+#: so a badge can be withdrawn once it stops describing what is on screen. This is the population
+#: the ban below scans, not a second one beside it (rule 147): every shipped file spelling an
+#: ``of:`` key outside a comment. Pinned by name, because the fifth surface is written by copying
+#: whichever of these four its author happened to open, and three of the four were the wrong copy.
+_VOUCHED_TEST_SURFACES = {
+    "frontend/src/components/DiscordModal.tsx",
+    "frontend/src/components/NotificationsPanel.tsx",
+    "frontend/src/components/ServiceModal.tsx",
+    "frontend/src/components/ServicesPanel.tsx",
+}
+
+_OF_KEY = re.compile(r"\bof:")
+
+#: What an ``of:`` key may be handed: a name, or a path of them. ``issued.of`` is the fingerprint
+#: captured when the request was issued; ``string`` is the type annotation on the state that holds
+#: it. Everything else is an expression, and an expression under ``of:`` is evaluated where it is
+#: written, which is the question this asks.
+_CAPTURED_NAME = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$")
+
+
+def _without_comments_keeping_lines(text: str) -> str:
+    """``_without_comments``, with every removed line still there as an empty one.
+
+    The offender list reports line numbers, so the collapsing form cannot be used. A block
+    comment becomes its own newlines.
+    """
+    blanked = _BLOCK_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    return _without_line_comments(blanked)
+
+
+def _value_after_of(line: str) -> str | None:
+    """The expression ``line`` hands to an ``of:`` key, or ``None`` where it has no such key.
+
+    Bounded crudely, at the first ``,``, ``;`` or closing bracket. That cuts a value carrying one
+    of those inside a string (``of: `${kind}, ${baseUrl()}` ``) short, and the check below is
+    written so a short read is a FAILURE rather than a pass: half a template literal is not a
+    name either. An exact walk over bracket depth was tried first and is what made the cut matter,
+    since it counted brackets and not quotes and so mis-read the same line the other way.
+    """
+    key = _OF_KEY.search(line)
+    if key is None:
+        return None
+    for i in range(key.end(), len(line)):
+        if line[i] in ",;)]}":
+            return line[key.end() : i]
+    return line[key.end() :]
+
+
+def _settle_time_fingerprints(text: str) -> list[int]:
+    """Line numbers where an ``of:`` key is handed anything but a name, outside ``onMutate``.
+
+    Written as an allowlist rather than as a hunt for a call, because the defect is not "a call
+    ran here" but "this value was computed here", and a template literal spelling out the same
+    fingerprint is the same defect with no call in it. The first draft asked for a call and let
+    exactly that through. So the two shapes a stored fingerprint may take are named and everything
+    else fails, which is the direction a gate on this tree resolves.
+    """
+    found = []
+    for n, line in enumerate(_without_comments_keeping_lines(text).splitlines(), 1):
+        if "onMutate" in line:
+            continue
+        value = _value_after_of(line)
+        if value is not None and not _CAPTURED_NAME.match(value.strip()):
+            found.append(n)
+    return found
+
+
+def test_a_held_test_result_is_stamped_when_its_request_is_issued() -> None:
+    """A "Passed" badge must describe the address that was tested, not the one now on screen.
+
+    Four surfaces store ``{ result, of }`` and show the badge only while ``of`` still matches what
+    the form holds. That comparison is the honesty of the badge (rule 85), and it is satisfied by
+    computing the fingerprint at EITHER end -- which is why three of the four computed it at
+    success time, where it is no longer the address the request asked about. The boxes stay live
+    while the request is out, so pasting a second webhook while the first is being sent to left the
+    two matching by construction and "Passed" beside a channel nobody tried. ``ServiceModal``
+    captured it in ``onMutate`` and the other three did not, and nothing in the suite could see the
+    difference; #178 and #264 each fixed one site of this family by hand.
+
+    **The forms this reads** (rule 147): the value an ``of:`` key is handed, on a line that does
+    not also spell ``onMutate``, in a shipped ``.ts``/``.tsx`` with block comments blanked and
+    ``//`` runs cut. It passes a name or a path of names, ``issued.of`` and ``string``; everything
+    else fails, template literals and concatenations included.
+    ``test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of`` runs both lists.
+
+    One thing it cannot see, and the population pin is what covers it: a fingerprint computed into
+    a local at success time and handed over by that local's name. The pin is over the same ``of:``
+    keys this scans rather than over the helper's name, so a fifth surface arrives here to be read
+    whatever it calls its fingerprint.
+
+    One thing the pin cannot see either, named rather than implied: ``_BLOCK_COMMENT`` reads a
+    ``/*`` inside a string literal as an opener, so the span to the next ``*/`` is blanked. The
+    tree holds one, ``docs/toMdx.ts:21``'s ``GENERATED_MARKER``, measured at 123 characters over
+    no line break and covering no ``of:``.
+    """
+    holders = {
+        str(path.relative_to(REPO))
+        for path in _shipped_frontend_source()
+        if any(
+            _OF_KEY.search(line)
+            for line in _without_comments_keeping_lines(
+                path.read_text(encoding="utf-8")
+            ).splitlines()
+        )
+    }
+    assert holders == _VOUCHED_TEST_SURFACES, (
+        "the surfaces pairing a test result with its fingerprint moved.\n"
+        f"expected: {sorted(_VOUCHED_TEST_SURFACES)}\nfound:    {sorted(holders)}\n"
+        "A new one: capture the fingerprint in the mutation's `onMutate` and read it back off\n"
+        "the context in `onSuccess`, the way `ServiceModal` does, then add the file here. One\n"
+        "that went away: drop it."
+    )
+
+    offenders = [
+        f"{path.relative_to(REPO)}:{n}"
+        for path in _shipped_frontend_source()
+        for n in _settle_time_fingerprints(path.read_text(encoding="utf-8"))
+    ]
+    assert not offenders, (
+        "these compute a test result's fingerprint where the result is STORED, which is after\n"
+        "the request came back. The operator can keep typing while it is out, so the answer gets\n"
+        "filed against an address it was never asked about and the badge vouches for a host\n"
+        "nobody tried (rule 85). Capture it at issuance instead:\n"
+        "  onMutate: () => ({ of: testedWith() }),\n"
+        "  onSuccess: (r, _v, issued) => setTest({ result: r, of: issued.of }),\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -> None:
+    """The gate above is a source-text scan, so it is worth what its matcher can parse (rule 147).
+
+    Every case here is a way the check could read green over a real one, or red over an innocent
+    line. Four earned their place by failing a draft of it: the call hunt this replaced passed
+    ``of: [kind, baseUrl()].join(" ")``, then passed an inlined template literal with no call in
+    it at all, and the bracket walk written to fix the first counted brackets and not quotes, so a
+    comma inside a template literal ended the value early. The JSX case is the fail-closed one, a
+    block comment's continuation line, which the per-line prefix skip could not see.
+    """
+    caught = [
+        "      setTest({ result: r, of: testedWith() });",
+        '      setTest({ result: r, of: [kind, baseUrl()].join(" ") });',
+        "  setProbe({ of: fingerprint(), result: r });",
+        "      setTest({ result: r, of: `${instance.base_url} ${instance.has_key}` });",
+        '      setTest({ result: r, of: "a, " + testedWith() });',
+        '      setTest({ result: r, of: host + ":" + port });',
+    ]
+    passed = [
+        "      setTest({ result: r, of: issued.of });",
+        "    onMutate: () => ({ of: testedWith() }),",
+        "    of: string;",
+        "  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);",
+        # The value is a name; the call belongs to the member after it.
+        "      setTest({ of: issued.of, result: normalize(r) });",
+        # Prose, in the three shapes the tree writes it. Both blocks are whole, because a
+        # continuation line is only ever reached with its opener: `ListsPanel` writes the JSDoc
+        # one, "covers only part of:", and the diff that added this gate wrote the JSX one.
+        "      // of: testedWith() is what this used to be",
+        "/** A list a rule covers\n *  only part of: what it keeps (roughly).\n */",
+        "{/* Two lines, and this is the second:\n    of: the operator presses Test again. */}",
+    ]
+    for line in caught:
+        assert _settle_time_fingerprints(line) == [1], f"should be caught: {line}"
+    for line in passed:
+        assert _settle_time_fingerprints(line) == [], f"should NOT be caught: {line}"
+
+
 # Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
 # count once carried past were #147's library pickers, which shipped nameless; they have names
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
@@ -3053,9 +4229,16 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 _EXPECTED_SELECTS = 23
 
 
+#: A ``//`` that starts a comment, which is any ``//`` not preceded by a colon. Splitting on the
+#: bare pair truncated a line at the first URL in it, taking the rest of that line out of every
+#: walk below: `ServiceModal` writes an example address in running help text, and a sentence after
+#: one would have been unscannable.
+_LINE_COMMENT = re.compile(r"(?<!:)//.*")
+
+
 def _without_line_comments(chunk: str) -> str:
-    """``chunk`` with every ``//`` run to end-of-line removed."""
-    return "\n".join(line.split("//", 1)[0] for line in chunk.splitlines())
+    """``chunk`` with every ``//`` run to end-of-line removed, leaving a URL's ``//`` alone."""
+    return "\n".join(_LINE_COMMENT.sub("", line) for line in chunk.splitlines())
 
 
 def _select_is_named(tag: str, text: str) -> bool:
@@ -3187,16 +4370,15 @@ def test_the_select_name_matcher_rejects_what_it_claims_to_reject() -> None:
         ('<select id="tz" value={tz}>', ""),
         # A label, but pointed somewhere else.
         ('<select id="tz" value={tz}>', '<label htmlFor="other">Zone</label>'),
-        # Prose about a name is not a name. Both spellings the old matcher fell for.
-        ("<select value={tz}>", ""),
     ]
     for tag, text in accepted:
         assert _select_is_named(tag, text), f"should count as named: {tag}"
     for tag, text in rejected:
         assert not _select_is_named(tag, text), f"should NOT count as named: {tag}"
 
-    # And the comment stripping, which happens before the matcher ever sees the tag: a comment
-    # mentioning either spelling must not survive into the string that gets searched.
+    # And the comment stripping, which happens before the matcher ever sees the tag: prose about
+    # a name is not a name, so a comment mentioning either spelling must not survive into the
+    # string that gets searched. These are both spellings the old matcher fell for.
     for comment in ("// no aria-label= needed here", "// matches the id= of the row above"):
         stripped = " ".join(
             _without_line_comments(f"<select\n  {comment}\n  value={{tz}}>").split()
@@ -3224,6 +4406,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "components/TestBadgeFreshness.test.tsx": "one badge's freshness, audited in the panels",
     "components/PlexPin.test.tsx": "the poll's state machine; it mounts the announcer, no screen",
     "focus.test.tsx": "focus moves, not a screen",
+    "AppFocus.test.tsx": "which view holds a jump's aim; both routes it drives to are stubs",
 }
 
 # The population the walk itself collects: every `*.test.tsx` under frontend/src that mounts
@@ -3234,7 +4417,16 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # own and carries its own audit rather than being covered by the panel that opens it.
 # +1 for `JobsShelfSkip.test.tsx`, which mounts the Jobs panel to drive the shelf row's
 # skipped-scan branch and audits that branch, since the row draws copy no other test renders.
-_EXPECTED_RENDERING_TEST_FILES = 53
+# +1 for `SetupPlexStep.test.tsx`, the wizard's Plex step, which had no test of its own while the
+# settings panel's copy of the same behavior had a careful one (W10-7). It audits its linked
+# state, where the server and connection pickers are.
+# +1 for `PanelHead.test.tsx`, which mounts the item panel and the show panel to compare the head
+# they share. It audits that head with every link set, the state neither panel's own suite drives.
+# +1 for `AppFocus.test.tsx`, which is exempt rather than audited: it mounts the shell to ask
+# which view is holding a jump's aim, and the two routes it drives to are stubs printing a prop.
+# +1 for `artFallback.test.tsx`, which mounts `WhyHero` to drive the art-then-poster ladder the
+# hook now declares once. It audits the banner on both rungs, the fallback included.
+_EXPECTED_RENDERING_TEST_FILES = 58
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -3254,7 +4446,14 @@ def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
     rendering: dict[str, int] = {}
     for path in sorted(FRONTEND_SRC.rglob("*.test.tsx")):
         body = path.read_text(encoding="utf-8")
-        if not re.search(r"\brender\(", body):
+        # Every spelling of "mounts a tree" the suite uses, not just the bare one (rule 147):
+        # testing-library's `render(` and `renderHook(`, the shared `renderWithProviders(` and
+        # `renderHookWithProviders(`, and the file-local `renderPanel(`/`renderQueue(` helpers
+        # that wrap them. `\b` keeps `rerender(` out, which mounts nothing new. This matched
+        # `render(` alone until the provider trees moved onto the shared helper, and 29 of the
+        # 53 files below silently left the walk in one commit -- caught by the count, which is
+        # what it is here for.
+        if not re.search(r"\brender[A-Za-z]*\(", body):
             continue
         rel = path.relative_to(FRONTEND_SRC).as_posix()
         rendering[rel] = len(re.findall(r"\bexpectNoA11yViolations\(", body))
@@ -3627,7 +4826,8 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     the next author to remember.
     """
     from reaper.clock import humanize_days
-    from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, SignalId
+    from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
+    from reaper.engine.signals import SignalId
 
     page = (FRONTEND_SRC / "docs" / "content" / "understandingPolicy.ts").read_text()
     shipped = {
@@ -3669,7 +4869,7 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     )
 
 
-_SETTINGS_TSX = FRONTEND_SRC / "components" / "Settings.tsx"
+_JOBS_PANEL_TSX = FRONTEND_SRC / "components" / "JobsPanel.tsx"
 #: ``JOB_META`` read as the whole declaration up to the ``};`` that closes it, then picked
 #: apart inside, rather than anchored on a delimiter one spelling happens to put there
 #: (rule 147): a key may be a bare identifier or the computed ``[SCAN_ID]``, and both are
@@ -3697,13 +4897,15 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     Both directions. A stale entry for a job that no longer exists is dead copy nobody will
     ever see, and it is the half a hand-maintained map keeps longest.
     """
-    source = _SETTINGS_TSX.read_text(encoding="utf-8")
+    source = _JOBS_PANEL_TSX.read_text(encoding="utf-8")
     block_match = _JOB_META_BLOCK.search(source)
-    assert block_match, "parsed no JOB_META declaration out of Settings.tsx -- the matcher is stale"
+    assert block_match, (
+        "parsed no JOB_META declaration out of JobsPanel.tsx -- the matcher is stale"
+    )
     block = block_match.group(1)
 
     scan_id = _SCAN_ID_CONST.search(source)
-    assert scan_id, "parsed no SCAN_ID constant out of Settings.tsx -- the matcher is stale"
+    assert scan_id, "parsed no SCAN_ID constant out of JobsPanel.tsx -- the matcher is stale"
     constants = {"SCAN_ID": scan_id.group(1)}
 
     keys = {
@@ -3718,10 +4920,2524 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     )
 
     assert keys == set(SCHEDULABLE_JOB_IDS), (
-        "frontend/src/components/Settings.tsx's JOB_META and the jobs the server schedules "
+        "frontend/src/components/JobsPanel.tsx's JOB_META and the jobs the server schedules "
         "disagree.\n"
         f"  scheduled with no copy: {sorted(set(SCHEDULABLE_JOB_IDS) - keys) or 'none'}\n"
         f"  copy for no such job:   {sorted(keys - set(SCHEDULABLE_JOB_IDS)) or 'none'}\n"
         "Add the title/desc/offWarning to JOB_META, or drop the stale entry. The off-warning "
         "states what stops happening when the job is off (rule 55)."
+    )
+
+
+# --- the layering CLAUDE.md's *Architecture* section describes ------------------------------
+
+#: The four packages *Architecture* names, top of the stack first. An import that reaches a
+#: package LATER in this tuple runs downward and is fine; one that reaches a package EARLIER
+#: runs upward, and refusing that is the whole of the test below.
+#:
+#: **`clients` above `engine` is the one position the prose does not hand you**, and the live
+#: edge is what fixes it: `clients/plex.py` takes `PlexFile`, `PlexItem`, `parse_guids` and
+#: `to_basename` from `engine/identity.py`, whose own *Why this module is pure* section says it
+#: holds data types and pure functions while the index builders that call Plex and Tautulli live
+#: above it and hand the frozen types in. So that edge is the shape the module was designed for,
+#: and the one that would be wrong is its reverse -- the decision engine reaching for a client,
+#: which is zero today and which this ordering is what holds at zero.
+#:
+#: **Scoped to these four deliberately.** `notify` and `services` are a real runtime two-cycle
+#: (`notify/discord.py` <-> `services/leaving_soon.py`), so a gate that swept every package under
+#: `src/reaper` would be red the day it landed and would get deleted rather than fixed.
+#:
+#: That pair is a cycle between PACKAGES and not between modules: `discord.py` imports
+#: `services/app_settings.py`, `leaving_soon.py` imports `discord.py`, and neither module
+#: reaches itself. So `test_every_import_cycle_under_src_is_one_someone_declared` below does
+#: sweep all of `src/reaper`, at module granularity, and the pair is not one of the two it
+#: declares. The two gates answer different questions and both are wanted: this one holds a
+#: direction across four packages, that one holds the module graph to a declared set of cycles.
+_LAYERS = ("api", "services", "clients", "engine")
+
+#: Every `.py` file under those four, which is the population the walk parses. It moves when a
+#: module is added, split or deleted, and it is pinned because a walk that quietly stopped
+#: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
+_EXPECTED_LAYERED_MODULES = 84
+
+#: Every ordered pair where one of the four imports another, reconciled by hand: all six
+#: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
+#: so a pair that goes to zero is a change someone declares here rather than one nobody sees.
+_EXPECTED_LAYER_EDGES = frozenset(
+    {
+        ("api", "services"),
+        ("api", "clients"),
+        ("api", "engine"),
+        ("services", "clients"),
+        ("services", "engine"),
+        ("clients", "engine"),
+    }
+)
+
+#: Every cross-package import that does NOT run at module import time, by importing file, target
+#: and how it is deferred. Written out rather than counted: a deferred import is how a layering
+#: violation hides from a runtime graph, so a new one is a decision made here by hand, never a
+#: number bumped to make a red test go green.
+#:
+#: **Empty, all three of wave 9's gone.** The last was `services/executor.py`'s `TYPE_CHECKING`
+#: block, which named two symbols from `reaper.clients.plex` while the line above it imported
+#: that same module at runtime, so the deferral hid nothing from any graph. Empty is the
+#: interesting state for this set, not a broken one: every cross-package edge in the four
+#: packages now runs at import time, so the runtime graph is the whole truth about them.
+_DEFERRED_CROSS_PACKAGE_IMPORTS: frozenset[tuple[str, str, str]] = frozenset()
+
+
+class _Edge(NamedTuple):
+    """One import statement, resolved to the packages it leaves and reaches."""
+
+    #: Repo-relative path of the importing file, posix-spelled.
+    path: str
+    lineno: int
+    #: The importing package and the imported one, both members of `_LAYERS`.
+    src: str
+    dst: str
+    #: The full dotted module the import names.
+    target: str
+    #: "" when the import runs at module import time, else how it is deferred.
+    deferred: str
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    """``if TYPE_CHECKING:`` and ``if typing.TYPE_CHECKING:``, and nothing else.
+
+    ``if not TYPE_CHECKING:`` is deliberately not one of them: it runs, so whatever it imports
+    is a runtime edge however it is spelled.
+    """
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    return isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+
+
+def _deferred_import_lines(tree: ast.Module) -> dict[int, str]:
+    """Line -> how it is deferred, for every import that does not run at module import time.
+
+    Two spellings defer one and the tree uses both: inside a ``def``/``async def``, which runs
+    on the first call, and inside ``if TYPE_CHECKING:``, which never runs. TYPE_CHECKING wins
+    where they nest, since that import has no runtime existence to defer.
+    """
+    deferred: dict[int, str] = {}
+    for scope in ast.walk(tree):
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for node in ast.walk(scope):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    deferred[node.lineno] = "function-local"
+    for scope in ast.walk(tree):
+        if isinstance(scope, ast.If) and _is_type_checking(scope.test):
+            for node in ast.walk(scope):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    deferred[node.lineno] = "TYPE_CHECKING"
+    return deferred
+
+
+def _imported_modules(node: ast.Import | ast.ImportFrom, package: str) -> list[str]:
+    """Every dotted module ``node`` reaches, made absolute against its containing ``package``.
+
+    ``import a.b`` and ``import a.b as c`` both name ``a.b``. ``from a.b import c`` names
+    ``a.b``, the ``c`` being a symbol rather than a module in every case but one.
+
+    **The exception is ``from reaper import services``**, where the `from` clause is the
+    parent and the imported NAME is the package. Reading the clause alone made that edge
+    vanish, which is a layering violation the gate reported as clean, and the idiom is live
+    in the tree: `api/logs.py` and `api/settings.py` both spell it, and both are non-edges
+    today only because `logbuffer` and `launcher` are not among the four. One package over
+    and it is silent. So each name is checked too, whenever the clause resolves to `reaper`
+    itself. `from a.b import c` is left alone: `c` there really is a symbol, and a package
+    that deep would already have been named by the clause.
+
+    A relative ``from . import x`` resolves against ``package``: the four hold none today,
+    and one that arrives must not drop out of the walk unseen (rule 147).
+    """
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    base = node.module or ""
+    if node.level:
+        parent = package.rsplit(".", node.level - 1)[0]
+        base = f"{parent}.{node.module}" if node.module else parent
+    if base == "reaper":
+        return [f"reaper.{alias.name}" for alias in node.names]
+    return [base] if base else []
+
+
+def _edges_in(source: str, path: str) -> list[_Edge]:
+    """Every cross-package import in ``source``, for a file at repo-relative ``path``.
+
+    Split out from the walk so the classifier can be run against the import forms the tree
+    does not currently spell as well as the ones it does (rule 147).
+    """
+    parts = Path(path).with_suffix("").parts
+    src = parts[1]
+    # The containing package, which is what a relative import resolves against. The same
+    # expression serves `__init__.py`, where `.` means the package the file *is* rather than
+    # the one above it, because dropping the last part gets there from either side.
+    package = ".".join(parts[:-1])
+    tree = ast.parse(source)
+    deferred = _deferred_import_lines(tree)
+    edges: list[_Edge] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for target in _imported_modules(node, package):
+            bits = target.split(".")
+            if len(bits) < 2 or bits[0] != "reaper" or bits[1] not in _LAYERS:
+                continue
+            if bits[1] == src:
+                continue
+            edges.append(
+                _Edge(path, node.lineno, src, bits[1], target, deferred.get(node.lineno, ""))
+            )
+    return edges
+
+
+@lru_cache(maxsize=1)
+def _layered_modules() -> tuple[tuple[str, str], ...]:
+    """Every module under the four packages, as (repo-relative posix path, source)."""
+    return tuple(
+        (p.relative_to(SRC.parent).as_posix(), p.read_text(encoding="utf-8"))
+        for layer in _LAYERS
+        for p in sorted((SRC / layer).rglob("*.py"))
+    )
+
+
+@lru_cache(maxsize=1)
+def _cross_package_edges() -> tuple[_Edge, ...]:
+    """Every import that leaves one of the four packages for another."""
+    return tuple(edge for path, source in _layered_modules() for edge in _edges_in(source, path))
+
+
+def test_the_four_packages_import_only_downward() -> None:
+    """CLAUDE.md's *Architecture* section describes a stack, and nothing held it to one.
+
+    The claim it makes is a dependency direction: routers sit on services, services compose
+    the decision engine and the HTTP clients, and neither of those two reaches back up. That
+    is true today and was true only because everyone who touched it happened to keep it true.
+    The failure it prevents is not a crash -- Python imports a cycle happily until it does
+    not -- it is `engine/` growing a reason to know about `services/`, at which point the one
+    place a fate is decided stops being separable from the code that acts on it.
+
+    **The pinned module count is the load-bearing half** (rule 145). A direction assertion is
+    a flag: it cannot tell a module that complies from one the walk never opened, so a scan
+    scoped to the wrong root, or one that stopped parsing, reports a clean stack while reading
+    nothing. Same for `_EXPECTED_LAYER_EDGES`, which is an equality for the same reason.
+
+    The plan this landed under expected the test to skip deferred imports to be green on day
+    one. Measured, it does not need to: every cross-package import that does not run at module
+    import time runs downward, so they are held to the same rule as the rest and pinned by name
+    in the test below.
+    """
+    modules = _layered_modules()
+    assert len(modules) == _EXPECTED_LAYERED_MODULES, (
+        f"expected {_EXPECTED_LAYERED_MODULES} modules under {'/, '.join(_LAYERS)}/, walked "
+        f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number -- AND the two prose\n"
+        "copies of it, which nothing else asserts (rule 144): docs/SIMPLIFICATION_PLAN.md's S7\n"
+        "paragraph names this constant and restates the figure, and its C3 checkpoint row does\n"
+        "too. Both were already stale by two when this message was written. Leave the *Landed*\n"
+        "rows alone -- their figures are historical deltas, and editing one makes a correct\n"
+        "record false.\n"
+        "`_EXPECTED_SOURCE_MODULES` moves with the same module, counting all of src/reaper\n"
+        "rather than these four, and it fails separately rather than telling you about this.\n"
+        "If you did not add or delete one, the walk lost part of the tree -- and every\n"
+        "assertion below passes on what it cannot see."
+    )
+    rank = {layer: i for i, layer in enumerate(_LAYERS)}
+    upward = [e for e in _cross_package_edges() if rank[e.dst] < rank[e.src]]
+    assert not upward, (
+        "these imports run UP the stack:\n"
+        + "\n".join(f"  {e.path}:{e.lineno}  {e.src} -> {e.dst}  ({e.target})" for e in upward)
+        + "\n\nThe order is "
+        + " -> ".join(_LAYERS)
+        + ", and a package may only import one to its right. If the\n"
+        "import is right and the order is wrong, move _LAYERS and say why -- but read\n"
+        "engine/identity.py's 'Why this module is pure' section first: it is the reason the\n"
+        "decision engine is at the bottom and takes nothing from anywhere."
+    )
+    found = frozenset((e.src, e.dst) for e in _cross_package_edges())
+    assert found == _EXPECTED_LAYER_EDGES, (
+        "the set of package pairs that import each other moved.\n"
+        f"  new:  {sorted(found - _EXPECTED_LAYER_EDGES) or 'none'}\n"
+        f"  gone: {sorted(_EXPECTED_LAYER_EDGES - found) or 'none'}\n\n"
+        "A new pair is a layer boundary being crossed for the first time; one that went away\n"
+        "is a dependency the stack no longer has. Both are worth a sentence in the pull\n"
+        "request, and both are declared here rather than discovered later."
+    )
+
+
+def test_every_deferred_cross_package_import_is_named() -> None:
+    """An import that does not run at module import time is invisible to a runtime graph.
+
+    That is what makes the escape hatch worth pinning rather than counting. `if TYPE_CHECKING:`
+    and a `def`-local import are both legitimate -- they are how a genuine cycle gets broken --
+    and they are also exactly where a layering violation would go to hide, since the module
+    graph a tool draws does not have the edge at all.
+
+    `docs/SIMPLIFICATION_PLAN.md`'s wave 9 measured all three of these and found that none
+    breaks the cycle it looks like it was written for. All three are gone. This list is what
+    made that deletion visible: without it the walk skips the sites, the count never moves, and
+    the gate is blind to the one change it exists to watch.
+
+    **Empty, and still a live assertion.** It fires on any deferred cross-package import that
+    arrives. What it cannot notice on its own is a walk that collects nothing, since an empty
+    walk equals an empty expectation; `test_the_four_packages_import_only_downward` is what
+    covers that, pinning the module count and a non-empty edge set off the same walk.
+    """
+    deferred = frozenset(
+        (e.path, e.target, e.deferred) for e in _cross_package_edges() if e.deferred
+    )
+    assert deferred == _DEFERRED_CROSS_PACKAGE_IMPORTS, (
+        "the deferred cross-package imports moved.\n"
+        f"  new:  {sorted(deferred - _DEFERRED_CROSS_PACKAGE_IMPORTS) or 'none'}\n"
+        f"  gone: {sorted(_DEFERRED_CROSS_PACKAGE_IMPORTS - deferred) or 'none'}\n\n"
+        "The set is empty, so anything here at all is NEW, and a new one needs a\n"
+        "reason written down: it is a cross-package dependency that no import graph will show,\n"
+        "so if it is here to break a cycle, name the cycle.\n"
+        "docs/SIMPLIFICATION_PLAN.md's S7 paragraph restates this set's size in prose, and\n"
+        "nothing asserts that copy (rule 144)."
+    )
+
+
+def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> None:
+    """The walk above is worth what its parser can resolve, so the forms are run, not assumed.
+
+    Rule 147: a matcher ships with the spellings it accepts AND the ones it rejects. The
+    relative forms are the sharp ones -- the four packages hold none today, so nothing in the
+    tree would notice `from ..engine import x` silently resolving to nothing and dropping out
+    of the walk, which is a layering violation the gate reports as clean.
+    """
+    cases = {
+        "from reaper.engine.gates import Facts": ("engine", "reaper.engine.gates", ""),
+        "from reaper.engine import gates": ("engine", "reaper.engine", ""),
+        "import reaper.clients.plex": ("clients", "reaper.clients.plex", ""),
+        "import reaper.clients.plex as plex": ("clients", "reaper.clients.plex", ""),
+        "from ..engine.gates import Facts": ("engine", "reaper.engine.gates", ""),
+        "from ..engine import gates": ("engine", "reaper.engine", ""),
+        # The `from` clause is the PARENT, so the package is the imported name. Reading the
+        # clause alone dropped this edge entirely, and `from reaper import <name>` is spelled
+        # in two of the four packages already -- for modules outside them, which is the only
+        # reason it was not a live hole.
+        "from reaper import engine": ("engine", "reaper.engine", ""),
+        "from .. import engine": ("engine", "reaper.engine", ""),
+        "from reaper import engine as e": ("engine", "reaper.engine", ""),
+        "if TYPE_CHECKING:\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "TYPE_CHECKING",
+        ),
+        "if typing.TYPE_CHECKING:\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "TYPE_CHECKING",
+        ),
+        "def f():\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "function-local",
+        ),
+        "async def f():\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "function-local",
+        ),
+        "class C:\n    def m(self):\n        from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "function-local",
+        ),
+        # It runs, so it is a runtime edge whatever the condition is called.
+        "if not TYPE_CHECKING:\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "",
+        ),
+        # A class body runs at import time too.
+        "class C:\n    from reaper.engine import gates": ("engine", "reaper.engine", ""),
+    }
+    for source, (dst, target, deferred) in cases.items():
+        edges = _edges_in(source, "reaper/services/thing.py")
+        assert len(edges) == 1, f"expected one edge from {source!r}, got {edges}"
+        assert (edges[0].dst, edges[0].target, edges[0].deferred) == (dst, target, deferred), (
+            f"{source!r} classified as {edges[0].dst}/{edges[0].target}/"
+            f"{edges[0].deferred!r}, expected {dst}/{target}/{deferred!r}"
+        )
+
+    # And the forms that are correctly NOT an edge: the package importing itself, a package
+    # outside the four, and a third-party module whose name merely starts the same way.
+    for source in (
+        "from reaper.services.planner import MediaRef",
+        "from reaper.notify.discord import DiscordNotifier",
+        "from reaper.config import Settings",
+        "import structlog",
+        # The `from reaper import <name>` arm above must not turn a module OUTSIDE the four
+        # into an edge. Both of these are spelled in the tree today.
+        "from reaper import logbuffer",
+        "from reaper import launcher, crypto",
+    ):
+        assert not _edges_in(source, "reaper/services/thing.py"), f"should be no edge: {source}"
+
+
+# --- the import cycles under src/reaper are declared, not discovered -----------------------
+
+#: Every `.py` file under `src/reaper`, which is the population the cycle walk parses. Pinned
+#: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
+#: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
+#: A different population from that constant, which counts the 84 under the four packages only.
+_EXPECTED_SOURCE_MODULES = 116
+
+#: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
+#: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`
+#: reaches `main` to serve, and `main` mounts every router. Written out rather than counted,
+#: because a cycle is a coupling someone chose and the next reader needs to know which two.
+#:
+#: **That edge is two function calls, not two constants**, so it is not another one-string move:
+#: `_desktop_out` calls `launcher.desktop_platform()` and the desktop save calls
+#: `launcher.write_conf_values()`. Breaking it means moving behavior, not a name.
+#:
+#: There were **nine** before `LAUNCHER_CONF_NAME` moved to `config.py`; the seven that went
+#: were `services/backup.py` and `services/restore.py` importing the process entry point for a
+#: filename. Nothing failed when they were there, which is why this list exists.
+_KNOWN_IMPORT_CYCLES = frozenset(
+    {
+        ("reaper.api.plex", "reaper.api.settings", "reaper.launcher", "reaper.main"),
+        ("reaper.api.settings", "reaper.launcher", "reaper.main"),
+    }
+)
+
+
+def _module_candidates(node: ast.Import | ast.ImportFrom, package: str) -> list[str]:
+    """Every dotted name ``node`` could be naming, made absolute against ``package``.
+
+    `_imported_modules` above answers which PACKAGE an import reaches, which is all the
+    layering walk needs. This needs the MODULE, so each imported name is offered as a
+    submodule too: `from reaper.services import app_settings` reaches
+    `services/app_settings.py`, and reading the `from` clause alone stops at the package's
+    empty `__init__.py` and loses the edge. Names that are symbols rather than modules
+    resolve to nothing and drop out in `_module_import_graph`.
+    """
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    base = node.module or ""
+    if node.level:
+        parent = package.rsplit(".", node.level - 1)[0]
+        base = f"{parent}.{node.module}" if node.module else parent
+    if not base:
+        return []
+    return [base, *(f"{base}.{alias.name}" for alias in node.names)]
+
+
+@lru_cache(maxsize=1)
+def _module_import_graph() -> dict[str, frozenset[str]]:
+    """Every module under `src/reaper`, mapped to the in-tree modules it imports at RUNTIME.
+
+    Top-level and function-local imports both count; `if TYPE_CHECKING:` does not, because it
+    never runs and cannot make a cycle real. **Counting the function-local ones is the whole
+    reason this gate works**: the top-level graph alone is acyclic today and stays acyclic
+    when the cycles below are put back, since `launcher.main()` imports `reaper.preflight`
+    and `reaper.main` from inside the function. A cycle broken by deferring one edge is still
+    a cycle, and the deferral is what a module graph drawn from top-level imports cannot see.
+
+    A package's `__init__.py` is a module here like any other, because importing
+    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. All eight
+    of them import nothing today, so they carry no outgoing edges.
+    """
+    names = {}
+    for path in sorted(SRC.rglob("*.py")):
+        parts = list(path.relative_to(SRC.parent).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        names[".".join(parts)] = path
+    graph: dict[str, frozenset[str]] = {}
+    for name, path in names.items():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        deferred = _deferred_import_lines(tree)
+        package = name if path.name == "__init__.py" else name.rsplit(".", 1)[0]
+        reached: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            if deferred.get(node.lineno) == "TYPE_CHECKING":
+                continue
+            for candidate in _module_candidates(node, package):
+                if candidate in names and candidate != name:
+                    reached.add(candidate)
+        graph[name] = frozenset(reached)
+    return graph
+
+
+def _import_cycles(graph: dict[str, frozenset[str]]) -> set[tuple[str, ...]]:
+    """Every simple cycle in ``graph``, each rotated to start at its smallest member.
+
+    Enumerated from the smallest member outward, so each cycle is found exactly once and the
+    result needs no de-duplication. Measured at 47ms over this tree's 115 modules and 667
+    edges; the graph is a DAG plus two back edges, which is what keeps a walk over simple
+    paths cheap.
+    """
+    order = {node: i for i, node in enumerate(sorted(graph))}
+    found: set[tuple[str, ...]] = set()
+
+    def walk(start: str, node: str, path: list[str]) -> None:
+        for nxt in sorted(graph[node]):
+            if nxt == start:
+                found.add(tuple(path))
+            elif nxt not in path and order[nxt] > order[start]:
+                walk(start, nxt, [*path, nxt])
+
+    for start in sorted(graph):
+        walk(start, start, [start])
+    return found
+
+
+def test_every_import_cycle_under_src_is_one_someone_declared() -> None:
+    """Nothing held the module graph, and a returning cycle costs one import line to add.
+
+    Measured against this tree: `services/backup.py` and `services/restore.py` imported
+    `reaper.launcher` for one filename, and that single edge was **7 of the 9** cycles under
+    `src/reaper`. Putting `LAUNCHER_CONF_NAME` in `config.py` removed all 7, and re-adding
+    either import restores them.
+
+    **Nothing failed while they were there, and three gates were looking.** The layering walk
+    above reads the four packages only and `reaper.launcher` is outside them; the
+    deferred-import gate reads cross-package imports that do not run, and these run; and a
+    graph built from top-level imports alone is acyclic either way, because the edges that
+    close every one of these cycles are the function-local imports in `launcher.main()`.
+
+    Python imports a cycle happily until it does not. The failure this prevents is the one a
+    review pass measured in phase 6: a five-module cut whose graph would not have booted, and
+    which read as clean right up to the boot.
+
+    **It excludes ``TYPE_CHECKING`` edges, so a cycle broken by a type-only import is invisible
+    to it** (rule 147). That is deliberate -- those imports do not run, so they cannot fail a
+    boot -- but it means the walk is not an inventory of couplings. ``services/lists.py`` and
+    ``services/list_config.py`` are the live example: they import each other, one of them under
+    ``TYPE_CHECKING``, and promoting that one raises ``ImportError`` on three modules. Nothing
+    here would say so, and the deferred-import gate skips it too for being same-package.
+    """
+    graph = _module_import_graph()
+    assert len(graph) == _EXPECTED_SOURCE_MODULES, (
+        f"expected {_EXPECTED_SOURCE_MODULES} modules under src/reaper/, walked {len(graph)}.\n\n"
+        "If you ADDED or DELETED one, bump the number. `_EXPECTED_LAYERED_MODULES` counts a\n"
+        "narrower population (the four packages only) and moves separately.\n"
+        "If you did not, the walk lost part of the tree, and the assertion below passes on\n"
+        "what it cannot see."
+    )
+    found = _import_cycles(graph)
+    assert found == _KNOWN_IMPORT_CYCLES, (
+        "the import cycles under src/reaper moved.\n"
+        + "  new:  "
+        + (
+            "\n        ".join(" -> ".join(c) for c in sorted(found - _KNOWN_IMPORT_CYCLES))
+            or "none"
+        )
+        + "\n  gone: "
+        + (
+            "\n        ".join(" -> ".join(c) for c in sorted(_KNOWN_IMPORT_CYCLES - found))
+            or "none"
+        )
+        + "\n\nOne that went away is wave 9 landing, and the entry comes out. A NEW one is a\n"
+        "coupling to break where the dependency is wrong, never by deferring the import:\n"
+        "a function-local or `TYPE_CHECKING` import leaves the coupling and hides the edge.\n"
+        "Where a constant or a type is the whole reason for the edge, move it to a leaf both\n"
+        "sides already import. `config.LAUNCHER_CONF_NAME` is what that looks like."
+    )
+
+
+def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
+    """The gate above is mostly an absence, so the detector is driven (rule 145).
+
+    A walk that returned nothing would be green on any tree with no cycles left to lose, and
+    two of these shapes are ones a wrong detector reports: a diamond has two paths to one
+    module and no cycle, and a self-edge-free chain has neither.
+
+    The classifier gets the same treatment (rule 147). `from reaper.services import
+    app_settings` is the form that decides whether this graph has module edges at all, and
+    reading the `from` clause alone resolves it to the package's empty `__init__.py`.
+    """
+    two = {"a": frozenset({"b"}), "b": frozenset({"a"})}
+    assert _import_cycles(two) == {("a", "b")}
+    long_way = {
+        "a": frozenset({"b"}),
+        "b": frozenset({"c"}),
+        "c": frozenset({"a"}),
+        "d": frozenset(),
+    }
+    assert _import_cycles(long_way) == {("a", "b", "c")}
+    # Two cycles sharing a module, so a detector that stops at the first one is short here.
+    figure_eight = {
+        "a": frozenset({"b"}),
+        "b": frozenset({"a", "c"}),
+        "c": frozenset({"b"}),
+    }
+    assert _import_cycles(figure_eight) == {("a", "b"), ("b", "c")}
+    diamond = {
+        "a": frozenset({"b", "c"}),
+        "b": frozenset({"d"}),
+        "c": frozenset({"d"}),
+        "d": frozenset(),
+    }
+    assert _import_cycles(diamond) == set()
+    assert _import_cycles({"a": frozenset({"b"}), "b": frozenset()}) == set()
+
+    forms = {
+        "from reaper.services import app_settings": "reaper.services.app_settings",
+        "from reaper.config import Settings": "reaper.config",
+        "import reaper.clients.plex": "reaper.clients.plex",
+        "from reaper import launcher": "reaper.launcher",
+        "from ..engine import gates": "reaper.engine.gates",
+        "from ..engine.gates import Facts": "reaper.engine.gates",
+    }
+    modules = set(_module_import_graph())
+    for source, expected in forms.items():
+        node = ast.parse(source).body[0]
+        assert isinstance(node, (ast.Import, ast.ImportFrom))
+        resolved = [c for c in _module_candidates(node, "reaper.services") if c in modules]
+        assert expected in resolved, f"{source!r} resolved to {resolved}, expected {expected}"
+
+
+# --- the frontend has no import cycles at all ----------------------------------------------
+
+#: Every `.ts`/`.tsx` file under `frontend/src`, which is the population the walk below parses.
+#: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
+#: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
+#: graph exactly.
+_EXPECTED_FRONTEND_MODULES = 214
+
+#: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
+_TS_SUFFIXES = (".ts", ".tsx")
+
+#: A static `import`/`export` of a relative specifier, in every spelling the tree uses: a bare
+#: side-effect import, a default, a braced list running over several lines, and a re-export.
+#: The body may not cross a quote, a backtick, a paren or a semicolon, so it cannot run out of
+#: its own statement into the next one's string. Anchored at a line start or a `;`, since
+#: prettier puts every statement on its own line and the `;` arm is the belt for a file that
+#: somehow arrives unformatted.
+#:
+#: `import type` and `export type` are left out, and under `verbatimModuleSyntax` (set in
+#: `frontend/tsconfig.json`) that is the exact line the compiler draws: the `type` STATEMENT is
+#: erased, and `import { type A } from "./x"` emits `import {} from "./x"`, a real runtime edge
+#: this therefore counts. Measured on this tree, putting the type-only edges back changes
+#: nothing: both spellings of the walk found the same two cycles before wave 9 and find none now.
+#:
+#: It runs over `_without_comments`, so a commented-out import is not an edge. Reading a
+#: quotation of an import as a real one is fail-CLOSED, a cycle nobody wrote, which is the
+#: harmless direction and still a false red somebody has to chase.
+_TS_STATIC_IMPORT = re.compile(
+    r"""(?m)(?:^|;)[ \t]*(?:import|export)\s+(?!type[\s{])"""
+    r"""(?:[^'"`();]*?\bfrom\s*)?['"](\.[^'"]+)['"]"""
+)
+
+#: `await import("./x")`, which is a runtime edge like any other: `App.tsx` reaches five of the
+#: six routes this way, and the policy editor is reached by nothing else in that file.
+#:
+#: Three spellings the first version of this missed, all of them fail-OPEN, which is the
+#: direction that loses a cycle rather than inventing one: Vite's documented
+#: `import(/* @vite-ignore */ "./x")`, a backtick specifier, and `typeof` separated from
+#: `import(` by anything but one space. `typeof` is matched and discarded rather than excluded
+#: by a lookbehind, because Python's lookbehind is fixed-width and `typeof\n  import("./x")` is
+#: legal.
+_TS_DYNAMIC_IMPORT = re.compile(
+    r"""(?P<typeof>\btypeof\s+)?\bimport\(\s*(?:/\*.*?\*/\s*)?['"`](\.[^'"`]+)['"`]""",
+    re.S,
+)
+
+
+def _ts_module_key(path: Path) -> str:
+    """``frontend/src``-relative, extension dropped: `components/PolicyEditor`."""
+    return path.relative_to(FRONTEND_SRC).with_suffix("").as_posix()
+
+
+@lru_cache(maxsize=1)
+def _frontend_import_graph() -> dict[str, frozenset[str]]:
+    """Every module under `frontend/src`, mapped to the in-tree modules it imports at RUNTIME.
+
+    Test files are in the population rather than filtered out. A component never imports a
+    test, so they close no cycle, and leaving them in means no skip list to keep current.
+
+    **A specifier resolves the way the bundler resolves it, and the near-miss is the bug.** The
+    candidates are the specifier itself *only when it already spells a module extension*, then
+    the specifier plus each extension, then an `index` barrel under it. Taking the bare
+    specifier unconditionally and stripping a suffix off it is what the first version did, and
+    `./dissolve.generated` then resolved to `brand/dissolve`: three modules carried an edge
+    their source does not have, harmless only while that file stays a leaf. `./index.css`
+    resolving to nothing was the same accident wearing the right answer.
+
+    There are no barrels in the tree today, so that pair of candidates is what stops a future
+    one from silently dropping its edges. Every candidate is checked for containment before it
+    is made relative: `resolveJsonModule` is on and two files already import JSON, so a
+    specifier reaching out of `frontend/src` is ordinary and must drop out rather than raise.
+    """
+    paths = [
+        path
+        for path, _ in _repo_text_files()
+        if path.suffix in _TS_SUFFIXES and path.is_relative_to(FRONTEND_SRC)
+    ]
+    files = {_ts_module_key(path): path for path in paths}
+    # `announce.ts` beside `announce.tsx` is one key for two files: one module's imports are
+    # never parsed and the other's are silently replaced. The pinned count below counts KEYS and
+    # cannot see it, so the collision is caught here instead of arriving as a missing edge.
+    collided = sorted(k for k, n in Counter(_ts_module_key(p) for p in paths).items() if n > 1)
+    assert not collided, (
+        f"two files under frontend/src share a module key: {collided}. One of them is missing "
+        "from the graph entirely and the other's edges were overwritten. Rename one, or teach "
+        "`_ts_module_key` to keep the extension."
+    )
+    graph: dict[str, frozenset[str]] = {}
+    for name, path in files.items():
+        text = _without_comments(path.read_text(encoding="utf-8"))
+        specs = [m.group(1) for m in _TS_STATIC_IMPORT.finditer(text)]
+        specs += [m.group(2) for m in _TS_DYNAMIC_IMPORT.finditer(text) if not m.group("typeof")]
+        reached = set()
+        for spec in specs:
+            base = (path.parent / spec).resolve()
+            candidates = [base] if base.suffix in _TS_SUFFIXES else []
+            candidates += [base.with_name(base.name + s) for s in _TS_SUFFIXES]
+            candidates += [base / f"index{s}" for s in _TS_SUFFIXES]
+            for candidate in candidates:
+                if not candidate.is_relative_to(FRONTEND_SRC):
+                    continue
+                target = _ts_module_key(candidate)
+                if target in files and target != name:
+                    reached.add(target)
+        graph[name] = frozenset(reached)
+    return graph
+
+
+def test_the_frontend_has_no_import_cycles() -> None:
+    """The SPA had two, and each was one borrowed symbol.
+
+    `PolicyRuleEditors` was lifted out of `PolicyEditor` and left three lookup tables behind,
+    so the new module imported them back out of the file it had just left; the same import
+    also carried `humanDays`, which `PolicyEditor` re-exported after the function itself had
+    already moved to `format.ts` to break a different cycle. `UnmatchedList` reached into
+    `ScalesPanel` for a twelve-line poster placeholder, while `ScalesPanel` renders
+    `UnmatchedList`. Both are gone, and the expected set is empty rather than declared: a
+    browser bundle tolerates a cycle until an initialization order changes under it, and
+    nothing here needs one.
+
+    The Python twin above declares its two instead, because those are a coupling someone chose
+    and cannot cheaply undo. The walk is shared: this builds the graph, `_import_cycles` finds
+    the cycles, and `test_the_cycle_walk_reports_the_cycles_it_is_given` is what proves the
+    finder is not simply returning nothing.
+    """
+    graph = _frontend_import_graph()
+    assert len(graph) == _EXPECTED_FRONTEND_MODULES, (
+        f"expected {_EXPECTED_FRONTEND_MODULES} .ts/.tsx files under frontend/src/, walked "
+        f"{len(graph)}.\n\n"
+        "If you ADDED or DELETED one, bump the number. If you did not, the walk lost part of\n"
+        "the tree, and an empty expected cycle set is green on a graph it never read."
+    )
+    found = _import_cycles(graph)
+    assert found == set(), (
+        "a new import cycle under frontend/src:\n  "
+        + "\n  ".join(" -> ".join(c) for c in sorted(found))
+        + "\n\nBreak it where the dependency is wrong, never by deferring the import: a\n"
+        "`import type` or a dynamic `import()` written to dodge this leaves the coupling and\n"
+        "hides the edge. Where a constant, a type or one small component is the whole reason\n"
+        "for the edge, move it to a leaf both sides already import.\n"
+        "`components/PosterFallback.tsx` is what that looks like."
+    )
+
+
+def test_the_frontend_import_walk_reads_the_spellings_the_tree_uses() -> None:
+    """The gate above is an absence, so the two matchers behind it are driven (rule 147).
+
+    A regex is bounded by the syntax it parses. The synthetic half fixes what each spelling
+    must resolve to, **including every one that must resolve to NOTHING** — those are the cases
+    a matcher passes by doing nothing at all, so they are written out rather than assumed. The
+    live half then asserts edges the real tree has, because a matcher can be right about a
+    string and still never fire against a file: `App.tsx` reaches `ReviewQueue` statically and
+    the policy editor only through `lazy(async () => (await import(...)))`, which is that file's
+    one non-type reference to it, so those two edges are one proof each for the two matchers.
+
+    **The fail-open cases are the ones worth the lines.** A spelling the dynamic matcher misses
+    is a real runtime edge dropped, which is a cycle this gate then reports as absent, and three
+    of them shipped in the first version: `import(/* @vite-ignore */ "./x")`, a backtick
+    specifier, and `typeof` separated from `import(` by a newline. A spelling the static matcher
+    over-reads is the other direction, a cycle nobody wrote, and those are listed too.
+    """
+    graph = _frontend_import_graph()
+    assert "components/ReviewQueue" in graph["App"], (
+        "the static-import matcher found no edge from App.tsx to the review queue, which it "
+        "imports at the top of the file."
+    )
+    assert "components/PolicyEditor" in graph["App"], (
+        "the dynamic-import matcher found no edge from App.tsx to the policy editor, which is "
+        "reached only through `lazy(async () => (await import(...)))`."
+    )
+
+    static = {
+        'import { PosterFallback } from "./PosterFallback";': ["./PosterFallback"],
+        'import App from "./App";': ["./App"],
+        'import "./index.css";': ["./index.css"],
+        'export { humanDays } from "../format";': ["../format"],
+        'import {\n  a,\n  b,\n} from "./x";': ["./x"],
+        # Erased by the compiler, so it cannot make a cycle real.
+        'import type { Focus } from "./navIntent";': [],
+        'export type { Panel } from "./Settings";': [],
+        # A value import that merely mentions `type` inline still emits, and still counts.
+        'import { type Focus, goTo } from "./navIntent";': ["./navIntent"],
+        # Not an import at all, and the shape a `from`-anchored matcher reads as one.
+        'const cfg = { from: "./x" };': [],
+        # Nor is a quotation of one inside a template literal, which the body's own character
+        # class is what rejects: the backtick is excluded along with the quotes.
+        'export const N = `copied from "./x"`;': [],
+        # Two statements on one line, which prettier never writes and which the `;` arm of the
+        # anchor is here for: reading only the first is an edge silently dropped.
+        'export { a } from "./x"; export { b } from "./y";': ["./x", "./y"],
+    }
+    for source, expected in static.items():
+        assert [m.group(1) for m in _TS_STATIC_IMPORT.finditer(source)] == expected, (
+            f"the static-import matcher misread {source!r}"
+        )
+    # The block-comment case is the walk's, not the pattern's: the pattern has no way to see a
+    # `/* */` around a line, and `_without_comments` is what takes it away first.
+    commented = '/*\nimport { a } from "./x";\n*/'
+    assert [m.group(1) for m in _TS_STATIC_IMPORT.finditer(commented)] == ["./x"]
+    assert _TS_STATIC_IMPORT.search(_without_comments(commented)) is None, (
+        "a commented-out import still reads as an edge, so the walk must not have stripped "
+        "comments before matching."
+    )
+
+    dynamic = {
+        'const m = await import("./components/Settings");': ["./components/Settings"],
+        'type Api = typeof import("./api");': [],
+        # Vite's documented escape hatch, which prettier keeps exactly where it is.
+        'await import(/* @vite-ignore */ "./x");': ["./x"],
+        "await import(`./x`);": ["./x"],
+        # `typeof` is matched and discarded rather than excluded by a lookbehind, so the space
+        # between the two words may be anything.
+        'type A = typeof\n  import("./api");': [],
+        'type B = typeof  import("./api");': [],
+    }
+    for source, expected in dynamic.items():
+        assert [
+            m.group(2) for m in _TS_DYNAMIC_IMPORT.finditer(source) if not m.group("typeof")
+        ] == expected, f"the dynamic-import matcher misread {source!r}"
+
+
+# --- the HTTP status an InstanceError means is declared once (rule 144) ---------------
+
+#: Every `except` arm in `api/` that catches one of the `services.instances` errors. Pinned
+#: because the ban below can only judge the handlers the walk collected, and a walk that
+#: stopped reading the tree would pass by finding none (rule 145). Six today: five map the
+#: error to a response, and `test_new_instance`'s arm reports it as `map_error` copy beside a
+#: passed connection test instead, which is why the second number is not the first.
+_EXPECTED_INSTANCE_ERROR_HANDLERS = 6
+_EXPECTED_INSTANCE_ERROR_RESPONSES = 5
+
+#: The three the walk recognizes, by the trailing name. Spelled as a suffix set rather than
+#: matched on the dotted path, so `instances.InstanceError` and a bare `InstanceError` are one
+#: case and a future subclass is caught by being named here rather than by being missed.
+_INSTANCE_ERROR_NAMES = frozenset(
+    {"InstanceError", "InstanceNotFoundError", "InstanceConflictError"}
+)
+
+
+def _names_an_instance_error(node: ast.expr | None) -> bool:
+    """Whether an ``except`` clause catches one of them, in any form the tree may spell it.
+
+    Four forms reach here: a bare ``InstanceError``, a dotted ``instances.InstanceError``, a
+    tuple holding either beside an unrelated error (``(IntegrationError,
+    instances.InstanceError)``, live in the tree), and a bare ``except:`` -- which names
+    nothing and so catches these too, but cannot be told apart from any other blanket catch
+    and is banned elsewhere. Reading the trailing name is what makes the first two one case;
+    anchoring on the dotted spelling would have read only the one the tree happens to use
+    (rule 147).
+    """
+    if node is None:
+        return False
+    if isinstance(node, ast.Tuple):
+        return any(_names_an_instance_error(el) for el in node.elts)
+    if isinstance(node, ast.Attribute):
+        return node.attr in _INSTANCE_ERROR_NAMES
+    return isinstance(node, ast.Name) and node.id in _INSTANCE_ERROR_NAMES
+
+
+def _http_status_args(handler: ast.ExceptHandler) -> list[tuple[int, ast.expr]]:
+    """The status argument of every ``HTTPException(...)`` raised inside ``handler``.
+
+    Collected from the whole handler body rather than from its first statement, so an arm that
+    branches before raising is read too, and returned in source order -- ``ast.walk`` is
+    breadth-first, so a raise nested inside an ``if`` comes back after one written below it.
+
+    **Both spellings of the status, because the tree spells it both ways**: positionally, which
+    is what every arm here uses, and as ``status_code=``, which ``api/lists.py`` uses twice. A
+    reader of the positional form alone does not report a keyword-spelled arm as a violation --
+    it drops that arm out of the population entirely, so the count below fails saying an arm
+    stopped answering when the truth is that it answered in a spelling nobody could read
+    (rule 147).
+    """
+    out: list[tuple[int, ast.expr]] = []
+    for node in ast.walk(handler):
+        if not isinstance(node, ast.Raise) or node.exc is None:
+            continue
+        exc = node.exc
+        if not isinstance(exc, ast.Call):
+            continue
+        callee = exc.func
+        name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+        if name != "HTTPException":
+            continue
+        keyword = next((kw.value for kw in exc.keywords if kw.arg == "status_code"), None)
+        status = exc.args[0] if exc.args else keyword
+        if status is not None:
+            out.append((node.lineno, status))
+    return sorted(out, key=lambda pair: pair[0])
+
+
+def _instance_error_handlers() -> list[tuple[str, int, ast.ExceptHandler]]:
+    """Every such arm across ``api/``, as (repo-relative path, line, node)."""
+    found: list[tuple[str, int, ast.ExceptHandler]] = []
+    for path in sorted((SRC / "api").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler) and _names_an_instance_error(node.type):
+                found.append((path.relative_to(REPO).as_posix(), node.lineno, node))
+    return found
+
+
+def test_no_route_hand_writes_the_status_an_instance_error_already_declares() -> None:
+    """The status comes from ``exc.status``, never from a number typed at the ``except``.
+
+    ``services.instances`` declares one status per subclass -- 422 for the base, 404 for
+    not-found, 409 for a name clash -- and each subclass's docstring says why. The five arms
+    that answer these used to hand-write the number instead, and two of them wrote 404 for the
+    base class: correct only because those callees can raise nothing but ``InstanceNotFound``
+    today, so a service that grew a blank-field guard the way ``create_instance`` has would
+    have told the operator the instance did not exist. Reading the declaration is what makes
+    that unable to happen again, and this is what keeps a sixth arm from reintroducing it
+    (rule 144).
+    """
+    handlers = _instance_error_handlers()
+    assert len(handlers) == _EXPECTED_INSTANCE_ERROR_HANDLERS, (
+        f"{len(handlers)} `except InstanceError` arms under api/, expected "
+        f"{_EXPECTED_INSTANCE_ERROR_HANDLERS}. Update the count once the new arm reads "
+        f"`exc.status`: {[(p, n) for p, n, _ in handlers]}"
+    )
+
+    answered = 0
+    for path, _, handler in handlers:
+        for lineno, arg in _http_status_args(handler):
+            answered += 1
+            assert isinstance(arg, ast.Attribute) and arg.attr == "status", (
+                f"{path}:{lineno} raises HTTPException with a hand-written status. "
+                f"Use `exc.status`, which services/instances.py declares per subclass."
+            )
+    assert answered == _EXPECTED_INSTANCE_ERROR_RESPONSES, (
+        f"{answered} of those arms answer with an HTTPException, expected "
+        f"{_EXPECTED_INSTANCE_ERROR_RESPONSES}"
+    )
+
+
+def test_the_instance_error_matcher_reads_every_form_the_clause_can_take() -> None:
+    """The four forms it must collect, and the ones it must leave alone (rule 147).
+
+    The ban above is only as wide as this classifier: an arm it does not collect is absent
+    from the count and from the assertion at once, so the two agree while disagreeing with the
+    tree. Only one of the accepted forms is live in `api/` today.
+    """
+    accepted = (
+        "except InstanceError as exc: pass",
+        "except instances.InstanceError as exc: pass",
+        "except (IntegrationError, instances.InstanceError) as exc: pass",
+        "except (instances.InstanceNotFoundError, ValueError): pass",
+        "except InstanceConflictError: pass",
+        "except services.instances.InstanceError: pass",
+    )
+    for clause in accepted:
+        tree = ast.parse(f"try:\n    pass\n{clause}")
+        handler = next(n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler))
+        assert _names_an_instance_error(handler.type), f"should be collected: {clause}"
+
+    for clause in (
+        "except IntegrationError as exc: pass",
+        "except (ValueError, KeyError): pass",
+        "except restore.RestoreError as exc: pass",
+        # Catches one, and is indistinguishable from any other blanket catch.
+        "except Exception: pass",
+    ):
+        tree = ast.parse(f"try:\n    pass\n{clause}")
+        handler = next(n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler))
+        assert not _names_an_instance_error(handler.type), f"should be left alone: {clause}"
+
+
+def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
+    """``_http_status_args`` reads the raise, not the handler's first line.
+
+    An arm that logs first, or branches before raising, still raises a status -- and a reader
+    that only inspected ``handler.body[0]`` would call both of those clean. Driven against a
+    nested raise, since that is the shape a future arm most plausibly takes, and against
+    ``status_code=``, which is a live spelling in ``api/lists.py`` and reaches the ban only
+    because the reader takes it (rule 147).
+    """
+    nested = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        "    log.warning('x')\n"
+        "    if exc.status:\n"
+        "        raise HTTPException(404, str(exc)) from exc\n"
+        "    raise HTTPException(status_code=409, detail=str(exc)) from exc\n"
+    )
+    handler = next(n for n in ast.walk(nested) if isinstance(n, ast.ExceptHandler))
+    args = _http_status_args(handler)
+    assert len(args) == 2, f"both raises should be read, got {len(args)}"
+    (_, positional), (_, keyword) = args
+    assert isinstance(positional, ast.Constant) and positional.value == 404
+    assert isinstance(keyword, ast.Constant) and keyword.value == 409
+
+    # And the compliant spellings, so the ban's accept side is driven too.
+    clean = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        "    raise HTTPException(exc.status, str(exc)) from exc\n"
+    )
+    handler = next(n for n in ast.walk(clean) if isinstance(n, ast.ExceptHandler))
+    ((_, arg),) = _http_status_args(handler)
+    assert isinstance(arg, ast.Attribute) and arg.attr == "status"
+
+    # A raise that is not an HTTPException contributes nothing, so a `raise` re-raising the
+    # original cannot be read as an arm that stopped answering.
+    bare = ast.parse("try:\n    pass\nexcept InstanceError:\n    raise\n")
+    handler = next(n for n in ast.walk(bare) if isinstance(n, ast.ExceptHandler))
+    assert _http_status_args(handler) == []
+
+
+# --- the bold-when-active strut, and the sentence enumerating it (rule 144) -----------
+
+_STYLES = FRONTEND_SRC / "styles"
+
+#: Selecting a control bumps its label 500 -> 600, which would widen it and shove its
+#: neighbors sideways. A hidden bold copy of the label reserves the wider width at every
+#: weight. `04-buttons.css` holds the rule for four of the five controls carrying one and a
+#: comment enumerating all five; `02-masthead.css` holds `.view-tab`'s, byte-identical.
+_STRUT_ENUMERATION = _STYLES / "04-buttons.css"
+
+#: Every control that bolds when active or selected. Pinned because both assertions below
+#: are set comparisons, and a walk that stopped reading the tree satisfies a set comparison
+#: by finding nothing on both sides at once (rule 145).
+_EXPECTED_BOLD_WHEN_ACTIVE = 6
+
+#: The one that bolds and deliberately carries no strut, with the reason -- classified in
+#: writing rather than silenced, since the assertion below is an equality and would otherwise
+#: just be relaxed. A vertical list has no sideways neighbor to shove.
+_BOLDS_WITHOUT_A_STRUT = {".filter-mi": "a vertical menu item, so nothing sits beside it"}
+
+#: A selector carrying a chosen state. `.sel` and `.active` are both live spellings here.
+_ACTIVE_STATE = re.compile(r"\.active\b|\.sel\b|\[aria-selected|\[data-active")
+_CSS_RULE = re.compile(r"(?m)^([^{}/@]+?)\{([^{}]*)\}")
+#: The leading class of a selector, which is the control the rule is about.
+_LEAD_CLASS = re.compile(r"^\s*(\.[a-z0-9-]+)")
+
+
+def _css_rules() -> list[tuple[str, int, str, str]]:
+    """Every flat CSS rule under `styles/`, as (file, line, selector, body).
+
+    Flat, so a rule nested in `@media` is read too -- ``10-layout.css`` turns `.view-tab`'s
+    strut back off inside one, and a walk that skipped media queries would not see it.
+    """
+    out: list[tuple[str, int, str, str]] = []
+    for path in sorted(_STYLES.glob("*.css")):
+        text = path.read_text(encoding="utf-8")
+        for match in _CSS_RULE.finditer(text):
+            line = text[: match.start()].count("\n") + 1
+            out.append((path.name, line, " ".join(match.group(1).split()), match.group(2)))
+    return out
+
+
+def _lead_classes(selector: str) -> set[str]:
+    """The control each comma-separated part of ``selector`` is about."""
+    found = set()
+    for part in selector.split(","):
+        lead = _LEAD_CLASS.match(part)
+        if lead:
+            found.add(lead.group(1))
+    return found
+
+
+def _bolding_and_strutted() -> tuple[set[str], set[str]]:
+    """(controls that bold when chosen, controls carrying a strut), by leading class."""
+    bolding: set[str] = set()
+    strutted: set[str] = set()
+    for _, _, selector, body in _css_rules():
+        if "font-weight" in body and _ACTIVE_STATE.search(selector):
+            bolding |= _lead_classes(selector)
+        # `content: none` is the phone bar turning the strut OFF, not a control carrying one.
+        if "[data-label]" in selector and "::after" in selector and "content: none" not in body:
+            strutted |= _lead_classes(selector)
+    return bolding, strutted
+
+
+#: The sentence in ``04-buttons.css`` that makes the claim. The matcher anchors on it rather
+#: than on the comment block, and the block rather than the file, because both wider readings
+#: are satisfied by prose: the file mentions `.seg2` and `.intent-band` in unrelated comments,
+#: and the block's own closing paragraph names `.view-tab` while narrating the drift -- so
+#: deleting the name from the list left the test green (rule 147). Reading the claim itself is
+#: the only scope where a name's presence means what the test says it means.
+_STRUT_CLAIM_OPENER = "Applied to every control that bolds when active"
+
+
+def _strut_comment() -> str:
+    """The enumeration sentence, from its opener to the end of that paragraph."""
+    text = _STRUT_ENUMERATION.read_text(encoding="utf-8")
+    start = text.find(_STRUT_CLAIM_OPENER)
+    assert start != -1, (
+        f"{_STRUT_ENUMERATION.name} no longer contains the sentence enumerating the "
+        f"bold-width strut ({_STRUT_CLAIM_OPENER!r}). Restore it or retarget this gate: "
+        f"without it nothing reconciles the comment against the selectors"
+    )
+    end = text.find("\n\n", start)
+    return text[start : end if end != -1 else len(text)]
+
+
+def test_every_control_that_bolds_when_chosen_reserves_the_bold_width() -> None:
+    """A control that bolds on selection carries the strut, or is classified as not needing it.
+
+    Without one the label widens on click and shoves its neighbors sideways. The exemption is
+    written out rather than the assertion relaxed, so a sixth control that quietly stops
+    reserving its width fails here instead of being covered by a subset check.
+    """
+    bolding, strutted = _bolding_and_strutted()
+    assert len(bolding) == _EXPECTED_BOLD_WHEN_ACTIVE, (
+        f"{len(bolding)} controls bold when chosen, expected {_EXPECTED_BOLD_WHEN_ACTIVE}: "
+        f"{sorted(bolding)}. A new one either gets a `[data-label]::after` strut or a line in "
+        f"_BOLDS_WITHOUT_A_STRUT saying why it does not need one"
+    )
+    assert bolding - strutted == set(_BOLDS_WITHOUT_A_STRUT), (
+        f"unstrutted: {sorted(bolding - strutted)}, exempt: {sorted(_BOLDS_WITHOUT_A_STRUT)}"
+    )
+
+
+def test_the_strut_comment_names_every_control_that_carries_one() -> None:
+    """The enumeration in ``04-buttons.css`` and the selectors are one fact, checked both ways.
+
+    It claimed to cover "every control that bolds when active" and listed four, while five
+    carried a strut: `.view-tab`'s rule lives in ``02-masthead.css``, so the author of either
+    file could read their own and be right. That is rule 144's shape -- one sentence about what
+    the app does, stated where the code it describes is not -- and the direction it failed in
+    is the reassuring one, since a reader checking whether a control needs a strut was told the
+    list was complete.
+
+    Both directions, because they fail differently: a strutted control missing from the
+    sentence is the drift that happened, and a name in the sentence with no rule behind it is a
+    strut someone deleted while leaving the claim standing (rule 7/24).
+    """
+    _, strutted = _bolding_and_strutted()
+    named = {f".{name}" for name in re.findall(r"`\.([a-z0-9-]+)`", _strut_comment())}
+
+    missing = strutted - named
+    assert not missing, (
+        f"{_STRUT_ENUMERATION.name} enumerates the controls carrying the bold-width strut and "
+        f"does not name {sorted(missing)}. Add them to the comment above "
+        f"`.tab[data-label]::after`, or the next author reads a list that says it is complete"
+    )
+    claimed = named - set(_BOLDS_WITHOUT_A_STRUT)
+    assert claimed <= strutted, (
+        f"{_STRUT_ENUMERATION.name} names {sorted(claimed - strutted)} as carrying a strut, and "
+        f"no `[data-label]::after` rule does"
+    )
+
+
+def test_the_css_walk_reads_the_forms_the_stylesheets_spell(tmp_path: Path) -> None:
+    """The two assertions above are only as wide as this walk (rule 147).
+
+    Driven against the spellings `styles/` uses -- a grouped selector, a rule nested in a media
+    query, a state class other than `.active` -- and against the one that must NOT count, the
+    phone bar's `content: none`, which turns a strut off rather than declaring one. A walk that
+    counted that would report `.view-tab` strutted on a build where it is not.
+    """
+    assert _lead_classes(".tab[data-label]::after, .seg[data-label]::after") == {".tab", ".seg"}
+    assert _lead_classes(".view-tab.active:hover:not(:disabled)") == {".view-tab"}
+    assert _lead_classes(".filter-mi.sel") == {".filter-mi"}
+    assert _lead_classes("  .settings-tab[data-label]::after") == {".settings-tab"}
+
+    scratch = tmp_path / "styles"
+    scratch.mkdir()
+    (scratch / "x.css").write_text(
+        ".a.active {\n  font-weight: var(--weight-semi);\n}\n"
+        "@media (max-width: 40rem) {\n"
+        "  .a[data-label]::after {\n    content: none;\n  }\n}\n"
+        ".b[data-label]::after {\n  content: attr(data-label);\n}\n"
+    )
+    global _STYLES
+    real, _STYLES = _STYLES, scratch
+    try:
+        bolding, strutted = _bolding_and_strutted()
+    finally:
+        _STYLES = real
+    assert bolding == {".a"}, bolding
+    # `.a`'s only `[data-label]` rule is the media query switching it off, so it is not strutted.
+    assert strutted == {".b"}, strutted
+
+
+# ---------------------------------------------------------------------------
+# Rule 94: a scan-sized ``IN`` is chunked
+# ---------------------------------------------------------------------------
+
+#: The membership operators SQLAlchemy spells a ``WHERE col IN (...)`` with. ``not_in`` and
+#: its legacy ``notin_`` alias expand identically -- one bound variable per element -- so a
+#: ban that read only ``in_`` would miss half the population it claims to cover (rule 147).
+_MEMBERSHIP_CALLS = frozenset({"in_", "not_in", "notin_"})
+
+#: The third spelling, and the one that hides: a placeholder list built by hand and pasted into
+#: the SQL, which is neither an ORM operator nor an ``expanding`` bindparam.
+#: ``imdb_dataset.lookup`` does exactly this. A walk collecting only the first two reported 17
+#: functions and had no count to pin for the eighteenth, which is rule 147's shape -- a form
+#: that never enters the walk is missing from the ban and from the count alike.
+#:
+#: Read against string literals only, so the ``#:`` comments spelling ``IN (...)`` in prose are
+#: not sites. Upper-case with a word boundary, so ``MIN(``, ``JOIN (`` and the rest do not match.
+_RAW_IN = re.compile(r"\bIN\s*\(")
+
+
+class _Membership(NamedTuple):
+    """What one function does with membership filters."""
+
+    sites: int
+    """How many it carries. Counted rather than flagged so a SECOND filter added inside an
+    already-classified function fails here too, instead of riding the first one's line."""
+    chunked: bool
+    """Whether its CODE reads ``KEY_CHUNK``. Not proof that the chunking is correct -- it is
+    what stops a line below claiming "chunked" about a function that does no chunking. Read
+    off the syntax tree rather than the text, because the text includes the comment saying
+    why the read is chunked, and a check that comment satisfies proves nothing (rule 147)."""
+
+
+class _MembershipWalk(ast.NodeVisitor):
+    """Collects membership filters, remembering which ``def`` each one sits inside."""
+
+    def __init__(self, rel: str, found: dict[str, _Membership]) -> None:
+        self._rel = rel
+        self._found = found
+        self._stack: list[ast.AST] = []
+
+    def _scope(self, node: ast.AST) -> None:
+        self._stack.append(node)
+        self.generic_visit(node)
+        self._stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._scope(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._scope(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._scope(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        operator = isinstance(func, ast.Attribute) and func.attr in _MEMBERSHIP_CALLS
+        expanding = (
+            isinstance(func, ast.Name)
+            and func.id == "bindparam"
+            and any(kw.arg == "expanding" for kw in node.keywords)
+        )
+        if operator or expanding:
+            self._record(node)
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        # Hand-written SQL, including the constant halves of an f-string. Recorded against the
+        # innermost enclosing def, which is where the placeholder list is built.
+        if isinstance(node.value, str) and _RAW_IN.search(node.value):
+            self._record(node)
+        self.generic_visit(node)
+
+    def _record(self, node: ast.AST) -> None:
+        names = [getattr(n, "name", "") for n in self._stack]
+        key = f"{self._rel}::{'.'.join(names) or '<module>'}"
+        enclosing = self._stack[-1] if self._stack else node
+        prior = self._found.get(key)
+        self._found[key] = _Membership(
+            sites=(prior.sites if prior else 0) + 1,
+            chunked=any(
+                isinstance(inner, ast.Name) and inner.id == "KEY_CHUNK"
+                for inner in ast.walk(enclosing)
+            ),
+        )
+
+
+def _membership_sites(root: Path) -> dict[str, _Membership]:
+    """Every ``IN``-shaped filter under ``root``, keyed by ``path::enclosing qualname``.
+
+    Three spellings reach one SQL construct and all three are collected: the ORM operators
+    above, ``bindparam(..., expanding=True)``, which is how the raw-SQL readers bind
+    ``IN :keys``, and a hand-built placeholder list pasted into the SQL text. Keyed on the
+    enclosing function rather than a line number, because line numbers move and a reviewer
+    needs to know which read is being classified.
+    """
+    found: dict[str, _Membership] = {}
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(REPO).as_posix()
+        _MembershipWalk(rel, found).visit(ast.parse(path.read_text(encoding="utf-8")))
+    return found
+
+
+#: Every membership filter in ``src/reaper``, and what bounds the list it expands. A line
+#: starting ``chunked`` means the read loops on ``KEY_CHUNK``; one starting ``bounded`` says
+#: what holds its input under SQLite's ceiling without chunking. Reconciled by hand, and by
+#: site count, so a filter added beside a classified one cannot ride its line (rule 145).
+_MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
+    "src/reaper/api/review.py::list_candidates": (
+        5,
+        "bounded: four over the operator's hand overrides, one over the page (limit le=500)",
+    ),
+    "src/reaper/api/review.py::_group_rollups": (2, "chunked"),
+    "src/reaper/api/review.py::_decided_keys": (2, "chunked"),
+    "src/reaper/api/review.py::group_detail": (1, "bounded: the seasons of one show"),
+    "src/reaper/services/condemned.py::_reap_overridden_rows": (
+        2,
+        "bounded: the operator's reap overrides, one row per hand click",
+    ),
+    "src/reaper/services/condemned.py::overridden_lane_shifts": (
+        2,
+        "bounded: the operator's overrides, one row per hand click",
+    ),
+    "src/reaper/services/executor.py::Executor.execute": (1, "chunked"),
+    "src/reaper/services/executor.py::Executor._rolling_30d_deletions": (
+        1,
+        "bounded: the fixed _TERMINAL_DELETE_KINDS set",
+    ),
+    "src/reaper/services/fairness.py::_evidence_index": (1, "chunked"),
+    "src/reaper/services/fairness.py::_distinct_episodes": (1, "chunked"),
+    "src/reaper/services/grace.py::grace_report": (1, "chunked"),
+    "src/reaper/services/imdb_dataset.py::ImdbRatings.lookup": (1, "chunked"),
+    "src/reaper/services/instances.py::arr_rows": (1, "bounded: two enum members"),
+    "src/reaper/services/retention.py::_doomed": (
+        2,
+        "bounded: both take a subquery, so nothing is bound at all",
+    ),
+    "src/reaper/services/retention.py::sweep_old_snapshots": (1, "bounded: SWEEP_BATCH ids"),
+    "src/reaper/services/season_scan.py::season_watch_stats": (3, "chunked"),
+    "src/reaper/services/snapshot.py::record_first_flagged_bulk": (1, "chunked"),
+    "src/reaper/services/snapshot.py::_fold_merged_watch_stats": (1, "chunked"),
+}
+
+
+def test_every_scan_sized_in_clause_is_chunked_or_classified() -> None:
+    """Rule 94, which was prose and nowhere in code until #556.
+
+    An expanding ``IN`` binds one variable per key and SQLite refuses a statement past its
+    ceiling, so a filter over a library-sized set is a scan or a report that dies outright
+    rather than one that runs slowly. The grace report shipped that way: nothing bounds the
+    condemned set, and the read raised ``OperationalError``, which is not an
+    ``IntegrationError`` and so was caught nowhere.
+
+    Reading the code is the only way to tell a scan-sized list from a two-element one, so this
+    does not try to: it collects the three spellings the tree uses and requires each site to
+    carry a written classification. A new one fails here, which is the point -- the site that
+    broke was missed because nothing made anyone look at it. A **fourth** spelling would be
+    missing from this walk and from its counts alike (rule 147), which is why the walk is
+    driven against each form in the test below rather than trusted.
+    """
+    found = _membership_sites(SRC)
+
+    missing = sorted(set(found) - set(_MEMBERSHIP_INVENTORY))
+    assert not missing, (
+        "membership filters with no classification:\n"
+        + "\n".join(missing)
+        + "\n\nChunk the read on `db.KEY_CHUNK` if its list is scan-sized, then add a line to "
+        "_MEMBERSHIP_INVENTORY saying which it is (rule 94)."
+    )
+    gone = sorted(set(_MEMBERSHIP_INVENTORY) - set(found))
+    assert not gone, (
+        "_MEMBERSHIP_INVENTORY classifies filters that no longer exist, so the list is "
+        "vouching for reads nobody can find:\n" + "\n".join(gone)
+    )
+    counts = {
+        key: (found[key].sites, expected)
+        for key, (expected, _why) in _MEMBERSHIP_INVENTORY.items()
+        if found[key].sites != expected
+    }
+    assert not counts, (
+        "these functions gained or lost a membership filter; re-read the classification "
+        f"before moving the count (found, classified): {counts}"
+    )
+    unchunked = sorted(
+        key
+        for key, (_n, why) in _MEMBERSHIP_INVENTORY.items()
+        if why.startswith("chunked") and not found[key].chunked
+    )
+    assert not unchunked, (
+        "classified as chunked, but the function never names KEY_CHUNK:\n" + "\n".join(unchunked)
+    )
+
+
+def test_the_membership_walk_reads_the_forms_the_tree_spells(tmp_path: Path) -> None:
+    """The guard above is only as wide as this walk (rule 147).
+
+    Driven against every spelling ``src/`` uses -- the three ORM operators, a raw-SQL
+    ``expanding`` bindparam, a hand-built placeholder list inside an f-string, several filters
+    in one function, a method inside a class -- and against the three that must NOT count: a
+    plain ``bindparam`` binds one value and cannot overflow anything, an unrelated method whose
+    name merely ends in the same letters is not a membership filter, and neither is SQL naming
+    a function that happens to end in those two letters.
+
+    The chunked flag is driven both ways too, and the negative case is the one that matters:
+    ``one`` carries ``KEY_CHUNK`` in a comment and nowhere in its code, which is exactly what
+    a chunking loop deleted from under its own explanatory comment looks like.
+    """
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "def one():\n"
+        "    # chunked on KEY_CHUNK, says the comment nothing here implements\n"
+        "    return T.a.in_(keys), T.b.not_in(keys), T.c.notin_(keys)\n"
+        "def two():\n"
+        "    return text('x IN :k').bindparams(bindparam('k', expanding=True))\n"
+        "def three():\n"
+        "    q = 'SELECT MIN(x) FROM t JOIN (SELECT 1) u'\n"
+        "    return text('x = :k').bindparams(bindparam('k')), obj.join_(keys), q\n"
+        "class C:\n"
+        "    def four(self):\n"
+        "        for chunk in batched(keys, KEY_CHUNK):\n"
+        "            yield T.a.in_(chunk)\n"
+        "    def five(self):\n"
+        "        marks = ', '.join(f':id{i}' for i in range(len(keys)))\n"
+        "        return text(f'SELECT 1 FROM t WHERE k IN ({marks})')\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        found = _membership_sites(scratch)
+    finally:
+        REPO = real
+
+    assert set(found) == {
+        "src/reaper/m.py::one",
+        "src/reaper/m.py::two",
+        "src/reaper/m.py::C.four",
+        "src/reaper/m.py::C.five",
+    }, found
+    assert found["src/reaper/m.py::one"].sites == 3
+    assert not found["src/reaper/m.py::one"].chunked
+    assert found["src/reaper/m.py::C.four"].chunked
+    # The placeholder list is attributed to the innermost def that builds it, not to its class.
+    assert found["src/reaper/m.py::C.five"].sites == 1
+
+
+#: Every argument a Sonarr or Radarr client must be handed, beyond the URL and the key.
+#: Omitting ``api_path_prefix`` or ``verify`` is not a crash: the client falls back to its own
+#: default, ``/api/v3`` for the path and ``True`` for TLS. Both are the *narrow* direction, so
+#: the failure is a scan that reads nothing or a Test Connection that validates a path the
+#: scan will never send to, never a wider deletion. ``safety`` is the one that crashes, being
+#: keyword-only and required, so this gate can only ever report on the other two.
+_ARR_CONSTRUCTION_ARGS = frozenset({"safety", "verify", "api_path_prefix"})
+
+#: The two classes the argument set above belongs to.
+_ARR_CLIENTS = ("RadarrClient", "SonarrClient")
+
+#: Reconciled by hand against the tree, so a site that leaves the walk is noticed rather
+#: than silently dropping out of the assertion below (rule 145). **Six, which is three
+#: functions building two classes each**: ``scan_runner.build_sources``,
+#: ``scan_runner.build_reap_gateway`` and ``instances._client``. The plan's finding says
+#: "three places" and means the functions; this number counts calls, and the first draft of
+#: this constant wrote the finding's figure down without re-deriving it.
+_EXPECTED_ARR_CONSTRUCTIONS = 6
+
+
+def _client_construction_sites(root: Path, names: tuple[str, ...]) -> dict[str, set[str]]:
+    """Every ``<name>(...)`` call under ``src/`` for the given client classes, by address.
+
+    Two gates read this, the *arr one below over six sites and the TLS one over 21. Reads the
+    call node and inspects its keywords, rather than anchoring on the text after the paren:
+    most sites wrap across several lines and some are a single line, so a line-oriented
+    matcher reads one spelling and misses the rest (rule 147). A ``**kwargs`` splat would
+    defeat this, and none exists; if one arrives it is recorded as passing nothing, and the
+    caller's membership assertion names it.
+    """
+    found: dict[str, set[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id not in names:
+                continue
+            rel = path.relative_to(REPO).as_posix()
+            found[f"{rel}:{node.lineno} {node.func.id}"] = {
+                kw.arg for kw in node.keywords if kw.arg is not None
+            }
+    return found
+
+
+def test_every_arr_client_is_built_with_the_same_arguments() -> None:
+    """The scan, the reap gateway and Test Connection each build these three ways.
+
+    ``api_path_prefix`` once reached the first two and not the third, so a green connection
+    test vouched for a path the scan does not use. The fix was adding the argument, and
+    ``instances._client`` still carries the note. Nothing binds a fourth site written by
+    someone who never read that note, which is what this is (rule 72, and CLAUDE.md's "write
+    the gate instead" -- a shared constructor would only bind the sites that call it).
+    """
+    sites = _client_construction_sites(SRC, _ARR_CLIENTS)
+    assert len(sites) == _EXPECTED_ARR_CONSTRUCTIONS, (
+        f"expected {_EXPECTED_ARR_CONSTRUCTIONS} *arr client constructions under src/, walked "
+        f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass "
+        f"{sorted(_ARR_CONSTRUCTION_ARGS)}; bump the number here AND in "
+        "docs/SIMPLIFICATION_PLAN.md's wave 3 row, which states the population in prose."
+    )
+    missing = {
+        site: sorted(_ARR_CONSTRUCTION_ARGS - args)
+        for site, args in sites.items()
+        if not args.issuperset(_ARR_CONSTRUCTION_ARGS)
+    }
+    assert not missing, (
+        f"these *arr clients are built without every argument the others pass: {missing}. "
+        "An omitted one falls back to the client's default rather than the operator's stored "
+        "value, so the scan and the connection test stop agreeing about what they reached."
+    )
+
+
+def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> None:
+    """A guard that scans source is bounded by the syntax it parses (rule 147).
+
+    The tree spells these two ways -- one call per line, and one wrapped across five -- and a
+    matcher anchored on the text after the paren reads the first and misses the second. This
+    drives both, plus the form that must NOT be collected under any name set: a same-named
+    method call, ``self.RadarrClient(...)`` being an Attribute rather than a Name. The
+    ``**kwargs`` splat is the one shape that defeats the argument check rather than the walk,
+    so it is collected as passing nothing and the membership assertion is what names it.
+
+    The ``TautulliClient`` call is collected by the TLS name set and not by the *arr one, off
+    one scratch file read twice. A matcher serving two populations is proven in both.
+    """
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "def flat():\n"
+        "    return RadarrClient(u, k, safety=s, verify=v, api_path_prefix=p)\n"
+        "def wrapped():\n"
+        "    return SonarrClient(\n"
+        "        u,\n"
+        "        k,\n"
+        "        safety=s,\n"
+        "        api_path_prefix=p,\n"
+        "        verify=v,\n"
+        "    )\n"
+        "def splatted():\n"
+        "    return RadarrClient(u, k, **kwargs)\n"
+        "def not_a_construction(self):\n"
+        "    return self.RadarrClient(u, k), TautulliClient(u, k, safety=s, verify=v)\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        found = _client_construction_sites(scratch, _ARR_CLIENTS)
+        wider = _client_construction_sites(scratch, _TLS_CLIENTS)
+    finally:
+        REPO = real
+
+    assert set(found) == {
+        "src/reaper/m.py:2 RadarrClient",
+        "src/reaper/m.py:4 SonarrClient",
+        "src/reaper/m.py:12 RadarrClient",
+    }, found
+    assert found["src/reaper/m.py:2 RadarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
+    assert found["src/reaper/m.py:4 SonarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
+    assert found["src/reaper/m.py:12 RadarrClient"] == set()
+
+    # The same matcher under the wider name set. The Tautulli call the *arr walk must not
+    # collect is one this one must, and the attribute form stays out of both.
+    assert set(wider) == set(found) | {"src/reaper/m.py:14 TautulliClient"}, wider
+    assert wider["src/reaper/m.py:14 TautulliClient"] == {"safety", "verify"}
+
+
+#: What every client built from an address the operator typed must be handed. ``safety`` is
+#: the transport guard's state, keyword-only and required (``BaseClient.__init__``,
+#: ``PlexClient.__init__``), so omitting it raises ``TypeError`` and this gate never sees it.
+#: ``verify`` is that instance's TLS switch and falls back to ``True``, so dropping it costs
+#: agreement rather than safety. An operator whose server sits behind a self-signed
+#: certificate gets one surface that cannot reach it while every other surface can, and
+#: nothing announces the difference.
+_TLS_CLIENT_ARGS = frozenset({"safety", "verify"})
+
+#: Every class in ``clients/`` that is CONSTRUCTED against an address the operator stored.
+#: This list is the walk's real bound and no count can cover it, since a class the matcher
+#: never names contributes zero sites and the number below never moves (rule 145). So the
+#: four classes that also declare ``verify`` are excluded in writing rather than by omission:
+#:
+#: * ``PlexTvClient`` reaches plex.tv, an address nobody configured, and declares no
+#:   ``verify`` at all.
+#: * ``GuardedSession`` is the transport plexapi rides, built inside ``PlexClient`` from the
+#:   ``verify`` that client was already handed.
+#: * ``BaseClient`` and ``ArrClient`` are base classes with no direct construction anywhere.
+#:
+#: ``_ProbeClient`` IS in: it probes one advertised address of the operator's own server, and
+#: both callers thread that server's stored switch into it.
+_TLS_CLIENTS = (
+    "PlexClient",
+    "RadarrClient",
+    "SeerrClient",
+    "SonarrClient",
+    "TautulliClient",
+    "_ProbeClient",
+)
+
+#: Reconciled by hand against the tree, so a site that leaves the walk is noticed rather than
+#: silently dropping out of the assertion (rule 145). **Twenty-one**: six ``PlexClient``, five
+#: ``TautulliClient``, three ``SeerrClient``, one ``_ProbeClient``, and the six ``*arr`` the
+#: gate above counts separately. The six Plex ones are W3b-8's population, by AST at this tip.
+_EXPECTED_TLS_CONSTRUCTIONS = 21
+
+
+def test_every_client_carries_the_operators_own_tls_setting() -> None:
+    """W3b-8's six ``PlexClient`` constructions, and the fifteen siblings beside them.
+
+    The row proposed folding the six into one helper. Measured, that nets about six lines
+    and binds only the callers that adopt it, which is the reasoning
+    ``test_every_arr_client_is_built_with_the_same_arguments`` already wrote down one gate up.
+    So the row is killed and its obligation lands here instead, widened to every client built
+    against a stored address (rule 72). The *arr gate stays separate because it requires a
+    third argument these do not have.
+
+    **Two spellings are out of reach rather than covered** (rule 147): the walk matches an
+    ``ast.Name``, so ``some_module.PlexClient(...)`` and ``from … import PlexClient as PC``
+    are invisible to it. Neither is in the tree, checked by AST across ``src/`` at this tip,
+    and the count above cannot see one arriving because a site the walk never collected is
+    missing from both halves. Reading the whole call is what the shared walk already does;
+    resolving a local alias per file is what ``_pending_pin_construction_sites`` does already.
+
+    **The ceiling on the check itself**: it reads that ``verify`` was PASSED, not what was
+    passed. ``verify=True`` written by hand would satisfy it and mean the opposite. All 21
+    sites pass a stored value today (``server.verify_tls``, ``row.verify_tls``, ``r
+    .verify_tls``, ``plex_verify``, ``verify``), and a literal there is a code review's job.
+    """
+    sites = _client_construction_sites(SRC, _TLS_CLIENTS)
+    assert len(sites) == _EXPECTED_TLS_CONSTRUCTIONS, (
+        f"expected {_EXPECTED_TLS_CONSTRUCTIONS} client constructions under src/ for "
+        f"{sorted(_TLS_CLIENTS)}, walked {len(sites)}: {sorted(sites)}. A new one is fine and "
+        f"must pass {sorted(_TLS_CLIENT_ARGS)}; bump the number here AND in "
+        "docs/SIMPLIFICATION_PLAN.md's W3b-8 kill block, which states it in prose (rule 144). "
+        "A new client CLASS built against a stored address belongs in _TLS_CLIENTS, or the "
+        "walk cannot see any of its sites and this count cannot tell you."
+    )
+    missing = {
+        site: sorted(_TLS_CLIENT_ARGS - args)
+        for site, args in sites.items()
+        if not args.issuperset(_TLS_CLIENT_ARGS)
+    }
+    assert not missing, (
+        f"these clients are built without passing the operator's stored TLS setting: {missing}. "
+        "`verify` then falls back to True, so a server the operator excused from certificate "
+        "checks becomes unreachable from this one surface and reachable from every other."
+    )
+
+
+#: The one place a pending plex.tv PIN is written, ``plex_link.start_pin``.
+#:
+#: Two flows wrote their own before W3b-6 merged them, and the merge buys exactly one
+#: thing: a third flow cannot arrive without the expiry sweep and without a ``purpose``.
+#: Both matter. The sweep is the only thing bounding the table, and ``purpose`` is the
+#: fence between an open sign-in route and an admin-only link route, so a row created
+#: without one is a row either poller might spend. A docstring saying "go through
+#: ``start_pin``" binds nobody who has not read it, which is what this counts instead
+#: (rule 72, and CLAUDE.md's "write the gate instead").
+#:
+#: **Spellings the walk reads** (rule 147, written down before shipping the matcher, and
+#: each one driven in ``test_the_pending_pin_walk_reads_every_spelling``): the bare name;
+#: the ``models.PendingPlexLogin(...)`` attribute form; a local alias, because
+#: ``from … import X as Y`` is live idiom here and not a hypothetical
+#: (``services/list_rules.py`` imports ``Policy as PolicyModel``); and the Core
+#: ``insert(PendingPlexLogin)``, which is a write with no construction in it at all.
+#: **What it cannot read**: a name reached through ``getattr``. Nothing in ``src/``
+#: addresses a model that way, and a walk that tried would be matching strings.
+_PENDING_PIN_CONSTRUCTION_SITE = "src/reaper/services/plex_link.py"
+
+
+def _names_the_pending_model(node: ast.expr, local_names: set[str]) -> bool:
+    """Is this expression the model itself, bare, aliased, or attribute-qualified?"""
+    if isinstance(node, ast.Name):
+        return node.id in local_names
+    if isinstance(node, ast.Attribute):
+        return node.attr == "PendingPlexLogin"
+    return False
+
+
+def _pending_pin_construction_sites(root: Path) -> set[str]:
+    """Every write of a ``PendingPlexLogin`` row under ``src/``, by address.
+
+    Resolves the model's local names per file from that file's own ``ImportFrom`` nodes,
+    rather than matching the class's own spelling: anchoring on the spelling would read
+    the site that already complies and go blind to an aliased one, which is the form a
+    second site is most likely to arrive in (rule 147). The constant above lists every
+    spelling this accepts and the one it does not.
+    """
+    found: set[str] = set()
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        local_names = {"PendingPlexLogin"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                local_names.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name == "PendingPlexLogin"
+                )
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            verb = node.func
+            # Constructing the model, or naming it as the target of a Core insert.
+            # `select(PendingPlexLogin)` is the same AST shape as the second and is a
+            # read, so the verb is what separates them.
+            writes_a_row = _names_the_pending_model(verb, local_names) or (
+                isinstance(verb, ast.Name | ast.Attribute)
+                and (verb.id if isinstance(verb, ast.Name) else verb.attr) == "insert"
+                and bool(node.args)
+                and _names_the_pending_model(node.args[0], local_names)
+            )
+            if writes_a_row:
+                found.add(f"{path.relative_to(REPO).as_posix()}:{node.lineno}")
+    return found
+
+
+def test_a_pending_plex_pin_is_written_in_exactly_one_place() -> None:
+    sites = _pending_pin_construction_sites(SRC)
+    assert len(sites) == 1 and next(iter(sites)).startswith(_PENDING_PIN_CONSTRUCTION_SITE), (
+        f"expected one PendingPlexLogin write, in {_PENDING_PIN_CONSTRUCTION_SITE}, "
+        f"walked {sorted(sites)}. A new plex.tv PIN flow calls plex_link.start_pin with its "
+        "own purpose rather than inserting a row: start_pin is what sweeps expired pendings "
+        "and what sets the TTL, and a hand-written row gets neither."
+    )
+
+
+def test_the_pending_pin_ttl_outlives_the_browsers_poll() -> None:
+    """``PIN_TTL`` is a producer bound whose consumer is in the other language (rule 131).
+
+    The row `start_pin` writes has to outlive the window the browser polls for, or it
+    expires under an operator who is still on plex.tv and the sign-in fails for a reason
+    nothing reports. The two numbers are declared 5 minutes apart in two languages and
+    nothing but this reads both, which is why `PIN_TTL`'s comment used to cite
+    ``PlexTvClient.PIN_TIMEOUT`` instead: same 5 minutes, but it governs ``wait_for_pin``,
+    whose only caller is the CLI ``link``, and that path writes no pending row.
+    """
+    source = (REPO / "frontend" / "src" / "components" / "PlexPin.tsx").read_text()
+    match = re.search(r"^const DEADLINE_MS = (.+);$", source, re.MULTILINE)
+    assert match, (
+        "DEADLINE_MS is gone from frontend/src/components/PlexPin.tsx, or is no longer a "
+        "top-level const. It is the window services/plex_link.py's PIN_TTL is sized "
+        "against; re-point both this matcher and that comment at whatever replaced it."
+    )
+    # `5 * 60 * 1000`, an arithmetic literal rather than a number, so it is evaluated
+    # rather than parsed: `int()` reads the current spelling and nothing else.
+    deadline = timedelta(milliseconds=eval(match.group(1), {"__builtins__": {}}))  # noqa: S307
+
+    assert deadline <= plex_link.PIN_TTL, (
+        f"services/plex_link.py's PIN_TTL is {plex_link.PIN_TTL}, shorter than the "
+        f"{deadline} PlexPin.tsx polls for, so a pending PIN expires while the browser is "
+        "still asking about it. Raise PIN_TTL, or lower DEADLINE_MS."
+    )
+
+
+def test_the_pending_pin_walk_reads_every_spelling(tmp_path: Path) -> None:
+    """Rule 147: proven against the forms the tree does NOT use today, since those are
+    the ones a second site arrives in, and against the reads it must not collect.
+
+    The aliased form is the one that matters. A first draft of this walk matched the
+    class's own spelling, and `from reaper.db.models import PendingPlexLogin as Pending`
+    walked straight past it while the gate stayed green.
+    """
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "from reaper.db.models import AuthSession, PendingPlexLogin\n"
+        "def bare():\n"
+        "    session.add(PendingPlexLogin(pin_id=1, purpose='login'))\n"
+        "def qualified():\n"
+        "    session.add(\n"
+        "        models.PendingPlexLogin(\n"
+        "            pin_id=2,\n"
+        "            purpose='link',\n"
+        "        )\n"
+        "    )\n"
+        "def core_insert():\n"
+        "    return insert(PendingPlexLogin).values(pin_id=3, purpose='login')\n"
+        "def reads_are_not_writes():\n"
+        "    return select(PendingPlexLogin), delete(PendingPlexLogin)\n"
+        "def a_different_model_is_not_this_one():\n"
+        "    return AuthSession(token_hash=h)\n",
+        encoding="utf-8",
+    )
+    (scratch / "aliased.py").write_text(
+        "from reaper.db.models import PendingPlexLogin as Pending\n"
+        "def sneaks_one_in():\n"
+        "    session.add(Pending(pin_id=4, purpose='login'))\n",
+        encoding="utf-8",
+    )
+    # A local named `Pending` that is NOT this model: the alias set is per file, so the
+    # name is only privileged in the file that imported the model under it.
+    (scratch / "other.py").write_text(
+        "from somewhere.other import Pending\ndef unrelated():\n    return Pending(whatever=1)\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        found = _pending_pin_construction_sites(scratch)
+    finally:
+        REPO = real
+
+    assert found == {
+        "src/reaper/m.py:3",
+        "src/reaper/m.py:6",
+        "src/reaper/m.py:12",
+        "src/reaper/aliased.py:3",
+    }, found
+
+
+#: The six configuration values ``snapshot.scan`` holds once per media type and hands to
+#: ``_judge_item``. Movies are judged under the movie policy and seasons under the TV one:
+#: separate keep rules, separate gates, separate condemn threshold, separate scoring window.
+#: The scan holds all twelve as locals differing only by a ``movie_`` / ``tv_`` prefix. Four
+#: are its own parameters (``movie_policy``, ``movie_gates``, and the TV pair); the other
+#: eight it derives from those.
+_LANE_ARGUMENTS = frozenset(
+    {"gates", "signals", "custom_condemn", "keeps", "policy", "window_days"}
+)
+
+#: The prefix on each lane's locals, and the discriminator the walk below reads.
+_LANES = frozenset({"movie", "tv"})
+
+#: Reconciled by hand against the tree, so a call that leaves the walk is noticed rather than
+#: dropping out of the assertions below (rule 145). Two: the movie loop and the season loop,
+#: both in ``services/snapshot.py``.
+_EXPECTED_JUDGE_ITEM_CALLS = 2
+
+
+def _judge_item_lane_arguments(root: Path) -> dict[str, dict[str, str]]:
+    """Every ``_judge_item(...)`` call under ``src/``, and the lane locals it passes.
+
+    Reads the call node's keywords rather than the text after the paren: the two sites wrap
+    across 67 and 52 lines, so a line-oriented matcher reads one keyword per attempt
+    (rule 147). A bare ``_judge_item(...)`` and a qualified ``snapshot._judge_item(...)`` are
+    both collected, since the count below is what notices a site leaving the walk and a
+    qualified call would otherwise take a third site out of both halves.
+
+    Only a bare ``Name`` whose first segment is a lane counts as a lane local, so an
+    attribute, a call result or an unprefixed name is absent from the mapping and the
+    keyword-set assertion below is what names it. A ``**kwargs`` splat passes nothing.
+    """
+    found: dict[str, dict[str, str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            called = node.func
+            name = called.id if isinstance(called, ast.Name) else getattr(called, "attr", "")
+            if name != "_judge_item":
+                continue
+            rel = path.relative_to(REPO).as_posix()
+            found[f"{rel}:{node.lineno}:{node.col_offset}"] = {
+                kw.arg: kw.value.id
+                for kw in node.keywords
+                if kw.arg is not None
+                and isinstance(kw.value, ast.Name)
+                and kw.value.id.split("_")[0] in _LANES
+            }
+    return found
+
+
+def test_a_judged_item_is_never_handed_the_other_lanes_policy() -> None:
+    """The movie loop cannot reach a TV local, and the season loop cannot reach a movie one.
+
+    Measured, on this tree: cross ``custom_condemn``, ``keeps`` and ``policy`` at the movie call
+    site and this is the only test in the whole suite that fails. So the keep rules a movie is
+    judged against, and the threshold it is condemned at, can both come from the TV policy with
+    nothing else saying a word (rule 118). ``gates``, ``signals`` and ``window_days`` are the
+    three ``test_scan_pipeline.py`` already catches.
+
+    This is the gate rather than a lane carrier, per CLAUDE.md's "write the gate instead": a
+    carrier binds the sites that adopt it, and ``services/snapshot.py`` is the deletion path.
+    ``docs/SIMPLIFICATION_PLAN.md``'s wave 3 parameter-object paragraph carries the measurement.
+    """
+    sites = _judge_item_lane_arguments(SRC)
+    assert len(sites) == _EXPECTED_JUDGE_ITEM_CALLS, (
+        f"expected {_EXPECTED_JUDGE_ITEM_CALLS} `_judge_item` calls under src/, walked "
+        f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass every argument in "
+        f"{sorted(_LANE_ARGUMENTS)} off one lane's locals; bump the number here AND in "
+        "docs/SIMPLIFICATION_PLAN.md's wave 3 parameter-object paragraph, which states the "
+        "population in prose."
+    )
+    lanes: dict[str, str] = {}
+    for site, args in sorted(sites.items()):
+        assert set(args).issuperset(_LANE_ARGUMENTS), (
+            f"{site} does not pass {sorted(_LANE_ARGUMENTS - set(args))} as a bare `movie_*` / "
+            "`tv_*` local. Each lane argument reaches `_judge_item` that way so that crossing "
+            "one is visible here; computing it inline at the call site hides which lane it came "
+            "from. A seventh per-lane value is fine and is checked by the same walk."
+        )
+        prefixes = {local.split("_")[0] for local in args.values()}
+        assert len(prefixes) == 1, (
+            f"{site} judges an item against both lanes at once: {sorted(args.items())}. Movies "
+            "are judged under the movie policy and seasons under the TV one, so a crossed "
+            "argument applies the wrong keep rules, gates or condemn threshold to every item in "
+            "that loop."
+        )
+        lanes[site] = prefixes.pop()
+    assert set(lanes.values()) == _LANES, (
+        f"the `_judge_item` calls do not cover both lanes: {lanes}. One loop judges movies and "
+        "the other seasons, so pointing them at one lane silences the check above instead of "
+        "fixing the cross it caught."
+    )
+
+
+def test_the_lane_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> None:
+    """A guard that scans source is bounded by the syntax it parses (rule 147).
+
+    Drives the wrapped form the tree actually spells, the flat one it does not, and the two
+    qualified spellings a third site could arrive in. Plus the four shapes that must not be
+    collected as a lane local: an attribute, a call result, an unprefixed name, and a
+    ``**kwargs`` splat. Each of those leaves the keyword out of the mapping, which is what makes
+    the keyword-set assertion the thing that names it rather than the walk quietly losing it.
+    """
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "def movie_lane():\n"
+        "    return _judge_item(\n"
+        "        session,\n"
+        "        gates=movie_gates,\n"
+        "        signals=movie_signals,\n"
+        "        custom_condemn=movie_custom,\n"
+        "        keeps=movie_keeps,\n"
+        "        policy=movie_policy,\n"
+        "        window_days=movie_window,\n"
+        "    )\n"
+        "def season_lane():\n"
+        "    return _judge_item(session, gates=tv_gates, signals=tv_signals, "
+        "custom_condemn=tv_custom, keeps=tv_keeps, policy=tv_policy, window_days=tv_window)\n"
+        "def crossed():\n"
+        "    return _judge_item(session, gates=movie_gates, keeps=tv_keeps)\n"
+        "def indirect():\n"
+        "    return _judge_item(\n"
+        "        session,\n"
+        "        gates=self.movie_gates,\n"
+        "        signals=_signals(movie_policy),\n"
+        "        keeps=keeps,\n"
+        "        **rest,\n"
+        "    )\n"
+        "def qualified(self):\n"
+        "    snapshot._judge_item(session, keeps=movie_keeps)\n"
+        "    return self._judge_item(session, keeps=tv_keeps)\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        found = _judge_item_lane_arguments(scratch)
+    finally:
+        REPO = real
+
+    assert set(found) == {
+        "src/reaper/m.py:2:11",
+        "src/reaper/m.py:12:11",
+        "src/reaper/m.py:14:11",
+        "src/reaper/m.py:16:11",
+        "src/reaper/m.py:24:4",
+        "src/reaper/m.py:25:11",
+    }, found
+    assert set(found["src/reaper/m.py:2:11"]) == _LANE_ARGUMENTS
+    assert set(found["src/reaper/m.py:12:11"]) == _LANE_ARGUMENTS
+    assert {v.split("_")[0] for v in found["src/reaper/m.py:2:11"].values()} == {"movie"}
+    assert {v.split("_")[0] for v in found["src/reaper/m.py:12:11"].values()} == {"tv"}
+    # The cross the gate exists for: one call, both prefixes.
+    assert {v.split("_")[0] for v in found["src/reaper/m.py:14:11"].values()} == {"movie", "tv"}
+    # None of the four indirect spellings is read as a lane local.
+    assert found["src/reaper/m.py:16:11"] == {}
+    # A qualified call is a call site, whichever way it is qualified.
+    assert found["src/reaper/m.py:24:4"] == {"keeps": "movie_keeps"}
+    assert found["src/reaper/m.py:25:11"] == {"keeps": "tv_keeps"}
+
+
+# ---------------------------------------------------------------------------
+# The client failure sentences are worded in one place (rule 144)
+# ---------------------------------------------------------------------------
+
+#: The sentences a failed client call is reported with, as templates: literal text with `{}`
+#: standing in for each interpolation, mapped to the factory in `clients/base.py` that words
+#: each. Every one was written at two or three of the sites that raise it. Rewording one copy
+#: leaves the others describing the same failure differently, which is what rule 144 is about,
+#: and it had already happened: `public.py` spelled one of them with a hardcoded `GET` where
+#: `base.py` names the method.
+_CLIENT_FAILURE_SENTENCES = {
+    "timed out ({})": "transport_failure",
+    "unreachable ({})": "transport_failure",
+    "refused redirect (HTTP {}) for {} {}": "refused_redirect",
+    "HTTP {} for {} {}": "http_failure",
+    "expected JSON from {}, got {}": "unexpected_body",
+}
+
+#: Where all four are allowed to be spelled.
+_FAILURE_SENTENCE_HOME = "src/reaper/clients/base.py"
+
+
+def _message_template(node: ast.expr) -> str | None:
+    """An ``IntegrationError`` message argument as a template, or None if it cannot be read.
+
+    A plain string is itself; an f-string becomes its literal parts with ``{}`` for every
+    interpolation, so a copy spelling the method ``GET`` where the original interpolates it
+    reads as a DIFFERENT template rather than the same one. Anything else -- a name, a ``%``
+    format, a call -- reads as None and is counted rather than passed over, because a
+    sentence the walk cannot see is a copy it cannot fence (rule 147).
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if not isinstance(node, ast.JoinedStr):
+        return None
+    parts: list[str] = []
+    for piece in node.values:
+        if isinstance(piece, ast.FormattedValue):
+            parts.append("{}")
+        elif isinstance(piece, ast.Constant) and isinstance(piece.value, str):
+            parts.append(piece.value)
+        else:  # pragma: no cover -- a JoinedStr holds only those two node kinds
+            return None
+    return "".join(parts)
+
+
+def _integration_error_messages(root: Path) -> tuple[dict[str, list[str]], list[str]]:
+    """Every ``IntegrationError`` construction under ``root``, by message template.
+
+    Returns the readable ones keyed by template, and the sites whose message the walk could
+    not read at all. Both halves are asserted on: the second is the population another copy
+    would hide in.
+
+    ``message`` is positional-or-keyword, so both spellings are collected. A call with no
+    message at all is not a construction this fence is about and is skipped; one whose message
+    is there but unreadable is counted, which is the distinction the earlier draft of this walk
+    got wrong by testing ``len(node.args) < 2`` alone and dropping every keyword call into
+    neither half (rule 147).
+    """
+    by_template: dict[str, list[str]] = {}
+    unreadable: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name != "IntegrationError":
+                continue
+            keyword = next((k.value for k in node.keywords if k.arg == "message"), None)
+            message = node.args[1] if len(node.args) >= 2 else keyword
+            if message is None:
+                continue
+            site = f"{path.relative_to(REPO).as_posix()}:{node.lineno}"
+            template = _message_template(message)
+            if template is None:
+                unreadable.append(site)
+            else:
+                by_template.setdefault(template, []).append(site)
+    return by_template, unreadable
+
+
+def test_every_client_failure_sentence_is_worded_in_exactly_one_place() -> None:
+    """Rule 144, for the sentences a failed integration call is reported with.
+
+    ``_send``, ``_mutate``, ``PublicClient``, ``get_json`` and ``plextv._post`` each carried
+    their own copy, thirteen in all. The factories in ``clients/base.py`` are the only place
+    these five are spelled now, and this is what stops the next client writing its own.
+
+    **It fences these and not every sentence this layer raises.** ``too many redirects`` stays
+    out: it is written once per file, and ``public.py``'s copy already spells the method
+    ``GET`` where ``base.py`` interpolates it, so adding it here fails rather than fences. The
+    comment above the factories in ``clients/base.py`` says the same. Every other
+    ``IntegrationError`` sentence under ``src/`` is written once, which the walk itself shows.
+    """
+    by_template, _ = _integration_error_messages(SRC)
+    strays = {
+        template: outside
+        for template in _CLIENT_FAILURE_SENTENCES
+        for outside in [
+            [s for s in by_template.get(template, []) if not s.startswith(_FAILURE_SENTENCE_HOME)]
+        ]
+        if outside
+    }
+    assert not strays, (
+        f"a client failure sentence is written outside {_FAILURE_SENTENCE_HOME}: {strays}. "
+        "Call the factory that already words each one -- "
+        f"{', '.join(sorted(set(_CLIENT_FAILURE_SENTENCES.values())))} -- rather than "
+        "repeating the sentence, or the copies drift the next time one is reworded (rule 144)."
+    )
+    for template, factory in _CLIENT_FAILURE_SENTENCES.items():
+        assert factory in (SRC / "clients" / "base.py").read_text(encoding="utf-8"), (
+            f"_CLIENT_FAILURE_SENTENCES maps {template!r} to {factory}, which no longer "
+            "exists in clients/base.py. Point it at whatever words the sentence now, or the "
+            "message above sends the next author to a function that is gone."
+        )
+    missing = [t for t in _CLIENT_FAILURE_SENTENCES if not by_template.get(t)]
+    assert not missing, (
+        f"these sentences are no longer written anywhere under src/reaper: {missing}. If a "
+        "factory was renamed or its wording changed, update _CLIENT_FAILURE_SENTENCES to the "
+        "new spelling; leaving it stale makes this gate pass while fencing nothing."
+    )
+
+
+def test_the_failure_sentence_walk_reads_every_message_the_tree_writes() -> None:
+    """Rule 147: the fence is only as wide as the spellings the walk can parse.
+
+    A message built anywhere but at the ``IntegrationError(...)`` call -- assembled into a
+    local, or handed in by a caller -- is invisible to the template match above, so a copy
+    hiding there would pass. The tree writes none today, and a new one has to be looked at
+    rather than silently joining the blind spot.
+    """
+    _, unreadable = _integration_error_messages(SRC)
+    assert unreadable == [], (
+        f"these IntegrationError messages are not literals the walk can read: {unreadable}. "
+        "Spell the message at the raise, or widen _message_template to the form used and "
+        "prove it against the forms it still rejects."
+    )
+
+
+def test_the_failure_sentence_matcher_reads_the_forms_it_claims_to(tmp_path: Path) -> None:
+    """The template reader, against each form separately: literal, f-string, and neither.
+
+    The keyword forms are here because they were the walk's blind spot and read as no blind
+    spot: ``message`` is positional-or-keyword, so an argument count alone dropped them out of
+    the readable half AND out of the unreadable half at once, which is a fence reporting
+    itself complete over sentences it never saw (rule 147).
+    """
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "raise IntegrationError(svc, 'plain')\n"
+        'raise IntegrationError(svc, f"HTTP {code} for {method} {path}")\n'
+        'raise IntegrationError(svc, f"HTTP {code} for GET {path}")\n'
+        "raise base.IntegrationError(svc, f'unreachable ({exc})')\n"
+        "raise IntegrationError(svc, message)\n"
+        "raise IntegrationError(svc)\n"
+        'raise IntegrationError(svc, message=f"timed out ({kind})")\n'
+        "raise IntegrationError(service=svc, message=held)\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        by_template, unreadable = _integration_error_messages(scratch)
+    finally:
+        REPO = real
+
+    # The two spellings of the HTTP sentence stay apart, which is the point: `GET` hardcoded
+    # and `{method}` interpolated are not the same sentence, and the fence has to see that.
+    assert sorted(by_template) == [
+        "HTTP {} for GET {}",
+        "HTTP {} for {} {}",
+        "plain",
+        "timed out ({})",
+        "unreachable ({})",
+    ]
+    # A qualified call is a call site, and a keyword message is read like a positional one.
+    assert by_template["unreachable ({})"] == ["src/reaper/m.py:4"]
+    assert by_template["timed out ({})"] == ["src/reaper/m.py:7"]
+    # A message that is there but unreadable is counted; a call carrying none is not a
+    # construction this fence is about and is skipped rather than reported as a blind spot.
+    assert unreadable == ["src/reaper/m.py:5", "src/reaper/m.py:8"]
+
+
+# --- every Display field the source record carries reaches its lane's pack ----------------
+
+#: The record each hand-written ``Display(...)`` pack unpacks, which is also its lane: the
+#: movie loop reads a ``RawItem`` and the season loop a ``SeasonJudgment``. Taken off the
+#: call's own value expressions rather than off the enclosing function, so a third pack in
+#: another function is read by the same walk.
+_DISPLAY_PACK_SOURCES: dict[str, type] = {"item": RawItem, "judgment": SeasonJudgment}
+
+#: The fields one pack leaves at the ``None`` default, and why. Hand-written, and the first
+#: draft of this gate derived it instead: a pack was allowed to skip any field its source
+#: record did not declare BY NAME, which read the movie pack's missing ``ratings_json`` as
+#: permitted, because the movie lane builds that value out of ``item.plex_ratings`` and the
+#: dataset rather than copying a same-named field. Deleting it was green while deleting the
+#: season's went red, and it blanks the ratings row for the whole movie lane
+#: (``api/review.py``'s ``_ratings_out``). A derivation that reads a NAME cannot see a value
+#: assembled from other fields, so the classification is written out (rule 103), and adding a
+#: member here is an author saying in the diff why one lane cannot answer.
+_DISPLAY_LANE_EXCEPTIONS: dict[str, str] = {
+    "group_key": "a movie is not part of a show, so it joins no group",
+    "group_title": "same, and the queue draws a movie under its own title",
+    "title_slug": "Sonarr's series slug; Radarr's deep link keys on the tmdb id",
+    "video_resolution": "a season spans episodes, so it has no single resolution",
+}
+
+#: Reconciled by hand against the tree (rule 145). Three ``Display(...)`` calls under
+#: ``src/``: the two packs, plus the ``_NO_DISPLAY`` singleton, which sets nothing and is the
+#: "no display fields" default.
+_EXPECTED_DISPLAY_CALLS = 3
+
+
+def _display_pack_sites(root: Path) -> dict[str, tuple[frozenset[str], frozenset[str]]]:
+    """Every ``Display(...)`` call under ``src/``: the fields it sets, and the source records
+    its values read off.
+
+    Reads the call node rather than the text after the paren, because the two packs wrap
+    across 24 and 16 lines (rule 147). The source base comes from every ``Name`` anywhere
+    inside a keyword's value, not just a bare ``item.year``: the movie pack reaches ``item``
+    through ``item.imdb_id or item.plex_imdb_id`` and through the arguments of
+    ``build_ratings_json(...)``, and a base-of-the-attribute matcher would read neither.
+    A keyword whose value names no source at all (``tvdb_id=None``) contributes no base and
+    is still counted as set: an explicit ``None`` is an author saying the field does not
+    apply.
+
+    **Two spellings this cannot see**, written down rather than guessed at (rule 147): a pack
+    built by ``dataclasses.replace(_NO_DISPLAY, …)``, and one calling ``Display`` through an
+    aliased import. Neither is in the tree, and the count below cannot cover either, because a
+    site that never entered the walk was never in the number. A positional argument and a
+    ``**splat`` ARE covered, both by leaving the field out of ``keywords``.
+    """
+    found: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            called = node.func
+            name = called.id if isinstance(called, ast.Name) else getattr(called, "attr", "")
+            if name != "Display":
+                continue
+            keywords = frozenset(kw.arg for kw in node.keywords if kw.arg is not None)
+            bases = frozenset(
+                inner.id
+                for kw in node.keywords
+                for inner in ast.walk(kw.value)
+                if isinstance(inner, ast.Name) and inner.id in _DISPLAY_PACK_SOURCES
+            )
+            rel = path.relative_to(REPO).as_posix()
+            found[f"{rel}:{node.lineno}:{node.col_offset}"] = (keywords, bases)
+    return found
+
+
+def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None:
+    """A field added to ``Display`` and packed on one lane only is silent today.
+
+    All fifteen default to ``None``, so an omission raises nothing and mypy sees nothing: the
+    movie pack and the season pack are two hand-written mirrors of one dataclass (rule 103).
+    Four of the fifteen do more than draw a queue row -- ``tmdb_id``, ``imdb_id`` and
+    ``tvdb_id`` are what ``services/fairness.py`` joins a request to its candidate on, and
+    ``title_slug`` builds the Sonarr link -- so a sixteenth of that kind, forgotten on one
+    lane, drops that join for that lane rather than blanking a column (rules 29/106).
+
+    Every field is set at both packs unless ``_DISPLAY_LANE_EXCEPTIONS`` names it, which is
+    four today. That list is hand-written on purpose: see the constant for the derivation
+    that replaced it and the movie-lane omission it read as permitted.
+
+    ``docs/SIMPLIFICATION_PLAN.md``'s W5-2 row carries the measurement, including why the
+    collapse this replaces was killed: ``_judge_item`` already takes ``Display`` whole, so
+    merging the packs removes no parameter and no line. What it would have removed is this
+    hazard, and the gate removes it from ``tests/``.
+    """
+    declared = frozenset(f.name for f in dataclasses.fields(Display))
+    stale = sorted(set(_DISPLAY_LANE_EXCEPTIONS) - declared)
+    assert not stale, (
+        f"_DISPLAY_LANE_EXCEPTIONS names {stale}, which `Display` no longer declares. An "
+        "exception outliving its field excuses nothing and reads as a live classification."
+    )
+
+    sites = _display_pack_sites(SRC)
+    assert len(sites) == _EXPECTED_DISPLAY_CALLS, (
+        f"expected {_EXPECTED_DISPLAY_CALLS} `Display(...)` calls under src/, walked "
+        f"{len(sites)}: {sorted(sites)}. A new pack is fine and must set every field not in "
+        "_DISPLAY_LANE_EXCEPTIONS; bump the number here."
+    )
+
+    empty = sorted(site for site, (keywords, _) in sites.items() if not keywords)
+    assert len(empty) == 1, (
+        f"expected exactly one `Display()` setting nothing, the `_NO_DISPLAY` singleton, "
+        f"found {empty}. A pack that lost all its keywords would otherwise read as that "
+        "singleton and leave this gate green."
+    )
+
+    packs = {site: value for site, value in sites.items() if value[0]}
+    for site, (keywords, bases) in sorted(packs.items()):
+        assert len(bases) == 1, (
+            f"{site} packs a Display off {sorted(bases) or 'no known record'}; expected "
+            f"exactly one of {sorted(_DISPLAY_PACK_SOURCES)}. Which record a pack unpacks is "
+            "its lane, and a pack reading two of them, or none, has no lane to check."
+        )
+        forgotten = declared - keywords - set(_DISPLAY_LANE_EXCEPTIONS)
+        assert not forgotten, (
+            f"{site} leaves {sorted(forgotten)} at the None default. Every field defaults to "
+            "None, so the other lane's pack setting it is the only sign anything is missing. "
+            "Set it, or add it to _DISPLAY_LANE_EXCEPTIONS with the reason its lane cannot."
+        )
+
+    unused = sorted(
+        field
+        for field in _DISPLAY_LANE_EXCEPTIONS
+        if all(field in keywords for keywords, _ in packs.values())
+    )
+    assert not unused, (
+        f"_DISPLAY_LANE_EXCEPTIONS excuses {unused}, which both packs now set. An excuse no "
+        "pack uses is the next lane-specific field's free pass."
+    )
+
+    assert {next(iter(bases)) for _, bases in packs.values()} == set(_DISPLAY_PACK_SOURCES), (
+        f"the Display packs do not cover both lanes: {sorted(packs)}. One packs a movie and "
+        "the other a season, so pointing them at one record silences the check above."
+    )
+
+
+#: Where the built-in accent is spelled outside the Python declaration that owns it, and what
+#: shape each copy takes. The stylesheet carries it once per theme block, the two operator
+#: sentences carry it inside a sentence, and `accent.ts` carries it as an export the brand
+#: modules import. `website/src/css/custom.css` is deliberately absent: its `--rp-accent` is
+#: already compared against the app's token by `test_the_site_palette_matches_the_app_palette`,
+#: and a second check of the same pair would fail twice for one edit.
+_ACCENT_DEFAULT_COPIES: dict[str, int] = {
+    "src/reaper/api/settings.py": 1,
+    "frontend/src/accent.ts": 1,
+    "frontend/src/components/GeneralPanel.tsx": 2,
+    "frontend/src/styles/00-tokens.css": 4,
+}
+
+
+def test_the_accent_default_and_its_hex_shape_agree_across_both_languages() -> None:
+    """The accent is declared once in Python and mirrored eight times, twice of that in
+    TypeScript and twice more inside a sentence an operator reads.
+
+    Rule 144's case, and the reason it is a gate rather than a comment: nothing here can be
+    generated. A stylesheet needs a literal so the page paints before any script runs,
+    `index.html` pre-paints from the same literal for the same reason, and the two refusal
+    sentences are operator copy that has to name a real color. So every copy is hand-written,
+    and the failure is quiet in the worst direction -- the app refuses a color while telling
+    the operator to type a different one, or Reset returns to a shade the backend does not
+    store.
+
+    The hex SHAPE is the same duplication one layer down: `api/settings.py` refuses on one
+    regex and `accent.ts` disables the save on another, so a widening on either side alone is
+    a value one language accepts and the other rejects.
+
+    The failure message names each file, because a comment asking the next author to remember
+    the others does nothing (rule 144).
+    """
+    expected = app_settings.DEFAULT_ACCENT_COLOR
+    assert re.fullmatch(r"#[0-9a-f]{6}", expected), (
+        f"the declaration itself is malformed: {expected!r}"
+    )
+
+    found = {
+        path: (REPO / path).read_text(encoding="utf-8").count(expected)
+        for path in _ACCENT_DEFAULT_COPIES
+    }
+    assert found == _ACCENT_DEFAULT_COPIES, (
+        f"the built-in accent is {expected!r}, declared at "
+        "src/reaper/services/app_settings.py's DEFAULT_ACCENT_COLOR. These files carry a copy "
+        f"and no longer agree (found, expected): {found}, {_ACCENT_DEFAULT_COPIES}.\n"
+        "Retuning the accent means editing every one of them, and a stale copy shows the "
+        "operator a color the server will not store. If a copy was deliberately added or "
+        "removed, move its count here."
+    )
+
+    ts = (FRONTEND_SRC / "accent.ts").read_text(encoding="utf-8")
+    ts_default = re.search(r'export const DEFAULT_ACCENT = "([^"]+)";', ts)
+    assert ts_default is not None, (
+        "frontend/src/accent.ts no longer spells DEFAULT_ACCENT the way this check reads it "
+        "(rule 147). Re-read the file and widen the matcher."
+    )
+    assert ts_default.group(1) == expected
+
+    ts_shape = re.search(r"^const HEX = /(.+)/;$", ts, flags=re.MULTILINE)
+    assert ts_shape is not None, (
+        "frontend/src/accent.ts no longer spells its hex regex the way this check reads it "
+        "(rule 147). Re-read the file and widen the matcher."
+    )
+    assert ts_shape.group(1) == settings_api._HEX_COLOR.pattern, (
+        "the accent's hex shape is written twice, in two languages: "
+        f"src/reaper/api/settings.py's _HEX_COLOR is {settings_api._HEX_COLOR.pattern!r} and "
+        f"frontend/src/accent.ts's HEX is {ts_shape.group(1)!r}.\n"
+        "The backend refuses a save on one and the panel disables it on the other, so a "
+        "widening on one side alone is a color the operator can type, the panel accepts, and "
+        "the server then refuses."
+    )
+
+
+# --- the mutation zones' function lists (#598) ---------------------------------------
+
+
+def _mutation_scope() -> Any:
+    """``scripts/mutation_scope.py``, imported by path.
+
+    `scripts/` is not a package and is not on the path, so the module is loaded from its file.
+    Importing it runs only module-level definitions; nothing here starts a mutation run.
+    """
+    import importlib.util
+
+    path = REPO / "scripts" / "mutation_scope.py"
+    spec = importlib.util.spec_from_file_location("_mutation_scope", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered before execution: the module's dataclasses resolve their annotations through
+    # `sys.modules[cls.__module__]`, which raises on a module that is not in there yet.
+    sys.modules["_mutation_scope"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_mutation_zone_accounts_for_its_whole_module() -> None:
+    """A zone's ``functions=`` is a hand-written mirror of its module's callables (rule 103).
+
+    The `engine-gates` zone declared 12 of 22 and reported on those, so a run read as a clean
+    sweep of the gate layer while a fifth of its mutable surface was never asked about. The
+    undeclared eight held three survivors, one live on a default policy (#598).
+
+    This lives here rather than only in the script because the script is not in CI, so a zone
+    that has drifted is otherwise discovered by whoever next runs it. A callable belongs in
+    ``functions=`` or in an ``Omission`` with a written reason; being in neither is the
+    failure. Silence is what this forbids, not omission.
+    """
+    scope = _mutation_scope()
+
+    complaints = [
+        line for name, zone in scope.ZONES.items() for line in scope.zone_drift(name, zone)
+    ]
+
+    assert not complaints, (
+        "a mutation zone's function list no longer matches its module:\n  "
+        + "\n  ".join(complaints)
+        + "\n\nDeclare the callable in that zone's `functions=` -- one with no mutable token "
+        "reports zero, which is honest -- or add it to an `Omission` saying why the zone does "
+        "not answer for it."
+    )
+
+
+def test_every_mutation_omission_carries_a_reason() -> None:
+    """An ``Omission`` with an empty or throwaway reason is the silence this guards against.
+
+    The reason is the whole mechanism: the check above passes for anything listed, so a list
+    with no argument behind it would turn the guard into a way of recording that a function
+    was seen once.
+    """
+    for name, zone in _mutation_scope().ZONES.items():
+        for group in zone.omits:
+            assert len(group.reason.split()) >= 8, (
+                f"the {name} zone omits {list(group.functions)} with a reason too short to be "
+                f"an argument: {group.reason!r}"
+            )
+            assert group.functions, f"the {name} zone has an Omission naming no functions"
+
+
+# --- a rule file's paths: against CLAUDE.md's Governs cell (#685) ---------------------
+
+
+def _expand_braces(pattern: str) -> list[str]:
+    """``api/{settings,plex}.py`` into two patterns. Both copies spell scopes this way."""
+    brace = re.search(r"\{([^}]*)\}", pattern)
+    if brace is None:
+        return [pattern]
+    return [
+        expanded
+        for option in brace.group(1).split(",")
+        for expanded in _expand_braces(pattern[: brace.start()] + option + pattern[brace.end() :])
+    ]
+
+
+def _glob_to_regex(glob: str) -> re.Pattern[str]:
+    """``**`` crosses directory separators, ``*`` does not.
+
+    Written out rather than taken from ``fnmatch``, whose ``*`` crosses ``/`` too: under it
+    ``frontend/src/*.tsx`` would claim every component, so the two copies could disagree about
+    a whole directory and still compare equal.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(glob):
+        if glob.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif glob[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(glob[i]))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def _files_matching(pattern: str, population: list[str]) -> set[str]:
+    matchers = [_glob_to_regex(p) for p in _expand_braces(pattern)]
+    return {f for f in population if any(m.match(f) for m in matchers)}
+
+
+def _governs_rows() -> list[tuple[str, str]]:
+    """Each rule file named in CLAUDE.md's table, with its ``Governs`` cell."""
+    table = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    return [
+        (path, governs)
+        for path, governs, _rules in re.findall(
+            r"^\| `(\.claude/rules/[^`]+)` \| (.*?) \| ([^|]*)\|$", table, re.MULTILINE
+        )
+    ]
+
+
+def test_each_rule_files_paths_and_its_governs_cell_describe_the_same_files() -> None:
+    """The scope of a rule set is written twice, by hand, and nothing compared the copies.
+
+    The ``paths:`` frontmatter is what actually loads a rule set for a session. CLAUDE.md's
+    ``Governs`` cell is what a reader consults to find out which rules bind a file. When they
+    disagree the prose says a file is covered while the loader skips it, and the session edits
+    that file having read none of the rules scoped to it.
+
+    Twice already, both found by hand rather than by a gate: `auth.md` scoped rules to
+    `api/settings.py` and the watch-evidence gate then moved to `api/plex.py`; and
+    `api/auth.py`, which held every admin-password helper, was never under
+    `src/reaper/auth/**/*.py` at all (#685).
+
+    **The comparison is the set of repository files each side matches**, not the glob strings,
+    which are deliberately not written the same way: the cell abbreviates, and the review-queue
+    row names components rather than paths. Two rules resolve a cell fragment, and they are the
+    two the five rows actually use -- a fragment is tried as written from the repo root, and
+    then as ``**/<fragment>*``, which is what makes `secrets.py` and `ReviewQueue` resolve. A
+    fragment that resolves to nothing fails rather than being skipped, since a fragment nobody
+    can resolve is exactly the drift this reads for (rule 147).
+    """
+    population = [str(path.relative_to(REPO)) for path, _ in _repo_text_files()]
+    complaints: list[str] = []
+
+    for rule_path, governs in _governs_rows():
+        frontmatter = (REPO / rule_path).read_text(encoding="utf-8").split("---", 2)[1]
+        declared = re.findall(r'-\s+"([^"]+)"', frontmatter)
+        loads = set[str]().union(*(_files_matching(g, population) for g in declared))
+
+        # The cell is `globs — prose`. The em dash ends the scope and starts the summary.
+        claimed: set[str] = set()
+        for fragment in re.findall(r"`([^`]+)`", governs.split("—")[0]):
+            hit = _files_matching(fragment, population) or _files_matching(
+                f"**/{fragment}*", population
+            )
+            if not hit:
+                complaints.append(
+                    f"CLAUDE.md's Governs cell for {rule_path} names `{fragment}`, which "
+                    "matches no file in the checkout. Spell it as a path."
+                )
+            claimed |= hit
+
+        for only_claimed in sorted(claimed - loads):
+            complaints.append(
+                f"{only_claimed} is claimed by CLAUDE.md's Governs cell for {rule_path} but "
+                f"no paths: glob in {rule_path} matches it, so the rules never load for it."
+            )
+        for only_loaded in sorted(loads - claimed):
+            complaints.append(
+                f"{only_loaded} loads {rule_path} through its paths: frontmatter, and "
+                "CLAUDE.md's Governs cell does not say so."
+            )
+
+    assert not complaints, (
+        "a rule set's scope disagrees with the Governs cell that describes it:\n  "
+        + "\n  ".join(complaints)
+        + "\n\nThe two copies are `.claude/rules/<file>.md`'s paths: frontmatter and the "
+        "Governs column of CLAUDE.md's table. Fix whichever is wrong; the frontmatter is the "
+        "one that decides what a session actually reads."
     )

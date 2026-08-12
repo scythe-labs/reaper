@@ -176,6 +176,16 @@ jobs:
       - name: Install
         run: uv sync --frozen --extra package
 
+      # The snap job below bakes the same provenance and differs in two places. Both
+      # differences are forced, so do not fold the two steps into one:
+      #   --out       `packaging/pyinstaller/reaper.spec:25` reads the file out of
+      #               SPECPATH, and `snap/snapcraft.yaml:100` reads it from the repo
+      #               root. Each consumer names a different path.
+      #   uv run      this job installed uv and synced above, and it runs on Windows
+      #               and macOS where `python3` is not the interpreter to reach for.
+      #               The snap job installs no Python toolchain at all, so it uses the
+      #               runner's `python3`. write_buildinfo.py imports only the stdlib,
+      #               so neither needs a venv.
       - name: Bake provenance
         shell: bash
         env:
@@ -198,42 +208,37 @@ jobs:
 
       # A binary that ships must have booted once: fresh data dir, migrations, and a
       # 200 from its own health probe. This is the packaged twin of ci.yml's docker
-      # buildability gate.
+      # buildability gate. The .app is a second build of the same tree, so it gets a
+      # second boot on its own port, against the same two checks. The two copies this
+      # replaces had to be edited together, and nothing said so.
       - name: Boot the binary and probe it (macOS)
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          datadir="$(mktemp -d)"
-          REAPER_DATA_DIR="${datadir}" REAPER_LAUNCH_BROWSER=false \
-            REAPER_HOST=127.0.0.1 REAPER_PORT=8461 \
-            ./build/pyinstaller/dist/reaper/reaper > server.log 2>&1 &
-          pid=$!
-          ok=false
-          for _ in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:8461/api/health > /dev/null; then ok=true; break; fi
-            sleep 1
-          done
-          # The health probe alone cannot see a bundle that lost the SPA: the API
-          # answers while / serves a JSON 404, which is exactly what a tester hit.
-          spa=false
-          if curl -s http://127.0.0.1:8461/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
-          kill "${pid}" 2>/dev/null || true
-          if [ "${ok}" != "true" ] || [ "${spa}" != "true" ]; then cat server.log; exit 1; fi
-          # The .app is a second build of the same tree, so it gets its own boot.
-          appdata="$(mktemp -d)"
-          REAPER_DATA_DIR="${appdata}" REAPER_LAUNCH_BROWSER=false \
-            REAPER_HOST=127.0.0.1 REAPER_PORT=8462 \
-            "./build/pyinstaller/dist/Reaper.app/Contents/MacOS/Reaper" > app.log 2>&1 &
-          apppid=$!
-          ok=false
-          for _ in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:8462/api/health > /dev/null; then ok=true; break; fi
-            sleep 1
-          done
-          spa=false
-          if curl -s http://127.0.0.1:8462/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
-          kill "${apppid}" 2>/dev/null || true
-          if [ "${ok}" != "true" ] || [ "${spa}" != "true" ]; then cat app.log; exit 1; fi
+          probe() {
+            local binary="$1" port="$2" log="$3"
+            local datadir pid ok=false spa=false
+            datadir="$(mktemp -d)"
+            REAPER_DATA_DIR="${datadir}" REAPER_LAUNCH_BROWSER=false \
+              REAPER_HOST=127.0.0.1 REAPER_PORT="${port}" \
+              "${binary}" > "${log}" 2>&1 &
+            pid=$!
+            for _ in $(seq 1 60); do
+              if curl -sf "http://127.0.0.1:${port}/api/health" > /dev/null; then ok=true; break; fi
+              sleep 1
+            done
+            # The health probe alone cannot see a bundle that lost the SPA: the API
+            # answers while / serves a JSON 404, which is exactly what a tester hit.
+            # The body lands in a file rather than going through `head`: under pipefail
+            # the pipeline reports curl's status, and curl dies of SIGPIPE once the page
+            # outgrows the pipe buffer, so a healthy build would read as broken.
+            curl -s "http://127.0.0.1:${port}/" > "${log}.root" || true
+            if grep -qi "<!doctype html>" "${log}.root"; then spa=true; fi
+            kill "${pid}" 2>/dev/null || true
+            if [ "${ok}" != "true" ] || [ "${spa}" != "true" ]; then cat "${log}"; exit 1; fi
+          }
+          probe ./build/pyinstaller/dist/reaper/reaper 8461 server.log
+          probe ./build/pyinstaller/dist/Reaper.app/Contents/MacOS/Reaper 8462 app.log
 
       - name: Boot the binary and probe it (Windows)
         if: runner.os == 'Windows'
@@ -331,6 +336,8 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.ref }}
 
+      # The build job's own Bake provenance step carries why these two differ on the
+      # output path and the interpreter, and why folding them together breaks one.
       - name: Bake provenance
         env:
           VERSION: ${{ needs.plan.outputs.version }}
@@ -362,9 +369,12 @@ jobs:
             if curl -sf http://127.0.0.1:8420/api/health > /dev/null; then ok=true; break; fi
             sleep 1
           done
-          # The health probe alone cannot see a snap that lost the SPA.
+          # The health probe alone cannot see a snap that lost the SPA. Read to a file
+          # rather than through `head`, the same pipefail trap the macOS probe above
+          # describes (rule 72).
           spa=false
-          if curl -s http://127.0.0.1:8420/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
+          curl -s http://127.0.0.1:8420/ > root.html || true
+          if grep -qi "<!doctype html>" root.html; then spa=true; fi
           if [ "${ok}" != "true" ] || [ "${spa}" != "true" ]; then
             sudo snap logs scythe-labs-reaper -n 100 || true
             exit 1

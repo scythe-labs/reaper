@@ -57,6 +57,7 @@ from reaper.services import (
     history_sync,
     imdb_dataset,
     list_config,
+    plex_link,
     retention,
     scan_runner,
 )
@@ -246,11 +247,12 @@ async def refresh_curated_lists(
     last-run bookkeeping tolerates their absence; with no way to read the definitions or reach
     the sources there is nothing to refresh.
 
-    **Every exit records a run**, which is what the catch-all here is for. The body raises by
-    several routes -- ``adopt_legacy``, ``sync_rule_names``, ``retire_absent`` and the
-    cache-database faults ``gather_reaped`` re-raises -- and APScheduler has no failure
-    listener writing these rows, so a raise left the Jobs row reading green from the last
-    successful night while nothing had refreshed since. Same shape as ``refresh_ratings``.
+    **Once it is wired, every failing exit records a run.** The shape is what holds that: the
+    whole body is one call to :func:`_refresh_curated_lists` under one catch-all, and the one
+    handler inside that function (Plex unreachable) changes what the result says instead of
+    ending the pass. APScheduler has no failure listener writing these rows, so a raise left
+    the Jobs row reading green from the last successful night while nothing had refreshed
+    since. Same shape as ``refresh_ratings``.
     """
     if session_factory is None or settings is None or secret_box is None:
         log.warning("scheduler.lists_refresh_skipped", reason="not wired")
@@ -275,25 +277,27 @@ async def _refresh_curated_lists(
     settings: Settings,
     secret_box: SecretBox,
 ) -> None:
-    """The refresh itself. Split out so its caller's catch-all covers every line of it."""
+    """The refresh itself. Split out so its caller's catch-all covers every line of it.
+
+    **No handler here records anything.** A refusal from ``build_sources`` and an unreadable
+    list registry were each caught where they happened and recorded with the caller's own
+    event name, ``ok=False`` and result string, so the two arms decided nothing and were a
+    second place for that copy to drift. The one row this function writes is the last line,
+    off the ``ok`` and ``result`` the pass worked out, and those three ``ok=False`` branches
+    are outcomes rather than raises, so the caller's catch-all never sees them. The Plex
+    handler below stays: it changes what that result says rather than ending the pass.
+    """
     async with AsyncExitStack() as stack:
-        try:
-            # Not a scan: this reads the *arr and Plex and nothing else, so it does not carry
-            # a scan's Tautulli precondition -- an install with Plex linked and no Tautulli
-            # still gets its collections refreshed.
-            radarrs, sonarrs, _tautulli, _seerrs, plex = await scan_runner.build_sources(
-                session_factory,
-                settings,
-                secret_box,
-                stack=stack,
-                require_scan_sources=False,
-            )
-        except scan_runner.ScanConfigError as exc:
-            log.warning("scheduler.lists_refresh_failed", error=str(exc))
-            await _record_run(
-                session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
-            )
-            return
+        # Not a scan: this reads the *arr and Plex and nothing else, so it does not carry
+        # a scan's Tautulli precondition -- an install with Plex linked and no Tautulli
+        # still gets its collections refreshed.
+        radarrs, sonarrs, _tautulli, _seerrs, plex = await scan_runner.build_sources(
+            session_factory,
+            settings,
+            secret_box,
+            stack=stack,
+            require_scan_sources=False,
+        )
 
         plex_server: object | None = None
         plex_reached = False
@@ -304,17 +308,10 @@ async def _refresh_curated_lists(
             except PlexError as exc:
                 log.warning("scheduler.lists_refresh_plex_unreachable", error=str(exc))
 
-        try:
-            async with session_factory() as session:
-                # ``strict``: this pass retires, so a row that will not decode has to stop it
-                # rather than read as one the operator deleted (rules 65/91, 115).
-                definitions = await list_config.definitions(session, strict=True)
-        except Exception as exc:
-            log.warning("scheduler.lists_refresh_failed", error=str(exc))
-            await _record_run(
-                session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
-            )
-            return
+        async with session_factory() as session:
+            # ``strict``: this pass retires, so a row that will not decode has to stop it
+            # rather than read as one the operator deleted (rules 65/91, 115).
+            definitions = await list_config.definitions(session, strict=True)
 
         synced = await snapshot_service.sync_protection_lists(
             cache_engine,
@@ -442,7 +439,7 @@ async def check_for_updates(
     saying so rather than reading as a check that happened.
 
     The result strings are the Jobs page's own copy for these states; the About row
-    (`frontend/src/components/Settings.tsx`, ``UpdateCell``) says the same six things in
+    (`frontend/src/components/AboutPanel.tsx`, ``UpdateCell``) says the same six things in
     its own words, and the two are edited together (rule 144).
     """
     try:
@@ -495,18 +492,26 @@ async def check_for_updates(
 async def sweep_expired_sessions(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Delete auth sessions whose window has closed. Not operator-schedulable (see the id).
+    """Delete auth state whose window has closed. Not operator-schedulable (see the id).
+
+    Two tables, one job. Auth sessions were here first; pending Plex PINs were swept only
+    inside `plex_link.start_pin`, which runs when somebody starts ANOTHER PIN, so an
+    abandoned sign-in on an install where nobody starts one again sat there indefinitely
+    (#710). They are the same shape with the same TTL and the same argument for having no
+    off switch, so they share the firing rather than growing a second job with a second
+    interval to keep in step.
 
     Swallows its own failures like every other job here: a locked database must not stop
     the scheduler, and nothing depends on this having run -- an expired session is refused
-    on sight whether or not its row is still there.
+    on sight, and an expired PIN cannot be spent, whether or not the row is still there.
     """
     try:
         async with session_factory() as session:
             removed = await sessions.sweep_expired(session)
+            pins = await plex_link.sweep_expired_pins(session)
             await session.commit()
-        if removed:
-            log.info("scheduler.sessions_swept", removed=removed)
+        if removed or pins:
+            log.info("scheduler.sessions_swept", removed=removed, pins=pins)
     except Exception as exc:
         log.warning("scheduler.session_sweep_failed", error=str(exc))
 
@@ -642,7 +647,6 @@ def apply_scan_schedule(
 
 def _maintenance_specs(
     cache_engine: AsyncEngine,
-    data_dir: Path,
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
@@ -655,9 +659,13 @@ def _maintenance_specs(
     ``update_checker`` is the app's own instance, not a fresh one: the job and the About
     route share one cache, so a scheduled check leaves the answer ready for the next page
     load instead of the two asking GitHub separately.
+
+    The data folder comes off ``settings`` rather than beside it. Every caller in this family
+    passed ``settings.data_dir`` next to the same ``settings``, and two sources for one folder
+    is how the ratings download and the snapshot sweep end up in different directories.
     """
     return {
-        "refresh_ratings": (refresh_ratings, [cache_engine, data_dir, session_factory]),
+        "refresh_ratings": (refresh_ratings, [cache_engine, settings.data_dir, session_factory]),
         "refresh_curated_lists": (
             refresh_curated_lists,
             [cache_engine, session_factory, settings, secret_box],
@@ -681,7 +689,6 @@ def apply_maintenance_schedule(
     cron: str | None,
     *,
     cache_engine: AsyncEngine,
-    data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
     settings: Settings,
@@ -697,7 +704,6 @@ def apply_maintenance_schedule(
     """
     specs = _maintenance_specs(
         cache_engine,
-        data_dir,
         session_factory=session_factory,
         secret_box=secret_box,
         settings=settings,
@@ -721,7 +727,6 @@ def run_maintenance_now(
     job_id: str,
     *,
     cache_engine: AsyncEngine,
-    data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
     settings: Settings,
@@ -735,7 +740,6 @@ def run_maintenance_now(
     """
     specs = _maintenance_specs(
         cache_engine,
-        data_dir,
         session_factory=session_factory,
         secret_box=secret_box,
         settings=settings,
@@ -784,7 +788,6 @@ async def catch_up_on_startup(cache_engine: AsyncEngine, data_dir: Path) -> None
 
 def build_scheduler(
     cache_engine: AsyncEngine,
-    data_dir: Path,
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
@@ -808,7 +811,6 @@ def build_scheduler(
 
     specs = _maintenance_specs(
         cache_engine,
-        data_dir,
         session_factory=session_factory,
         secret_box=secret_box,
         settings=settings,
@@ -837,14 +839,14 @@ def build_scheduler(
             start_date=utcnow() + timedelta(seconds=SNAPSHOT_SWEEP_STARTUP_DELAY_S),
             jitter=SNAPSHOT_SWEEP_JITTER_S,
         ),
-        args=[session_factory, data_dir, reap_running],
+        args=[session_factory, settings.data_dir, reap_running],
         id=SNAPSHOT_SWEEP_JOB_ID,
         replace_existing=True,
     )
     return scheduler
 
 
-def reschedule_timezone(
+def apply_stored_schedules(
     scheduler: AsyncIOScheduler,
     timezone: tzinfo,
     *,
@@ -853,22 +855,28 @@ def reschedule_timezone(
     cache_engine: AsyncEngine,
     secret_box: SecretBox,
     update_checker: UpdateChecker,
-    data_dir: Path,
     scan_cron: str | None,
     maintenance: dict[str, str | None],
 ) -> None:
-    """Re-apply every timed job under a new server time zone, in place.
+    """Apply every timed job the owner has stored a schedule for, under ``timezone``.
 
-    Each cron trigger carries its own zone, so moving the clock means rebuilding every
-    trigger -- the scan and all upkeep jobs -- with the new one. The stored crons decide what
-    to rebuild: a job the owner turned off stays off, an overridden one keeps its override,
-    and an untouched one falls back to its default. Called when the time zone changes in the
-    UI so every "next run" recomputes immediately; startup wires the same jobs directly.
+    **Both replays of this data go through here** -- boot, and the timezone save -- because
+    they are one ladder and used to be two: `main.py` open-coded the same guards and the same
+    log events beside a docstring here claiming startup already shared them (rule 87, rule
+    7/24). What made them look different is that boot iterated the *stored* dict while this
+    iterated every known job; that difference is preserved below and is now the only place it
+    is written down.
 
-    Each ``apply_*`` is wrapped in the same ``ValueError`` guard startup uses (rule 87): a
-    stored-but-malformed cron (hand-edited, or a future parser tightening) is logged and
-    skipped, so one bad cron can never 500 the timezone save or half-apply the zone -- moving
-    some jobs and leaving the rest -- which is exactly what boot already survives.
+    The stored crons decide what runs: a job the owner turned off stays off, an overridden one
+    keeps its override, and an untouched one falls back to its built-in default. Each cron
+    trigger carries its own zone, so a zone change means rebuilding every trigger, which is
+    why re-applying a job already on its default is not wasted work -- at boot it re-wires
+    what ``build_scheduler`` set to the same value, and on a save it moves the clock.
+
+    Each ``apply_*`` is wrapped in a ``ValueError`` guard: a stored-but-malformed cron
+    (hand-edited, or a future parser tightening) is logged and skipped, so one bad cron can
+    never 500 the timezone save or half-apply the zone -- moving some jobs and leaving the
+    rest -- and boot serves a UI the owner can fix it from.
     """
     try:
         apply_scan_schedule(
@@ -882,6 +890,16 @@ def reschedule_timezone(
         )
     except ValueError:
         log.warning("scheduler.bad_scan_cron", cron=scan_cron)
+
+    # A stored row naming a job this build does not have -- a job retired between releases, or
+    # a hand-edited settings table. It cannot be applied and it is not an error the owner
+    # caused, but it is the answer to "I turned that off and it came back", so it is said out
+    # loud rather than skipped. Boot used to reach this as a `KeyError` out of
+    # `apply_maintenance_schedule` and the timezone save never saw it at all, which is the half
+    # of rule 87 a shared guard does not cover on its own.
+    for job_id in sorted(set(maintenance) - set(MAINTENANCE_JOB_IDS)):
+        log.warning("scheduler.unknown_maintenance_job", job=job_id, cron=maintenance[job_id])
+
     for job_id in MAINTENANCE_JOB_IDS:
         cron = effective_maintenance_cron(job_id, maintenance)
         try:
@@ -890,12 +908,15 @@ def reschedule_timezone(
                 job_id,
                 cron,
                 cache_engine=cache_engine,
-                data_dir=data_dir,
                 session_factory=session_factory,
                 secret_box=secret_box,
                 settings=settings,
                 update_checker=update_checker,
                 timezone=timezone,
             )
-        except (ValueError, KeyError):
+        except ValueError:
+            # `KeyError` is deliberately not caught: `apply_maintenance_schedule` raises it for
+            # a job id absent from `_maintenance_specs`, and `build_scheduler` dereferences
+            # `specs[job_id]` over this same population before either caller reaches here, so
+            # that mismatch is already a boot failure and cannot arrive at this line.
             log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)

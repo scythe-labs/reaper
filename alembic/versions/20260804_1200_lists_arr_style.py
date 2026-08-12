@@ -10,7 +10,7 @@ Three additive data moves, no schema change:
   bodies named the same tags under ALL. A union is only the wider read under ANY, since ALL
   would ask each title for both policies' tags (see ``_stored_keep_tags``). The policy-body
   half of the same move -- the ``on_list`` rules that make the list act -- is
-  ``engine.policy.convert_list_protections``, which runs on load and is reviewed and saved
+  ``engine.policy_migrations.convert_list_protections``, which runs on load and is reviewed and saved
   by the operator; this migration only makes sure the list those rules name exists.
 * ``lists_seeded`` is set whenever any definition exists, so ``list_config.ensure_defaults``
   does not add a second, shipped copy beside an upgraded install's own rows.

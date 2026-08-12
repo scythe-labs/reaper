@@ -259,29 +259,9 @@ tbody tr.selected {
   background: var(--surface-2);
   color: var(--abstain);
 }
-/* A hand decision recolors the number to the fate it forces, so it never contradicts the
-   row's chip: SOLID for a decision that takes effect (you chose this), DASHED RED for a reap
-   the engine can't honor yet (noted, the file is held) -- never solid, never the amber that
-   now means only "left for you to decide". This mirrors the chips (.chip-hand-*,
-   .chip-reap-refused) and the strip (.strip-ov-*), the app's one hand-decision language. */
-.score-reap {
-  background: var(--condemn);
-  color: var(--condemn-soft);
-}
-.score-spare {
-  background: var(--protect);
-  color: var(--protect-soft);
-}
-.score-refused {
-  background: var(--condemn-soft);
-  color: var(--condemn);
-  border: 1px dashed var(--condemn);
-}
-/* The keep-direction twin of .score-refused: a hand spare whose clock has passed. Green,
-   because the item is still kept until a scan re-judges it; dashed, because the decision
-   keeping it has expired. Routed through handFate like every other fate-bearing cell. */
-.score-spare-expired {
-  background: var(--protect-soft);
-  color: var(--protect);
-  border: 1px dashed var(--protect);
-}
+/* A hand decision recolors the number to the fate it forces, so it never contradicts the row's
+   chip. Those four rules (.score-reap, .score-spare, .score-refused, .score-spare-expired) are
+   in 23-queue-chips.css, each sharing one rule with the card chip and status pill that wear the
+   same tone: the three families are one language and a tone written out three times is three
+   places to change it. They load after this file, which is also the direction rule 49 wants --
+   a hand decision beats the scan verdict above, never the other way. */

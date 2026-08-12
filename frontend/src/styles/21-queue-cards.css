@@ -334,10 +334,6 @@
   justify-content: space-between;
   gap: var(--space-md);
 }
-.row-actions {
-  display: flex;
-  gap: var(--space-sm);
-}
 button.sm {
   padding: 0.28rem 0.6rem;
   font-size: var(--text-sm);

@@ -2,9 +2,8 @@
 """A local mirror of Tautulli's watch history.
 
 Reaper needs to ask questions Tautulli's API cannot answer in one call: *"as of a
-year ago, who had watched this, and how long had it sat untouched?"* -- and then,
-*"who watched it afterwards?"* That is the backtest, and it needs the whole history
-in a form we can query, not paginate.
+year ago, who had watched this, and how long had it sat untouched?"* Answering those over a
+whole library needs the whole history in a form we can query, not paginate.
 
 A mature Tautulli install holds hundreds of thousands of rows. The first pull walks all
 of them, once, in large pages. After that it is genuinely incremental: it asks Tautulli
@@ -54,8 +53,6 @@ is what makes the guard real.
 
 from __future__ import annotations
 
-import asyncio
-import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -63,6 +60,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.aio import per_loop_lock
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 
@@ -103,11 +101,29 @@ class HistoryState:
     rows: int
     earliest: datetime | None
     latest: datetime | None
+    #: What the source said IT holds, at the last sync that reached it
+    #: (``history_sync_state.tautulli_total``). ``None`` when no sync has ever recorded one,
+    #: which is "we were never told" and not zero (rule 93). Carried here so the scan can ask
+    #: whether the mirror is COMPLETE in the same read that asks whether it is empty or stale.
+    source_total: int | None = None
 
     @property
     def horizon(self) -> datetime | None:
         """The data horizon. Nothing before this can be judged."""
         return self.earliest
+
+    @property
+    def shortfall(self) -> int | None:
+        """How many rows the source has that we do not, or ``None`` if we cannot tell.
+
+        Never negative, and that is a property of this value rather than of any one caller.
+        ``rows`` legitimately exceeds ``source_total``: the total is read once per sync and
+        the mirror never deletes, so a source pruned since we last asked leaves us holding
+        more than it now reports. That is evidence in hand, never evidence missing.
+        """
+        if self.source_total is None:
+            return None
+        return max(0, self.source_total - self.rows)
 
 
 SCHEMA = """
@@ -149,7 +165,7 @@ CREATE TABLE IF NOT EXISTS history_sync_state (
 #: creates it in place, leaving the mirrored rows alone.
 #:
 #: Every column a fairness query filters on wants one here: the board and the person drawer
-#: run ``WHERE ... IN (:keys)`` per 500-key chunk, and an unindexed column turns each chunk
+#: run ``WHERE ... IN (:keys)`` per ``db.KEY_CHUNK``, and an unindexed column turns each chunk
 #: into a full scan of a table that holds every play the server has ever recorded (P-4).
 INDEXES = {
     "ix_watch_event_rating_key": (
@@ -215,24 +231,9 @@ _WATCH_EVENT_COLUMNS = (
 )
 
 
-#: One rebuild lock per event loop, created lazily so it always binds to the running loop.
-#: A single module-level ``asyncio.Lock`` would bind to whichever loop first awaited it and
-#: raise on every other -- and the test suite runs a fresh loop per test. Weak-keyed on the
-#: loop so a closed loop's lock is collected. In production there is exactly one loop, hence
-#: one lock, which is what serializes the rebuild across every concurrent caller in the
-#: process (the scan, the fairness route, the nightly sync).
-_rebuild_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
-    weakref.WeakKeyDictionary()
-)
-
-
-def _rebuild_lock() -> asyncio.Lock:
-    loop = asyncio.get_running_loop()
-    lock = _rebuild_locks.get(loop)
-    if lock is None:
-        lock = asyncio.Lock()
-        _rebuild_locks[loop] = lock
-    return lock
+#: Serializes the rebuild across every concurrent caller in the process: the scan, the
+#: fairness route, the nightly sync. What it prevents is at ``ensure_schema``'s write path.
+_rebuild_lock = per_loop_lock()
 
 
 async def ensure_schema(engine: AsyncEngine) -> None:
@@ -338,6 +339,7 @@ async def _state(engine: AsyncEngine) -> HistoryState:
         rows=int(row.n or 0),
         earliest=from_epoch(row.lo),
         latest=from_epoch(row.hi),
+        source_total=await _last_tautulli_total(engine),
     )
 
 
@@ -547,26 +549,15 @@ async def horizon(engine: AsyncEngine) -> datetime | None:
     return (await _state(engine)).earliest
 
 
-async def latest(engine: AsyncEngine) -> datetime | None:
-    """The newest event in the local mirror, or ``None`` when there is nothing at all.
-
-    "Did anybody watch anything?", where :func:`horizon` is the reach question. This
-    **cannot** answer "is the ingest still running?": a stalled Tautulli ingest and a
-    genuinely quiet library produce the identical ``MAX(watched_at)``, so degrading a scan
-    on this reads users who went away for the weekend as a broken pipeline. Ask
-    :func:`last_synced_at` for that.
-    """
-    return (await _state(engine)).latest
-
-
 async def last_synced_at(engine: AsyncEngine) -> datetime | None:
     """When the ingest last ran, or ``None`` if it never has.
 
-    The liveness signal :func:`latest` is not. ``history_sync_state.synced_at`` is written
-    by :func:`_store_tautulli_total` whenever Tautulli answered and its history had not
-    shrunk, so this moves on a quiet library while ``MAX(watched_at)`` stands still. That
-    is the whole difference, and it is what the scan's staleness guard degrades on
-    (``services.snapshot``).
+    The liveness signal ``HistoryState.latest`` is not. ``history_sync_state.synced_at`` is
+    written by :func:`_store_tautulli_total` whenever Tautulli answered and its history had
+    not shrunk, so this moves on a quiet library while ``MAX(watched_at)`` stands still.
+    A stalled ingest and a quiet library share the same newest event, so degrading a scan on
+    that reads users who went away for the weekend as a broken pipeline. This is what the
+    scan's staleness guard degrades on instead (``services.snapshot``).
 
     Precise about what it marks: ``_store_tautulli_total`` is called from
     ``_check_regression``, which runs *before* the page walk, so this says "the source

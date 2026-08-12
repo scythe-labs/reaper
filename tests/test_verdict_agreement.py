@@ -20,7 +20,7 @@ import json
 import pytest
 
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
 from reaper.engine.signals import Score
 from reaper.engine.verdict import decide_verdict
 from reaper.services.condemned import reap_override_verdict_decoded
@@ -54,8 +54,23 @@ BLOCKED = Evaluation(
 )
 
 
+def _hand_reap(evaluation: Evaluation, score: int, policy: PolicyBody) -> str:
+    """What a hand reap on this evaluation actually decides, through the production path.
+
+    A reap never reaches ``snapshot._verdict``: the scan freezes an explanation, and
+    ``condemned.reap_override_verdict_decoded`` re-decides from that document when the
+    operator presses Reap -- in the queue, in the plan, and in the executor's per-item
+    re-read. So the frozen document is produced here by the real writer
+    (``snapshot._explain``) rather than hand-typed, and a field the writer stops emitting
+    fails these tests instead of quietly changing what the read side can see.
+    """
+    frozen = Score(value=float(score), coverage=1.0, results=[])
+    stored = json.loads(_explain(evaluation, frozen, policy))
+    return reap_override_verdict_decoded(stored, score=score)
+
+
 def _simulator_verdict(score: int, coverage_bp: int, condemn_at: int, floor_bp: int) -> str:
-    """The simulator's re-decision for a clean stored row, as ``api.routes.simulate``
+    """The simulator's re-decision for a clean stored row, as ``api.simulate.simulate``
     actually makes it: the REAL shared function, with the stored integers.
 
     Not a transcription. The route imports ``decide_verdict`` and calls it exactly like
@@ -154,7 +169,7 @@ class TestRowsTheSimulatorMustNotReDecide:
         verdict instead of re-deciding it on score."""
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": condemn_at})
 
-        assert _verdict(CLEAN, score, 10_000, policy, override="reap") == "condemn"
+        assert _hand_reap(CLEAN, score, policy) == "condemn"
 
 
 class TestAReapOverrideForcesCondemnButNeverPastSafety:
@@ -179,7 +194,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         override does, because the owner said so."""
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})
 
-        assert _verdict(CLEAN, 0, 10_000, policy, override="reap") == "condemn"
+        assert _hand_reap(CLEAN, 0, policy) == "condemn"
 
     def test_a_reap_override_does_not_delete_something_streaming_now(self) -> None:
         """The one line that matters: a hand reap must not beat the active-stream veto."""
@@ -190,7 +205,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         )
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
-        assert _verdict(streaming, 100, 10_000, policy, override="reap") == "protect"
+        assert _hand_reap(streaming, 100, policy) == "protect"
 
     def test_a_reap_override_does_not_delete_an_unmanaged_file(self) -> None:
         """No *arr owns it, so there is no path to delete through -- reaping it is a lie.
@@ -206,7 +221,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         )
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
-        assert _verdict(unmanaged, 100, 10_000, policy, override="reap") == "protect"
+        assert _hand_reap(unmanaged, 100, policy) == "protect"
 
     def test_a_reap_override_passes_a_streaming_check_that_could_not_run(self) -> None:
         """The reversal, on the gate where it reads worst -- and the reason it is still safe.
@@ -234,7 +249,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
         assert _verdict(blocked, 100, 10_000, policy) == "abstain"
-        assert _verdict(blocked, 100, 10_000, policy, override="reap") == "condemn"
+        assert _hand_reap(blocked, 100, policy) == "condemn"
 
     @pytest.mark.parametrize(
         "gate",
@@ -268,7 +283,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
         assert _verdict(blocked, 100, 10_000, policy) == "abstain"
-        assert _verdict(blocked, 100, 10_000, policy, override="reap") == "condemn"
+        assert _hand_reap(blocked, 100, policy) == "condemn"
 
     #: One row per shape a reap can meet, with the answer written out by hand from
     #: ``engine.verdict``'s docstring rather than derived from either implementation
@@ -364,40 +379,32 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
     )
 
     @pytest.mark.parametrize(("label", "results", "expected"), _REAP_SHAPES, ids=lambda x: x)
-    def test_the_scan_and_the_stored_row_reap_the_same_item_the_same_way(
+    def test_the_stored_row_reaps_each_shape_the_way_the_spec_says(
         self, label: str, results: list[GateResult], expected: str
     ) -> None:
-        """Rule 3/22 for the reap branch: TWO production callers, one answer per shape.
+        """One answer per shape a reap can meet, from the ONE caller that decides them.
 
-        ``snapshot._verdict`` decides with the live evaluation in hand and passes
-        ``blocked_holds_reap=False``; ``condemned.reap_override_verdict_decoded`` re-decides
-        the same item hours later off nothing but the frozen explanation, and passes
-        ``bad_match or unreadable``. Those two arguments are written independently, so they
-        are exactly the kind of pair that drifts -- and the drift is invisible, because each
-        caller serves a different surface: the scan sets the row's verdict, the stored path
-        answers the queue's Reap button, the plan and the executor's per-item re-read.
+        ``condemned.reap_override_verdict_decoded`` re-decides the item hours after the scan
+        off nothing but the frozen explanation, and it serves three surfaces from there: the
+        queue's Reap button, the plan, and the executor's per-item re-read. Nothing else
+        decides a reap -- the scan's ``_verdict`` takes no override, so there is no second
+        implementation to hold this in step with, and this sweep is the whole of the reap
+        branch's coverage rather than half of an agreement pair.
 
-        The frozen explanation is produced by the real writer (``snapshot._explain``) from
-        the same ``Evaluation``, never hand-typed, so a field the writer stops emitting
-        fails here instead of silently changing what the read side can see. The expected
-        answer is written out in ``_REAP_SHAPES`` from the decision's spec, so a shape both
-        callers get wrong together still fails."""
+        The frozen explanation is produced by the real writer (``snapshot._explain``) from an
+        ``Evaluation``, never hand-typed, so a field the writer stops emitting fails here
+        instead of silently changing what the read side can see. The expected answer is
+        written out in ``_REAP_SHAPES`` from the decision's spec (rule 119), so a shape the
+        reader gets wrong still fails even though only one implementation is left."""
         evaluation = Evaluation(results=results)
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})
-        stored = json.loads(
-            _explain(evaluation, Score(value=42.0, coverage=1.0, results=[]), policy)
-        )
 
-        scan = _verdict(evaluation, 42, 10_000, policy, override="reap")
-        stored_row = reap_override_verdict_decoded(stored, score=42)
-
-        assert scan == expected, label
-        assert stored_row == expected, label
+        assert _hand_reap(evaluation, 42, policy) == expected, label
 
     def test_a_reap_override_beats_a_soft_protection_like_a_rating_floor(self) -> None:
         """A rating floor is a *cautious* keep, not a safety guarantee -- the owner may
         overrule it. Only STREAMING_NOW and UNMANAGED are inviolable."""
-        assert _verdict(PROTECTED, 0, 10_000, DEFAULT_MOVIE_POLICY, override="reap") == "condemn"
+        assert _hand_reap(PROTECTED, 0, DEFAULT_MOVIE_POLICY) == "condemn"
 
     def test_a_reap_override_overrules_a_keep_rule_conflict(self) -> None:
         """The keep-rule conflict flags a season for a human to decide -- a *blocked*
@@ -419,7 +426,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})
 
         assert _verdict(conflict, 90, 10_000, policy) == "abstain"
-        assert _verdict(conflict, 90, 10_000, policy, override="reap") == "condemn"
+        assert _hand_reap(conflict, 90, policy) == "condemn"
 
     def test_the_wording_of_a_season_block_decides_nothing_either_way(self) -> None:
         """The three season-guard block shapes reach ONE verdict, and no sentence moves it.
@@ -432,7 +439,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         is that it decides nothing.
 
         ``defers_to_owner`` is still set and still varied here, because it still picks the
-        operator's chip (``api.routes._chip``, pinned in ``test_review_chips.py``). It must
+        operator's chip (``api.review._chip``, pinned in ``test_review_chips.py``). It must
         not pick the verdict. Each shape also abstains with no override -- the item still
         goes to a human first."""
         details = {
@@ -466,7 +473,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
             )
 
             assert _verdict(conflict, 100, 10_000, policy) == "abstain", defers
-            assert _verdict(conflict, 100, 10_000, policy, override="reap") == "condemn", defers
+            assert _hand_reap(conflict, 100, policy) == "condemn", defers
 
         # And a plumbing failure on the same gate, whose detail DOES carry the retired
         # prefix, lands in the same place. The prefix is not a hold and never was one.
@@ -482,4 +489,4 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         )
 
         assert _verdict(plumbing, 100, 10_000, policy) == "abstain"
-        assert _verdict(plumbing, 100, 10_000, policy, override="reap") == "condemn"
+        assert _hand_reap(plumbing, 100, policy) == "condemn"

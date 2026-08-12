@@ -97,7 +97,7 @@ const SITES: Site[] = [
     what: "the base URL of a Sonarr, Radarr or Seerr instance as the operator typed it",
     selectors: [".instance-url"],
     classInTsx: "instance-url",
-    seenIn: ["components/Settings.tsx"],
+    seenIn: ["components/ServicesPanel.tsx"],
   },
   {
     // The grid around this is not a row of its own: `.plex-map-grid` renders no text, and floors
@@ -159,13 +159,18 @@ const SITES: Site[] = [
     what: "help text, app-authored except on the Plex row, which appends the server's URL",
     selectors: [".set-row .help"],
     classInTsx: "help",
-    seenIn: ["components/PlexPanel.tsx"],
+    // `SetRow` writes the class for all twenty-six settings rows now, so it is the file this
+    // site lives in. `PlexPanel.tsx` still spells `help` on a paragraph outside `.set-rows`,
+    // which is a DIFFERENT element from the one this selector styles, so listing it here would
+    // keep the entry green off a token that moved. What PlexPanel still supplies is the value:
+    // the linked row passes the server's URL in as `help`.
+    seenIn: ["components/SetRow.tsx"],
   },
   {
     what: "the About list, whose Data folder row is the server's configured path",
     selectors: [".about-kv dd"],
     classInTsx: "about-kv",
-    seenIn: ["components/Settings.tsx"],
+    seenIn: ["components/AboutPanel.tsx"],
   },
 
   // ---- #219: eleven blocks, one declaration each ------------------------------------------
@@ -179,7 +184,13 @@ const SITES: Site[] = [
     what: "the same media title at the head of a panel",
     selectors: [".why-head h2"],
     classInTsx: "why-head",
-    seenIn: ["components/WhyPanel.tsx", "components/ShowPanel.tsx"],
+    // One file, and it used to be two: the item panel and the show panel drew this head
+    // separately until `PanelHead` collapsed them, and the show panel renders it from there
+    // now. A media TITLE reaches this selector through `PanelHead` alone. `ScalesPanel.tsx`
+    // also puts outside text under `.why-head h2` -- a requester's display name, through
+    // `ProfileName` -- and that is covered by its own row on `.scales-head-id h2` rather
+    // than here. The other two `.why` heads carry app-written copy.
+    seenIn: ["components/WhyPanel.tsx"],
   },
   {
     what: "the rule that argued a keep Reaper could not check",
@@ -289,7 +300,7 @@ const SITES: Site[] = [
       "(`sourceHint`). Shared with the Jobs tab's rows",
     selectors: [".jobrow-sched"],
     classInTsx: "jobrow-sched",
-    seenIn: ["components/ListsPanel.tsx", "components/Settings.tsx"],
+    seenIn: ["components/ListsPanel.tsx", "components/JobsPanel.tsx"],
   },
   {
     what:
@@ -297,7 +308,7 @@ const SITES: Site[] = [
       "status. On Lists it is now a plain count, so its outside text is the Jobs side",
     selectors: [".jobrow-desc"],
     classInTsx: "jobrow-desc",
-    seenIn: ["components/ListsPanel.tsx", "components/Settings.tsx"],
+    seenIn: ["components/ListsPanel.tsx", "components/JobsPanel.tsx"],
   },
   {
     what: "the list's name, which is the operator's own but may be pasted from anywhere",

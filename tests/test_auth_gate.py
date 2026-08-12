@@ -11,32 +11,20 @@ forge a state-changing request.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine as sa_create_engine
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from reaper.api.middleware import AuthGuard
 from reaper.config import Settings
-from reaper.db.base import Base
 from reaper.main import create_app
 
 from ._auth import TEST_ADMIN, TEST_PASSWORD, seed_admin
 
 CSRF = {"X-Reaper-CSRF": "1"}
-
-
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    s = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
-    engine = sa_create_engine(s.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    return s
 
 
 @pytest.fixture
@@ -119,7 +107,9 @@ class TestLocalLoginFlow:
         )
         assert client.get("/api/auth/me").status_code == 200
 
-        assert client.post("/api/auth/logout", headers=CSRF).status_code == 200
+        signed_out = client.post("/api/auth/logout", headers=CSRF)
+        assert signed_out.status_code == 200
+        assert signed_out.json() == {"ok": True}
         assert client.get("/api/auth/me").status_code == 401
 
 

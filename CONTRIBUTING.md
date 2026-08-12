@@ -121,7 +121,7 @@ and it is the one that has to be green before a pull request can merge. Seeing j
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src/reaper                 # src only; tests are not type-checked
+uv run mypy src/reaper tests/          # both trees; pass src/reaper, or tests/ checks nothing
 uv run pytest -n auto                  # what CI runs; ~80s on 8 cores, minutes on one
 uv run alembic upgrade head            # then `alembic check` for model/migration drift
 
@@ -307,10 +307,11 @@ migrations fail and the only repair is rewriting the entire migration history.
 
 `tests/test_migrations.py` guards both halves. It imports the real naming convention and
 proves a named constraint can be dropped under batch mode, and it runs the real
-`alembic/env.py` to capture what that file passes to `context.configure()` at both the
-offline and online call sites. Flipping `render_as_batch` to `False` fails that test today,
-which is a great deal better than discovering it years from now in the first migration that
-needs it.
+`alembic/env.py` to capture what that file passes to `context.configure()`. There is one call
+site: the offline (`--sql`) branch had no invoker and could not have worked, since 9
+revisions call `op.get_bind()`, so it was removed rather than kept as a second path nothing
+exercises. Flipping `render_as_batch` to `False` fails that test today, which is a great deal
+better than discovering it years from now in the first migration that needs it.
 
 ### Reading git history
 

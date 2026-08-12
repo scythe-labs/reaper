@@ -25,9 +25,10 @@ import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
+from reaper.api.deps import newest_snapshot, session_factory, state_singleton
 from reaper.api.scan import launch_scan
 from reaper.api.schemas import (
     ActionStepOut,
@@ -38,11 +39,12 @@ from reaper.api.schemas import (
     RunOut,
     RunOutcomeOut,
     RunReportOut,
+    RunStepsOut,
     RunSummaryOut,
 )
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, Snapshot
+from reaper.db.models import ActionStep, Candidate, ReapRun, RunState
 from reaper.engine.policy import ProfileSettings
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import effective_condemned
@@ -74,15 +76,10 @@ router = APIRouter(prefix="/api", tags=[api_tags.REAP])
 profile_router = APIRouter(prefix="/api", tags=[api_tags.POLICY])
 
 
-def _sessions(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
-
-
-async def _latest_snapshot(session: AsyncSession) -> Snapshot | None:
-    return (
-        await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
-    ).scalar_one_or_none()
+#: How many journal rows a run's detail response carries, and the default page of the steps
+#: route. A plan of 500 seasons is 1,500 rows, each with a path and a stringified request body,
+#: and the table draws 50 of them. The rest are a route away rather than in every response.
+STEP_PAGE = 50
 
 
 async def _run_steps(session: AsyncSession, run: ReapRun) -> list[ActionStep]:
@@ -226,7 +223,6 @@ async def _run_out(
     return RunOut(
         id=run.id,
         snapshot_id=run.snapshot_id,
-        policy_hash=run.policy_hash,
         state=run.state.value,
         item_count=len(planned),
         # The same set the phrase is derived from. The total covers the items that have
@@ -236,9 +232,21 @@ async def _run_out(
         total_bytes=plan_bytes(planned)[0],
         confirmation_phrase=confirmation_phrase(planned) if planned else "REAP 0 SOULS 0 GB",
         held_back_unknown_size=run.held_back_unknown_size,
-        approved_manifest_hash=run.approved_manifest_hash,
-        approved_by=run.approved_by,
-        approved_at=run.approved_at.isoformat(),
+        step_count=len(steps),
+        # The window, and it is applied HERE rather than in `_run_steps` or
+        # `_planned_candidates`. Both of those feed the confirmation phrase: `planned` above
+        # comes off the full list, and `execute_run` re-derives the same phrase through
+        # `_planned_candidates` at send time. A LIMIT in either would shrink the phrase and the
+        # server's expectation together, so the comparison would still pass -- while
+        # `services.executor` loads its own steps and deletes every one. The operator would type
+        # REAP 50 SOULS and 500 would go.
+        #
+        # So slice the ITERABLE below, and never rebind `steps`. Two later uses of that name
+        # read the full list and a rebinding breaks whichever it sits above: the
+        # `_planned_candidates` call, which is the failure this comment is about, and
+        # `step_count` just above, which would report the window as the plan and silently empty
+        # the "N more steps" line the operator reads instead of the rows.
+        # `GET /api/runs/{id}/steps` serves anything past the window.
         steps=[
             ActionStepOut(
                 media_key=s.media_key,
@@ -251,7 +259,7 @@ async def _run_out(
                 is_canary=s.ordinal == 0,
                 error=s.error,
             )
-            for s in steps
+            for s in steps[:STEP_PAGE]
         ],
     )
 
@@ -273,14 +281,15 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
     only = (
         set(payload.media_keys) if payload is not None and payload.media_keys is not None else None
     )
-    async with _sessions(request)() as session:
-        snapshot = await _latest_snapshot(session)
+    async with session_factory(request)() as session:
+        snapshot = await newest_snapshot(session)
         if snapshot is None:
             raise HTTPException(404, "No scan has run yet, so there is nothing to plan.")
 
         try:
-            # approved_by is the authenticated admin once auth is wired into these routes;
-            # until then the plan records that it was built from the API, unattended.
+            # ``approved_by`` records that the plan was built through the API rather than
+            # naming a person: this route is reachable unattended, and every run therefore
+            # stores the same string. It is a column on the run, not a field on any response.
             run = await build_plan(
                 session,
                 snapshot_id=snapshot.id,
@@ -314,7 +323,7 @@ async def list_runs(
     on every visit to the Reap page (P-3). Opening a run goes to ``GET /runs/{id}``,
     which derives them for the one run being looked at.
     """
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         runs = list(
             (await session.execute(select(ReapRun).order_by(ReapRun.id.desc()).limit(limit)))
             .scalars()
@@ -324,12 +333,9 @@ async def list_runs(
         return [
             RunSummaryOut(
                 id=r.id,
-                snapshot_id=r.snapshot_id,
                 state=r.state.value,
-                approved_by=r.approved_by,
                 approved_at=r.approved_at.isoformat(),
                 aborted_reason=r.aborted_reason,
-                held_back_unknown_size=r.held_back_unknown_size,
             )
             for r in runs
         ]
@@ -337,11 +343,55 @@ async def list_runs(
 
 @router.get("/runs/{run_id}")
 async def get_run(request: Request, run_id: int) -> RunOut:
-    async with _sessions(request)() as session:
+    """One run, with the first page of its journal.
+
+    ``steps`` is a window, not the whole plan. ``step_count`` says how many rows there are and
+    ``GET /api/runs/{run_id}/steps`` serves the rest.
+    """
+    async with session_factory(request)() as session:
         run = await session.get(ReapRun, run_id)
         if run is None:
             raise HTTPException(404, "No such run.")
         return await _run_out(session, run)
+
+
+@router.get("/runs/{run_id}/steps")
+async def get_run_steps(
+    request: Request,
+    run_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(STEP_PAGE, ge=1, le=500),
+) -> RunStepsOut:
+    """A window of one run's journal, for reading past what the run detail carries.
+
+    Reads only. Nothing here feeds the confirmation phrase or any count the operator acts on:
+    that is `_planned_candidates`, which the detail route and the execute route both derive
+    from the WHOLE step list. A cap belongs here and in `_run_out`'s serialization, never in
+    the shared helper underneath them.
+    """
+    async with session_factory(request)() as session:
+        run = await session.get(ReapRun, run_id)
+        if run is None:
+            raise HTTPException(404, "No such run.")
+        steps = await _run_steps(session, run)
+        return RunStepsOut(
+            steps=[
+                ActionStepOut(
+                    media_key=s.media_key,
+                    ordinal=s.ordinal,
+                    kind=s.kind,
+                    method=s.method,
+                    path=s.path,
+                    body=json.loads(s.body_json) if s.body_json else None,
+                    state=s.state.value,
+                    is_canary=s.ordinal == 0,
+                    error=s.error,
+                )
+                for s in steps[offset : offset + limit]
+            ],
+            step_count=len(steps),
+            offset=offset,
+        )
 
 
 @router.post("/runs/{run_id}/dry-run")
@@ -358,7 +408,7 @@ async def dry_run(request: Request, run_id: int) -> RunReportOut:
     """
     settings: Settings = request.app.state.settings
 
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         # Read-only safety by construction here: the executor's dry_run does not send, and
         # even if it tried, this ceiling forbids it. Read both switches so a UI emergency
         # stop is reflected, not just the env flag.
@@ -412,11 +462,7 @@ class ReapStatus(BaseModel):
 
 
 def _reap_status(app: FastAPI) -> ReapStatus:
-    status: ReapStatus | None = getattr(app.state, "reap_status", None)
-    if status is None:
-        status = ReapStatus()
-        app.state.reap_status = status
-    return status
+    return state_singleton(app, "reap_status", ReapStatus)
 
 
 def reap_in_flight(app: FastAPI) -> bool:
@@ -477,7 +523,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     """
     settings: Settings = request.app.state.settings
     box: SecretBox = request.app.state.secret_box
-    factory = _sessions(request)
+    factory = session_factory(request)
     app = request.app
 
     # Claim the single reap slot SYNCHRONOUSLY, with no await between the check and the set,
@@ -758,7 +804,7 @@ async def get_profile(request: Request) -> ProfileSettingsIO:
 
     Reports ``settings_recovered`` when the stored blob was unreadable and these are the
     shipped defaults, so the Pace page can tell the operator to save again (rule 65)."""
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         profile = await active_profile(session)
     return _settings_out(profile.settings, recovered=profile.fell_back)
 
@@ -770,7 +816,11 @@ async def update_profile(request: Request, payload: ProfileSettingsIO) -> Profil
     The domain enforces the invariants (a per-run cap may not exceed the rolling 30-day
     cap; grace is at least a week), so a nonsensical combination comes back as a 422 with
     the reason -- never a silent clamp that would let a run do more than the owner meant.
-    Saving does not enable the profile; acting is a separate, deliberate switch.
+
+    Saving these settings deletes nothing and arms nothing. Removing files takes turning
+    deletion on and typing the confirmation phrase for the exact plan you reviewed, on a
+    different screen. There is no on switch on the profile itself: the ``enabled`` column
+    that clause used to name was written False, read by nothing, and retired in release M.
     """
     try:
         settings = ProfileSettings(
@@ -795,7 +845,7 @@ async def update_profile(request: Request, payload: ProfileSettingsIO) -> Profil
             ],
         ) from exc
 
-    async with _sessions(request)() as session:
+    async with session_factory(request)() as session:
         saved = await save_profile_settings(session, settings)
         await session.commit()
     return _settings_out(saved)

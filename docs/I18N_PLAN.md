@@ -187,7 +187,7 @@ recommendation this converges on is the one Reaper's own rule 92 already states.
 
 `GateResult.detail` and `SignalResult.detail` become a typed reason id plus typed params, and the
 frontend composes the sentence from the catalog. `defers_to_owner` on `GateResult` is the in-repo
-precedent: a wording test replaced by a typed flag, shipped, and read by `api.routes._chip`.
+precedent: a wording test replaced by a typed flag, shipped, and read by `api.review._chip`.
 
 `HTTPException.detail` stays **English**, per the table above, and the frontend maps a stable
 error code to translated copy — the same split Stripe ships.
@@ -233,7 +233,7 @@ The single highest-value file: it already centralizes every number, byte, date a
 Note an inconsistency this fixes on the way: `date()` and `time()` already pass `undefined` as
 the locale, so **a German browser gets German dates inside English sentences today**.
 
-Also here: `Settings.tsx:1918` `ordinal()` hand-builds English ordinals (`st`/`nd`/`rd`/`th`),
+Also here: `JobsPanel.tsx`'s `ordinal()` hand-builds English ordinals (`st`/`nd`/`rd`/`th`),
 which is `Intl.PluralRules` with `type: "ordinal"`. Its neighbor `describeCron()` renders a
 schedule as an English sentence and is the one surface in this stage that cannot be reduced to
 a formatter, so it becomes ICU messages per cron shape.
@@ -256,8 +256,11 @@ opens in the why-panel.
 
 ### Stage 4 — extract the UI catalog
 
-The mechanical bulk: ~800 strings across 76 files, `Settings.tsx` (142) and `WhyPanel.tsx` (70)
-heaviest. Attributes (`aria-label`, `title`, `placeholder`) and all 44 `announce()` sites
+The mechanical bulk: ~800 strings, `Settings.tsx` and the seven panels split out of it (142
+between them, measured before the split) and `WhyPanel.tsx` (70) heaviest. The shell kept a share
+of the 142 — the ten `PANELS` labels, three `aria-label`s and the two switch-confirm templates — so
+the panels do not hold all of it. The file count that used to sit here, 76, moved with the split
+and is not restated: re-measure it rather than adding seven. Attributes (`aria-label`, `title`, `placeholder`) and all 44 `announce()` sites
 included — a live region that announces in the wrong language is worse than one that says
 nothing.
 

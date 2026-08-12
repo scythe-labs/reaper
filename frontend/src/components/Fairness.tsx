@@ -18,6 +18,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSlowWait } from "../announce";
 import { ApiError, api, type RequesterRow } from "../api";
 import { bytes, count } from "../format";
+import { BalanceBar } from "./BalanceBar";
 import { CardOpen } from "./CardOpen";
 import { type WatchReach, mirrorNote, reachIsMeasured, watchReach } from "./watchReach";
 import { Notice } from "./Notice";
@@ -89,10 +90,6 @@ export function PersonCard({
   const granted = row.gb_granted_bytes;
   const reclaim = row.reclaimable_bytes;
   const used = Math.max(0, granted - reclaim);
-  // Granted can be zero (no size known for anything they asked for): show a full, neutral
-  // bar rather than dividing by zero.
-  const usedPct = granted > 0 ? (100 * used) / granted : 100;
-  const reclaimPct = granted > 0 ? (100 * reclaim) / granted : 0;
   const hasReclaim = row.reclaimable_items > 0;
 
   const open = () => onSelect(row.identity);
@@ -118,18 +115,7 @@ export function PersonCard({
           </span>
         </div>
 
-        <div
-          className="fair-balance"
-          role="img"
-          aria-label={
-            hasReclaim
-              ? `${bytes(used)} kept, ${bytes(reclaim)} the scan would reclaim`
-              : `${bytes(used)} kept, nothing reclaimable`
-          }
-        >
-          <i className="used" style={{ width: `${usedPct}%` }} />
-          {reclaimPct > 0 && <i className="reclaim" style={{ width: `${reclaimPct}%` }} />}
-        </div>
+        <BalanceBar granted={granted} reclaim={reclaim} hasReclaim={hasReclaim} />
         <div className="fair-legend">
           <span>
             <strong>{bytes(used)}</strong> earning its keep

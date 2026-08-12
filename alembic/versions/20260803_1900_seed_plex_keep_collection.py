@@ -13,9 +13,10 @@ release that shipped a screen promising to show them exactly that. Seeding the d
 Reaper had hardcoded means the first scan after the upgrade produces the same collection
 from the same library and simply re-homes it under a slug carrying the definition's id.
 
-The row is deliberately **not** ``built_in``. An operator with no Plex, or one who keeps
-nothing this way, deletes it; ``ensure_built_ins`` would put a deleted row straight back,
-which is why the seed is a one-time migration rather than a startup fixup.
+The row carries no special standing. An operator with no Plex, or one who keeps nothing this
+way, deletes it, and a startup fixup that re-seeded the shipped lists would put a deleted row
+straight back -- which is why the seed is a one-time migration and why no such fixup exists.
+(This paragraph named one, ``ensure_built_ins``, which never did: rule 7/24.)
 
 ``"Movies"`` is not a guess Reaper is entitled to keep making -- it is the bug (#483), and
 carrying it here is only what makes the upgrade a no-op for the installs it happened to be

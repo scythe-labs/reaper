@@ -22,9 +22,12 @@ rule from ANY to ALL and back leaves both spellings behind.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from contextlib import AsyncExitStack
 
 from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from reaper.api import tags as api_tags
 from reaper.api.schemas import (
@@ -41,8 +44,10 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import ListConfig
-from reaper.services import list_config, list_rules, lists, scan_runner, snapshot
+from reaper.engine import policy_migrations
+from reaper.services import app_settings, list_config, list_rules, lists, scan_runner, snapshot
 from reaper.services.snapshot import WHITELIST_STALE_AFTER
+from reaper.text import fold
 
 router = APIRouter(prefix="/api", tags=[api_tags.LISTS])
 
@@ -103,7 +108,55 @@ def _refused(exc: list_config.ListConfigError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
-def _out(row: ListConfig, uses: list[ListPolicyUseOut] | None = None) -> ListConfigOut:
+async def _authorable_media(
+    session: AsyncSession, cache_engine: AsyncEngine, definitions: Sequence[ListConfig]
+) -> dict[int, list[str]]:
+    """Per definition id, the media types a keep rule on it can be authored for -- the set the
+    Policy picker offers it on (``policy_migrations.authorable_media_scope``, #549).
+
+    Reads the Plex library kinds and the synced content, both best-effort: this feeds a screen
+    that renders before the first sync, so a settings or cache read that fails leaves each list
+    on its source-derived scope and withholds only what nothing else can type (rule 96's shape).
+    Both reads are read-only and gate no deletion, so degrading them narrows what the picker
+    offers, never what a scan removes.
+    """
+    try:
+        libraries = await app_settings.get_plex_libraries(session)
+    except (SQLAlchemyError, ValueError, TypeError):
+        libraries = []
+    library_types = policy_migrations.library_media_types(libraries)
+    try:
+        rows = await lists.configured(cache_engine)
+    except SQLAlchemyError:
+        rows = []
+    observed: dict[int, set[str]] = {}
+    synced: set[int] = set()
+    for row in rows:
+        list_id = row.list_id
+        if list_id is None:
+            continue
+        observed.setdefault(list_id, set()).update(row.media_types)
+        if row.last_synced_at is not None:
+            synced.add(list_id)
+    return {
+        d.id: sorted(
+            policy_migrations.authorable_media_scope(
+                d.source,
+                d.config_json,
+                frozenset(observed.get(d.id, set())),
+                d.id in synced,
+                library_types,
+            )
+        )
+        for d in definitions
+    }
+
+
+def _out(
+    row: ListConfig,
+    uses: list[ListPolicyUseOut] | None = None,
+    authorable: list[str] | None = None,
+) -> ListConfigOut:
     """One stored definition, on the wire. A stored body that will not parse reads as an
     empty one rather than raising a row off the screen (rule 96): the operator can see the
     list, and Edit rewrites the body through ``_clean_config``, which is the way out."""
@@ -117,6 +170,7 @@ def _out(row: ListConfig, uses: list[ListPolicyUseOut] | None = None) -> ListCon
         source=row.source,
         config=config if isinstance(config, dict) else {},
         policy_use=uses or [],
+        authorable_media=authorable or [],
     )
 
 
@@ -132,10 +186,12 @@ async def get_configured(request: Request) -> list[ListConfigOut]:
     async with request.app.state.session_factory() as session:
         rows = await list_config.all_lists(session)
         uses = await list_rules.usage(session)
+        authorable = await _authorable_media(session, request.app.state.cache_engine, rows)
     return [
         _out(
             row,
-            [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])],
+            [ListPolicyUseOut(**u) for u in uses.get(fold(row.name), [])],
+            authorable.get(row.id, []),
         )
         for row in rows
     ]
@@ -163,7 +219,12 @@ async def add_list(request: Request, body: ListConfigIn) -> ListConfigOut:
         # ships and the ones an upgrade migrated are named by the policy body directly (the
         # default body, ``convert_list_protections``), not from here.
         uses = await list_rules.usage(session)
-        return _out(row, [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])])
+        authorable = await _authorable_media(session, request.app.state.cache_engine, [row])
+        return _out(
+            row,
+            [ListPolicyUseOut(**u) for u in uses.get(fold(row.name), [])],
+            authorable.get(row.id, []),
+        )
 
 
 @router.patch("/lists/configured/{list_id}")
@@ -184,7 +245,12 @@ async def edit_list(request: Request, list_id: int, body: ListConfigPatch) -> Li
             request.app.state.cache_engine, await list_config.definitions(session)
         )
         uses = await list_rules.usage(session)
-        return _out(row, [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])])
+        authorable = await _authorable_media(session, request.app.state.cache_engine, [row])
+        return _out(
+            row,
+            [ListPolicyUseOut(**u) for u in uses.get(fold(row.name), [])],
+            authorable.get(row.id, []),
+        )
 
 
 @router.post("/lists/sync")

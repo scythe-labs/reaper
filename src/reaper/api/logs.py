@@ -76,7 +76,13 @@ async def get_logs(
     )
 
 
-@router.get("/logs/download")
+# A text file, not JSON. Same published-shape correction as ``api/poster.py`` and
+# ``api/backup.py``'s download (rule 72).
+@router.get(
+    "/logs/download",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/plain": {}}}},
+)
 async def download_logs(request: Request) -> StreamingResponse:
     """The full log as one downloadable text file.
 

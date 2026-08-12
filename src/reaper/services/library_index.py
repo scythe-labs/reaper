@@ -14,6 +14,15 @@ rating_key / title / year / added_at cheaply, and for every row it lists,
 title-only era. The plexapi sweep enriches each spine row with external ids + file
 basenames, joined by rating key.
 
+**The spine is walked on Tautulli's own reported count, never on a page coming back
+short.** A server is free to clamp a page below the length asked for, so a short page
+says nothing about whether the library ended, and reading one as the end admitted a
+fraction of a section and reported nothing wrong (#559). Every item the walk never
+listed resolves unmatched, which keeps it but explains it as "Plex has not matched
+this", so a walk that ends before the count degrades like every other read anomaly
+here (rule 28). A server that serves rows and reports no count at all is paged until a
+page comes back empty, bounded by ``_SPINE_MAX_PAGES`` (rule 56).
+
 The spine is a Tautulli-side *cache*, though, and it lags: an item added to Plex
 since Tautulli's last library refresh is absent from the listing (verified live: a
 day-old item missing from the media-info listing while Tautulli's own get_metadata
@@ -69,9 +78,10 @@ failure aborts the scan exactly as it did when the reads were sequential, with t
 sweep reaped rather than left running. Neither read raises: a failure, and every
 malformed shape either can produce, degrades and is skipped instead. That covers a
 listing entry that is not an object, a library with no usable id, a media row that
-is not an object, and an item with no usable rating key -- the four places a
-response Reaper did not write could otherwise throw straight through
-``gather_reaped``. So a bad source costs the operator a plan, never the whole scan.
+is not an object, an item with no usable rating key, and a page count that is not a
+number -- the five places a response Reaper did not write could otherwise throw
+straight through ``gather_reaped``. So a bad source costs the operator a plan, never
+the whole scan.
 """
 
 from __future__ import annotations
@@ -117,6 +127,16 @@ _SPINE_SECTION = "_reaper_section_id"
 _RETIRED_DEGRADE_SHARE = 0.1
 _RETIRED_DEGRADE_FLOOR = 20
 
+#: How many rows the spine asks for per page, and how many pages one library may take. The
+#: client's own default is 100 and a whole library is read on every scan, so the size is set
+#: here rather than inherited. The bound is a million rows in one library, orders of magnitude
+#: past a real one, so it can only ever bind on a server that is not advancing through the
+#: listing at all -- which is what the walk needs, since ending on a short page is exactly the
+#: bug being fixed and the reported count is the only other thing that ends it (rule 56,
+#: ``history_sync.MAX_HISTORY_PAGES`` is the model).
+_SPINE_PAGE_SIZE = 1_000
+_SPINE_MAX_PAGES = 1_000
+
 
 def _as_year(value: Any) -> int | None:
     """A row's release year, or ``None`` -- used only to disambiguate duplicate titles.
@@ -125,6 +145,21 @@ def _as_year(value: Any) -> int | None:
     """
     if isinstance(value, int | str) and str(value).isdigit():
         return int(value)
+    return None
+
+
+def _as_count(value: Any) -> int | None:
+    """A page envelope's row count, or ``None`` for "the server did not tell us".
+
+    Zero folds into ``None`` deliberately. ``int(value or 0)`` makes a Tautulli that omits
+    the field indistinguishable from one reporting an empty library, and the walk would then
+    stop after page one having read a library it never finished; ``history_sync`` carries the
+    same note over the same field. Anything that is not a plain number reads as not-told too,
+    because this module's contract is that a shape Reaper did not write degrades rather than
+    raising out of the scan.
+    """
+    if isinstance(value, int | str) and str(value).isdigit():
+        return int(value) or None
     return None
 
 
@@ -243,9 +278,25 @@ async def build_index(
             # library even for a row the plexapi sweep did not (or could not) enrich.
             section_name = str(library.get("section_name") or "") or None
             start = 0
+            pages = 0
+            total: int | None = None
+            capped = False
             while True:
-                page = await tautulli.library_media_info(section_id, start=start, length=1000)
+                page = await tautulli.library_media_info(
+                    section_id, start=start, length=_SPINE_PAGE_SIZE
+                )
+                pages += 1
                 rows = page.get("data") or []
+                if total is None:
+                    # Tautulli's own count for this section, the way ``history_sync`` reads it
+                    # off the same API. No search filter is sent, so ``recordsFiltered`` counts
+                    # the whole section; ``recordsTotal`` is the same number and stands in
+                    # where only it is served.
+                    total = _as_count(page.get("recordsFiltered")) or _as_count(
+                        page.get("recordsTotal")
+                    )
+                if not rows:
+                    break
                 # Paging still advances on the RAW page length, never the filtered one
                 # (rule 56): a malformed row must not shorten a page and end the walk early,
                 # silently truncating the library.
@@ -255,9 +306,27 @@ async def build_index(
                     {**row, _SPINE_LIBRARY: section_name, _SPINE_SECTION: section_id}
                     for row in usable
                 )
-                if len(rows) < 1000:
+                # By what the page actually held, never by the constant: a server that clamps
+                # the page would otherwise have `start` step over the rows it did not serve.
+                start += len(rows)
+                if total is not None and start >= total:
                     break
-                start += 1000
+                if pages >= _SPINE_MAX_PAGES:
+                    # A reported count ends the walk long before this at any library size that
+                    # exists, so reaching it means a server serving rows and reporting no
+                    # count, which is one that is ignoring `start`. Stop rather than spin.
+                    log.warning("library_index.page_cap", section_id=section_id, fetched=start)
+                    capped = True
+                    break
+            if capped or (total is not None and start < total):
+                # Part of a library read as the whole of it is invisible without this: every
+                # item the walk never listed resolves unmatched, which keeps it, and the
+                # why-panel then explains a live file as one Plex has not matched (rule 28).
+                counted = f"{start} of {total}" if total is not None else str(start)
+                degrade(
+                    f"Tautulli listed only {counted} items in one of your libraries, so the "
+                    "rest could not be matched and nothing may be deleted from this scan"
+                )
         if malformed:
             degrade(
                 f"{malformed} row(s) in your Plex library listing could not be read, so "

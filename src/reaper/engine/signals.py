@@ -59,6 +59,7 @@ from reaper.clock import humanize_days, humanize_window
 from reaper.engine import fields
 from reaper.engine.gates import Facts
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.text import fold
 
 MAX_SCORE = 100
 
@@ -69,7 +70,7 @@ class SignalId(enum.StrEnum):
     Note what is **not** here: size.
 
     ``SIZE`` remains available for owners who insist, but it is off by default and
-    enabling it raises a ``danger`` warning on the policy page (``policy.inspect``, the
+    enabling it raises a ``danger`` warning on the policy page (``policy_warnings.inspect``, the
     same one a hand-written size rule raises). Backtested against real watch history, a
     scorer that weighted
     size produced a condemned set with *worse* regret than picking at random among
@@ -279,13 +280,18 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     weight in the denominator so coverage falls with it.
 
     **A caller that understates the window charges MORE than the evidence supports**, which
-    is why every caller passes ``policy.popularity_window_days()`` and none may lean on the
-    default above. A shorter window is easier for the mirror to cover, so the shortfall
-    stops firing and the signal takes full pressure at full coverage on a count the true
-    window could not establish. Measured on a 180-day mirror against a count taken over the
-    real 365-day window: 0.00/20 at coverage 0.00 when passed 365, and 20.00/20 at coverage
-    1.00 when passed 180 or 90. ``score()``'s docstring names the same hazard, and
-    ``backtest.run`` was a live instance of it.
+    is why every caller on the SCAN path passes ``policy.popularity_window_days()`` and none
+    may lean on the default above. A shorter window is easier for the mirror to cover, so the
+    shortfall stops firing and the signal takes full pressure at full coverage on a count the
+    true window could not establish.
+
+    ``engine.preview.probe_signal`` is the one caller outside that rule, and it is safe for a
+    reason that does not generalize to a real item: a probe answers about a RULE rather than a
+    file, so the mirror it builds out-reaches any window and the shortfall cannot fire at all.
+
+    Measured on a 180-day mirror against a count taken over the real 365-day window: 0.00/20 at
+    coverage 0.00 when passed 365, and 20.00/20 at coverage 1.00 when passed 180 or 90.
+    ``score()``'s docstring names the same hazard.
 
     The span is named in the withheld arm too, where the shortfall clause that follows it
     says why it could not be checked.
@@ -642,9 +648,9 @@ def evaluate_keep(
         # The membership form: flat, per the spec (GradedKeepSpec.value). Both sides of the
         # name match are case-folded (rule 88), and the fact is the multi convention's
         # comma-joined list, split the way `fields.evaluate` splits it.
-        wanted = config.value.strip().casefold()
+        wanted = fold(config.value)
         if isinstance(observation, Known) and isinstance(observation.value, str):
-            names = {part.strip().casefold() for part in observation.value.split(",")}
+            names = {fold(part) for part in observation.value.split(",")}
             on_it = wanted in names
             return KeepResult(
                 config.name,

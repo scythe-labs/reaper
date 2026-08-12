@@ -16,26 +16,27 @@ under Settings -> Plex. The rules pinned here:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session
 
+from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
+from reaper.db.models import PlexServer
 from reaper.db.session import create_engine, create_session_factory
-from reaper.main import create_app
 from reaper.services import app_settings, leaving_soon
-from tests._auth import login
 
 
 @pytest.fixture
 async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -106,19 +107,6 @@ class TestTheLibraryStore:
         assert [lib["key"] for lib in enabled] == [2]
 
 
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    """A logged-in client over an EMPTY database: no Plex server, no snapshot. Exactly a
-    fresh install, which is the state the defaults are promised for."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
-
-
 class TestTheSettingsRoutes:
     def test_defaults_read_off_and_never_updated(self, client: TestClient) -> None:
         body = client.get("/api/settings/leaving-soon").json()
@@ -181,7 +169,7 @@ class TestTheSettingsRoutes:
 
         # Seed a stored list the way a sync would, then choose through the API. (The
         # sync route itself needs a live server; the merge rule is a client concern.)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory = create_session_factory(engine)
         async with factory() as session:
@@ -204,6 +192,40 @@ class TestTheSettingsRoutes:
         body = client.put("/api/settings/plex/libraries", json={"enabled_keys": []}).json()
         assert all(lib["enabled"] is False for lib in body)
 
+    def test_a_pass_with_no_libraries_says_the_same_thing_on_both_surfaces(
+        self, client: TestClient, sync_db: Engine
+    ) -> None:
+        """The shelf on, a server linked, and no library turned on: one pass, one sentence.
+
+        The route used to name this case in the response AFTER the pass had stored its own
+        summary, so the two disagreed about it -- the row rested green saying "Preview only,
+        nothing written" while the button flashed a failure (#555). Both halves are asserted
+        here, because a fix on either alone leaves the contradiction standing.
+
+        Hermetic: with no library enabled the reconcile visits no section, so the client is
+        built and closed without ever connecting.
+        """
+        box: SecretBox = client.app.state.secret_box  # type: ignore[attr-defined]
+        with Session(sync_db) as session:
+            session.add(
+                PlexServer(
+                    machine_identifier="abc123",
+                    name="Example Server",
+                    connection_uri="http://plex.local:32400",
+                    token_enc=box.encrypt("plex-token"),
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+        client.put("/api/settings/leaving-soon", json={"enabled": True})
+
+        body = client.post("/api/leaving-soon/sync").json()
+
+        assert body["result"] == "No libraries are turned on, so no shelf was updated"
+        assert body["ok"] is False
+        stored = client.get("/api/settings/leaving-soon").json()["last"]
+        assert (stored["ok"], stored["result"]) == (body["ok"], body["result"])
+
     def test_a_manual_update_while_off_is_refused_in_plain_words(self, client: TestClient) -> None:
         resp = client.post("/api/leaving-soon/sync")
         assert resp.status_code == 400
@@ -214,6 +236,40 @@ class TestTheSettingsRoutes:
         resp = client.post("/api/leaving-soon/sync")
         assert resp.status_code == 400
         assert "linked Plex server" in resp.json()["detail"]
+
+    def test_a_linked_server_that_will_not_answer_is_a_502_in_reapers_words(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The route answered every `PlexError` 400, with the exception's text verbatim.
+
+        The service raised that class for "no linked Plex server" too, so one class arrived
+        carrying a configuration problem and an upstream failure and the route could not tell
+        them apart (#734). An operator whose linked server stopped answering got a
+        bad-request status for something that was not their request, plus a sentence the
+        client wrote for a log.
+
+        The status and the lead are both asserted, since 400 with a good lead and 502 with a
+        bare client sentence would each be half a fix.
+
+        The client's own text still trails Reaper's, which is what the three sibling routes
+        do (`api/plex.py`, `api/plex_trash.py`, `api/lists.py`, rule 72). Rule 21 is answered
+        by what the operator reads FIRST: the outcome in Reaper's words, with the diagnostic
+        behind it, rather than the diagnostic alone under a status that blamed them for it.
+        """
+        from reaper.clients.plex import PlexError
+        from reaper.services import leaving_soon as service
+
+        async def _stalled(*args: object, **kwargs: object) -> object:
+            raise PlexError("movie listing for section 3 stalled at 200 of 1000")
+
+        monkeypatch.setattr(service, "_plex_client", _stalled)
+        client.put("/api/settings/leaving-soon", json={"enabled": True})
+
+        resp = client.post("/api/leaving-soon/sync")
+
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail.startswith("Reaper couldn't reach Plex")
 
     def test_about_reports_the_facts(self, client: TestClient) -> None:
         body = client.get("/api/about").json()

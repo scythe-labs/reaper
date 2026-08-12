@@ -15,6 +15,7 @@ import sqlite3
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,16 +24,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from reaper import logbuffer
+from reaper.api.schemas import ProfileSettingsIO, ReapBreakdownOut, SignalCountOut
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import (
     ActionStep,
+    AppSetting,
     Candidate,
     FirstFlagged,
     Instance,
     InstanceKind,
+    ListConfig,
     PlexServer,
     Profile,
     Snapshot,
@@ -44,6 +48,7 @@ from reaper.engine.policy import (
     DEFAULT_TV_POLICY,
     GateSetting,
     PolicyBody,
+    ProfileSettings,
     SignalSetting,
     combine_hashes,
 )
@@ -66,7 +71,7 @@ DEFAULT_GATES = [
 DEFAULT_SIGNALS = [{"signal": "unwatched", "weight": 100, "saturate_at": 1825, "floor": 365}]
 
 
-def _policy(condemn_at: int = 70, **overrides: object) -> dict[str, object]:
+def _policy(condemn_at: int = 70, **overrides: object) -> dict[str, Any]:
     return {
         "condemn_at": condemn_at,
         "gates": DEFAULT_GATES,
@@ -135,7 +140,7 @@ def _explanation(score: float) -> str:
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -193,7 +198,6 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     name="Example Server",
                     connection_uri="http://plex.local:32400",
                     token_enc="enc",
-                    owner_plex_account_id=1,
                     created_at=now,
                 ),
             ]
@@ -370,13 +374,9 @@ class TestTheRunsApi:
         payload, and it should never reach a query."""
         long_key = "radarr:1:" + "9" * 200
 
-        assert client.post("/api/whitelist", json={"media_key": long_key}).status_code == 422
-        assert (
-            client.post(
-                "/api/override", json={"media_key": long_key, "decision": "spare"}
-            ).status_code
-            == 422
-        )
+        refused = client.post("/api/override", json={"media_key": long_key, "decision": "spare"})
+
+        assert refused.status_code == 422, refused.text
 
     def test_an_unknown_key_is_refused_for_what_reaper_can_actually_know(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -394,15 +394,14 @@ class TestTheRunsApi:
         """
         monkeypatch.setattr(retention, "KEEP_SNAPSHOTS", 7)
 
-        for route, payload in (
-            ("/api/whitelist", {"media_key": "radarr:1:never-scanned"}),
-            ("/api/override", {"media_key": "radarr:1:never-scanned", "decision": "spare"}),
-        ):
-            refused = client.post(route, json=payload)
-            assert refused.status_code == 404, refused.text
-            assert refused.json()["detail"] == (
-                "Reaper has no record of that item. It keeps only the last 7 scans."
-            )
+        refused = client.post(
+            "/api/override", json={"media_key": "radarr:1:never-scanned", "decision": "spare"}
+        )
+
+        assert refused.status_code == 404, refused.text
+        assert refused.json()["detail"] == (
+            "Reaper has no record of that item. It keeps only the last 7 scans."
+        )
 
     def test_a_plan_shows_the_literal_steps_and_the_confirmation_phrase(
         self, client: TestClient
@@ -442,7 +441,7 @@ class TestTheRunsApi:
         run = client.post("/api/runs").json()
         reason = "Radarr accepted the delete; not confirmed. Reaper could not reach it again."
 
-        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)  # type: ignore[call-arg]
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
         with Session(engine) as session:
             step = session.execute(
                 select(ActionStep).where(ActionStep.run_id == run["id"])
@@ -504,15 +503,7 @@ class TestTheRunsApi:
         """
         client.post("/api/runs")
         row = client.get("/api/runs").json()[0]
-        assert set(row) == {
-            "id",
-            "snapshot_id",
-            "state",
-            "approved_by",
-            "approved_at",
-            "aborted_reason",
-            "held_back_unknown_size",
-        }
+        assert set(row) == {"id", "state", "approved_at", "aborted_reason"}
         # ...and the detail route still answers with the whole thing.
         full = client.get(f"/api/runs/{row['id']}").json()
         assert full["confirmation_phrase"].startswith("REAP ")
@@ -541,7 +532,7 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
     one I asked for" and "planned the whole set" the same number -- so the selection could
     not be told from the fall-through. Three is the smallest count that distinguishes them.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -688,9 +679,7 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
     refuses a movie whose Radarr is gone), but no Plex or Tautulli is, so the execute
     endpoint's client-presence gate still refuses before any live service is touched. Enough
     to exercise the confirmation and client-presence gates without any live service."""
-    settings = Settings(  # type: ignore[call-arg]
-        data_dir=tmp_path, secret_key="k", destructive_actions_enabled=True
-    )
+    settings = Settings(data_dir=tmp_path, secret_key="k", destructive_actions_enabled=True)
     # The box the app decrypts the Radarr key with at execute time. Built exactly as main.py
     # builds it, off the same settings, so the api_key below opens under app.state.secret_box;
     # resolve_kdf_salt mints the per-install salt here and create_app reads the same one.
@@ -933,6 +922,46 @@ class TestTheProfileControlsTheCaps:
         settings["grace_days"] = 3
         assert client.put("/api/profile", json=settings).status_code == 422
 
+    def test_the_wire_and_the_domain_state_the_same_bounds(self) -> None:
+        """The caps are declared twice: ``ProfileSettingsIO`` on the wire and
+        ``ProfileSettings`` in the domain, every ``ge``/``le`` transcribed rather than
+        derived from the other (rule 131). The two do not collapse into one model, because
+        the wire requires the five fields the domain defaults -- that is what makes the
+        test below a 422 -- and ``settings_recovered`` is wire-only. So the bounds are held
+        to one answer here instead."""
+        shared = [
+            name for name in ProfileSettingsIO.model_fields if name in ProfileSettings.model_fields
+        ]
+        assert len(shared) == 7, "a cap arrived or left; these seven are the population"
+        assert set(ProfileSettingsIO.model_fields) - set(shared) == {"settings_recovered"}
+
+        for name in shared:
+            wire = ProfileSettingsIO.model_fields[name].metadata
+            domain = ProfileSettings.model_fields[name].metadata
+            assert wire == domain, (
+                f"{name} is bounded {wire} in api/schemas.py's ProfileSettingsIO and "
+                f"{domain} in engine/policy.py's ProfileSettings"
+            )
+
+    def test_a_body_missing_the_caps_is_refused_rather_than_reset(self, client: TestClient) -> None:
+        """A partial save is a 422 because the wire model gives those five fields no
+        default. A route taking ``ProfileSettings`` instead would answer 200 and write the
+        shipped defaults over whatever the operator narrowed, taking a tightened
+        ``max_items_per_run`` of 3 back to 10 and forcing ``caps_enabled`` on.
+        ``/api/profile`` sits in the API-key write allowlist (``api/middleware.py``), so
+        reaching it needs no browser."""
+        response = client.put("/api/profile", json={})
+
+        assert response.status_code == 422
+        missing = {detail["loc"][-1] for detail in response.json()["detail"]}
+        assert missing == {
+            "max_items_per_run",
+            "max_bytes_per_run",
+            "max_items_per_30d",
+            "max_bytes_per_30d",
+            "grace_days",
+        }
+
 
 class TestLimitsNobodySavedDoNotBoundAReap:
     """``active_profile`` never raises on purpose: the settings page an operator would use
@@ -947,7 +976,7 @@ class TestLimitsNobodySavedDoNotBoundAReap:
     def _break_the_saved_limits(tmp_path: Path) -> None:
         """Corrupt the stored blob out of band, which is how this really happens: a value
         that stopped validating across an upgrade, or a hand-edited row."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             row = session.execute(select(Profile).order_by(Profile.id.asc()).limit(1)).scalar_one()
@@ -1005,6 +1034,22 @@ class TestLimitsNobodySavedDoNotBoundAReap:
         assert client.get("/api/runs").status_code == 200
 
 
+class TestTheReapBreakdownRoute:
+    """``test_reap_breakdown.py`` pins every number this route reports, against the service.
+    Nothing read the route, so what it actually sends was uncovered at both levels: the
+    envelope and the nested per-signal counts."""
+
+    def test_the_body_carries_the_whole_model_and_the_nested_counts(
+        self, client: TestClient
+    ) -> None:
+        body = client.get("/api/reap/breakdown").json()
+
+        assert set(body) == set(ReapBreakdownOut.model_fields)
+        assert body["condemned_by"], "the seeded condemned rows tally at least one signal"
+        for entry in body["condemned_by"]:
+            assert set(entry) == set(SignalCountOut.model_fields)
+
+
 class TestSnapshot:
     def test_it_reports_the_split_and_the_reclaimable_bytes(self, client: TestClient) -> None:
         body = client.get("/api/snapshots/latest").json()
@@ -1026,7 +1071,7 @@ class TestTheWhyPanel:
     ) -> None:
         """The block no competitor shows. Every protection evaluated, with the ACTUAL
         NUMBERS -- not just which rules matched."""
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
         detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
 
         checked = detail["explanation"]["protections_checked"]
@@ -1038,7 +1083,7 @@ class TestTheWhyPanel:
 
         The protected fixture scores 90 -- it would be deleted on score alone -- and
         the panel must say both: why it scored that, and why it is kept anyway."""
-        protected = client.get("/api/candidates?verdict=protect").json()
+        protected = client.get("/api/candidates?verdict=protect").json()["items"]
         detail = client.get(f"/api/candidates/{protected[0]['id']}").json()
 
         assert detail["verdict"] == "protect"
@@ -1048,7 +1093,7 @@ class TestTheWhyPanel:
         assert "well rated: 8.0 on IMDb from 250,000 votes" in fired[0]["detail"]
 
     def test_the_grace_clock_is_exposed(self, client: TestClient) -> None:
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
 
         assert candidates[0]["first_flagged_at"]
 
@@ -1057,7 +1102,7 @@ class TestTheWhyPanel:
         the wire schema did not declare them, so pydantic silently DROPPED both -- and the
         panel's "kept to be safe" notice could never render. Every key the UI reads must
         be named in the schema."""
-        abstained = client.get("/api/candidates?verdict=abstain").json()
+        abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
         detail = client.get(f"/api/candidates/{abstained[0]['id']}").json()
 
         assert detail["explanation"]["match"]["status"] == "unmatched"
@@ -1069,7 +1114,7 @@ class TestTheWhyPanel:
         """The card's one-liner. Three gates each report "could not check X: Plex has not
         matched this item"; the owner should read the shared cause once, in plain words,
         not the first gate's engineer-speak."""
-        abstained = client.get("/api/candidates?verdict=abstain").json()
+        abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
 
         assert abstained[0]["reason"] == "Kept to be safe: it couldn't be found in Plex."
 
@@ -1085,7 +1130,7 @@ class TestPanelHeadFields:
     """
 
     def test_the_card_carries_the_badge_and_the_dormancy_pill(self, client: TestClient) -> None:
-        row = client.get("/api/candidates?verdict=condemn").json()[0]
+        row = client.get("/api/candidates?verdict=condemn").json()["items"][0]
 
         assert row["video_resolution"] == "1080"
         assert row["dormant_for"] == "5 years, 7 months"
@@ -1093,7 +1138,7 @@ class TestPanelHeadFields:
     def test_a_row_without_the_metadata_hides_both(self, client: TestClient) -> None:
         """The abstained fixture predates the capture (no columns, and its dormancy came
         from an unmatched item) -- both fields must be null, not an error."""
-        row = client.get("/api/candidates?verdict=abstain").json()[0]
+        row = client.get("/api/candidates?verdict=abstain").json()["items"][0]
 
         assert row["video_resolution"] is None
         # Its explanation says "not watched in ..." but with evaluated=True from the
@@ -1102,7 +1147,7 @@ class TestPanelHeadFields:
         assert row["dormant_for"] == "5 years, 7 months"
 
     def test_the_detail_carries_links_ratings_and_the_meta_line(self, client: TestClient) -> None:
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
         detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
 
         assert detail["links"] == {
@@ -1155,7 +1200,7 @@ class TestPanelHeadFields:
             == 200
         )
 
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
         links = client.get(f"/api/candidates/{candidates[0]['id']}").json()["links"]
 
         # The link opens at the external address (trailing slash stripped), not base_url.
@@ -1171,7 +1216,7 @@ class TestPanelHeadFields:
     ) -> None:
         """No rating key -> no Plex/Tautulli link; no tmdb id -> no Radarr link. The
         panel hides them all rather than rendering a broken jump."""
-        abstained = client.get("/api/candidates?verdict=abstain").json()
+        abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
         detail = client.get(f"/api/candidates/{abstained[0]['id']}").json()
 
         assert detail["links"] == {
@@ -1204,7 +1249,7 @@ class TestPlexWebUrlSetting:
         assert saved.status_code == 200
         assert saved.json()["web_url"] == "https://plex.example"
 
-        candidates = client.get("/api/candidates?verdict=condemn").json()
+        candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
         detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
         # A self-hosted address serves the web client under /web, not /desktop (which 403s).
         assert detail["links"]["plex"].startswith("https://plex.example/web#!/server/")
@@ -1228,8 +1273,8 @@ class TestTheSimulator:
     """Re-scores the last snapshot under a candidate policy with ZERO API calls, so the
     knob and its blast radius sit in the same viewport."""
 
-    def _simulate(self, client: TestClient, condemn_at: int) -> dict[str, object]:
-        return client.post(
+    def _simulate(self, client: TestClient, condemn_at: int) -> dict[str, Any]:
+        body: dict[str, Any] = client.post(
             "/api/policy/simulate",
             json={
                 "condemn_at": condemn_at,
@@ -1237,6 +1282,7 @@ class TestTheSimulator:
                 "signals": DEFAULT_SIGNALS,
             },
         ).json()
+        return body
 
     def test_lowering_the_threshold_condemns_more(self, client: TestClient) -> None:
         strict = self._simulate(client, 95)
@@ -1278,7 +1324,7 @@ class TestTheSimulator:
     def test_the_histogram_covers_every_item(self, client: TestClient) -> None:
         result = self._simulate(client, 70)
 
-        assert sum(result["histogram"]) == 4  # type: ignore[arg-type]
+        assert sum(result["histogram"]) == 4
 
     def test_a_threshold_only_change_is_exact(self, client: TestClient) -> None:
         """Moving condemn_at re-compares a STORED score against a new number, which
@@ -1411,7 +1457,7 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
     the product, because the number would look exactly as authoritative as the true one.
 
     **This fixture's snapshot froze no Facts**, which is what every case below is really
-    driven by: ``api.routes.simulate``'s replay tier needs every governed row to carry a
+    driven by: ``api.simulate.simulate``'s replay tier needs every governed row to carry a
     ``facts_json``, so a pre-facts-freeze snapshot falls to the refusal whatever the edit
     was. That is a real state -- every snapshot taken before the freeze shipped is in it,
     and it is exactly the state the refusal must survive -- but it is not the same claim as
@@ -1424,12 +1470,13 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
     ``tests/test_simulate_hardening.py``'s question, and a gate is no longer one of them.
     """
 
-    def _simulate(self, client: TestClient, policy: dict[str, object]) -> dict[str, object]:
-        return client.post("/api/policy/simulate", json=policy).json()
+    def _simulate(self, client: TestClient, policy: dict[str, Any]) -> dict[str, Any]:
+        body: dict[str, Any] = client.post("/api/policy/simulate", json=policy).json()
+        return body
 
     def test_the_premise(self, client: TestClient) -> None:
         """No row here froze its Facts, so the replay tier is unreachable by construction."""
-        rows = client.get("/api/candidates?verdict=condemn").json()
+        rows = client.get("/api/candidates?verdict=condemn").json()["items"]
         assert rows, "the fixture seeded no candidates, so nothing below is exercised"
         # A threshold-only edit still answers: it never needed the frozen evidence, which is
         # what makes the refusals below about the evidence rather than about the route.
@@ -1451,7 +1498,7 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
         assert result["exact"] is False
         assert result["condemned"] == 0
         assert result["reclaimable_bytes"] == 0
-        assert sum(result["histogram"]) == 0  # type: ignore[arg-type]
+        assert sum(result["histogram"]) == 0
         # No examples and no spared-by tally either: stale names would be acted on
         # exactly like stale counts.
         assert result["examples_newly_condemned"] == []
@@ -1585,7 +1632,7 @@ class TestPolicyPersistence:
         """
         stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         stored["signals"] = [{"signal": "unwatched", "weight": 42, "saturate_at": 1825, "floor": 0}]
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             session.add(
@@ -1619,7 +1666,7 @@ class TestPolicyPersistence:
         """Rescaling only fixes the budget. Anything else unreadable opens on the default,
         which must announce itself: a silent default reads as "this is what you configured"
         and is the one way this fallback could cause a deletion nobody chose."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             session.add(
@@ -1639,6 +1686,198 @@ class TestPolicyPersistence:
         assert out["name"] == "default"
         assert out["repairs"] == ["fell_back"]
 
+    @pytest.mark.parametrize(
+        ("gate", "keep_tags", "lists"),
+        [
+            pytest.param(
+                "whitelisted",
+                ["reaper-keep"],
+                [("Saturday movie night", "arr_tag", {"tags": ["movie-night"]})],
+                id="the tag list their tags became is gone",
+            ),
+            pytest.param(
+                "curated_list",
+                [],
+                [("IMDb Top 250", "plex_collection", {})],
+                id="a collection of their own already holds the shipped list's name",
+            ),
+        ],
+    )
+    def test_a_leftover_list_protection_still_opens_the_editor(
+        self,
+        settings: Settings,
+        gate: str,
+        keep_tags: list[str],
+        lists: list[tuple[str, str, dict[str, Any]]],
+    ) -> None:
+        """#627, and the pair of routes that reach it.
+
+        ``convert_list_protections`` leaves an ENABLED ``whitelisted``/``curated_list`` row in
+        the body when its replacement keep rule cannot be named, so the cover stands and
+        ``build_gates`` refuses the scan out loud rather than the protection being withdrawn
+        in silence (rule 38). Both halves are reachable on a real upgrade: the tag list the
+        conversion looks for is the operator's to rename, retag or delete, and the shipped IMDb
+        list is skipped by the upgrade migration when a list of that name already exists under
+        any source, so either row can be missing on its own.
+
+        Seeded and flagged BEFORE the app boots, which is the state that migration leaves: the
+        seed is guarded by ``lists_seeded`` rather than by the rows, so an install that has
+        been through it never gains a second shipped copy.
+
+        The editor is the only place this state can be cleared, and it was rebuilding every
+        loaded row through the SAVE boundary, so it answered 500 for exactly the bodies it
+        exists to repair. Nothing here relaxes that boundary: the save below is still refused,
+        and the row leaves only when the operator takes it off.
+        """
+        self._seed_upgraded_install(settings, gate=gate, keep_tags=keep_tags, lists=lists)
+
+        with TestClient(create_app(settings)) as client:
+            login(client, settings)
+            loaded = client.get("/api/policy")
+
+            assert loaded.status_code == 200, loaded.text
+            out = loaded.json()
+            # Served as it is stored, still on: the editor's leftover-row notice renders off
+            # this row, and it is the switch beside it that the operator turns off.
+            row = next(g for g in out["body"]["gates"] if g["gate"] == gate)
+            assert row["enabled"] is True
+            # The savebar is up either way, so there is a Save to press once they have.
+            assert out["repairs"] == ["lists_migrated"]
+
+            # Serving it did NOT make it savable. Handing the body straight back is refused,
+            # in the plain sentence the SPA renders verbatim (rule 21).
+            refused = client.post("/api/policy", json=out["body"])
+
+            assert refused.status_code == 422
+            message = " ".join(d["msg"] for d in refused.json()["detail"])
+            assert "left over from an older version" in message
+            # Not the gate id: this is the editor's "Can't save this" banner on arrival, and
+            # the row it names is labeled in the operator's words on the same screen (rule 21).
+            assert gate not in message
+            assert "Value error" not in message
+
+            # The exit the row's notice names: take it off, save, and the install scans again.
+            cleared = dict(out["body"])
+            cleared["gates"] = [g for g in cleared["gates"] if g["gate"] != gate]
+            saved = client.post("/api/policy", json=cleared)
+
+            assert saved.status_code == 200, saved.text
+            reloaded = client.get("/api/policy").json()
+            assert gate not in {g["gate"] for g in reloaded["body"]["gates"]}
+            assert reloaded["repairs"] == []
+            # And it really is gone: no keep rule took its place, which is the cost the row's
+            # notice and the scan's sentence both have to state rather than imply.
+            assert not [
+                c for c in reloaded["body"]["protect_conditions"] if c["field"] == "on_list"
+            ]
+
+    @staticmethod
+    def _seed_upgraded_install(
+        settings: Settings,
+        *,
+        gate: str,
+        keep_tags: list[str],
+        lists: list[tuple[str, str, dict[str, Any]]],
+    ) -> None:
+        """A database an upgrade left carrying a leftover list protection.
+
+        Rows and the ``lists_seeded`` flag go in BEFORE the app boots, because that is the
+        state the migration leaves: the seed is guarded by the flag rather than by the rows,
+        so an install that has been through it never gains a second shipped copy.
+        """
+        stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        stored["protect_conditions"] = []
+        stored["keep_tags"] = keep_tags
+        stored["keep_tags_match"] = "any"
+        stored["gates"] = [{"gate": gate, "enabled": True}, *stored["gates"]]
+
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            for name, source, config in lists:
+                session.add(
+                    ListConfig(
+                        name=name,
+                        source=source,
+                        config_json=json.dumps(config),
+                        enabled=True,
+                        created_at=utcnow(),
+                    )
+                )
+            session.add(AppSetting(key="lists_seeded", value_json="true", updated_at=utcnow()))
+            session.add(
+                PolicyModel(
+                    name="upgraded",
+                    media_type="movie",
+                    body_json=json.dumps(stored),
+                    policy_hash="0" * 64,
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+        engine.dispose()
+
+    def test_adding_the_list_back_first_is_what_keeps_the_protection(
+        self, settings: Settings
+    ) -> None:
+        """The order ``build_gates`` tells the operator to work in, driven.
+
+        That sentence used to say to open Policy and save first, then add the list. Following
+        it loses the protection outright and the test above is the proof: the only way to
+        reach a save is to take the row off, and the saved body then carries neither the gate
+        nor ``keep_tags``, so the conversion can never fire again and a list added afterwards
+        attaches no rule of its own (``api/lists.py``'s ``add_list``).
+
+        In the order the sentence names now, the same install keeps its cover: the registry
+        row resolves ``tag_list_name``, so the next load converts the gate into an outright
+        ``on_list`` keep rule naming that list, and the save that follows writes it (rules 25,
+        144 -- the copy and this are one fact).
+        """
+        self._seed_upgraded_install(
+            settings,
+            gate="whitelisted",
+            keep_tags=["reaper-keep"],
+            lists=[("Saturday movie night", "arr_tag", {"tags": ["movie-night"]})],
+        )
+
+        with TestClient(create_app(settings)) as client:
+            login(client, settings)
+            blocked = client.get("/api/policy").json()
+            assert "whitelisted" in {g["gate"] for g in blocked["body"]["gates"]}
+
+            # Step one of the sentence: the list goes back on Settings, Lists. Resolved by the
+            # TAGS it holds, never by its name or its age, so the operator may call it anything.
+            added = client.post(
+                "/api/lists/configured",
+                json={
+                    "name": "Titles I tagged",
+                    "source": "arr_tag",
+                    "config": {"tags": ["reaper-keep"], "match": "any"},
+                },
+            )
+            assert added.status_code == 201, added.text
+
+            # Step two: open Policy. The conversion now has a list to name, so the gate leaves
+            # as a keep rule instead of leaving as nothing.
+            out = client.get("/api/policy").json()
+
+            assert "whitelisted" not in {g["gate"] for g in out["body"]["gates"]}
+            assert out["repairs"] == ["lists_migrated"]
+            assert [
+                c["value"] for c in out["body"]["protect_conditions"] if c["field"] == "on_list"
+            ] == ["Titles I tagged"]
+
+            # Step three: save. The body is savable now, and the protection is what was saved.
+            saved = client.post("/api/policy", json=out["body"])
+
+            assert saved.status_code == 200, saved.text
+            reloaded = client.get("/api/policy").json()
+            assert reloaded["repairs"] == []
+            assert "Titles I tagged" in [
+                c["value"]
+                for c in reloaded["body"]["protect_conditions"]
+                if c["field"] == "on_list"
+            ]
+
     def test_a_saved_policy_is_what_loads_next(self, client: TestClient) -> None:
         client.post("/api/policy", json=_policy(condemn_at=55, name="mine"))
 
@@ -1656,15 +1895,24 @@ class TestPolicyPersistence:
         did it. It is refused at the boundary now, and the refusal has to be readable: the SPA
         renders ``detail[].msg`` verbatim, so pydantic's "Value error," prefix would land in
         front of the sentence (rule 21).
+
+        **The gate id is the part that must NOT be in it.** The editor renders this message as
+        its "Can't save this" banner, and once the response stopped being validated through
+        this same model (#627) an upgraded install meets the banner on arrival, beside a row
+        labeled in the operator's own words. Which row it is still comes back in ``loc``,
+        asserted below, so nothing an API caller needs was traded for the plain sentence.
         """
         bad = [*DEFAULT_GATES, {"gate": "season_progression", "enabled": True}]
 
         response = client.post("/api/policy", json=_policy(gates=bad))
 
         assert response.status_code == 422
-        message = " ".join(d["msg"] for d in response.json()["detail"])
-        assert "season_progression" in message
+        detail = response.json()["detail"]
+        message = " ".join(d["msg"] for d in detail)
+        assert "season_progression" not in message
         assert "Value error" not in message
+        assert "Turn it off, then save." in message
+        assert ["body", "gates", "3", "gate"] in [d["loc"] for d in detail]
 
         # And the stored policy is untouched, so the install still scans.
         assert client.get("/api/policy").status_code == 200
@@ -1788,7 +2036,7 @@ class TestRequestedOnlyScopeNeedsSeerr:
         """A disabled Seerr is not one Reaper can ask, so the floor silently covers every
         show. Switching it off, rather than deleting the row, is the case a configured-vs-
         usable mix-up would miss."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             seerr = session.query(Instance).filter(Instance.kind == InstanceKind.SEERR).one()
@@ -1827,7 +2075,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
             # handle leaked to teardown as a ResourceWarning (#541).
             conn.close()
 
-    def _policy_body(self, **overrides: object) -> dict[str, object]:
+    def _policy_body(self, **overrides: object) -> dict[str, Any]:
         """``DEFAULT_GATES`` with the dormancy floor lowered beneath the mirror seeded here.
 
         ``inspect`` stays silent while the floor alone empties the list, because there the
@@ -1838,7 +2086,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         gates = [
             {**g, "threshold": 30} if g["gate"] == "min_dormancy" else g for g in DEFAULT_GATES
         ]
-        return _policy(gates=gates, **overrides)
+        return _policy(gates=gates, **overrides)  # type: ignore[arg-type]
 
     def _window_warnings(self, client: TestClient) -> list[dict[str, str]]:
         # The server_popularity gate takes the default 365-day window.
@@ -1915,7 +2163,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         )
         payload["gates"] = [
             {**g, "enabled": False} if g["gate"] == "server_popularity" else g
-            for g in payload["gates"]  # type: ignore[union-attr]
+            for g in payload["gates"]
         ]
 
         warnings = client.post("/api/policy/validate", json=payload).json()["warnings"]
@@ -2115,6 +2363,7 @@ class TestNothingCanDelete:
 
         for route in client.app.routes:  # type: ignore[attr-defined]
             if isinstance(route, APIRoute):
+                assert route.methods is not None
                 assert route.methods <= {"GET", "POST", "HEAD", "OPTIONS"}
                 assert "delete" not in route.path.lower()
                 assert "execute" not in route.path.lower()

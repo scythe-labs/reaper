@@ -30,7 +30,9 @@ import {
 import {
   api,
   type Candidate,
+  type CandidatePage,
   type Chip,
+  type GroupRollup,
   type GroupSeasonMark,
   type Override,
   type OverrideFilter,
@@ -44,12 +46,14 @@ import { announce } from "../announce";
 import { useBackGuard } from "../backnav";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
-import type { Focus } from "../navIntent";
+import { useGeneralSettings } from "../useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
+import { useArtFallback } from "./artFallback";
 import { CardOpen } from "./CardOpen";
 import { FilterMenu } from "./FilterMenu";
+import { PosterFallback } from "./PosterFallback";
 import { ReapConfirm } from "./ReapConfirm";
 import { KeptByShowNote, OverrideControls, OverrideMark } from "./OverrideControls";
 import {
@@ -209,13 +213,7 @@ function FilterChip({
 /** The dimmed backdrop behind a card. Tries the wide Plex art first and falls back to the
  *  poster when a title has no separate backdrop; a paired scrim keeps the text readable. */
 function Backdrop({ posterUrl }: { posterUrl: string | null }) {
-  const [src, setSrc] = useState(posterUrl ? `${posterUrl}?kind=art` : null);
-  const fellBack = useRef(false);
-
-  useEffect(() => {
-    fellBack.current = false;
-    setSrc(posterUrl ? `${posterUrl}?kind=art` : null);
-  }, [posterUrl]);
+  const { src, onError } = useArtFallback(posterUrl);
 
   if (!src) return null;
   return (
@@ -226,14 +224,7 @@ function Backdrop({ posterUrl }: { posterUrl: string | null }) {
         alt=""
         aria-hidden="true"
         loading="lazy"
-        onError={() => {
-          if (!fellBack.current && posterUrl) {
-            fellBack.current = true;
-            setSrc(posterUrl);
-          } else {
-            setSrc(null);
-          }
-        }}
+        onError={onError}
       />
       <div className="card-scrim" aria-hidden="true" />
     </>
@@ -244,22 +235,16 @@ function Backdrop({ posterUrl }: { posterUrl: string | null }) {
 export function Poster({ url, alt }: { url: string | null; alt: string }) {
   const [broken, setBroken] = useState(false);
 
-  // Reset on a new url, exactly as Backdrop does. Without this the flag latches: one
-  // failed image (a dropped session, a slow Plex) leaves the placeholder in place for
-  // every later item this row is reused for, so the art never comes back until remount.
+  // Reset on a new url, as `useArtFallback` does for the two backdrops. Without this the
+  // flag latches: one failed image (a dropped session, a slow Plex) leaves the placeholder
+  // in place for every later item this row is reused for, so the art never comes back until
+  // remount. Not the hook: that one climbs art then poster, this one has a single rung.
   useEffect(() => setBroken(false), [url]);
 
   if (!url || broken) {
     return (
       <div className="poster poster-empty" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
-          <path d="M4 5h16v14H4z" stroke="currentColor" strokeWidth="1.6" />
-          <path
-            d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4"
-            stroke="currentColor"
-            strokeWidth="1.2"
-          />
-        </svg>
+        <PosterFallback size={20} />
       </div>
     );
   }
@@ -315,10 +300,7 @@ function DormantPill({ dormantFor }: { dormantFor: string | null }) {
   if (!dormantFor) return null;
   return (
     <span className="dormant-pill" title={`Not watched in ${dormantFor}`}>
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
-        <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
-        <path d="M8 4.6V8l2.4 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      </svg>
+      <ClockGlyph size={12} />
       Not watched in {compactSpan(dormantFor)}
     </span>
   );
@@ -386,6 +368,10 @@ type Group = {
   /** The Plex library the item lives in -- a show's is shared by all its seasons, so the
    *  first season sets it for the whole card. Null when unknown; the chip is hidden. */
   library: string | null;
+  /** The show's whole-snapshot rollup, sent once per show beside the rows. Null for a movie,
+   *  and for a show whose rollup did not arrive -- never a page-shaped substitute, since
+   *  every figure on it sits beside a destructive control. */
+  rollup: GroupRollup | null;
   items: Candidate[];
   isShow: boolean;
 };
@@ -397,10 +383,25 @@ function groupKeyOf(group: Group): string {
   return group.isShow ? group.key : group.items[0]!.media_key;
 }
 
+/** Every show's rollup across the pages fetched so far, keyed by group key.
+ *
+ *  Read from EVERY page, never `pages[0]`: a show first seen on page three has its rollup
+ *  on page three. Reading only the first page would leave those shows with no rollup at
+ *  all, and the count beside their Reap button is the one number that must come from the
+ *  set the server will act on (rule 30). A show straddling two pages carries the same
+ *  whole-snapshot figures in both, so which copy wins does not matter. */
+function toRollups(pages: CandidatePage[] | undefined): Map<string, GroupRollup> {
+  const byKey = new Map<string, GroupRollup>();
+  for (const page of pages ?? []) {
+    for (const rollup of page.groups) byKey.set(rollup.group_key, rollup);
+  }
+  return byKey;
+}
+
 /** Fold the flat candidate list into cards: a movie is its own card; every season of a
  *  show collapses under one show card. Order is preserved, so a group sits where its
  *  first (highest-scoring) member would. */
-function toGroups(items: Candidate[]): Group[] {
+function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[] {
   const groups: Group[] = [];
   const index = new Map<string, Group>();
   for (const item of items) {
@@ -416,6 +417,7 @@ function toGroups(items: Candidate[]): Group[] {
           requestedBy: item.requested_by,
           dormantFor: item.dormant_for,
           library: item.library,
+          rollup: rollups.get(item.group_key) ?? null,
           items: [],
           isShow: true,
         };
@@ -433,6 +435,7 @@ function toGroups(items: Candidate[]): Group[] {
         requestedBy: item.requested_by,
         dormantFor: item.dormant_for,
         library: item.library,
+        rollup: null,
         items: [item],
         isShow: false,
       });
@@ -1122,8 +1125,8 @@ const ShowCard = memo(function ShowCard({
   }, [defaultOpen]);
   const first = group.items[0]!;
   // The whole show's shape, across every lane of the snapshot -- what the strip and the
-  // season count draw from. Null only on rows from before this field existed.
-  const marks = first.group_seasons;
+  // season count draw from. Null only when the show's rollup did not arrive with the page.
+  const marks = group.rollup?.seasons ?? null;
   // Whether the show has finished, from the first season row that carries it. This is a
   // fact about the series, stamped onto every one of its seasons in the same scan, so the
   // rows of one show cannot disagree; skipping the empty ones keeps a snapshot taken
@@ -1177,18 +1180,26 @@ const ShowCard = memo(function ShowCard({
   // decision does not take a season the operator spared individually, nor one the engine
   // refuses to reap. That helper says why, and keeps this number, the chip and the strip
   // squares reading the same `handFate` (rules 49/61).
+  //
+  // The three fallbacks below are a page-shaped answer, which the bulk bar deliberately does
+  // NOT take (it drops to "cards only" instead). They are kept here because this card must
+  // draw a line either way, and they cannot fire: `list_candidates` builds its rollups from
+  // the `group_key`s of the rows on the page, and `toGroups` gives a card to exactly those
+  // rows, so every show with a card has a rollup. A show first seen on a later page is the
+  // one way that could stop being true, which is why `toRollups` merges every page and a
+  // test drives it against reading `pages[0]`.
   const reapsWholeShow = showOverride === "reap";
   const reapedMarks = reapsWholeShow ? (marks ?? []).filter(showReapReaches) : [];
   const reapedUnknown = reapedMarks.filter((m) => m.size_bytes === null).length;
   const condemnedCount = reapsWholeShow
     ? reapedMarks.length - reapedUnknown
-    : (first.group_condemned_count ?? group.items.length);
+    : (group.rollup?.condemned_count ?? group.items.length);
   const condemnedBytes = reapsWholeShow
     ? reapedMarks.reduce((sum, m) => sum + (m.size_bytes ?? 0), 0)
-    : (first.group_condemned_bytes ?? fetchedSize);
+    : (group.rollup?.condemned_bytes ?? fetchedSize);
   const condemnedUnknown = reapsWholeShow
     ? reapedUnknown
-    : (first.group_unknown_size ?? fetchedUnknown);
+    : (group.rollup?.unknown_size ?? fetchedUnknown);
   const state =
     showOverride === "spare" ? "card-spared" : showOverride === "reap" ? "card-reaped" : "";
   const { selectMode } = select;
@@ -1340,7 +1351,7 @@ export function ReviewQueue({
   /** What a jump into this queue aimed it at (navIntent.ts): the search box's contents, so the
    *  list behind an opened panel is the title that was opened rather than the whole lane.
    *  Acted on once per `nonce`, so returning to Review later does not re-seed the box. */
-  focus?: Focus<{ search: string }> | null;
+  focus?: { search: string; nonce: number } | null;
   selectedId: number | null;
   selectedGroupKey: string | null;
   onSelect: (id: number) => void;
@@ -1432,7 +1443,9 @@ export function ReviewQueue({
   const dragRef = useRef<{ mode: "add" | "remove" } | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
 
-  // Debounce the search box so we do not fire a request per keystroke.
+  // Debounce the search box so we do not fire a request per keystroke. Its own 250, not the
+  // policy editor's `SETTLE_MS`: how long a typed search waits is a separate call from how long a
+  // dragged slider does, and one constant would move both whenever either is tuned.
   useEffect(() => {
     const id = setTimeout(() => setSearch(searchInput.trim()), 250);
     return () => clearTimeout(id);
@@ -1531,12 +1544,15 @@ export function ReviewQueue({
   // drag repaint) -- otherwise the sentinel observer below, keyed on `data`, would tear down
   // and rebuild every render and could re-fire while the sentinel sits in view.
   const data = useMemo(() => (pages ? pages.pages.flatMap((p) => p.items) : undefined), [pages]);
+  // Merged across every page, not read off the first: a show first seen on page three has
+  // its rollup on page three, and its card's count sits beside a destructive control.
+  const rollups = useMemo(() => toRollups(pages?.pages), [pages]);
   const totalItems = pages?.pages[0]?.total ?? 0;
   // Named apart from the `totalBytes` formatter, which this used to shadow -- which is
   // how the header kept rendering a bare sum while every other total had learned to say
   // what it could not include.
-  const totalSize = pages?.pages[0]?.totalBytes ?? 0;
-  const totalUnknownSize = pages?.pages[0]?.unknownSize ?? 0;
+  const totalSize = pages?.pages[0]?.total_bytes ?? 0;
+  const totalUnknownSize = pages?.pages[0]?.unknown_size ?? 0;
 
   // Reveal another render-page as the sentinel scrolls into view.
   useEffect(() => {
@@ -1609,7 +1625,13 @@ export function ReviewQueue({
       if (result.hasNextPage || result.isError || !result.data) {
         throw new Error("The rest of the list didn't load.");
       }
-      return toGroups(result.data.pages.flatMap((p) => p.items)).map(groupKeyOf);
+      // No rollups: this folds the list into cards only to read each card's key, and
+      // `groupKeyOf` reads none of them. Walking every page to fill a field nothing reads
+      // would cost the whole filtered list for nothing.
+      return toGroups(
+        result.data.pages.flatMap((p) => p.items),
+        new Map(),
+      ).map(groupKeyOf);
     },
     onSuccess: (keys) => {
       setSelected(new Set(keys));
@@ -1732,7 +1754,7 @@ export function ReviewQueue({
     return () => window.clearTimeout(id);
   }, [toastTick]);
   const freshness = useReviewFreshness({
-    viewSnapshotId: pages?.pages[0]?.snapshotId ?? null,
+    viewSnapshotId: pages?.pages[0]?.snapshot_id ?? null,
     latestSnapshotId: latestScanSnapshotId,
     isBusy,
     // A silent refresh whose refetch settles without catching up surfaces the nudge instead of a
@@ -1827,7 +1849,7 @@ export function ReviewQueue({
   // Memoized on the loaded set. Without it, every render re-folded every fetched candidate
   // into groups -- and a drag-select across a long list renders once per `pointerenter`
   // (P-1). Everything derived from it is memoized on it, all the way to the card props.
-  const groups = useMemo(() => (data ? toGroups(data) : []), [data]);
+  const groups = useMemo(() => (data ? toGroups(data, rollups) : []), [data, rollups]);
 
   // The genre and library choices are what the latest scan actually saw, most common first --
   // the genre list is the same one the policy rule editors suggest from.
@@ -1845,11 +1867,7 @@ export function ReviewQueue({
   // seeds each show card's starting state; a click on a card still wins for that card.
   // Shares the query key the settings panel writes, so flipping it there and returning here
   // takes effect. Unknown/error reads as off -- the safe, unchanged default.
-  const { data: generalSettings } = useQuery({
-    queryKey: ["general-settings"],
-    queryFn: api.general,
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: generalSettings } = useGeneralSettings();
   // ...and which screens it applies to. A phone's season list is long enough to bury the next
   // card, so the two screen sizes are separately choosable. Live rather than read once: drag a
   // window across the boundary and untouched cards re-seed to match, which is also what makes
@@ -1997,15 +2015,14 @@ export function ReviewQueue({
   // and the bar says cards only -- off the condemned lane, where the bulk actions decide whole
   // cards rather than seasons, and whenever a picked card is not drawn, since its size is
   // unknown here.
+  //
+  // A show with no rollup falls into that same "cards only" arm rather than to the fetched
+  // season count, which is the number this figure exists to avoid printing beside Reap.
   let selectedItems: number | null = null;
   if (verdict === "condemn" && selected.size > 0) {
     const perKey = new Map(
       groups.map(
-        (g) =>
-          [
-            groupKeyOf(g),
-            g.isShow ? (g.items[0]?.group_condemned_count ?? g.items.length) : g.items.length,
-          ] as const,
+        (g) => [groupKeyOf(g), g.isShow ? g.rollup?.condemned_count : g.items.length] as const,
       ),
     );
     let total = 0;

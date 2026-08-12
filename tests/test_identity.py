@@ -22,6 +22,7 @@ from reaper.engine.identity import (
     PlexIndex,
     PlexItem,
     candidate_libraries,
+    libraries_for_ids,
     library_for_path,
     parse_guids,
     resolve_movie,
@@ -30,6 +31,7 @@ from reaper.engine.identity import (
     title_year_match,
     to_basename,
 )
+from reaper.text import fold
 
 ADDED = datetime(2020, 1, 1, tzinfo=UTC)
 
@@ -2068,6 +2070,16 @@ class TestTheLibraryMapTellsTwoListingsApart:
             index=self._two_shows(),
         )
         assert res.rating_key == 400
+
+    def test_the_stale_mapping_guard_folds_both_sides(self) -> None:
+        """``libraries_for_ids`` is the guard's whole input and had no test at all. Both
+        callers ask ``fold(plex_library) in libraries_for_ids(...)``, so if only one side
+        were folded a correctly mapped library would look absent from the item's own
+        listings and the scan would warn the operator their mapping is wrong (rule 88)."""
+        folded = libraries_for_ids(ExternalIds.of(tvdb=2001), self._two_shows(), ("tvdb", "imdb"))
+
+        assert folded == {"tv", "tv 4k"}
+        assert fold("  TV 4K  ") in folded
 
     def test_library_match_is_case_and_whitespace_folded(self) -> None:
         """The mapped value is a stored copy of the title; a re-cased or padded copy still

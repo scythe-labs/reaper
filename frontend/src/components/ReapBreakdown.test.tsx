@@ -2,17 +2,16 @@
 //
 // The reap breakdown: the ledger (policy verdict, hand changes, the net), the by-reason
 // bars, the empty/error/no-scan states, and the two pointers off the page.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReapBreakdown as Breakdown, ScanStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { ReapBreakdown } from "./ReapBreakdown";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { reapBreakdown: vi.fn(), profile: vi.fn(), scanStatus: vi.fn(), startScan: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 
@@ -50,12 +49,10 @@ function full(overrides: Partial<Breakdown> = {}): Breakdown {
     has_snapshot: true,
     policy_condemned: 543,
     policy_condemned_bytes: 4400 * GB,
-    policy_condemned_unknown: 0,
     hand_spared: 12,
     spares_expired: 0,
     hand_reaped: 38,
     hand_reaped_bytes: 300 * GB,
-    hand_reaped_unknown: 0,
     hand_reaped_held: 0,
     will_reap: 569,
     will_reap_bytes: 4500 * GB,
@@ -65,20 +62,15 @@ function full(overrides: Partial<Breakdown> = {}): Breakdown {
     seasons: 167,
     seasons_unknown: 0,
     condemned_by: [
-      { id: "unwatched", count: 521, bytes: 0, unknown_size: 0 },
-      { id: "low_rating", count: 201, bytes: 0, unknown_size: 0 },
+      { id: "unwatched", count: 521 },
+      { id: "low_rating", count: 201 },
     ],
     ...overrides,
   };
 }
 
 function renderBreakdown(onPlex = () => {}, onReview = () => {}) {
-  const queryClient = testQueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <ReapBreakdown onGoToPlexSettings={onPlex} onGoToReview={onReview} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<ReapBreakdown onGoToPlexSettings={onPlex} onGoToReview={onReview} />);
 }
 
 beforeEach(() => {
@@ -298,7 +290,7 @@ describe("the by-reason bars", () => {
 
   it("shows a custom rule under its own name", async () => {
     apiMock.reapBreakdown.mockResolvedValue(
-      full({ condemned_by: [{ id: "My weekend rule", count: 9, bytes: 0, unknown_size: 0 }] }),
+      full({ condemned_by: [{ id: "My weekend rule", count: 9 }] }),
     );
     renderBreakdown();
     expect(await screen.findByText("My weekend rule")).toBeInTheDocument();

@@ -13,8 +13,8 @@ properties, each pinned here:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, NoReturn
 
 import httpx
 import httpx2
@@ -23,37 +23,31 @@ import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
-from reaper.api.settings import PlexUpdateIn, update_plex_settings
+import reaper.api.settings
+from reaper.api.plex import PlexUpdateIn, update_plex_settings
+from reaper.api.settings import _BAD_CRON
+from reaper.auth.ratelimit import argon2_gate
 from reaper.clients.base import IntegrationError
+from reaper.clients.plex import PlexClient, PlexError, PlexSection
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import InstanceKind, PlexServer, Snapshot
-from reaper.main import create_app
 from reaper.services import instances as instances_service
 
-from ._auth import TEST_PASSWORD, clear_admin_password, login
+from ._auth import TEST_PASSWORD, clear_admin_password
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 
 def _make(tmp_path: Path, **overrides: object) -> Settings:
-    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)  # type: ignore[arg-type]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
     return settings
-
-
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    # Startup seeding and the catch-up network fetch are stubbed for every test by the
-    # autouse ``_hermetic`` fixture in conftest.py, so booting the app here is safe.
-    settings = _make(tmp_path)
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)  # seeds a local admin whose password is TEST_PASSWORD
-        yield c
 
 
 def _add_snapshot(client: TestClient) -> None:
@@ -104,7 +98,6 @@ def _link_plex(client: TestClient) -> None:
                 name="Example Server",
                 connection_uri="http://plex.local:32400",
                 token_enc="enc",
-                owner_plex_account_id=1,
                 created_at=utcnow(),
             )
         )
@@ -226,6 +219,39 @@ class TestInstancesCrud:
 
         missing = client.put("/api/settings/instances/9999", json={"name": "Whatever"})
         assert missing.status_code == 404  # a genuinely absent instance still 404s
+
+    def test_every_route_answers_the_status_the_error_class_declares(
+        self, client: TestClient
+    ) -> None:
+        """The three reads that had no status test, on both arms each.
+
+        ``services.instances`` declares one status per subclass and the routes read it off the
+        exception, so the mapping is one fact -- but a fact stated once is still worth driving,
+        because nothing else here would notice the declaration itself going wrong. A missing
+        instance is 404 on all three; a real instance of the wrong kind is 422, since the
+        request named something that exists and asked it for a thing that kind does not have.
+        Neither arm reaches the network: both refuse before a client is constructed.
+        """
+        tautulli = client.post(
+            "/api/settings/instances",
+            json={"kind": "tautulli", "name": "T", "base_url": "http://t.local", "api_key": "k"},
+        )
+        assert tautulli.status_code == 200, tautulli.text
+        wrong_kind = tautulli.json()["id"]
+
+        for path in (
+            "/api/settings/instances/9999/root-folders",
+            "/api/settings/instances/9999/seerr-services",
+        ):
+            assert client.get(path).status_code == 404, path
+        assert client.post("/api/settings/instances/9999/test").status_code == 404
+
+        for path in (
+            f"/api/settings/instances/{wrong_kind}/root-folders",
+            f"/api/settings/instances/{wrong_kind}/seerr-services",
+        ):
+            response = client.get(path)
+            assert response.status_code == 422, f"{path}: {response.text}"
 
     def test_updating_without_a_key_keeps_the_stored_one(self, client: TestClient) -> None:
         created = client.post(
@@ -527,6 +553,33 @@ class TestTheApiPathIsStoredAndUnreachable:
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
         assert prefixes == ["/api/v3"]
 
+    def test_a_saved_instance_test_answers_the_verdict_and_no_mapping(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The route has no instance-less pass to read folders on, so it cannot answer the
+        mapping fields and its published shape must not say it may. Nothing in either tree
+        asserted this body before, so a narrowing that went the wrong way had no guard."""
+        made = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "HD",
+                "base_url": "http://radarr.local:7878",
+                "api_key": "k",
+            },
+        )
+        assert made.status_code == 200, made.text
+        instance_id = made.json()["id"]
+
+        async def fake_test(*_a: object, **_k: object) -> instances_service.TestResult:
+            return instances_service.TestResult(ok=True, detail="Connected.", version="4.0.1")
+
+        monkeypatch.setattr(instances_service, "test_connection", fake_test)
+
+        body = client.post(f"/api/settings/instances/{instance_id}/test").json()
+
+        assert body == {"ok": True, "detail": "Connected.", "version": "4.0.1"}
+
 
 class TestTheStoredTestResultDescribesWhatWasTested:
     """A connection test's outcome is stored on the instance row and rendered as the service
@@ -553,14 +606,15 @@ class TestTheStoredTestResultDescribesWhatWasTested:
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
 
     @staticmethod
-    def _row(client: TestClient, instance_id: int) -> dict[str, object]:
+    def _row(client: TestClient, instance_id: int) -> dict[str, Any]:
         listed = client.get("/api/settings/instances").json()
-        return next(row for row in listed if row["id"] == instance_id)  # type: ignore[no-any-return]
+        row: dict[str, Any] = next(r for r in listed if r["id"] == instance_id)
+        return row
 
     def _saved_and_tested(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> dict[str, object]:
-        made = client.post(
+    ) -> dict[str, Any]:
+        made: dict[str, Any] = client.post(
             "/api/settings/instances",
             json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
         ).json()
@@ -860,6 +914,167 @@ class TestSafety:
         assert codes[5] == 429
 
 
+class TestTheAdminPasswordGate:
+    """The one gate four routes ask through: ``deps.require_admin_password``.
+
+    Arming deletion, changing the arming password, forgetting the watch record and confirming
+    a restore all call it. The two tests those routes already had cover one gate each; these
+    cover the properties that only exist because it is ONE function, and that a fifth caller
+    would otherwise have to re-derive by hand (rule 11/98, rule 118).
+    """
+
+    def test_repeated_wrong_current_passwords_are_locked_out(self, client: TestClient) -> None:
+        """Changing the arming credential is a password-guessing surface like arming itself,
+        so past the threshold it answers 429 instead of running another Argon2 verify."""
+        codes = [
+            client.post(
+                "/api/settings/admin-password",
+                json={"password": "brandnew12345", "current_password": f"wrong-{n}"},
+            ).status_code
+            for n in range(6)
+        ]
+        assert codes == [403] * 5 + [429]
+        # The shared per-IP key is locked too, so arming from this address is 429 rather than
+        # 403. That the OTHER gates still answer is asserted below, from a second address.
+        assert (
+            client.put(
+                "/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD}
+            ).status_code
+            == 429
+        )
+
+    def test_the_right_password_clears_every_key_it_was_checked_against(
+        self, client: TestClient
+    ) -> None:
+        """The success path resets both keys, so a near-miss costs the operator nothing.
+
+        Four wrong attempts sit one under the threshold. If the success cleared neither key,
+        or only the per-IP one, the fifth wrong attempt below would be a 429. It is a 403, so
+        the count restarted on both. Written because this is the step an extraction drops
+        without any other test noticing: every existing throttle test stops at the lockout and
+        never comes back through a success (rule 118).
+        """
+        for n in range(4):
+            assert (
+                client.put(
+                    "/api/settings/safety", json={"enabled": True, "password": f"wrong-{n}"}
+                ).status_code
+                == 403
+            )
+        armed = client.put(
+            "/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD}
+        )
+        assert armed.status_code == 200, armed.text
+
+        for n in range(4):
+            assert (
+                client.put(
+                    "/api/settings/safety", json={"enabled": True, "password": f"again-{n}"}
+                ).status_code
+                == 403
+            ), f"attempt {n} after a success was throttled, so the success cleared nothing"
+
+    def test_a_busy_argon2_gate_is_not_a_wrong_password(self, client: TestClient) -> None:
+        """Rule 11/98's hardest clause: a full gate answers 503 and must never register as a
+        failed attempt, or the load-shedding defense becomes the lockout.
+
+        Asserted black-box, because ``Throttle._buckets`` is private and reading it would pin
+        the implementation rather than the behavior. Four real failures sit one under the
+        threshold of five. If a 503 counted it would be the fifth, and the next wrong password
+        would come back 429. It comes back 403, so none of the three counted.
+        """
+        for n in range(4):
+            assert (
+                client.post(
+                    "/api/settings/admin-password",
+                    json={"password": "brandnew12345", "current_password": f"wrong-{n}"},
+                ).status_code
+                == 403
+            )
+
+        taken = argon2_gate.acquire(argon2_gate.limit)
+        assert taken == argon2_gate.limit
+        try:
+            for _ in range(3):
+                busy = client.post(
+                    "/api/settings/admin-password",
+                    json={"password": "brandnew12345", "current_password": "wrong-again"},
+                )
+                assert busy.status_code == 503, busy.text
+                assert busy.headers["Retry-After"] == "2"
+        finally:
+            argon2_gate.release(taken)
+
+        still_counting = client.post(
+            "/api/settings/admin-password",
+            json={"password": "brandnew12345", "current_password": "wrong-5th"},
+        )
+        assert still_counting.status_code == 403, still_counting.text
+
+    def test_a_lockout_at_one_gate_leaves_the_other_gates_open(
+        self, client: TestClient, settings: Settings
+    ) -> None:
+        """Each gate carries its own ``account:`` key, and that is what bounds a lockout.
+
+        An ``account:`` key is not scoped to an address, so it refuses from everywhere at once.
+        Were the four collapsed onto one, five wrong watch-record passwords from any host on
+        the internet would lock the operator out of arming deletion from their own machine.
+        This is the assertion the per-route tests cannot reach: they share both keys.
+
+        Driven from a SECOND address, because all four gates deliberately share the per-IP key
+        (one guesser at one secret is one guesser, wherever they knock) and that shared key
+        would otherwise mask the account keys entirely.
+        """
+        for n in range(6):
+            client.post("/api/settings/watch-evidence/reset", json={"password": f"wrong-{n}"})
+        assert (
+            client.post(
+                "/api/settings/watch-evidence/reset", json={"password": "wrong-again"}
+            ).status_code
+            == 429
+        )
+
+        elsewhere = TestClient(client.app, client=("203.0.113.7", 44321))
+        elsewhere.headers["X-Reaper-CSRF"] = "1"
+        elsewhere.cookies.update(client.cookies)
+
+        # Locked out of forgetting the watch record from here too: that is the account key
+        # doing its job across addresses.
+        assert (
+            elsewhere.post(
+                "/api/settings/watch-evidence/reset", json={"password": "wrong"}
+            ).status_code
+            == 429
+        )
+        # The other three still answer on their merits, which is the point.
+        assert (
+            elsewhere.put(
+                "/api/settings/safety", json={"enabled": True, "password": "wrong"}
+            ).status_code
+            == 403
+        )
+        assert (
+            elsewhere.post(
+                "/api/settings/admin-password",
+                json={"password": "brandnew12345", "current_password": "wrong"},
+            ).status_code
+            == 403
+        )
+        assert (
+            elsewhere.post(
+                "/api/settings/backup/restore/confirm", json={"password": "wrong"}
+            ).status_code
+            == 403
+        )
+        # And the right password still arms, so the lockout next door cost nothing real.
+        assert (
+            elsewhere.put(
+                "/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD}
+            ).status_code
+            == 200
+        )
+
+
 class TestSetupStatus:
     def test_a_bare_install_is_not_scan_ready(self, client: TestClient) -> None:
         status = client.get("/api/setup/status").json()
@@ -1098,6 +1313,50 @@ class TestSchedule:
         resp = client.put("/api/settings/jobs/not_a_job/schedule", json={"cron": "0 6 * * *"})
         assert resp.status_code == 404
 
+    def test_both_job_families_refuse_a_bad_cron_in_the_one_declared_sentence(
+        self, client: TestClient
+    ) -> None:
+        """The scan arm and the upkeep arm answer a cron the scheduler will not take with the
+        same words, and those words are ``_BAD_CRON`` with its slot filled. The two arms each
+        spelled the sentence out, byte-identically, with nothing asserting either, so a reword
+        of one would have shipped an operator two explanations of one refusal (rule 144).
+
+        **Three mutations, one assertion each, and none of the three catches another.** Do not
+        collapse them:
+
+        - *An arm is reworded.* Caught by ``startswith``/``endswith``. This is the only one the
+          first version of this test caught.
+        - *An arm re-inlines the sentence verbatim.* Caught by the source count alone. Both
+          copies render identically, which is what the dedup means, so no assertion over a
+          response can ever see it.
+        - *An arm raises ``_BAD_CRON`` unformatted.* Caught by the ``{reason}`` assertion alone.
+          The raw template starts and ends with the very halves being compared, and its literal
+          ``{reason}`` is long enough to satisfy the length bound, so every other check here
+          passes while the placeholder ships to the operator (rule 21).
+
+        Every expectation is derived from the declaration, so none of this restates the sentence.
+        """
+        prefix, suffix = _BAD_CRON.split("{reason}")
+
+        # Rule 144, and rule 147's caution about what a text scan can see: `prefix` is the
+        # declaration's own first half, so a re-inlined f-string anywhere in the package is a
+        # second hit however the rest of it was reworded.
+        package = Path(reaper.api.settings.__file__).parent
+        copies = sum(f.read_text(encoding="utf-8").count(prefix) for f in package.rglob("*.py"))
+        assert copies == 1, (
+            f"{copies} copies of the cron refusal in src/reaper, expected only _BAD_CRON's "
+            "declaration. An arm spelling its own sentence renders identically to this one."
+        )
+
+        for job_id in ("scheduled_scan", "refresh_ratings"):
+            resp = client.put(f"/api/settings/jobs/{job_id}/schedule", json={"cron": "nope"})
+            assert resp.status_code == 422, job_id
+            detail = resp.json()["detail"]
+            assert detail.startswith(prefix), (job_id, detail)
+            assert detail.endswith(suffix), (job_id, detail)
+            assert "{reason}" not in detail, (job_id, detail)
+            assert len(detail) > len(prefix) + len(suffix), (job_id, detail)
+
     def test_saving_one_upkeep_job_leaves_the_others_untouched(self, client: TestClient) -> None:
         """Each job's schedule is its own stored row, so saving one never drops another. The
         old shared-dict read-modify-write could last-write-wins a concurrent save away (B-12)."""
@@ -1165,6 +1424,13 @@ class TestPlexStatus:
     def test_unlinking_when_nothing_is_linked_is_a_noop(self, client: TestClient) -> None:
         assert client.delete("/api/settings/plex").json() == {"removed": False}
 
+    def test_unlinking_a_linked_server_reports_the_removal(self, client: TestClient) -> None:
+        """The other arm of the same route. Only the no-op branch was covered, so the answer
+        an operator actually gets back after unlinking was never asserted."""
+        _link_plex(client)
+
+        assert client.delete("/api/settings/plex").json() == {"removed": True}
+
     def test_the_certificate_check_cannot_be_set_before_linking(self, client: TestClient) -> None:
         response = client.put("/api/settings/plex", json={"web_url": "", "verify_tls": False})
         assert response.status_code == 422
@@ -1208,6 +1474,23 @@ class TestPlexLinkChoice:
     """The Settings-page link flow for an account owning several servers: the exact
     API contract the PlexPanel picker consumes. The login-time twin of this flow is
     pinned in test_sessions; this pins the in-app route."""
+
+    @pytest.fixture(autouse=True)
+    def _plex_server_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A finished link fires a library autosync, and that one goes over plexapi.
+
+        `httpx2_mock` covers httpx. plexapi speaks `requests`, so nothing here mocked it and
+        seven of these tests really resolved the connection host on every run -- swallowed by
+        `_sync_libraries_after_link`, which catches every exception because its docstring
+        promises a sign-in never strands on a failed library refresh. The outcome pinned below
+        is the one those runs already had, minus the name lookup: `PlexClient._connect` maps
+        any failure to `PlexError`, which is what an unreachable server produced.
+        """
+
+        async def _unreachable(_self: PlexClient) -> NoReturn:
+            raise PlexError("no Plex server in these tests")
+
+        monkeypatch.setattr(PlexClient, "_connect", _unreachable)
 
     def _mock_plextv(self, httpx2_mock: respx.Router) -> None:
         httpx2_mock.post("https://plex.tv/api/v2/pins").mock(
@@ -1265,7 +1548,9 @@ class TestPlexLinkChoice:
         from reaper.services import plex_link
 
         captured: dict[str, object] = {}
-        real_probe = plex_link.probe_connection
+        # Through `plex_link` for the same reason the spy is installed there: the module
+        # under test reads this name, and rebinding any other copy patches nothing.
+        real_probe = plex_link.probe_connection  # type: ignore[attr-defined]
 
         async def spying_probe(
             connection: object, token: str, *, timeout: float = 5.0, verify: bool = True
@@ -1501,6 +1786,157 @@ class TestPlexLinkChoice:
         assert saved.json()["connection_uri"] == "https://192.0.2.52:32400"
 
 
+class TestPlexLibrarySync:
+    """The library refresh on a server that answers, which nothing had ever driven (#584).
+
+    Every route into ``_sync_libraries`` reached it through a failure. ``video_sections``
+    builds a plexapi server and plexapi speaks ``requests``, which ``respx`` does not
+    intercept, so the seven ``TestPlexLinkChoice`` tests fired the autosync at a real name
+    lookup and had it fail; ``_sync_libraries_after_link`` catches every exception on purpose,
+    so the suite stayed green. This drives the merge instead, which is the part with logic in
+    it: an operator's off stays off, a new library arrives on, and one that left the server
+    drops out.
+    """
+
+    @pytest.fixture
+    def linked(self, client: TestClient) -> None:
+        """A linked server whose token really opens, since ``_sync_libraries`` decrypts it
+        before it builds the client. ``_link_plex`` stores the literal ``"enc"``, which is
+        enough for the row-exists checks it was written for and not for this."""
+        settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
+        box = client.app.state.secret_box  # type: ignore[attr-defined]
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            session.add(
+                PlexServer(
+                    machine_identifier="machine-sync",
+                    name="Example Server",
+                    connection_uri="http://plex.example:32400",
+                    token_enc=box.encrypt("tok"),
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+        engine.dispose()
+
+    @staticmethod
+    def _sections(
+        monkeypatch: pytest.MonkeyPatch, sections: list[tuple[int, str, str]]
+    ) -> list[str]:
+        """Answer ``video_sections`` instead of raising, and record that it was asked.
+
+        Stubbed at ``video_sections`` rather than at ``_connect``: the layer under it is
+        plexapi's synchronous ``library.sections()``, and standing that up would be testing
+        plexapi. The list it returns is the client's own ``PlexSection``, which is the type
+        ``_sync_libraries`` reads.
+        """
+        asked: list[str] = []
+
+        async def _fake(_self: PlexClient) -> list[PlexSection]:
+            asked.append("video_sections")
+            return [PlexSection(key=k, title=t, kind=kind) for k, t, kind in sections]
+
+        monkeypatch.setattr(PlexClient, "video_sections", _fake)
+        return asked
+
+    def test_the_sync_route_merges_rather_than_replaces(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
+    ) -> None:
+        """The three merge outcomes at once, because they are one dict lookup with a default
+        and a test naming only the new-library case cannot tell that default from a rewrite.
+
+        The operator's choice is the one that fails toward writing to a library they turned
+        off, so it is the arm the assertion leads with.
+        """
+        asked = self._sections(
+            monkeypatch, [(2, "Movies", "movie"), (5, "TV", "show"), (9, "Kids", "movie")]
+        )
+        first = client.post("/api/settings/plex/libraries/sync")
+        assert first.status_code == 200, first.text
+        assert asked == ["video_sections"]
+        # A fresh library starts ON, so a default install marks every library without setup.
+        assert [(lib["key"], lib["enabled"]) for lib in first.json()] == [
+            (2, True),
+            (5, True),
+            (9, True),
+        ]
+
+        client.put("/api/settings/plex/libraries", json={"enabled_keys": [2, 9]})
+
+        # Second pass: 5 is still off, 9 has left the server, 12 is new.
+        self._sections(
+            monkeypatch, [(2, "Movies", "movie"), (5, "TV", "show"), (12, "Docs", "show")]
+        )
+        again = client.post("/api/settings/plex/libraries/sync")
+        assert again.status_code == 200, again.text
+        assert [(lib["key"], lib["enabled"]) for lib in again.json()] == [
+            (2, True),  # untouched
+            (5, False),  # the operator turned it off; a refresh must not turn it back on
+            (12, True),  # new since the last sync
+        ]
+        # Dropped, not left behind enabled: a library that is gone from the server would
+        # otherwise keep a stored `enabled` row nothing can ever reach to turn off.
+        assert 9 not in {lib["key"] for lib in again.json()}
+
+    def test_the_sync_route_answers_502_for_an_unreachable_server(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
+    ) -> None:
+        """The arm the suite already had, kept beside the one it did not: the route maps
+        ``PlexError`` rather than letting it reach the operator as a 500."""
+
+        async def _boom(_self: PlexClient) -> NoReturn:
+            raise PlexError("no route to host")
+
+        monkeypatch.setattr(PlexClient, "video_sections", _boom)
+
+        answer = client.post("/api/settings/plex/libraries/sync")
+        assert answer.status_code == 502, answer.text
+        assert "Could not reach Plex" in answer.json()["detail"]
+
+    def test_the_sync_route_refuses_before_a_server_is_linked(self, client: TestClient) -> None:
+        assert client.post("/api/settings/plex/libraries/sync").status_code == 400
+
+    async def test_the_autosync_after_a_link_stores_the_libraries(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
+    ) -> None:
+        """The other route in, and the one that carried the swallowed failure.
+
+        ``_sync_libraries_after_link`` returns nothing and reports nothing, so the only
+        evidence it did its job is the stored list afterwards. Driving it through the route
+        would mean standing up the whole plex.tv link flow again, which
+        ``TestPlexLinkChoice`` already pins; this calls the function the way both link
+        endpoints do.
+        """
+        from reaper.api.plex import _sync_libraries_after_link
+
+        self._sections(monkeypatch, [(2, "Movies", "movie")])
+        request = Request({"type": "http", "app": client.app, "headers": []})
+
+        await _sync_libraries_after_link(request)
+
+        stored = client.get("/api/settings/plex/libraries").json()
+        assert [(lib["key"], lib["title"], lib["enabled"]) for lib in stored] == [
+            (2, "Movies", True)
+        ]
+
+    async def test_a_failed_autosync_never_strands_the_sign_in(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, linked: None
+    ) -> None:
+        """The promise in its docstring, which is why the failure above was silent. It has
+        to keep holding, so it is pinned rather than left as prose (rule 7/24)."""
+        from reaper.api.plex import _sync_libraries_after_link
+
+        async def _boom(_self: PlexClient) -> NoReturn:
+            raise PlexError("no route to host")
+
+        monkeypatch.setattr(PlexClient, "video_sections", _boom)
+        request = Request({"type": "http", "app": client.app, "headers": []})
+
+        await _sync_libraries_after_link(request)  # returns, does not raise
+
+        assert client.get("/api/settings/plex/libraries").json() == []
+
+
 class TestConnectionTestCarriesTheMapping:
     """A passing test hands back what the connection still has to map.
 
@@ -1627,6 +2063,55 @@ class TestConnectionTestCarriesTheMapping:
         assert body["seerr_services"][0]["suggested_instance_id"] == 4
         # A Seerr has no root folders, so that list stays empty rather than being invented.
         assert body["root_folders"] == []
+
+    def test_both_routes_publishing_a_service_list_send_the_same_shape(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``SeerrServiceOut`` is built at two routes, the pre-save probe above and the
+        saved instance's own list. Both read the same service record, and only one of them
+        had its body asserted, so the pair could diverge without a test noticing."""
+        self._pass(monkeypatch)
+        suggestion = instances_service.ServiceInstanceSuggestion(
+            service_id=7, kind="sonarr", name="Shows", is_4k=True, suggested_instance_id=None
+        )
+
+        async def probe(
+            *_a: object, **_k: object
+        ) -> list[instances_service.ServiceInstanceSuggestion]:
+            return [suggestion]
+
+        monkeypatch.setattr(instances_service, "probe_seerr_services", probe)
+        monkeypatch.setattr(instances_service, "seerr_services", probe)
+
+        created = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "seerr",
+                "name": "Portal",
+                "base_url": "http://s.local:5055",
+                "api_key": "k",
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        from_probe = client.post(
+            "/api/settings/instances/test",
+            json={"kind": "seerr", "base_url": "http://s.local:5055", "api_key": "k"},
+        ).json()["seerr_services"]
+        from_saved = client.get(
+            f"/api/settings/instances/{created.json()['id']}/seerr-services"
+        ).json()
+
+        assert from_probe == from_saved
+        assert from_probe == [
+            {
+                "service_id": 7,
+                "kind": "sonarr",
+                "name": "Shows",
+                "is_4k": True,
+                "suggested_instance_id": None,
+            }
+        ]
 
 
 class TestCreateStoresTheMapping:

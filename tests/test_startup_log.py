@@ -20,15 +20,18 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import insert, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from reaper import buildinfo
 from reaper.buildinfo import install_kind
 from reaper.clock import utcnow
 from reaper.config import Settings
+from reaper.db import schema_gate
 from reaper.db.base import Base
 from reaper.db.models import AppSetting
 from reaper.db.session import journal_mode
 from reaper.main import create_app
 from reaper.services import scheduler
+
+#: A revision this build ships, so the boot gate lets the banner be written at all.
+SHIPPED_REVISION = next(iter(schema_gate.known_revisions()))
 
 
 class _RecordingLogger:
@@ -51,6 +54,12 @@ class _RecordingLogger:
     def warning(self, event: str, **kw: object) -> None:
         self.events.append(("warning", event, kw))
 
+    def error(self, event: str, **kw: object) -> None:
+        # Every level ``reaper.main`` uses, or the stand-in fails the boot it is standing
+        # in for: the schema gate's refusal is the one ``error`` (rule 135's shape, for a
+        # hand-written double rather than a module mock).
+        self.events.append(("error", event, kw))
+
     def names(self) -> list[str]:
         return [event for _level, event, _kw in self.events]
 
@@ -67,7 +76,7 @@ def _make(
 
     ``revision`` writes the ``alembic_version`` row that ``create_all`` never makes, so the
     banner's revision field can be pinned to a value that is not the default (rule 141)."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     if revision is not None:
@@ -183,15 +192,13 @@ class TestTheInstallFingerprint:
         """Docker plants the first, Podman the second."""
         monkeypatch.delattr(sys, "_MEIPASS", raising=False)
         monkeypatch.delenv("REAPER_HOME", raising=False)
-        monkeypatch.setattr(
-            buildinfo.Path, "exists", lambda self: str(self) == marker, raising=False
-        )
+        monkeypatch.setattr(Path, "exists", lambda self: str(self) == marker, raising=False)
         assert install_kind() == "container"
 
     def test_no_signal_at_all_is_a_source_checkout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delattr(sys, "_MEIPASS", raising=False)
         monkeypatch.delenv("REAPER_HOME", raising=False)
-        monkeypatch.setattr(buildinfo.Path, "exists", lambda self: False, raising=False)
+        monkeypatch.setattr(Path, "exists", lambda self: False, raising=False)
         assert install_kind() == "source"
 
 
@@ -237,8 +244,11 @@ class TestTheBootBannerDescribesTheInstall:
 
         The revision is pinned to a stored value rather than to the ``None`` a
         ``create_all`` database returns anyway, so replacing the read with a constant
-        fails here instead of passing on the fixture's own default (rule 141)."""
-        settings = _make(tmp_path, stored_destructive=None, revision="deadbeef0001")
+        fails here instead of passing on the fixture's own default (rule 141). It has to
+        be a revision this build actually ships: the boot gate refuses anything else
+        before the banner is ever written (``reaper.db.schema_gate``, #565), and the
+        invented hash that used to sit here described a database no build could serve."""
+        settings = _make(tmp_path, stored_destructive=None, revision=SHIPPED_REVISION)
 
         with TestClient(create_app(settings)):
             pass
@@ -246,7 +256,7 @@ class TestTheBootBannerDescribesTheInstall:
         db = next(kw for _l, event, kw in recorder.events if event == "db.ready")
         assert db["journal_mode"] == "wal"
         assert db["cache_journal_mode"] == "wal"
-        assert db["revision"] == "deadbeef0001"
+        assert db["revision"] == SHIPPED_REVISION
 
     async def test_journal_mode_reports_the_mode_the_database_settled_on(
         self, tmp_path: Path

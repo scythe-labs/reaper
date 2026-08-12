@@ -54,6 +54,10 @@ Nothing in `cache.db` is a source of truth, which is why it stays out of the bac
 Put the files back in the data folder and start Reaper. Migrations run before the app
 accepts a connection, so a database from an older version is brought forward on the way up.
 
+Going the other way, Reaper stops instead. A database a newer version set up will not open on
+an older one, because the older code cannot read it safely. Put the newer version back, or
+restore a backup made with the older one.
+
 Restore `reaper.db` without its matching key and salt and every stored credential is
 unreadable and must be entered again. The policies, decisions and audit trail survive.
 

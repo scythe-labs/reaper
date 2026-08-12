@@ -32,7 +32,7 @@ cluster large enough to notice earns its own file.
 | File | Governs | Rules |
 | --- | --- | --- |
 | `.claude/rules/backend.md` | `src/reaper/**/*.py`, `alembic/**/*.py` — safety path, engine, evidence, clients, persistence | 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143, 148 |
-| `.claude/rules/auth.md` | `src/reaper/auth/**`, `secrets.py`, `logbuffer.py`, `services/{backup,restore}.py`, `api/settings.py` — credentials, sessions, at-rest key material | 11, 12, 14, 74–76, 83, 84, 98–101, 125, 126, 130 |
+| `.claude/rules/auth.md` | `src/reaper/auth/**`, `secrets.py`, `logbuffer.py`, `services/{backup,restore}.py`, `api/{settings,plex,backup,deps,auth}.py` — credentials, sessions, at-rest key material | 11, 12, 14, 74–76, 83, 84, 98–101, 125, 126, 130 |
 | `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, gating surfaces | 17–20, 36, 39–47, 51, 53, 54, 60–62, 66, 67, 69, 79, 80, 85, 86, 138, 139, 146 |
 | `.claude/rules/review-queue.md` | `ReviewQueue`, `OverrideControls`, `ShowPanel`, `SeasonList`, `reviewFate` — fate, overrides, the two-level spare | 48–50, 120–123 |
 | `.claude/rules/tests.md` | `tests/**/*.py`, `frontend/src/**/*.test.ts{,x}`, `frontend/src/test/**` — test discipline | 37, 118, 119, 132, 133, 135–137, 141, 145, 147 |
@@ -110,6 +110,23 @@ rule narrating the gate that enforces it pays twice for one constraint.
   The `reaper-review` skill's *Opening issues* section holds every mechanic, label and cap, and
   binds every session rather than only a review pass — read it before filing. It is stated once,
   there, so nothing here can drift from it.
+- **A defect your own unlanded branch created is FIXED on that branch, never filed.** The
+  tracker describes what an operator can hit, and nobody can hit a branch. So the first question
+  about any candidate found while building is not "how severe" but **"is this on `dev`?"** —
+  `git show origin/dev:<path>` and read the line. If the branch introduced it, it belongs in the
+  diff that introduced it, with the test that pins it; filing it instead ships a known-broken
+  change and asks someone else to notice.
+  **Filing it costs more than the fix.** Three defects filed off one branch drew a verification
+  pass that measured `dev`, found all three absent, closed them `Reviewed/Invalid` and opened a
+  PR adding three refutations to `references/refuted.md` — the file that stops a future pass
+  re-raising a candidate, so the wrong row there is worse than no row. Two were real. The third
+  was real for a reason the refutation had not reached, and its `Invalid` label would have
+  buried a `Priority/High` lockout. Every verdict in that pass was correct about the tree it read.
+  **When a tracking issue is genuinely wanted anyway** — the fix is deferred, or it spans work
+  someone else holds — the title says so and the body opens with it: `on <branch>, not on dev`,
+  plus the base commit and the `git show` that proves the contrast. An issue that does not say
+  which tree it lives on will be verified against `dev`, because that is the only tree a reader
+  has, and it will be closed.
 - **Commit as you go, and keep the pull request focused — don't wait to be asked.** Branches
   are squash-merged, so a branch arrives on `dev` as one commit whose subject is the PR title
   and whose body is the PR description. **The pull request is the unit that tells one story**:
@@ -376,9 +393,13 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
   describes: several of these decisions were reversed once already, and the reversal is the part
   a future reader needs most.
 - `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data. `SIGNALS.md` is cited from
-  five places in `src/`: `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py`, and
-  `api/routes.py`. Read it before touching any of them, and before the rewatch curve in
-  `engine/backtest.py`.
-- `docs/CSS_SPLIT_PLAN.md` — the one feature plan still live (4 optional stages remain).
+  six places in `src/`: `engine/signals.py`, `engine/policy.py` (three times), `engine/gates.py`,
+  and `api/review.py`. Read it before touching any of them: it is also the only place the rewatch
+  curve is written down, now that the engines that measured it are gone.
+- The live plans: `docs/CSS_SPLIT_PLAN.md` (4 optional stages remain) and `docs/I18N_PLAN.md` (a
+  proposal, nothing landed), neither committed to. `docs/SIMPLIFICATION_PLAN.md` is committed to
+  and being executed: its own `Progress` table is the status, every change lands on
+  `audit/simplification-plan`, and nothing reaches `dev` until the last phase closes.
+  `docs/README.md`'s map is the list to correct.
 - `docs/history/` — frozen: the retired plan narratives and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.

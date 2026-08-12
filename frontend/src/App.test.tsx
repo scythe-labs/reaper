@@ -6,14 +6,25 @@
 // wrong one). UserMenu's sign-out failure notice has to survive the focus move that
 // disabling its own button causes. SectionNav keeps its section names when the phone bar drops
 // to icons, and its armed mark must not read as "off" when the safety state is unreadable.
-import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE, DEFAULT_UPDATE, IDLE_SCAN } from "./test/apiFixtures";
+import {
+  DEFAULT_FIELD_VALUES,
+  DEFAULT_GENERAL,
+  DEFAULT_PROFILE,
+  DEFAULT_UPDATE,
+  IDLE_SCAN,
+} from "./test/apiFixtures";
 import { expectNoA11yViolations } from "./test/a11y";
 import { testQueryClient } from "./test/queryClient";
-import { App, ReapBar, ScanFreshness, SectionNav, UserMenu, WhyPanelFallback } from "./App";
+import { renderWithProviders } from "./test/renderWithProviders";
+import { App } from "./App";
+import { ReapBar } from "./components/ReapBar";
+import { ScanFreshness } from "./components/ScanFreshness";
+import { SectionNav } from "./components/SectionNav";
+import { UserMenu } from "./components/UserMenu";
+import { WhyPanelFallback } from "./components/WhyPanelFallback";
 import { ScanLine } from "./components/ScanLine";
 import { announce, Announcer } from "./announce";
 import {
@@ -25,26 +36,8 @@ import {
   type Snapshot,
 } from "./api";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    logout: vi.fn(),
-    update: vi.fn(),
-    safety: vi.fn(),
-    me: vi.fn(),
-    authContext: vi.fn(),
-    reapStatus: vi.fn(),
-    stopRun: vi.fn(),
-    setupStatus: vi.fn(),
-    scanStatus: vi.fn(),
-    latestSnapshot: vi.fn(),
-    fairness: vi.fn(),
-    candidates: vi.fn(),
-    general: vi.fn(),
-    profile: vi.fn(),
-    reapBreakdown: vi.fn(),
-    person: vi.fn(),
-    candidate: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("./test/apiMock")).makeApiMock(),
 }));
 
 // Partial mock: ApiError and the types stay real, because ScanFreshness branches on a real
@@ -59,6 +52,12 @@ vi.mock("./api", async (importOriginal) => ({
 // answer set their own value after their reset.
 beforeEach(() => {
   apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+  // ReviewQueue's two filter suggesters read this, and every shell mount here renders the
+  // queue. Unanswered, both rendered their failed-read branch and 14 of the suite's 20
+  // undefined-reads came from this file alone (#704). Its own comment above is what the gate
+  // below could not enforce: an arrow-wrapped queryFn exists, so rule 135's collector sees a
+  // queryFn and says nothing.
+  apiMock.vocabularyValues.mockResolvedValue(DEFAULT_FIELD_VALUES);
 });
 
 const snapshot: Snapshot = {
@@ -185,18 +184,12 @@ const user: AuthUser = {
   id: 1,
   username: "owner",
   provider: "local",
-  email: null,
   thumb_url: null,
   via_recovery: false,
 };
 
 function renderMenu(onGoToAbout: () => void = () => {}) {
-  const queryClient = testQueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <UserMenu user={user} onGoToAbout={onGoToAbout} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<UserMenu user={user} onGoToAbout={onGoToAbout} />);
 }
 
 describe("UserMenu", () => {
@@ -275,11 +268,7 @@ const SAFETY: Safety = {
 };
 
 function renderNav(view: "review" | "reap" = "review") {
-  return render(
-    <QueryClientProvider client={testQueryClient()}>
-      <SectionNav view={view} onChange={() => {}} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<SectionNav view={view} onChange={() => {}} />);
 }
 
 /** The section nav is the one control that exists at every width, and under 900px it is drawn
@@ -389,11 +378,7 @@ describe("the announcer's mount point", () => {
 
   it("mounts two polite regions while the gate is still deciding", async () => {
     apiMock.me.mockReturnValue(new Promise(() => {}));
-    render(
-      <QueryClientProvider client={testQueryClient()}>
-        <App />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<App />);
 
     await screen.findByText("Loading Reaper…");
     expect(regions()).toHaveLength(2);
@@ -406,11 +391,7 @@ describe("the announcer's mount point", () => {
 
   it("keeps them mounted on the signed-out branch", async () => {
     apiMock.me.mockRejectedValue(new ApiError(401, "nope"));
-    render(
-      <QueryClientProvider client={testQueryClient()}>
-        <App />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<App />);
 
     await waitFor(() => expect(regions()).toHaveLength(2));
     act(() => announce("Settings saved."));
@@ -448,11 +429,12 @@ describe("the app-wide reap bar", () => {
   function renderBar() {
     const queryClient = testQueryClient();
     queryClient.setQueryData(["reapStatus"], runningAt(1, 4));
-    render(
-      <QueryClientProvider client={queryClient}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ReapBar onView={() => {}} />
-      </QueryClientProvider>,
+      </>,
+      { client: queryClient },
     );
     return queryClient;
   }
@@ -537,11 +519,12 @@ describe("the app-wide reap bar", () => {
     };
     apiMock.reapStatus.mockResolvedValue(finished);
     queryClient.setQueryData(["reapStatus"], finished);
-    render(
-      <QueryClientProvider client={queryClient}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ReapBar onView={() => {}} />
-      </QueryClientProvider>,
+      </>,
+      { client: queryClient },
     );
 
     await screen.findByText(/Reaped\./);
@@ -572,20 +555,17 @@ describe("the authenticated app's heading outline", () => {
     apiMock.fairness.mockResolvedValue({ generated_at: null, horizon_at: null, requesters: [] });
     apiMock.candidates.mockResolvedValue({
       items: [],
+      groups: [],
       total: 0,
-      totalBytes: 0,
-      unknownSize: 0,
+      total_bytes: 0,
+      unknown_size: 0,
       offset: 0,
-      snapshotId: 1,
+      snapshot_id: 1,
     });
     apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
     apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
     apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: true, will_reap: 0, condemned_by: [] });
-    return render(
-      <QueryClientProvider client={testQueryClient()}>
-        <App />
-      </QueryClientProvider>,
-    );
+    return renderWithProviders(<App />);
   }
 
   it("opens with an h1 naming the app", async () => {
@@ -711,11 +691,12 @@ describe("the authenticated app's heading outline", () => {
 
   // The other half of that jump: it also seeds the queue's search box, and a seeded box is state
   // the operator did not type. Backing out of the jump has to take it with them. Back restores
-  // the view through the raw setter and runs no handler, so the nav click's `clearFocus` never
-  // fires on this route -- and the queue UNMOUNTS on the way out, taking its once-per-nonce ref
-  // with it, so the next mount reads the same focus again and seeds from a jump that was undone.
-  // Driven through the real shell for the same reason as the test above: the focus, the view and
-  // the queue's own state are set in three places and only the assembled app proves they agree.
+  // the view through the raw setter and runs no handler at all, and the queue UNMOUNTS on the way
+  // out, taking its once-per-nonce ref with it, so the next mount reads the same focus again and
+  // seeds from a jump that was undone. Driven through the real shell for the same reason as the
+  // test above: the focus, the view and the queue's own state are set in three places and only
+  // the assembled app proves they agree. `AppFocus.test.tsx` is the same behavior on the Policy
+  // and Settings routes, whose views are stubbed there.
   it("takes the jump's search back out of the queue when the operator backs out of it", async () => {
     // jsdom carries one session history across a whole file, and the test above ends with layers
     // still open, so its teardown hands those entries back one deferred step at a time. Those are

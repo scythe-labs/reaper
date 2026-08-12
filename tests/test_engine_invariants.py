@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from pathlib import Path
@@ -40,7 +41,7 @@ from reaper.engine.gates import (
     evaluate_all,
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
 from reaper.engine.signals import (
     MAX_SCORE,
     CustomSignalConfig,
@@ -54,10 +55,25 @@ from reaper.engine.signals import (
     score,
 )
 from reaper.engine.verdict import STRUCTURAL_GATES
-from reaper.ratings import Rating, RatingSource
-from reaper.services.snapshot import _verdict
+from reaper.ratings import Rating, RatingSource, from_plex
+from reaper.services.condemned import reap_override_verdict_decoded
+from reaper.services.snapshot import _explain, _verdict
 
 _IMDB_BAR = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
+
+
+def _hand_reap(evaluation: Evaluation, score_value: int, policy: PolicyBody) -> str:
+    """What a hand reap on this evaluation actually decides, through the production path.
+
+    A reap never reaches the scan's ``_verdict``: the scan freezes an explanation, and
+    ``condemned.reap_override_verdict_decoded`` re-decides from that document hours later
+    when the operator presses Reap. So the frozen document is produced here by the real
+    writer (``snapshot._explain``) rather than hand-typed, and a field the writer stops
+    emitting fails these tests instead of quietly changing what the read side can see.
+    """
+    frozen = Score(value=float(score_value), coverage=1.0, results=[])
+    stored = json.loads(_explain(evaluation, frozen, policy))
+    return reap_override_verdict_decoded(stored, score=score_value)
 
 
 def _imdb(value: float, votes: int) -> tuple[Rating, ...]:
@@ -65,12 +81,25 @@ def _imdb(value: float, votes: int) -> tuple[Rating, ...]:
     return (Rating(source=RatingSource.IMDB, value=value, votes=votes, provider="imdb-dataset"),)
 
 
+def _plex_imdb(value: float) -> Rating:
+    """One IMDb rating as Plex serves it, with no vote count at all.
+
+    Built through the real reader rather than by hand: the claim these cases rest on is
+    ``from_plex``'s own -- it returns ``votes=None`` for *every* Plex-sourced rating, whatever
+    the source -- so transcribing a ``votes=None`` here would pin the transcription instead
+    (rule 119). The assert is what makes it evidence rather than a coincidence.
+    """
+    rating = from_plex(str(value), "imdb://image.rating")
+    assert rating is not None and rating.votes is None
+    return rating
+
+
 # --- generators -------------------------------------------------------------
 
 
-def observations(
-    value_strategy: st.SearchStrategy[object],
-) -> st.SearchStrategy[Observation[object]]:
+def observations[T](
+    value_strategy: st.SearchStrategy[T],
+) -> st.SearchStrategy[Observation[T]]:
     """All three arms, with Unknown well represented."""
     return st.one_of(
         value_strategy.map(lambda v: Known(value=v, source="test")),
@@ -112,8 +141,8 @@ def _on_list_gate(name: str = "My keep list") -> fields.CustomProtectGate:
 
 ALL_GATES: list[Gate] = [
     RatingFloorGate(rules=(_IMDB_BAR,)),
-    StreamingNowGate(GateConfig(GateId.STREAMING_NOW)),
-    ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3)),
+    StreamingNowGate(GateConfig()),
+    ServerPopularityGate(GateConfig(threshold=3)),
     _on_list_gate(),
 ]
 
@@ -188,8 +217,8 @@ class TestOnlyTwoGatesMayEverRefuseAHandReap:
                 results=[GateResult(gate, ABSTAIN, detail="could not check it", blocked=True)]
             )
 
-            assert _verdict(fired, 100, 10_000, policy, override="reap") == "protect", gate
-            assert _verdict(unreadable, 100, 10_000, policy, override="reap") == "condemn", gate
+            assert _hand_reap(fired, 100, policy) == "protect", gate
+            assert _hand_reap(unreadable, 100, policy) == "condemn", gate
             # ...and with nobody deciding by hand, the block still keeps it off every
             # automatic path. That is the job a block kept.
             assert _verdict(unreadable, 100, 10_000, policy) == "abstain", gate
@@ -230,7 +259,7 @@ class TestUnknownNeverCondemns:
             "imdb_rating_tenths",
             "season_rank",
         ):
-            degraded = replace(item, **{field_name: Unknown(reason="outage", source="test")})
+            degraded = replace(item, **{field_name: Unknown(reason="outage", source="test")})  # type: ignore[arg-type]
             degraded_score = score(ALL_SIGNALS, degraded).value
 
             assert degraded_score <= baseline + 1e-9, (
@@ -294,10 +323,10 @@ _ALL_READABLE = Facts(
 FAIL_CLOSED_GUARDS: list[tuple[Gate, str]] = [
     (RatingFloorGate(rules=(_IMDB_BAR,)), "imdb_rating_tenths"),
     (RatingFloorGate(rules=(_IMDB_BAR,)), "imdb_votes"),
-    (StreamingNowGate(GateConfig(GateId.STREAMING_NOW)), "is_streaming_now"),
-    (ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3)), "distinct_watchers"),
-    (MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1095)), "days_observed_unwatched"),
-    (DataHorizonGate(GateConfig(GateId.DATA_HORIZON)), "days_observed_unwatched"),
+    (StreamingNowGate(GateConfig()), "is_streaming_now"),
+    (ServerPopularityGate(GateConfig(threshold=3)), "distinct_watchers"),
+    (MinDormancyGate(GateConfig(threshold=1095)), "days_observed_unwatched"),
+    (DataHorizonGate(GateConfig()), "days_observed_unwatched"),
 ]
 
 _GUARD_IDS = [f"{gate.__class__.__name__}.{field}" for gate, field in FAIL_CLOSED_GUARDS]
@@ -346,7 +375,7 @@ class TestEveryFailClosedGuardKeepsTheFile:
     def test_an_unreadable_fact_blocks_the_gate(self, gate: Gate, field: str) -> None:
         """An Unknown input abstains *and* raises the blocked flag, naming its own cause.
 
-        The "could not check" prefix is load-bearing beyond this assertion: `api.routes._chip`
+        The "could not check" prefix is load-bearing beyond this assertion: `api.review._chip`
         routes a detail starting with it to "Some checks couldn't run" rather than "left for
         you to decide", and `WhyPanel` splits it into check and cause.
         """
@@ -690,12 +719,52 @@ class TestRatingGate:
         decision about how it reads with no rating, not a default that happens to parse."""
         assert set(_MISS_TEXT) == set(RatingSource)
 
+    @pytest.mark.parametrize(
+        ("min_votes", "rating", "clears_the_vote_floor", "phrase"),
+        [
+            (0, _plex_imdb(7.4), True, "7.4 on IMDb, below the 7.5 you keep"),
+            (1, _plex_imdb(7.4), False, "7.4 on IMDb, too few to trust (you need 1)"),
+            (
+                1000,
+                Rating(source=RatingSource.IMDB, value=7.4, votes=1000, provider="imdb-dataset"),
+                True,
+                "7.4 on IMDb from 1,000 votes, below the 7.5 you keep",
+            ),
+        ],
+        ids=["no-vote-floor", "a-floor-of-one", "a-count-exactly-at-the-floor"],
+    )
+    def test_the_vote_clause_fires_on_the_floor_the_decision_itself_uses(
+        self, min_votes: int, rating: Rating, clears_the_vote_floor: bool, phrase: str
+    ) -> None:
+        """The three inclusive edges of the vote floor, each of which a mutant survived on.
+
+        The miss phrase and the decision now read one ``Rating.short_of_vote_floor``
+        (rule 104), and these are the cases that hold them there. A floor of 0 is no floor, so
+        the bar is missed on the score and "you need 0" would be a sentence about nothing; a
+        floor of 1 is the smallest ``RatingRuleSpec`` accepts on a source that counts votes,
+        and it still owes the clause; and a count exactly AT the floor clears it, so calling
+        that title short on votes would contradict the bar that just measured it.
+
+        Pinned as exact strings because both arms return the same ABSTAIN and differ only in
+        the sentence the operator reads (rule 21), and re-asserted against ``meets`` in the
+        same case because agreeing by accident is precisely what this pair did before. A floor
+        of ``0.0`` there clears on value trivially, which isolates the vote half.
+
+        Two of the three are reachable from a saved policy. The 0 case is not: ``RatingRuleSpec``
+        refuses a vote floor below 1 on IMDb outright. It is the ``RatingRule`` dataclass's own
+        default, it is what every percentage bar carries, and the predicate has to meet it.
+        """
+        bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=min_votes)
+
+        assert RatingFloorGate(rules=(bar,))._miss_phrase(bar, rating) == phrase
+        assert rating.meets(0.0, min_votes=min_votes) is clears_the_vote_floor
+
     def test_a_policy_with_no_bars_set_says_nothing_is_configured(self) -> None:
         """A rating gate switched on with an empty rule set still owes the operator a
         sentence.
 
-        Not a hypothetical state: it is exactly what `policy.recover_rating_rules` exists to
-        repair, and that function's own docstring quotes this sentence as the symptom the
+        Not a hypothetical state: it is exactly what `policy_migrations.recover_rating_rules`
+        exists to repair, and that function's own docstring quotes this sentence as the symptom the
         operator would have seen. Deleting the arm drops through to the miss-list return,
         which joins an empty list and renders `"."` -- a bare period in the panel whose job
         is to be believed (rule 21). Pinned as an exact string because the failure is that
@@ -764,7 +833,7 @@ class TestRatingGate:
         assert gate.evaluate(facts).blocked is False  # Absent: nothing to keep it on
 
         result = gate.evaluate(
-            replace(facts, **{unreadable: Unknown(reason="dataset down", source="imdb")})
+            replace(facts, **{unreadable: Unknown(reason="dataset down", source="imdb")})  # type: ignore[arg-type]
         )
 
         assert result.blocked is True
@@ -878,7 +947,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
     The window here is the shipped 365 days and the floor the shipped 3.
     """
 
-    gate = ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365))
+    gate = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
 
     def test_a_history_shorter_than_the_window_cannot_report_nobody(self) -> None:
         """The bug, stated as the scan met it: a mirror three months deep, a title nobody
@@ -931,9 +1000,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         outright raises, which no test noticed either. Rule 21: an operator reading
         "1 people watched it" is reading a bug, in the panel whose job is to be believed.
         """
-        gate = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=floor, window_days=365)
-        )
+        gate = ServerPopularityGate(GateConfig(threshold=floor, window_days=365))
 
         result = gate.evaluate(_popularity_facts(count, Known(value=400.0, source="t")))
 
@@ -948,9 +1015,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         deleting an unwatched title and protecting the entire library. Nothing drove that
         substitution, because every other case here carries a ``Known`` count.
         """
-        gate = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=1, window_days=365)
-        )
+        gate = ServerPopularityGate(GateConfig(threshold=1, window_days=365))
 
         result = gate.evaluate(_popularity_facts(None, Known(value=400.0, source="t"), absent=True))
 
@@ -993,12 +1058,12 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         # Un-overridden, at a score that would otherwise condemn twice over.
         assert _verdict(evaluation, 100, 10_000, policy) == "abstain"
         # And the owner may still settle it by hand.
-        assert _verdict(evaluation, 100, 10_000, policy, override="reap") == "condemn"
+        assert _hand_reap(evaluation, 100, policy) == "condemn"
 
     def test_enough_watchers_still_protect_on_a_short_history(self) -> None:
         """The lower bound only ever *understates*. Three people seen inside the covered
         part did watch it within the window, so the protection is earned and fires -- and
-        keeps its own wording, which the review chip parses (``routes._kept_phrase``)."""
+        keeps its own wording, which the review chip parses (``review._kept_phrase``)."""
         result = self.gate.evaluate(_popularity_facts(3, Known(value=90.0, source="t")))
 
         assert result.outcome == PROTECT
@@ -1058,9 +1123,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         """The operator's remedy, and proof the check is against the *configured* window
         rather than a fixed span: narrowing the window to what the mirror holds gets a
         real answer back."""
-        gate = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=90)
-        )
+        gate = ServerPopularityGate(GateConfig(threshold=3, window_days=90))
         result = gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
 
         assert result.blocked is False
@@ -1108,9 +1171,9 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         ABSTAIN blocked=True on exactly these Facts while the operator's own rule returned
         ABSTAIN blocked=False. One bound, one answer, whichever lane asks."""
         item = _popularity_facts(0, Known(value=90.0, source="t"))
-        built_in = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=1, window_days=self.WINDOW)
-        ).evaluate(item)
+        built_in = ServerPopularityGate(GateConfig(threshold=1, window_days=self.WINDOW)).evaluate(
+            item
+        )
         authored = self._protect("recent_watchers", 1).evaluate(item)
 
         assert built_in.blocked is authored.blocked is True
@@ -1462,7 +1525,7 @@ def _observed_fields() -> tuple[str, ...]:
     need. Out by choice: ``_GATE_ONLY``.
     """
     names = [f.name for f in dataclass_fields(Facts) if f.name not in ("title", "ratings")]
-    probe = Facts(title="probe", **{n: Known(value=n, source="probe") for n in names})
+    probe = Facts(title="probe", **{n: Known(value=n, source="probe") for n in names})  # type: ignore[arg-type]
     readable = {
         obs.value for spec in fields.BY_KEY.values() if isinstance(obs := spec.read(probe), Known)
     }
@@ -1498,7 +1561,7 @@ class TestLosingEvidenceCannotCondemn:
         """
         probe = Facts(
             title="probe",
-            **{
+            **{  # type: ignore[arg-type]
                 f.name: Known(value=f.name, source="probe")
                 for f in dataclass_fields(Facts)
                 if f.name not in ("title", "ratings")
@@ -1531,7 +1594,7 @@ class TestLosingEvidenceCannotCondemn:
 
         for field_name in _OBSERVED_FIELDS:
             degraded = _full_score(
-                replace(item, **{field_name: Unknown(reason="outage", source="test")})
+                replace(item, **{field_name: Unknown(reason="outage", source="test")})  # type: ignore[arg-type]
             ).value
 
             assert degraded <= baseline + 1e-9, (
@@ -1596,7 +1659,7 @@ class TestLosingEvidenceCannotCondemn:
 
         for field_name in _OBSERVED_FIELDS:
             degraded = _full_score(
-                replace(item, **{field_name: Unknown(reason="outage", source="test")})
+                replace(item, **{field_name: Unknown(reason="outage", source="test")})  # type: ignore[arg-type]
             ).coverage
 
             assert degraded <= baseline + 1e-9, (

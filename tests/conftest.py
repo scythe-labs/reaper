@@ -14,12 +14,17 @@ to offline cracking.
 every ``create_app`` lifespan pays once, and which 495 tests reach through a ``client``
 fixture. See :func:`pytest_configure`, which is where it is applied and why.
 
-**No developer state, no network.** The autouse fixture below keeps every test off the
-developer's real ``.env``/``.env.local`` and off the network, whether or not the test
-boots the app. Without it, any test that constructs ``Settings`` silently reads the
-repo-root ``.env`` (copying real service keys into throwaway test databases), and any
-test that starts the app lifespan seeds instances from ``.env.local`` and kicks off the
-~280 MB IMDb dataset download -- slow, flaky, and different from CI.
+**No developer state.** The ``_hermetic`` fixture below keeps every test off the
+developer's real ``.env``/``.env.local``, whether or not the test boots the app. Without
+it, any test that constructs ``Settings`` silently reads the repo-root ``.env`` (copying
+real service keys into throwaway test databases), and any test that starts the app
+lifespan seeds instances from ``.env.local`` and kicks off the ~280 MB IMDb dataset
+download -- slow, flaky, and different from CI.
+
+**No network.** A separate guard, because that one blocks no sockets and said it did for
+long enough that seven tests were resolving a real hostname behind it. See
+:class:`NetworkReached`: name resolution and connection to anything but the loopback are
+refused, and the test is failed in teardown even if its own code caught the refusal.
 
 **No real backoff.** ``asyncio.sleep`` is collapsed to a single event-loop tick before
 any test runs (see below). Nothing in the suite asserts on real elapsed time, so paying
@@ -27,14 +32,22 @@ the real delay for a client retry or a poll loop only burns wall clock for no si
 """
 
 import asyncio
+import contextvars
 import logging
+import socket
 import sys
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
+from typing import Any, NoReturn
 
 import pytest
 import structlog
+from fastapi.testclient import TestClient
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
+from sqlalchemy import Engine
+from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # Private, because structlog exposes no public name for the proxy ``get_logger`` returns
 # and no public way to un-freeze one. ``tests/test_capturable_loggers.py`` drives the real
@@ -51,7 +64,12 @@ from reaper.auth.ratelimit import (
     recover_throttle,
 )
 from reaper.config import Settings
+from reaper.db.base import Base
+from reaper.db.session import create_engine as create_async_engine
+from reaper.db.session import create_session_factory
 from reaper.logging import _NOISY_LOGGERS
+from reaper.main import create_app
+from tests._auth import login
 
 _passwords._hasher = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),))
 
@@ -101,8 +119,209 @@ def pytest_configure() -> None:
     In ``pytest_configure`` rather than at module level, so ``import tests.conftest`` cannot
     apply it either. It cannot reach production by any route: ``tests/`` is outside the wheel,
     there is no root ``conftest.py``, and nothing in ``src/`` imports this file.
+
+    The network guard below installs here for the same reason, plus one of its own: a
+    session-scoped fixture is set up before any function-scoped one, so a guard that were a
+    fixture would not be watching while such a fixture booted an app.
     """
     crypto._derive_fernet_key = _cheap_derive_fernet_key
+    socket.getaddrinfo = _guarded_getaddrinfo
+    for name in _real_resolvers:
+        setattr(socket, name, _guarded_resolver(name))
+    socket.socket.connect = _guarded_connect  # type: ignore[assignment]
+    socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[assignment]
+    socket.socket.sendto = _guarded_sendto  # type: ignore[assignment]
+    socket.socket.sendmsg = _guarded_sendmsg  # type: ignore[assignment]
+
+
+# --------------------------------------------------------------------------------------
+# No network
+#
+# Measured over the whole suite before this landed, which is the population the guard is
+# reconciled against rather than a shape it was assumed to have:
+#
+#   2,023 socketpair() calls and the 4,046 AF_UNIX sockets they are made of, across 1,674
+#   tests -- every one asyncio's loop self-pipe, which TestClient builds per ``with`` block
+#   on a worker thread. A guard that refuses sockets rather than destinations breaks all of
+#   them, which is why this one hooks neither ``socket()`` nor ``bind()``.
+#
+#   4 AF_INET sockets and 2 connects, all loopback, all in test_launcher's TestLoopbackGuard,
+#   which listens on a port and connects to it to prove the port-in-use check reads it.
+#
+#   9 getaddrinfo calls: 2 loopback from that same pair of tests, and 7 to a real public
+#   hostname, from seven tests whose Plex link flow ends in a library autosync that goes over
+#   plexapi. respx mocks httpx; plexapi is ``requests``, so those seven really resolved a name
+#   over the network on every run, and their failure was swallowed on purpose.
+#
+# So getaddrinfo is where a hook sees anything at all, and connect is here for the case DNS
+# never reaches: a literal address, which ``socket.connect`` takes without resolving.
+# --------------------------------------------------------------------------------------
+
+#: Every host a test may reach. `None` and `""` are what a wildcard bind resolves, `0.0.0.0`
+#: and `::` are the wildcard itself: all four are a listener, which reaches nobody.
+_LOOPBACK_HOSTS = frozenset(
+    {None, "", "localhost", "127.0.0.1", "::1", "0.0.0.0", "::"}  # noqa: S104 -- not a bind
+)
+
+#: Every attempt the guard refused during the current test. Read in teardown, because the
+#: raise alone is not enough -- see `NetworkReached`.
+_network_attempts: list[str] = []
+
+#: Which test a refusal belongs to. A `ContextVar` rather than a plain global because a refusal
+#: can happen on a thread: `asyncio.to_thread` copies the context, so a worker is attributed to
+#: the test that spawned it, and a bare `threading.Thread` starts with an empty one and reads
+#: the default. Either is honest. A plain global reads whatever test is running NOW, which for
+#: a thread outliving its test is a different test's name -- a red run pointing at innocent code.
+_owner: contextvars.ContextVar[str] = contextvars.ContextVar("owner", default="<collection>")
+
+_real_getaddrinfo = socket.getaddrinfo
+_real_connect = socket.socket.connect
+_real_connect_ex = socket.socket.connect_ex
+_real_sendto = socket.socket.sendto
+_real_sendmsg = socket.socket.sendmsg
+#: The resolver siblings. Each answers the same question `getaddrinfo` does and each reaches
+#: the same resolver, so guarding one and not the rest is rule 72's own failure mode -- all
+#: five escaped a live probe of the first version of this guard.
+_real_resolvers = {
+    name: getattr(socket, name)
+    for name in ("gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo", "getfqdn")
+}
+
+
+class NetworkReached(BaseException):
+    """A test reached for the network.
+
+    **Deliberately off ``Exception``**, which is the whole reason this guard works. The code
+    it fires inside catches broadly and on purpose: ``PlexClient._connect`` maps every failure
+    to ``PlexError`` so a caller has one error to handle, and ``_sync_libraries_after_link``
+    swallows every exception because its docstring promises the sign-in never strands on a
+    failed library refresh. Both are right. But a guard raising an ordinary exception into
+    them is caught, logged, and the test goes green having reached the network anyway -- which
+    is exactly how seven tests spent a DNS round trip each without anyone noticing.
+
+    The teardown assertion below is the second half, for the case something catches
+    ``BaseException`` or the attempt happens on a thread whose exception nobody re-raises.
+
+    **What this guard does NOT cover**, measured by driving each one rather than reasoned
+    about. ``_socket.socket.connect`` is the C base class and cannot be patched, so code
+    reaching past ``socket.socket`` for it connects; nothing in the tree or the environment
+    does. A raw ``SOCK_RAW``/``AF_PACKET`` socket needs root and is out of scope. And a
+    subprocess has its own address space, so the two places that shell out are unguarded:
+    ``test_launcher.py`` patches ``subprocess.run`` and launches nothing, and
+    ``test_repo_hygiene.py`` runs ``git`` against the checkout on disk. Neither reaches the
+    network, and a third that did would go unseen here.
+    """
+
+
+def _refuse(what: str, target: object) -> NoReturn:
+    attempt = f"{what} {target!r}"
+    _network_attempts.append(f"{_owner.get()}: {attempt}")
+    raise NetworkReached(
+        f"a test reached the network: {attempt}\n"
+        "Tests are hermetic. Mock the client (respx for httpx) or stub the seam -- and note "
+        "that respx does NOT cover plexapi, which speaks requests."
+    )
+
+
+def _host_of(address: object) -> object:
+    """The host half of a socket address, for every shape ``connect`` accepts.
+
+    AF_INET is ``(host, port)`` and AF_INET6 is ``(host, port, flowinfo, scope_id)``. Anything
+    else is handed back whole and refused on its own account, which is the fail-closed
+    direction: this used to return ``None`` for a bare `str`/`bytes` -- an unwanted second
+    AF_UNIX exemption, since ``None`` is on the allowlist -- and to raise ``TypeError`` out of
+    the guard on an unhashable address like ``["192.0.2.1", 80]``, which is a crash where a
+    refusal belongs.
+    """
+    if isinstance(address, tuple) and address:
+        return address[0]
+    return address
+
+
+def _is_allowed(host: object) -> bool:
+    """Whether ``host`` is somewhere a test may reach.
+
+    Membership, never a prefix or a parse: **every loopback spelling outside the seven exact
+    strings is refused**, including real ones (`127.0.0.2`, `127.1`, `2130706433`, `[::1]`,
+    `LOCALHOST`, a trailing-dot `localhost.`, `b"127.0.0.1"`). That is the fail-closed
+    direction and it is written down here because the failure it produces reads as a network
+    violation: a test that genuinely wants a second loopback address adds it above, on purpose.
+    """
+    try:
+        return host in _LOOPBACK_HOSTS
+    except TypeError:  # an unhashable address is not on any allowlist
+        return False
+
+
+def _guarded_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
+    if not _is_allowed(host):
+        _refuse("resolved", host)
+    return _real_getaddrinfo(host, port, *args, **kwargs)
+
+
+def _guarded_resolver(name: str) -> Any:
+    """One of `getaddrinfo`'s siblings, guarded on its first argument."""
+    real = _real_resolvers[name]
+
+    def guarded(host: Any = None, *args: Any, **kwargs: Any) -> Any:
+        if not _is_allowed(_host_of(host)):
+            _refuse(f"resolved via {name}", host)
+        return real(host, *args, **kwargs) if host is not None else real()
+
+    return guarded
+
+
+def _guarded_connect(self: socket.socket, address: Any) -> None:
+    if self.family != socket.AF_UNIX and not _is_allowed(_host_of(address)):
+        _refuse("connected to", address)
+    return _real_connect(self, address)
+
+
+def _guarded_connect_ex(self: socket.socket, address: Any) -> int:
+    if self.family != socket.AF_UNIX and not _is_allowed(_host_of(address)):
+        _refuse("connected to", address)
+    return _real_connect_ex(self, address)
+
+
+def _guarded_sendto(self: socket.socket, *args: Any) -> int:
+    # UDP reaches a host with no connect and no lookup, so the address arrives here instead.
+    # Driven against the first version of this guard, `sendto` put five bytes on the wire.
+    if self.family != socket.AF_UNIX and args and not _is_allowed(_host_of(args[-1])):
+        _refuse("sent to", args[-1])
+    return _real_sendto(self, *args)
+
+
+def _guarded_sendmsg(self: socket.socket, *args: Any) -> int:
+    if self.family != socket.AF_UNIX and len(args) > 3 and not _is_allowed(_host_of(args[3])):
+        _refuse("sent to", args[3])
+    return _real_sendmsg(self, *args)
+
+
+@pytest.fixture(autouse=True)
+def _no_network(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Fail the test that reached out, even if its own code swallowed the refusal.
+
+    **Nothing is cleared on the way in**, deliberately. A refusal during collection, or on a
+    thread that outlived the test that started it, lands in the list with no teardown of its
+    own left to read it -- so the next teardown reports it, and each line carries the test it
+    belongs to rather than the one that happened to be running.
+    """
+    _owner.set(request.node.nodeid)
+    yield
+    attempts, _network_attempts[:] = list(_network_attempts), []
+    mine = request.node.nodeid
+    assert not attempts, (
+        "the network was reached:\n"
+        + "\n".join(
+            f"  {a}" if not a.startswith(f"{mine}: ") else f"  {a[len(mine) + 2 :]}"
+            for a in attempts
+        )
+        + "\n\nIt was refused, so nothing left the machine. This runs in teardown so that a "
+        "refusal\nsomething caught on the way out still fails the test rather than being "
+        "logged and\nforgotten -- so a line above naming ANOTHER test is that test's fault, "
+        "reported here\nbecause its own teardown had already run. Mock the client or stub the "
+        "seam: respx\ncovers httpx and does NOT cover plexapi, which speaks requests."
+    )
 
 
 _real_async_sleep = asyncio.sleep
@@ -276,7 +495,12 @@ def _restore_logging() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every test is hermetic: no ``.env`` reads, no startup seeding, no network.
+    """Every test is hermetic: no ``.env`` reads, no startup seeding.
+
+    Not the network, which this fixture never touched however it read (rule 7/24). The
+    ``_no_network`` guard above is what holds that, and it is a separate mechanism because
+    this one is about what the app is *configured* from and that one about where a socket is
+    allowed to go.
 
     * ``Settings`` never reads the developer's dotenv files -- ``env_file`` is cleared
       for the duration of the test, so ``Settings(data_dir=tmp_path, ...)`` gets exactly
@@ -296,3 +520,74 @@ def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
     recover_throttle.reset()
     password_throttle.reset()
     argon2_gate.reset()
+
+
+# --------------------------------------------------------------------------------------
+# Booting a throwaway install
+#
+# Four fixtures, layered, because the boot preamble was written by hand in 25 files: the
+# sync boot 44 times, the async boot 27, and ``TestClient(create_app(...)) + login(...)``
+# 32, seven of them byte for byte. What varies between those files is what they SEED, and
+# that is what a file-local ``client`` should be left holding -- so these take the boot and
+# nothing else, and a file with its own seeding overrides ``client`` and asks for
+# ``settings`` or ``sync_db`` instead of rewriting the four lines above it.
+#
+# **Every one of them is function-scoped, and that is load-bearing rather than a default.**
+# ``_hermetic`` above is function-scoped and takes a function-scoped ``monkeypatch``, so
+# anything higher-scoped is set up BEFORE it: measured, such a fixture sees the real
+# ``catch_up_on_startup`` and ``env_file`` still pointing at the developer's dotenv files,
+# and an app booted there reads their credentials and starts the IMDb download (rule 37).
+# The one fixture in the suite that is session-scoped, ``test_openapi_tags.schema``, applies
+# those three patches itself for exactly this reason.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def settings(tmp_path: Path) -> Settings:
+    """A throwaway install rooted at ``tmp_path``, with its schema already created.
+
+    The schema is made here rather than by whatever opens the database first, because the
+    app's own lifespan reads it on the way up -- it seeds instances and checks a local admin
+    exists -- so a ``create_app`` against an empty file fails before any test body runs.
+    """
+    resolved = Settings(data_dir=tmp_path, secret_key="test-key")
+    engine = sa_create_engine(resolved.sync_database_url)
+    Base.metadata.create_all(engine)
+    engine.dispose()
+    return resolved
+
+
+@pytest.fixture
+def sync_db(settings: Settings) -> Iterator[Engine]:
+    """A sync engine on that install, for a test that seeds rows before the app boots."""
+    engine = sa_create_engine(settings.sync_database_url)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+async def async_factory(settings: Settings) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """The app's own session factory on that install, built the way production builds it.
+
+    ``create_session_factory`` sets ``expire_on_commit=False``, so a row read back through
+    the session that wrote it comes out of the identity map without touching the database.
+    A test asserting on durable state opens a SECOND session from this factory (#340).
+    """
+    engine = create_async_engine(settings)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield create_session_factory(engine)
+    await engine.dispose()
+
+
+@pytest.fixture
+def client(settings: Settings) -> Iterator[TestClient]:
+    """A signed-in client on that install, with the CSRF header defaulted.
+
+    Signed in, because the API is behind the auth gate and almost every test that reaches a
+    route only cares that it is through. A test about the gate itself builds its own client
+    on ``settings`` and stays out.
+    """
+    with TestClient(create_app(settings)) as booted:
+        login(booted, settings)
+        yield booted

@@ -61,8 +61,8 @@ export type A11yFinding = axe.Result & {
  *
  * "Found" is both buckets. axe files a rule it cannot settle under `incomplete` rather than
  * `violations`, and under jsdom that is where a whole class of REAL failures lands:
- * `aria-hidden-focus` -- a focusable element inside `aria-hidden`, which is the invariant
- * `Settings.tsx` maintains by hand at every one of the app's `aria-hidden` sites -- comes back
+ * `aria-hidden-focus` -- a focusable element inside `aria-hidden`, which is the invariant the
+ * app maintains by hand at every one of its `aria-hidden` sites -- comes back
  * `incomplete` here and `violations` in a browser. A gate reading only `violations` therefore
  * passes `<div aria-hidden="true"><button>Reap</button></div>`, a serious WCAG 4.1.2 failure,
  * without a word. So the deferred set fails the test too, and a caller that has looked at one
