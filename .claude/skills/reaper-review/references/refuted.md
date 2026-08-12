@@ -568,3 +568,24 @@ next to, and narrowing `pairs` to match `progress` would delete the protection w
 tidy-up. Now asserted end to end in
 `test_season_scan.py::test_a_dropped_position_holds_the_season_rather_than_clearing_it` (#485),
 which goes red under exactly that mutation.
+
+**`tests/test_calibration.py` and `tests/test_list_config.py` — two test files leave SQLite
+connections for the garbage collector to close, so four `ResourceWarning: unclosed database` lines
+print under a green run (#576).** Stale rather than wrong: both halves were true when filed and
+neither site exists now. `tests/test_calibration.py` was deleted with `engine/calibration.py` in
+the simplification pass, and `TestDecodingForTheSync::test_a_body_that_will_not_parse_is_dropped_
+not_guessed` was rewritten onto the `session` fixture and opens no raw connection. Measured rather
+than read, which is the only way to tell a fixed leak from one whose timing moved: turning the
+warning into an error, `uv run pytest tests/test_list_config.py -W error::ResourceWarning` exits
+0, 65 passed. The original report already noted the warning surfaced on one branch and not on
+`dev` from byte-identical files, so a re-raise on a timing accident is the failure mode this row
+exists to stop. Pinned at `6d06f07`.
+
+**`src/reaper/engine/fields.py:_compare` — a stored rule whose `contains` target is whitespace
+only folds to `""`, and every value contains the empty string, so the rule matches everything.**
+Refuted: no stored body can reach `_compare` carrying one. Rule 108's non-empty check runs from a
+`model_validator(mode="after")` on `PolicyBody`, so it fires on every `PolicyBody.model_validate`
+including the load out of the database, not only on the write path that first accepted the value.
+A body holding a whitespace-only target is refused on read before any comparison happens. Raised
+by the `diff` lane while reviewing the fold fix (#657) and refuted by the `safety` lane in the
+same pass. Pinned at `bc11ca3`.
