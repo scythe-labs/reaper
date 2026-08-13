@@ -401,7 +401,8 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
   six places in `src/`: `engine/signals.py`, `engine/policy.py` (three times), `engine/gates.py`,
   and `api/review.py`. Read it before touching any of them: it is also the only place the rewatch
   curve is written down, now that the engines that measured it are gone.
-- The one live plan: `docs/I18N_PLAN.md`, a proposal with nothing landed and no stage committed
-  to. `docs/README.md`'s map is the list to correct.
+- The live plans: `docs/I18N_PLAN.md` (a proposal, nothing landed, no stage committed to) and
+  `docs/REWATCH_PLAN.md` (approved for #554, two stages, nothing landed yet). `docs/README.md`'s
+  map is the list to correct.
 - `docs/history/` — frozen: the retired plan narratives and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.
