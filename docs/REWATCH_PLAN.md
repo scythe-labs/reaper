@@ -257,8 +257,13 @@ estimate raise a score or flip a verdict toward condemn.
 
 ## TV, deferred behind its own validation
 
-Neither stage ships a TV answer, because none was validated. What is already known, recorded
-for the follow-up:
+**Validated 2026-08-13.** The period-based, replay-discriminated formulation (two or more
+replay periods, last qualified play within 730 days) cleared the lift bar at four cutoffs
+on the harness below; `docs/LEARNINGS.md` holds the shapes and the one named harness limit
+(matched-control lift compresses near a shared ceiling). A TV keep is unblocked. It ships
+as its own stage with its own mockups and PR; neither shipped stage moves for it.
+
+What was already known before that run, kept because the follow-up builds on it:
 
 - Episode plays cluster into show-level viewing periods at a 30-day window, which correctly
   bridges a weekly airing run into one period.
