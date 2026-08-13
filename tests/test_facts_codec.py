@@ -66,6 +66,8 @@ def _facts(draw: st.DrawFn) -> Facts:
         show_ended=draw(_obs(st.booleans())),
         rewatch_viewings=draw(_obs(st.integers(0, 5_000))),
         rewatch_last_play_days=draw(_obs(st.floats(0, 9000, allow_nan=False))),
+        rewatch_cohort_n=draw(_obs(st.integers(0, 5_000))),
+        rewatch_cohort_k=draw(_obs(st.integers(0, 5_000))),
         ratings=tuple(draw(st.lists(_RATING, max_size=5))),
     )
 

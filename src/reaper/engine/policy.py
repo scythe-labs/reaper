@@ -463,6 +463,40 @@ class PolicyBody(Frozen):
             object.__setattr__(self, "gates", kept)
         return self
 
+    @model_validator(mode="after")
+    def _rewatch_odds_row(self) -> Self:
+        """A movie body always carries the rewatch-odds row; a TV body never does.
+
+        The append is what puts the new protection's switch in front of an operator whose
+        body was stored before it existed: rows render from the body's own gate list, so
+        without this a pre-upgrade body simply never shows the control. Appended DISABLED at
+        the shipped starting percentage, so it changes no verdict until the operator turns it
+        on -- not a repair, and no degrade, by the same reasoning as the retirement above:
+        nothing was protecting, so nothing was withdrawn. It moves ``policy_hash`` for every
+        stored movie body (rule 113 voids pre-upgrade approvals) and ``scoring_hash``, and
+        leaves ``evidence_hash`` alone, exactly like the drop above.
+
+        The strip is rule 38's arm: the season lane freezes the gate's two cohort facts
+        ``Absent``, so on a TV body the gate could never fire and a switch for it would be a
+        protection the operator can enable that keeps nothing. The editor never offers it
+        there; this catches a hand-crafted body arriving through the API or a restore.
+        """
+        if self.media_type == "movie":
+            if all(g.gate is not GateId.REWATCH_ODDS for g in self.gates):
+                object.__setattr__(
+                    self,
+                    "gates",
+                    (
+                        *self.gates,
+                        GateSetting(gate=GateId.REWATCH_ODDS, enabled=False, threshold=25),
+                    ),
+                )
+        else:
+            kept = tuple(g for g in self.gates if g.gate is not GateId.REWATCH_ODDS)
+            if len(kept) != len(self.gates):
+                object.__setattr__(self, "gates", kept)
+        return self
+
     media_type: Literal["movie", "tv"] = "movie"
 
     condemn_at: int = Field(ge=1, le=100)
@@ -1141,6 +1175,10 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         # other than the person who asked". In a general policy it would degenerate
         # into protecting anything ever played by anyone.
         GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365),
+        # Off by default: it overlaps the dormancy floor above, and its threshold only
+        # means something once the operator has read their own fitted ladder
+        # (docs/REWATCH_PLAN.md, stage 2). 25 is the shipped starting percentage.
+        GateSetting(gate=GateId.REWATCH_ODDS, enabled=False, threshold=25),
     ),
     signals=(
         # Dormancy dominates, and the numbers come from the measured rewatch curve

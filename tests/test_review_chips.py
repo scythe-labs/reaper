@@ -100,6 +100,12 @@ _NO_PANEL_ROUTE = {
         "and a detail string and builds no candidate, stores no Explanation and touches no "
         "snapshot, so nothing carries this reason to a panel"
     ),
+    "snapshot.NO_REWATCH_ESTIMATE_REASON": (
+        "rewatch_cohort_n/rewatch_cohort_k (#554 stage 2) feed only the stored explanation's "
+        "rewatch_odds context block, read by its typed `state` in "
+        "{measured, thin, no_history}; no gate reads either field, so this reason never "
+        "reaches a 'could not check {what}: {reason}' detail"
+    ),
 }
 
 #: Panel copy whose backend producer is gone, and why the entry stays. ``CAUSE_COPY`` renders
@@ -1590,7 +1596,13 @@ class TestTheMatchStatusVocabulary:
         # and the popularity counts already take, so all four reuse `no_key_reason` and
         # `watch_blind_reason` rather than naming a new constant -- no new coverage gap,
         # just two more call sites reading the same two named reasons.
-        assert walked == 43, (
+        # 43 -> 45: the rewatch cohort fields (#554 stage 2) in snapshot.build_facts. Both
+        # take a single Unknown arm covering every other reason at once (no fit, dormancy
+        # Unknown, past the fitted range, a dropped bucket, withheld by reach), named
+        # `NO_REWATCH_ESTIMATE_REASON` -- two new call sites, one new reason constant,
+        # exempted from CAUSE_COPY in `_NO_PANEL_ROUTE` above (it feeds only the
+        # `rewatch_odds` context block's typed `state`, never a gate's blocked detail).
+        assert walked == 45, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."

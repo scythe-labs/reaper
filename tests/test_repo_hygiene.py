@@ -6458,6 +6458,7 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
         "bounded: both take a subquery, so nothing is bound at all",
     ),
     "src/reaper/services/retention.py::sweep_old_snapshots": (1, "bounded: SWEEP_BATCH ids"),
+    "src/reaper/services/rewatch.py::movie_rewatch_outcomes": (1, "chunked"),
     "src/reaper/services/rewatch.py::movie_rewatch_stats": (1, "chunked"),
     "src/reaper/services/season_scan.py::season_watch_stats": (3, "chunked"),
     "src/reaper/services/snapshot.py::record_first_flagged_bulk": (1, "chunked"),

@@ -28,6 +28,7 @@ Two outcomes, and a third thing that is not an outcome:
 from __future__ import annotations
 
 import enum
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
@@ -93,6 +94,11 @@ class GateId(enum.StrEnum):
     """The most important gate. Nothing under the dormancy floor may be deleted at
     all, whatever else it scores. See MinDormancyGate."""
 
+    REWATCH_ODDS = "rewatch_odds"
+    """Opt-in, movies only: keep anything whose dormancy cohort gets watched again at or
+    above the operator's percentage. See RewatchOddsGate; a TV body never carries the row
+    (``PolicyBody._rewatch_odds_row``)."""
+
     SEASON_PROGRESSION = "season_progression"
     """Not authorable in a policy. The engine emits it from the season judgment
     (``season_evidence.guard_result``); no policy row builds it."""
@@ -124,6 +130,7 @@ POLICY_AUTHORABLE_GATES: frozenset[GateId] = frozenset(
         GateId.SERVER_POPULARITY,
         GateId.DATA_HORIZON,
         GateId.MIN_DORMANCY,
+        GateId.REWATCH_ODDS,
     }
 )
 
@@ -412,6 +419,38 @@ class Facts:
 
     Defaulted like the fields above; a stored snapshot predating this field thaws as
     ``Unknown``, never as a false "checked, nothing there" (rule 104)."""
+
+    # --- rewatch cohort (#554 stage 2) ---------------------------------------------------
+
+    rewatch_cohort_n: Observation[int] = _UNSET
+    """How many candidates, in the same dormancy block as this item, were tracked by the
+    Stage 2 rewatch-probability fit -- the block's cohort size.
+
+    Frozen raw, not judged here: the display floor and the withhold are decided by
+    consumers against ``services.rewatch.BLOCK_FLOOR_N`` and ``block_withheld``, so a thin
+    block freezes ``Known`` at its small ``n`` rather than pretending it was not measured.
+    That is what lets the opt-in protective hold (decided in the engine by the gate that
+    reads it) and the simulator replay exactly against these frozen counts, the same reason
+    ``rewatch_last_play_days`` above is frozen rather than pre-judged
+    (``docs/REWATCH_PLAN.md``, Stage 2).
+
+    Known only when the current dormancy is Known AND the fit found a non-withheld block
+    for it; Unknown otherwise (no key, watch-blind, dormancy Unknown, past the fitted range,
+    a dropped bucket, or withheld by reach) -- never Absent, unlike the stage 1 pair above:
+    a movie candidate this scan measured always has an opinion about its own dormancy block,
+    even when that opinion is "cannot say" (``services.snapshot.build_facts``). The season
+    lane sets this Absent instead: it ships no rewatch-probability estimate at all
+    (``services.season_scan.build_season_facts``).
+
+    Defaulted like the fields above, and read the same way: anything but ``Known`` never
+    condemns and never argues the hold (rule 104)."""
+
+    rewatch_cohort_k: Observation[int] = _UNSET
+    """How many of ``rewatch_cohort_n`` were watched again inside the fit's outcome window --
+    the block's watched-again count. Same block, same fit, same freeze as
+    ``rewatch_cohort_n`` immediately above, including its Known/Unknown/Absent states; the
+    rate is ``k / n``, derived and never stored separately (``docs/REWATCH_PLAN.md``,
+    Stage 2)."""
 
     ratings: tuple[Rating, ...] = ()
     """Every interpretable rating the scan froze for this item, one per source (IMDb,
@@ -859,6 +898,86 @@ class MinDormancyGate:
         )
 
 
+#: The cohort size under which a fitted rewatch block displays no number and can never fire
+#: the hold (``docs/REWATCH_PLAN.md``, stage 2). It lives here rather than in
+#: ``services/rewatch.py`` because ``RewatchOddsGate`` below reads it and an engine module
+#: may not import a service; the service re-exports it for its own consumers.
+REWATCH_BLOCK_FLOOR_N = 30
+
+
+def wilson_upper(k: int, n: int) -> float:
+    """The Wilson 95% upper bound of ``k/n``, as a fraction.
+
+    The hold compares this rather than the point rate so a small library never loses
+    protection to sampling noise; it converges to ``k/n`` as ``n`` grows. One derivation,
+    read by the gate below and by the policy page's consequence echo (``api.policy``)."""
+    if n <= 0:
+        return 0.0
+    z = 1.96
+    p = k / n
+    denom = 1 + z * z / n
+    center = p + z * z / (2 * n)
+    spread = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (center + spread) / denom
+
+
+@dataclass(frozen=True, slots=True)
+class RewatchOddsGate:
+    """Keep anything whose kind gets watched again at or above the operator's percentage.
+
+    Movies only, opt-in, and the one gate that reads the fitted rewatch curve: the item's
+    frozen cohort (``Facts.rewatch_cohort_n`` / ``rewatch_cohort_k``) is its merged dormancy
+    block from the per-scan fit, and the comparison is the Wilson 95% upper bound of that
+    block's rate against ``config.threshold`` percent.
+
+    **An unreadable cohort abstains without blocking, and that is a documented deviation**
+    from the fail-closed ``_blocked`` arm every other gate takes (rule 143's corollary,
+    owned here in writing): the plan states a withheld block never blocks and never
+    condemns, because on a shallow mirror most of the library has no measurable cohort and
+    an opt-in extra protection must not amber-flag all of it. The items whose history is
+    genuinely unreadable are already blocked by the dormancy and popularity gates reading
+    the same sources, so failing quiet here withdraws no cover (``docs/REWATCH_PLAN.md``,
+    stage 2, "The hold").
+    """
+
+    config: GateConfig
+    id: GateId = GateId.REWATCH_ODDS
+
+    def evaluate(self, facts: Facts) -> GateResult:
+        n_obs = facts.rewatch_cohort_n
+        k_obs = facts.rewatch_cohort_k
+        if isinstance(n_obs, Unknown) or isinstance(k_obs, Unknown):
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                detail="Not enough watch history to say how often titles like this get watched.",
+            )
+        if not (isinstance(n_obs, Known) and isinstance(k_obs, Known)):
+            # The season lane, and any hand-built Facts: the fit ships no TV answer, so
+            # there is genuinely nothing to compare (rule 93's Absent, not a failed read).
+            return GateResult(self.id, ABSTAIN, detail="Does not apply here.")
+        n = int(n_obs.value)
+        k = int(k_obs.value)
+        if n < REWATCH_BLOCK_FLOOR_N:
+            return GateResult(self.id, ABSTAIN, detail="Too few titles like this to say.")
+        floor = self.config.threshold
+        if wilson_upper(k, n) * 100 >= floor:
+            # Lowercase fragment: it renders in the "Protections that fired" list.
+            return GateResult(
+                self.id,
+                PROTECT,
+                detail=f"titles like this keep getting watched: {k} of {n} within a year",
+            )
+        return GateResult(
+            self.id,
+            ABSTAIN,
+            detail=(
+                f"Of {n} titles like this, {k} were watched again within a year, "
+                f"under the {floor}% you keep."
+            ),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class DataHorizonGate:
     """Fail closed when we cannot say how long an item has gone unwatched.
@@ -982,6 +1101,7 @@ def evaluate_all(gates: Sequence[Gate], facts: Facts) -> Evaluation:
 __all__ = [
     "ABSTAIN",
     "PROTECT",
+    "REWATCH_BLOCK_FLOOR_N",
     "DataHorizonGate",
     "Evaluation",
     "Facts",
@@ -993,7 +1113,9 @@ __all__ = [
     "MinDormancyGate",
     "RatingFloorGate",
     "RatingRule",
+    "RewatchOddsGate",
     "ServerPopularityGate",
     "StreamingNowGate",
     "evaluate_all",
+    "wilson_upper",
 ]

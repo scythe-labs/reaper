@@ -767,6 +767,35 @@ class ConditionIn(BaseModel):
     value: int | str | bool
 
 
+class RewatchOddsBlockOut(BaseModel):
+    """One measured rung of the fitted rewatch ladder (#554 stage 2)."""
+
+    lo_days: float
+    hi_days: float | None
+    n: int
+    k: int
+    upper_bound_pct: float
+    """The Wilson 95% upper bound of k/n, in percent: the number the hold compares against
+    the operator's threshold, served so the echo can never disagree with the gate."""
+    items: int
+    """Movie candidates of the latest scan whose current dormancy falls in this rung: what
+    the consequence echo counts."""
+
+
+class RewatchOddsFitOut(BaseModel):
+    """The latest scan's fitted rewatch curve, for the Policy page's ladder and echo.
+
+    Aggregated from the per-candidate ``rewatch_odds`` explanation blocks of the newest
+    snapshot, so the page states exactly what the scan froze (rule 104: the fit is never
+    recomputed a second way here). Empty ``blocks`` with ``total_items == 0`` means no
+    scan has run on this build yet."""
+
+    blocks: list[RewatchOddsBlockOut]
+    thin_items: int
+    no_history_items: int
+    total_items: int
+
+
 class PolicyBodyOut(BaseModel):
     """A policy body as it is SERVED: exactly what is loaded, gate rows included.
 

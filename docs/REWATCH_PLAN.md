@@ -230,6 +230,17 @@ beside the input, recomputed from the current fit: "At 25%, this protects titles
 under about 3 years, 2,475 of 3,192." Ships opt-in (default off) because it overlaps the
 dormancy floor. Rule 38 holds: the gate ships wired to its facts in the same PR.
 
+**Approved with the mockups, 2026-08-13.** The threshold is exposable, and the operator chose
+all three exposures: the why-panel sentence carries the percentage beside the counts; the
+Policy surface shows the library's fitted ladder (one row per merged block, rate beside the
+range) above the percentage box, with the consequence echo below it; and the simulator
+re-decides the stored scan live as the percentage moves, off each item's frozen cohort
+numbers. **Placement is the grouped card**: the hold joins stage 1's card as its second half
+(a divider between them, each with its own switch), titled "Keep anything likely to be
+watched above a percentage". Soft and hard stay separate switches; only the placement merges,
+and the hold remains the one protection living outside "What's always kept", stated in its
+help. Why-block heading: "Watched again within a year".
+
 ### Storage and display
 
 Per-candidate context block added to the declared explanation shape

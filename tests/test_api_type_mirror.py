@@ -85,10 +85,16 @@ API_TS = REPO / "frontend" / "src" / "api.ts"
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
-#: Reconciled by hand against the tree: 125 under ``reaper.api.*`` and 15 across the two engine
-#: modules. It is here because the collision assertion below is flag-shaped, and a flag cannot
-#: see a member that left the walk (rule 145).
-_EXPECTED_SERVER_MODELS = 140
+#: Reconciled by hand against the tree: 127 under ``reaper.api.*`` and 16 across the two engine
+#: modules (+1 for ``RewatchOddsOut``, #554 stage 2 -- server-only for now, no browser mirror
+#: yet, which this count does not require: see ``TestEveryBrowserTypeIsPairedOrClassified``,
+#: which only demands every BROWSER type pair with a server model, never the reverse; +2 more
+#: for the same stage's ``RewatchOddsFitOut``/``RewatchOddsBlockOut``, the Policy page's
+#: ladder-and-echo payload, server-only on the same terms until the frontend step lands its
+#: types). It is
+#: here because the collision assertion below is flag-shaped, and a flag cannot see a member
+#: that left the walk (rule 145).
+_EXPECTED_SERVER_MODELS = 143
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
 #: field sets are compared -- and the rename is the only reason a suffix rule cannot find it.
@@ -121,6 +127,17 @@ CLIENT_ONLY = {
     # A UI-side subset of ScanStatus (phase/done/total/detail) that several components take
     # as a prop; the server has no model of the subset.
     "Progress",
+}
+
+#: Fields a paired server model sends that ``frontend/src/api.ts`` deliberately does not
+#: mirror yet, classified rather than silenced (rule 103): every entry is a real, declared
+#: field (see the server-side record above), just one with no browser reader today.
+_DELIBERATE_FIELD_DIFFERENCES: dict[str, frozenset[str]] = {
+    # #554 stage 2: the rewatch-probability context ships on the server ahead of the
+    # WhyPanel row that renders it (this plan's frontend step, not yet landed in this same
+    # PR). Declared in ``engine.explanation.RewatchOddsOut``; move this out once the
+    # browser type gains the field.
+    "Explanation": frozenset({"rewatch_odds"}),
 }
 
 #: Reconciled by hand against the tree (rule 145). ``grep -c '^export interface'`` on api.ts is
@@ -951,7 +968,9 @@ class TestTheTwoCopiesAgree:
             if counterpart is None:
                 continue
             fields = wire.get(counterpart, inner.get(counterpart, set()))
-            server_only = sorted(fields - browser_types[name])
+            server_only = sorted(
+                fields - browser_types[name] - _DELIBERATE_FIELD_DIFFERENCES.get(name, frozenset())
+            )
             browser_only = sorted(browser_types[name] - fields)
             if server_only or browser_only:
                 drifted.append(
@@ -975,6 +994,33 @@ class TestTheTwoCopiesAgree:
             "every listing of a merged bind). Edit frontend/src/api.ts to match, or record a "
             "deliberate difference in this file:\n  " + "\n  ".join(drifted)
         )
+
+    def test_every_deliberate_field_difference_is_still_needed(
+        self,
+        browser_types: dict[str, set[str]],
+        server_tables: tuple[dict[str, set[str]], dict[str, set[str]]],
+    ) -> None:
+        """The exemption above is checked rather than trusted (rule 25's spirit, and the same
+        shape ``_NO_PANEL_ROUTE`` and ``test_the_reason_with_no_panel_route_still_has_one_way
+        _out`` hold for the why-panel's reason constants): a browser type that caught up, or
+        a field the server stopped sending, leaves a stale line here that vouches for a
+        difference that no longer exists."""
+        wire, inner = server_tables
+        for name, fields in _DELIBERATE_FIELD_DIFFERENCES.items():
+            assert fields, f"{name} is exempt with no fields named"
+            assert name in browser_types, f"{name} is not a browser type any more"
+            counterpart = _pair(name, wire, inner)
+            assert counterpart is not None, f"{name} no longer pairs with a server model"
+            server_fields = wire.get(counterpart, inner.get(counterpart, set()))
+            assert fields <= server_fields, (
+                f"{name}: {sorted(fields - server_fields)} no longer sent by {counterpart}; "
+                "drop them from _DELIBERATE_FIELD_DIFFERENCES"
+            )
+            caught_up = fields & browser_types[name]
+            assert not caught_up, (
+                f"{name}: the browser now declares {sorted(caught_up)}; drop them from "
+                "_DELIBERATE_FIELD_DIFFERENCES"
+            )
 
 
 class TestEverySimulatorRefusalReachesThePanel:
