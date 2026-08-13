@@ -427,7 +427,7 @@ class Facts:
     Stage 2 rewatch-probability fit -- the block's cohort size.
 
     Frozen raw, not judged here: the display floor and the withhold are decided by
-    consumers against ``services.rewatch.BLOCK_FLOOR_N`` and ``block_withheld``, so a thin
+    consumers against ``REWATCH_BLOCK_FLOOR_N`` and ``rewatch.cohort_block``, so a thin
     block freezes ``Known`` at its small ``n`` rather than pretending it was not measured.
     That is what lets the opt-in protective hold (decided in the engine by the gate that
     reads it) and the simulator replay exactly against these frozen counts, the same reason
@@ -901,7 +901,7 @@ class MinDormancyGate:
 #: The cohort size under which a fitted rewatch block displays no number and can never fire
 #: the hold (``docs/REWATCH_PLAN.md``, stage 2). It lives here rather than in
 #: ``services/rewatch.py`` because ``RewatchOddsGate`` below reads it and an engine module
-#: may not import a service; the service re-exports it for its own consumers.
+#: may not import a service.
 REWATCH_BLOCK_FLOOR_N = 30
 
 

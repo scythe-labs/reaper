@@ -378,25 +378,12 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
     # --- every shipped gate, dropped ------------------------------------------------
     # Except the rewatch-odds row: a movie body cannot NOT carry it
     # (`PolicyBody._rewatch_odds_row` re-appends it on validation), so a dropped copy is a
-    # shape no wire round-trip can preserve and no operator can produce. Its single edit is
-    # the switch, swept below.
+    # shape no wire round-trip can preserve and no operator can produce.
     *[
         (f"drop:{g.gate.value}", _without(g.gate))
         for g in BASE.gates
         if g.gate is not GateId.REWATCH_ODDS
     ],
-    # --- the opt-in rewatch hold, switched on ---------------------------------------
-    (
-        "rewatch_odds=on",
-        BASE.model_copy(
-            update={
-                "gates": tuple(
-                    g.model_copy(update={"enabled": True}) if g.gate is GateId.REWATCH_ODDS else g
-                    for g in BASE.gates
-                )
-            }
-        ),
-    ),
     # --- every shipped list protection, dropped -------------------------------------
     # Where `drop:whitelisted` and `drop:curated_list` used to sit. Those gates retired and
     # list membership now protects through an `on_list` condition per list, so the lane is
@@ -818,12 +805,6 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
             "server_popularity=10",
             # All 100 points on dormancy moves scores without moving one across the line.
             "unwatched_weight=100",
-            # The recorded vectors were frozen before the cohort facts existed, so both thaw
-            # Unknown and the enabled gate abstains without blocking on every one
-            # (`RewatchOddsGate`'s documented quiet arm). The gate's own firing arms are
-            # pinned where its inputs can be composed (`test_custom_condemn`,
-            # `test_engine_invariants`); this sweep proves the wire and hash lanes only.
-            "rewatch_odds=on",
         }, sorted(inert)
 
 

@@ -129,12 +129,7 @@ function renderEditor(
    *  the "no scan yet" shape (empty blocks, zero total) so a test that does not care about
    *  the hold still gets a quiet card; the rewatch-odds hold's own describe block below
    *  passes a seeded fit. */
-  rewatchFit: RewatchOddsFit | Error = {
-    blocks: [],
-    thin_items: 0,
-    no_history_items: 0,
-    total_items: 0,
-  },
+  rewatchFit: RewatchOddsFit | Error = { blocks: [], total_items: 0 },
 ) {
   apiMock.policy.mockResolvedValue({
     policy_hash: "hash",
@@ -714,7 +709,7 @@ describe("the rewatch-odds hold, the grouped card's second half (#554 stage 2)",
   ];
 
   function measuredFit(over: Partial<RewatchOddsFit> = {}): RewatchOddsFit {
-    return { blocks: RUNGS, thin_items: 0, no_history_items: 0, total_items: 2500, ...over };
+    return { blocks: RUNGS, total_items: 2500, ...over };
   }
 
   it("renders the hold's toggle and the fitted ladder from a seeded fit", async () => {
@@ -821,7 +816,7 @@ describe("the rewatch-odds hold, the grouped card's second half (#554 stage 2)",
       [],
       "flags",
       "movie",
-      { blocks: [], thin_items: 0, no_history_items: 0, total_items: 0 },
+      { blocks: [], total_items: 0 },
     );
 
     expect(

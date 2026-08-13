@@ -626,8 +626,8 @@ export interface RewatchOddsBlock {
  *  echo. Empty `blocks` with `total_items === 0` means no scan has run on this build yet. */
 export interface RewatchOddsFit {
   blocks: RewatchOddsBlock[];
-  thin_items: number;
-  no_history_items: number;
+  /** Every movie candidate of the latest scan, block or no block: what the consequence echo
+   *  states its protected count out of. */
   total_items: number;
 }
 

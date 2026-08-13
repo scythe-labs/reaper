@@ -2345,20 +2345,17 @@ class TestTheRewatchOddsFitEndpoint:
             login(c, settings)
             body = c.get("/api/policy/rewatch-odds").json()
 
-        assert body == {"blocks": [], "thin_items": 0, "no_history_items": 0, "total_items": 0}
+        assert body == {"blocks": [], "total_items": 0}
 
-    def test_blocks_aggregate_by_identity_and_thin_and_unreadable_rows_count_as_no_history(
+    def test_blocks_aggregate_by_identity_and_unusable_rows_reach_no_block(
         self, rewatch_odds_client: TestClient
     ) -> None:
+        # All five rows count toward total_items, including the thin one, the no_history one
+        # and the one whose explanation JSON cannot be read at all (rule 96). Only the two
+        # measured rows reach a block.
         body = rewatch_odds_client.get("/api/policy/rewatch-odds").json()
 
         assert body["total_items"] == 5
-        assert body["thin_items"] == 1
-        # The explicit no_history row plus the unreadable one: an explanation this route
-        # cannot read counts as no_history too (rule 96), never a silently dropped item
-        # and never a measured block. Proven by elimination against total_items and the
-        # other two counts, since the unreadable row is not separately labeled on the wire.
-        assert body["no_history_items"] == 2
         assert len(body["blocks"]) == 1
         block = body["blocks"][0]
         assert block["lo_days"] == 365.0

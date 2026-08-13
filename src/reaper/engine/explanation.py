@@ -219,7 +219,7 @@ class RewatchOddsOut(BaseModel):
     lo_days: float
     hi_days: float | None
     state: Literal["measured", "thin", "no_history"]
-    """``"measured"`` at or above ``services.rewatch.BLOCK_FLOOR_N``, ``"thin"`` below it,
+    """``"measured"`` at or above ``gates.REWATCH_BLOCK_FLOOR_N``, ``"thin"`` below it,
     ``"no_history"`` when the item's dormancy has no usable block at all."""
 
 

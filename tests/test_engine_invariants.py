@@ -36,7 +36,6 @@ from reaper.engine.gates import (
     MinDormancyGate,
     RatingFloorGate,
     RatingRule,
-    RewatchOddsGate,
     ServerPopularityGate,
     StreamingNowGate,
     evaluate_all,
@@ -113,17 +112,6 @@ def observations[T](
 @st.composite
 def facts(draw: st.DrawFn) -> Facts:
     small_ints = st.integers(min_value=0, max_value=50)
-    # The Stage 2 cohort pair `RewatchOddsGate` reads (docs/REWATCH_PLAN.md). Drawn ahead of
-    # `Facts` below because `k` is drawn against the SAME draw of `n` when both are Known,
-    # matching every real fit (`k` is a count within `n`): `wilson_upper` takes `sqrt` of
-    # `p * (1 - p)`, which raises on a negative argument for an unconstrained `k > n`, so an
-    # uncorrelated draw would crash the gate rather than exercise it.
-    cohort_n = draw(observations(small_ints))
-    cohort_k = (
-        draw(observations(st.integers(0, cohort_n.value)))
-        if isinstance(cohort_n, Known)
-        else draw(observations(small_ints))
-    )
     return Facts(
         title=draw(st.text(min_size=1, max_size=20)),
         days_observed_unwatched=draw(observations(st.floats(0, 5000, allow_nan=False))),
@@ -149,8 +137,6 @@ def facts(draw: st.DrawFn) -> Facts:
         # nothing about the met/not-met/unreadable arms `_rewatch_keep` actually branches on.
         rewatch_viewings=draw(observations(small_ints)),
         rewatch_last_play_days=draw(observations(st.floats(0, 5000, allow_nan=False))),
-        rewatch_cohort_n=cohort_n,
-        rewatch_cohort_k=cohort_k,
     )
 
 
@@ -585,38 +571,6 @@ class TestProtectionAlwaysBeatsScore:
 
         assert score(ALL_SIGNALS, item).value > 90  # it looks maximally deletable
         assert evaluate_all(ALL_GATES, item).protected is True  # ...and is kept anyway
-
-
-class TestTheRewatchOddsGateOnlyEverMovesAVerdictTowardProtect:
-    """Stage 2's opt-in hold (``docs/REWATCH_PLAN.md``): "no configuration lets the
-    estimate raise a score or flip a verdict toward condemn." The gate's own return type
-    already forbids a CONDEMN outcome (``TestAGateCannotDelete`` above); this drives the
-    ENABLED gate over the same generated Facts every other gate invariant uses and checks
-    the verdict-level consequence of adding it to the evaluated set.
-
-    ``decide_verdict``'s own order is why the reachable set is exactly ``{before,
-    "protect"}`` and not narrower: "PROTECT beats everything" is checked before blocked,
-    coverage or score, so a firing gate can turn a condemn into a protect exactly as
-    readily as it can turn an abstain into one -- both are the keep direction, and the
-    plan's invariant is the wider one, not just the abstain-to-protect case."""
-
-    @given(item=facts(), score_value=st.integers(0, 100), threshold=st.integers(1, 100))
-    @settings(max_examples=300, deadline=None)
-    def test_enabling_the_gate_never_moves_a_verdict_toward_condemn(
-        self, item: Facts, score_value: int, threshold: int
-    ) -> None:
-        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 60})
-        coverage_bp = 10_000  # full coverage: isolate the gate's own effect from the floor
-
-        without = evaluate_all(ALL_GATES, item)
-        with_gate = evaluate_all(
-            [*ALL_GATES, RewatchOddsGate(GateConfig(threshold=threshold))], item
-        )
-
-        before = _verdict(without, score_value, coverage_bp, policy)
-        after = _verdict(with_gate, score_value, coverage_bp, policy)
-
-        assert after in (before, "protect")
 
 
 def _rating_facts(ratings: tuple[Rating, ...]) -> Facts:

@@ -58,7 +58,14 @@ from reaper.db.models import (
 )
 from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import dormancy_days, history_reach_days, reference_instant
-from reaper.engine.gates import Evaluation, Facts, Gate, GateResult, evaluate_all
+from reaper.engine.gates import (
+    REWATCH_BLOCK_FLOOR_N,
+    Evaluation,
+    Facts,
+    Gate,
+    GateResult,
+    evaluate_all,
+)
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
 from reaper.engine.signals import (
@@ -93,7 +100,6 @@ from reaper.services.display_meta import (
 )
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.rewatch import (
-    BLOCK_FLOOR_N,
     RewatchBlock,
     RewatchCurve,
     RewatchStats,
@@ -432,7 +438,7 @@ def build_facts(
     # fitted range, a dropped bucket, withheld by reach) -- one reason constant, since the
     # operator's takeaway is the same either way (docs/REWATCH_PLAN.md, Stage 2).
     #
-    # `cohort_block` is the one place `block_for` and `block_withheld` combine (rule 104):
+    # `cohort_block` is the one place the lookup and the withhold combine (rule 104):
     # `scan`'s per-item judge call re-derives the identical block off this same dormancy
     # value (read back from the Facts this call returns) and the same curve, so the stored
     # explanation's rewatch_odds context can never disagree with these two fields.
@@ -1783,7 +1789,7 @@ def _rewatch_odds_context(facts: Facts, block: RewatchBlock | None) -> dict[str,
     the season-only arm those two fields carry (never reached by a movie). Otherwise a
     movie item: the Unknown arms' zeroed placeholder with ``state="no_history"`` when there
     is no usable block, and the block's own pooled counts and range otherwise -- ``"thin"``
-    below ``rewatch.BLOCK_FLOOR_N``, ``"measured"`` at or above it. ``engine.explanation
+    below ``gates.REWATCH_BLOCK_FLOOR_N``, ``"measured"`` at or above it. ``engine.explanation
     .RewatchOddsOut`` declares this same shape; both are held together by
     ``test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared``.
     """
@@ -1796,7 +1802,7 @@ def _rewatch_odds_context(facts: Facts, block: RewatchBlock | None) -> dict[str,
         "k": block.k,
         "lo_days": block.lo_days,
         "hi_days": block.hi_days,
-        "state": "measured" if block.n >= BLOCK_FLOOR_N else "thin",
+        "state": "measured" if block.n >= REWATCH_BLOCK_FLOOR_N else "thin",
     }
 
 

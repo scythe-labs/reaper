@@ -791,9 +791,9 @@ class RewatchOddsFitOut(BaseModel):
     scan has run on this build yet."""
 
     blocks: list[RewatchOddsBlockOut]
-    thin_items: int
-    no_history_items: int
     total_items: int
+    """Every movie candidate of the latest scan, block or no block: what the consequence
+    echo states its protected count out of."""
 
 
 class PolicyBodyOut(BaseModel):

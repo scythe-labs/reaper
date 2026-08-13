@@ -8,6 +8,7 @@ rule): all fixtures use placeholder rating keys.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from reaper.clock import from_epoch, utcnow
 from reaper.config import Settings
 from reaper.db.session import create_engine
-from reaper.engine.gates import Facts
+from reaper.engine.gates import REWATCH_BLOCK_FLOOR_N, Facts
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.services import history_sync, lists, rewatch, snapshot
 from reaper.services.snapshot import RawItem, ScanContext, build_facts
@@ -297,22 +298,22 @@ class TestFitBlocksBuckets:
 
     def test_365_lands_in_the_first_bucket(self) -> None:
         curve = rewatch.fit_blocks([(365.0, True)] * 40)
-        assert len(curve.blocks) == 1
-        assert (curve.blocks[0].lo_days, curve.blocks[0].hi_days) == (0.0, 365.0)
+        assert len(curve) == 1
+        assert (curve[0].lo_days, curve[0].hi_days) == (0.0, 365.0)
 
     def test_366_lands_in_the_second_bucket(self) -> None:
         curve = rewatch.fit_blocks([(366.0, True)] * 40)
-        assert len(curve.blocks) == 1
-        assert (curve.blocks[0].lo_days, curve.blocks[0].hi_days) == (365.0, 548.0)
+        assert len(curve) == 1
+        assert (curve[0].lo_days, curve[0].hi_days) == (365.0, 548.0)
 
     def test_an_empty_bucket_is_dropped(self) -> None:
         # Nothing lands in the first bucket at all, so the curve starts at the second.
         curve = rewatch.fit_blocks([(400.0, True)] * 40)
-        assert len(curve.blocks) == 1
-        assert curve.blocks[0].lo_days == 365.0
+        assert len(curve) == 1
+        assert curve[0].lo_days == 365.0
 
     def test_no_pairs_is_an_empty_curve(self) -> None:
-        assert rewatch.fit_blocks([]) == rewatch.RewatchCurve(blocks=())
+        assert rewatch.fit_blocks([]) == ()
 
 
 class TestFitBlocksMonotoneMerge:
@@ -326,8 +327,8 @@ class TestFitBlocksMonotoneMerge:
             + [(400.0, True)] * 8  # bucket 2: n=10, k=8
         )
         curve = rewatch.fit_blocks(pairs)
-        assert len(curve.blocks) == 1
-        merged = curve.blocks[0]
+        assert len(curve) == 1
+        merged = curve[0]
         assert (merged.lo_days, merged.hi_days) == (0.0, 548.0)
         assert (merged.n, merged.k) == (20, 10)
 
@@ -339,68 +340,48 @@ class TestFitBlocksMonotoneMerge:
             + [(400.0, False)] * 8  # bucket 2: rate .2, already decreasing
         )
         curve = rewatch.fit_blocks(pairs)
-        assert len(curve.blocks) == 2
-        assert (curve.blocks[0].n, curve.blocks[0].k) == (10, 8)
-        assert (curve.blocks[1].n, curve.blocks[1].k) == (10, 2)
+        assert len(curve) == 2
+        assert (curve[0].n, curve[0].k) == (10, 8)
+        assert (curve[1].n, curve[1].k) == (10, 2)
 
 
 class TestBlockFor:
     def test_dormancy_past_the_fitted_range_is_none(self) -> None:
-        curve = rewatch.RewatchCurve(
-            blocks=(rewatch.RewatchBlock(lo_days=0.0, hi_days=365.0, n=40, k=10),)
-        )
+        curve = (rewatch.RewatchBlock(lo_days=0.0, hi_days=365.0, n=40, k=10),)
         assert rewatch.block_for(curve, 400.0) is None
 
     def test_dormancy_inside_a_dropped_gap_is_none(self) -> None:
         # The 365-730 bucket had nothing in it and was dropped: a gap, not a merge target.
-        curve = rewatch.RewatchCurve(
-            blocks=(
-                rewatch.RewatchBlock(lo_days=0.0, hi_days=365.0, n=40, k=10),
-                rewatch.RewatchBlock(lo_days=730.0, hi_days=1095.0, n=40, k=5),
-            )
+        curve = (
+            rewatch.RewatchBlock(lo_days=0.0, hi_days=365.0, n=40, k=10),
+            rewatch.RewatchBlock(lo_days=730.0, hi_days=1095.0, n=40, k=5),
         )
         assert rewatch.block_for(curve, 500.0) is None
 
     def test_dormancy_inside_a_block_is_returned(self) -> None:
         block = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=40, k=10)
-        curve = rewatch.RewatchCurve(blocks=(block,))
+        curve = (block,)
         assert rewatch.block_for(curve, 400.0) is block
 
 
-class TestBlockWithheld:
-    """The withhold helper at the reach boundary (docs/REWATCH_PLAN.md, Stage 2, "Floor")."""
+class TestCohortBlock:
+    """`cohort_block` combines the lookup with the reach withhold (rule 104, and
+    docs/REWATCH_PLAN.md, Stage 2, "Floor")."""
 
     BLOCK = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=40, k=10)
 
-    def test_reach_exactly_at_the_blocks_near_edge_is_withheld(self) -> None:
-        assert rewatch.block_withheld(self.BLOCK, 365.0) is True
-
-    def test_reach_one_day_short_of_the_near_edge_is_withheld(self) -> None:
-        assert rewatch.block_withheld(self.BLOCK, 364.0) is True
-
-    def test_reach_one_day_past_the_near_edge_is_not_withheld(self) -> None:
-        assert rewatch.block_withheld(self.BLOCK, 366.0) is False
-
-
-class TestCohortBlock:
-    """`cohort_block` combines `block_for` and `block_withheld` (rule 104)."""
-
     def test_none_when_no_block_covers_the_dormancy(self) -> None:
-        curve = rewatch.RewatchCurve(
-            blocks=(rewatch.RewatchBlock(lo_days=0.0, hi_days=365.0, n=40, k=10),)
-        )
+        curve = (rewatch.RewatchBlock(lo_days=0.0, hi_days=365.0, n=40, k=10),)
         assert rewatch.cohort_block(curve, 400.0, reach_days=1000.0) is None
 
-    def test_none_when_the_covering_block_is_withheld(self) -> None:
-        curve = rewatch.RewatchCurve(
-            blocks=(rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=40, k=10),)
-        )
-        assert rewatch.cohort_block(curve, 400.0, reach_days=100.0) is None
+    def test_reach_exactly_at_the_blocks_near_edge_is_withheld(self) -> None:
+        assert rewatch.cohort_block((self.BLOCK,), 400.0, reach_days=365.0) is None
 
-    def test_the_block_when_usable(self) -> None:
-        block = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=40, k=10)
-        curve = rewatch.RewatchCurve(blocks=(block,))
-        assert rewatch.cohort_block(curve, 400.0, reach_days=1000.0) is block
+    def test_reach_one_day_short_of_the_near_edge_is_withheld(self) -> None:
+        assert rewatch.cohort_block((self.BLOCK,), 400.0, reach_days=364.0) is None
+
+    def test_reach_one_day_past_the_near_edge_is_not_withheld(self) -> None:
+        assert rewatch.cohort_block((self.BLOCK,), 400.0, reach_days=366.0) is self.BLOCK
 
 
 class TestTrainingPair:
@@ -515,114 +496,88 @@ class TestMovieRewatchOutcomesEndToEnd:
         assert outcomes[900].last_play_at_or_before_cutoff == from_epoch(NOW_EPOCH)
 
 
-def _minimal_facts(**overrides: object) -> Facts:
-    """The smallest ``Facts`` that constructs, so a rewatch-cohort test overrides only the
-    two fields under test rather than restating every unrelated one."""
-    base: dict[str, object] = {
-        "title": "a title",
-        "days_observed_unwatched": Known(value=900.0, source="t"),
-        "distinct_watchers": Absent(source="t"),
-        "distinct_watchers_all_time": Absent(source="t"),
-        "size_bytes": Known(value=1, source="t"),
-        "imdb_rating_tenths": Absent(source="t"),
-        "imdb_votes": Absent(source="t"),
-        "season_rank": Absent(source="t"),
-        "is_streaming_now": Known(value=False, source="t"),
-        "is_managed": Known(value=True, source="t"),
-        "in_curated_list": Absent(source="t"),
-        "is_whitelisted": Known(value=False, source="t"),
-    }
-    base.update(overrides)
-    return Facts(**base)  # type: ignore[arg-type]
+ANCIENT = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+def _scanned_facts(
+    *,
+    rating_key: int | None = 900,
+    watch_blind_reason: str | None = None,
+    rewatch_curve: rewatch.RewatchCurve | None,
+    last_played: dict[int, datetime] | None = None,
+    horizon: datetime = datetime(1990, 1, 1, tzinfo=UTC),
+) -> Facts:
+    """One movie item's ``Facts`` as a scan builds them, so a rewatch-cohort test states
+    only the fit and the watch inputs under test."""
+    item = RawItem(
+        media_key="radarr:1:900",
+        title="a title",
+        media_type="movie",
+        size_bytes=1,
+        imdb_id=None,
+        tmdb_id=None,
+        plex_rating_key=rating_key,
+        added_at=ANCIENT,
+    )
+    return build_facts(
+        item,
+        ScanContext(horizon=horizon),
+        membership_index=lists.MembershipIndex({}, {}, {}, {}),
+        imdb={},
+        last_played=last_played or {},
+        watchers_window={},
+        watchers_all_time={},
+        whitelisted=set(),
+        watch_blind_reason=watch_blind_reason,
+        rewatch_curve=rewatch_curve,
+    )
 
 
 class TestRewatchCohortFacts:
     """`snapshot.build_facts`'s ``rewatch_cohort_n``/``rewatch_cohort_k``: the states table
     (docs/REWATCH_PLAN.md, Stage 2, "Population in snapshot.build_facts")."""
 
-    ANCIENT = datetime(2000, 1, 1, tzinfo=UTC)
-
-    def _facts(
-        self,
-        *,
-        rating_key: int | None = 900,
-        watch_blind_reason: str | None = None,
-        rewatch_curve: rewatch.RewatchCurve | None,
-        last_played: dict[int, datetime] | None = None,
-        horizon: datetime = datetime(1990, 1, 1, tzinfo=UTC),
-    ) -> Facts:
-        item = RawItem(
-            media_key="radarr:1:900",
-            title="a title",
-            media_type="movie",
-            size_bytes=1,
-            imdb_id=None,
-            tmdb_id=None,
-            plex_rating_key=rating_key,
-            added_at=self.ANCIENT,
-        )
-        return build_facts(
-            item,
-            ScanContext(horizon=horizon),
-            membership_index=lists.MembershipIndex({}, {}, {}, {}),
-            imdb={},
-            last_played=last_played or {},
-            watchers_window={},
-            watchers_all_time={},
-            whitelisted=set(),
-            watch_blind_reason=watch_blind_reason,
-            rewatch_curve=rewatch_curve,
-        )
-
     def test_no_plex_key_is_unknown(self) -> None:
-        facts = self._facts(rating_key=None, rewatch_curve=None)
+        facts = _scanned_facts(rating_key=None, rewatch_curve=None)
         assert isinstance(facts.rewatch_cohort_n, Unknown)
         assert isinstance(facts.rewatch_cohort_k, Unknown)
 
     def test_watch_blind_is_unknown(self) -> None:
-        facts = self._facts(watch_blind_reason="went blind", rewatch_curve=None)
+        facts = _scanned_facts(watch_blind_reason="went blind", rewatch_curve=None)
         assert isinstance(facts.rewatch_cohort_n, Unknown)
         assert isinstance(facts.rewatch_cohort_k, Unknown)
 
     def test_no_fit_ran_is_unknown(self) -> None:
-        facts = self._facts(rewatch_curve=None)
+        facts = _scanned_facts(rewatch_curve=None)
         assert isinstance(facts.rewatch_cohort_n, Unknown)
 
     def test_a_measured_block_freezes_known(self) -> None:
         # One block spanning every possible dormancy, so this reading is time-independent.
-        curve = rewatch.RewatchCurve(
-            blocks=(rewatch.RewatchBlock(lo_days=0.0, hi_days=None, n=40, k=12),)
-        )
-        facts = self._facts(rewatch_curve=curve)
+        curve = (rewatch.RewatchBlock(lo_days=0.0, hi_days=None, n=40, k=12),)
+        facts = _scanned_facts(rewatch_curve=curve)
         assert facts.rewatch_cohort_n == Known(value=40, source="tautulli")
         assert facts.rewatch_cohort_k == Known(value=12, source="tautulli")
 
     def test_a_thin_block_still_freezes_known(self) -> None:
-        curve = rewatch.RewatchCurve(
-            blocks=(rewatch.RewatchBlock(lo_days=0.0, hi_days=None, n=5, k=1),)
-        )
-        facts = self._facts(rewatch_curve=curve)
+        curve = (rewatch.RewatchBlock(lo_days=0.0, hi_days=None, n=5, k=1),)
+        facts = _scanned_facts(rewatch_curve=curve)
         assert facts.rewatch_cohort_n == Known(value=5, source="tautulli")
         assert facts.rewatch_cohort_k == Known(value=1, source="tautulli")
 
     def test_past_the_fitted_range_is_unknown(self) -> None:
         # A narrow block near zero; the item's ancient added_at puts its dormancy well
         # past it.
-        curve = rewatch.RewatchCurve(
-            blocks=(rewatch.RewatchBlock(lo_days=0.0, hi_days=1.0, n=40, k=10),)
-        )
-        facts = self._facts(rewatch_curve=curve)
+        curve = (rewatch.RewatchBlock(lo_days=0.0, hi_days=1.0, n=40, k=10),)
+        facts = _scanned_facts(rewatch_curve=curve)
         assert isinstance(facts.rewatch_cohort_n, Unknown)
         assert isinstance(facts.rewatch_cohort_k, Unknown)
 
     def test_withheld_by_reach_is_unknown(self) -> None:
         # An unclamped dormancy from a real play far outside the mirror's reach, and a
-        # block that covers it but starts past that reach -- block_withheld's job.
+        # block that covers it but starts past that reach -- the withhold's job.
         now = utcnow()
-        curve = rewatch.RewatchCurve(
-            blocks=(rewatch.RewatchBlock(lo_days=200.0, hi_days=None, n=40, k=10),)
-        )
-        facts = self._facts(
+        curve = (rewatch.RewatchBlock(lo_days=200.0, hi_days=None, n=40, k=10),)
+        facts = _scanned_facts(
             rewatch_curve=curve,
             last_played={900: now - timedelta(days=500)},
             horizon=now - timedelta(days=100),
@@ -630,23 +585,33 @@ class TestRewatchCohortFacts:
         assert isinstance(facts.rewatch_cohort_n, Unknown)
 
 
+def _known_cohort(block: rewatch.RewatchBlock) -> Facts:
+    """A movie item's ``Facts`` carrying ``block``'s counts, as a scan that found it freezes
+    them."""
+    return replace(
+        _scanned_facts(rewatch_curve=None),
+        rewatch_cohort_n=Known(value=block.n, source="t"),
+        rewatch_cohort_k=Known(value=block.k, source="t"),
+    )
+
+
 class TestRewatchOddsContext:
     """`snapshot._rewatch_odds_context`: the explanation block's three states, and the
     season lane's ``None`` (docs/REWATCH_PLAN.md, Stage 2, "Storage and display")."""
 
     def test_season_lane_is_none_whatever_the_block(self) -> None:
-        facts = _minimal_facts(
-            rewatch_cohort_n=Absent(source="t"), rewatch_cohort_k=Absent(source="t")
+        facts = replace(
+            _scanned_facts(rewatch_curve=None),
+            rewatch_cohort_n=Absent(source="t"),
+            rewatch_cohort_k=Absent(source="t"),
         )
         block = rewatch.RewatchBlock(lo_days=0.0, hi_days=None, n=40, k=10)
         assert snapshot._rewatch_odds_context(facts, None) is None
         assert snapshot._rewatch_odds_context(facts, block) is None
 
     def test_no_usable_block_is_no_history(self) -> None:
-        facts = _minimal_facts(
-            rewatch_cohort_n=Unknown(reason="r", source="t"),
-            rewatch_cohort_k=Unknown(reason="r", source="t"),
-        )
+        # No fit ran, so both cohort facts are already Unknown.
+        facts = _scanned_facts(rewatch_curve=None)
         assert snapshot._rewatch_odds_context(facts, None) == {
             "n": 0,
             "k": 0,
@@ -656,11 +621,8 @@ class TestRewatchOddsContext:
         }
 
     def test_measured_at_or_above_the_floor(self) -> None:
-        block = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=rewatch.BLOCK_FLOOR_N, k=9)
-        facts = _minimal_facts(
-            rewatch_cohort_n=Known(value=block.n, source="t"),
-            rewatch_cohort_k=Known(value=block.k, source="t"),
-        )
+        block = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=REWATCH_BLOCK_FLOOR_N, k=9)
+        facts = _known_cohort(block)
         assert snapshot._rewatch_odds_context(facts, block) == {
             "n": 30,
             "k": 9,
@@ -670,11 +632,8 @@ class TestRewatchOddsContext:
         }
 
     def test_thin_below_the_floor(self) -> None:
-        block = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=rewatch.BLOCK_FLOOR_N - 1, k=5)
-        facts = _minimal_facts(
-            rewatch_cohort_n=Known(value=block.n, source="t"),
-            rewatch_cohort_k=Known(value=block.k, source="t"),
-        )
+        block = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=REWATCH_BLOCK_FLOOR_N - 1, k=5)
+        facts = _known_cohort(block)
         ctx = snapshot._rewatch_odds_context(facts, block)
         assert ctx is not None
         assert ctx["state"] == "thin"
@@ -691,9 +650,9 @@ class TestTheZeroDormancyEdge:
 
     def test_a_zero_dormancy_pair_trains_the_first_bucket(self) -> None:
         curve = rewatch.fit_blocks([(0.0, True)] + [(10.0, False)] * 3)
-        first = curve.blocks[0]
+        first = curve[0]
         assert (first.lo_days, first.n, first.k) == (0.0, 4, 1)
 
     def test_a_zero_dormancy_item_reads_the_first_block(self) -> None:
         curve = rewatch.fit_blocks([(5.0, True)] * 40)
-        assert rewatch.block_for(curve, 0.0) is curve.blocks[0]
+        assert rewatch.block_for(curve, 0.0) is curve[0]

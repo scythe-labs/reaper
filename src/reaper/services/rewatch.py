@@ -39,7 +39,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from reaper.clock import from_epoch
 from reaper.db import KEY_CHUNK
 from reaper.engine.dormancy import dormancy_days
-from reaper.engine.gates import REWATCH_BLOCK_FLOOR_N
 from reaper.services import history_sync
 
 #: A play more than this many days after the PREVIOUS play starts a new viewing. A gap of
@@ -175,13 +174,9 @@ class RewatchBlock:
     k: int
 
 
-@dataclass(frozen=True, slots=True)
-class RewatchCurve:
-    """The whole fitted curve for one scan: every surviving block, ascending by ``lo_days``.
-
-    Refit every scan and never persisted as a property of a title (module docstring)."""
-
-    blocks: tuple[RewatchBlock, ...]
+#: The whole fitted curve for one scan: every surviving block, ascending by ``lo_days``.
+#: Refit every scan and never persisted as a property of a title (module docstring).
+type RewatchCurve = tuple[RewatchBlock, ...]
 
 
 #: Bucket edges for the point estimate, half-open ``(lo, hi]`` (docs/REWATCH_PLAN.md, Stage
@@ -243,14 +238,14 @@ def fit_blocks(pairs: Sequence[tuple[float, bool]]) -> RewatchCurve:
             b = pooled.pop()
             a = pooled.pop()
             pooled.append(_pool(a, b))
-    return RewatchCurve(blocks=tuple(pooled))
+    return tuple(pooled)
 
 
 def block_for(curve: RewatchCurve, dormancy_days: float) -> RewatchBlock | None:
     """Which (merged) block a CURRENT dormancy falls in, or ``None`` when nothing in the
     fitted curve covers it: past the fitted range, or inside a bucket that was dropped
     empty at fit time and never absorbed into a neighbor."""
-    for block in curve.blocks:
+    for block in curve:
         # Same closed-at-zero first edge as the fit's bucketing above (rule 104: the two
         # must agree, or a just-watched title trains the curve and then reads as unmeasured).
         if (dormancy_days > block.lo_days or (block.lo_days == 0 and dormancy_days == 0)) and (
@@ -260,39 +255,25 @@ def block_for(curve: RewatchCurve, dormancy_days: float) -> RewatchBlock | None:
     return None
 
 
-#: A (possibly merged) block under this cohort size displays no number and can never fire
-#: the opt-in protective hold (docs/REWATCH_PLAN.md, Stage 2: "Floor"). One declaration,
-#: re-exported: the engine's ``RewatchOddsGate`` reads the same bar and an engine module may
-#: not import a service, so the number lives in ``engine/gates.py``.
-BLOCK_FLOOR_N = REWATCH_BLOCK_FLOOR_N
-
-
-def block_withheld(block: RewatchBlock, reach_days: float) -> bool:
-    """Whether ``block`` sits deeper than the watch mirror reaches, so it is withheld until
-    history grows into it (docs/REWATCH_PLAN.md, Stage 2: "A block deeper than the mirror
-    reaches is withheld until history grows into it").
-
-    True when the block's NEAR edge is at or past the mirror's reach
-    (``Facts.history_reach_days``, ``services.history_sync.horizon``): the mirror cannot
-    have observed a real outcome that far back, so a block starting there is not evidence
-    yet, whatever its point estimate says.
-    """
-    return block.lo_days >= reach_days
-
-
 def cohort_block(
     curve: RewatchCurve, dormancy_days: float, *, reach_days: float
 ) -> RewatchBlock | None:
     """The current item's usable block, or ``None`` when there is nothing to report: past
-    the fitted range, a dropped bucket, or one :func:`block_withheld` holds back.
+    the fitted range, a dropped bucket, or one deeper than the watch mirror reaches.
 
-    The one place :func:`block_for` and :func:`block_withheld` are combined (rule 104), so
-    every reader -- the fact builder and the explanation writer alike -- gets the identical
-    decision over the identical curve and dormancy, rather than two hand-written copies
-    that could disagree.
+    A block is withheld until history grows into it when its NEAR edge is at or past the
+    mirror's reach (``Facts.history_reach_days``, ``services.history_sync.horizon``): the
+    mirror cannot have observed a real outcome that far back, so a block starting there is
+    not evidence yet, whatever its point estimate says (docs/REWATCH_PLAN.md, Stage 2:
+    "Floor").
+
+    The one place the lookup and the withhold are combined (rule 104), so every reader --
+    the fact builder and the explanation writer alike -- gets the identical decision over
+    the identical curve and dormancy, rather than two hand-written copies that could
+    disagree.
     """
     block = block_for(curve, dormancy_days)
-    if block is None or block_withheld(block, reach_days):
+    if block is None or block.lo_days >= reach_days:
         return None
     return block
 

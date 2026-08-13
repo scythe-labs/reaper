@@ -126,14 +126,6 @@ CLIENT_ONLY = {
     "Progress",
 }
 
-#: Fields a paired server model sends that ``frontend/src/api.ts`` deliberately does not
-#: mirror yet, classified rather than silenced (rule 103): every entry is a real, declared
-#: field (see the server-side record above), just one with no browser reader today.
-#:
-#: Empty today: #554 stage 2's ``Explanation.rewatch_odds`` was the one entry here, and the
-#: frontend step landed it as ``RewatchOdds`` (``WhyPanel.tsx``), so the two copies agree.
-_DELIBERATE_FIELD_DIFFERENCES: dict[str, frozenset[str]] = {}
-
 #: Reconciled by hand against the tree (rule 145). ``grep -c '^export interface'`` on api.ts is
 #: the first number; a walk that silently stopped collecting would drop below it while every
 #: name-comparison below still passed, because a type absent from the walk is absent from both
@@ -965,9 +957,7 @@ class TestTheTwoCopiesAgree:
             if counterpart is None:
                 continue
             fields = wire.get(counterpart, inner.get(counterpart, set()))
-            server_only = sorted(
-                fields - browser_types[name] - _DELIBERATE_FIELD_DIFFERENCES.get(name, frozenset())
-            )
+            server_only = sorted(fields - browser_types[name])
             browser_only = sorted(browser_types[name] - fields)
             if server_only or browser_only:
                 drifted.append(
@@ -991,33 +981,6 @@ class TestTheTwoCopiesAgree:
             "every listing of a merged bind). Edit frontend/src/api.ts to match, or record a "
             "deliberate difference in this file:\n  " + "\n  ".join(drifted)
         )
-
-    def test_every_deliberate_field_difference_is_still_needed(
-        self,
-        browser_types: dict[str, set[str]],
-        server_tables: tuple[dict[str, set[str]], dict[str, set[str]]],
-    ) -> None:
-        """The exemption above is checked rather than trusted (rule 25's spirit, and the same
-        shape ``_NO_PANEL_ROUTE`` and ``test_the_reason_with_no_panel_route_still_has_one_way
-        _out`` hold for the why-panel's reason constants): a browser type that caught up, or
-        a field the server stopped sending, leaves a stale line here that vouches for a
-        difference that no longer exists."""
-        wire, inner = server_tables
-        for name, fields in _DELIBERATE_FIELD_DIFFERENCES.items():
-            assert fields, f"{name} is exempt with no fields named"
-            assert name in browser_types, f"{name} is not a browser type any more"
-            counterpart = _pair(name, wire, inner)
-            assert counterpart is not None, f"{name} no longer pairs with a server model"
-            server_fields = wire.get(counterpart, inner.get(counterpart, set()))
-            assert fields <= server_fields, (
-                f"{name}: {sorted(fields - server_fields)} no longer sent by {counterpart}; "
-                "drop them from _DELIBERATE_FIELD_DIFFERENCES"
-            )
-            caught_up = fields & browser_types[name]
-            assert not caught_up, (
-                f"{name}: the browser now declares {sorted(caught_up)}; drop them from "
-                "_DELIBERATE_FIELD_DIFFERENCES"
-            )
 
 
 class TestEverySimulatorRefusalReachesThePanel:

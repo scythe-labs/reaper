@@ -285,17 +285,18 @@ async def rewatch_odds_fit(request: Request) -> RewatchOddsFitOut:
 
     Aggregated from the per-candidate ``rewatch_odds`` blocks the scan froze, never refit
     here (rule 104): the page states what the gate will actually compare, and the two cannot
-    disagree. Per-item rows that are stored but unreadable count as ``no_history`` -- the
-    conservative display answer (rule 96); this route decides nothing about a reap.
+    disagree. A row that is thin, has no usable block, or cannot be read at all contributes
+    to ``total_items`` and no block -- the conservative display answer (rule 96); this route
+    decides nothing about a reap.
     """
     blocks: dict[tuple[float, float | None], dict[str, int]] = {}
-    thin = no_history = total = 0
+    total = 0
     async with session_factory(request)() as session:
         newest = (
             await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
         ).scalar_one_or_none()
         if newest is None:
-            return RewatchOddsFitOut(blocks=[], thin_items=0, no_history_items=0, total_items=0)
+            return RewatchOddsFitOut(blocks=[], total_items=0)
         rows = (
             await session.execute(
                 select(Candidate.explanation_json).where(
@@ -309,17 +310,12 @@ async def rewatch_odds_fit(request: Request) -> RewatchOddsFitOut:
                 context = json.loads(blob or "{}").get("rewatch_odds")
             except (ValueError, TypeError):
                 context = None
-            if not isinstance(context, dict) or context.get("state") == "no_history":
-                no_history += 1
-                continue
-            if context.get("state") == "thin":
-                thin += 1
+            if not isinstance(context, dict) or context.get("state") in ("no_history", "thin"):
                 continue
             try:
                 key = (float(context["lo_days"]), context["hi_days"])
                 n, k = int(context["n"]), int(context["k"])
             except (KeyError, TypeError, ValueError):
-                no_history += 1
                 continue
             entry = blocks.setdefault(key, {"n": n, "k": k, "items": 0})
             entry["items"] += 1
@@ -335,8 +331,6 @@ async def rewatch_odds_fit(request: Request) -> RewatchOddsFitOut:
             )
             for (lo, hi), entry in sorted(blocks.items(), key=lambda pair: pair[0][0])
         ],
-        thin_items=thin,
-        no_history_items=no_history,
         total_items=total,
     )
 

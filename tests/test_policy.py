@@ -2313,14 +2313,6 @@ class TestTheRewatchOddsRow:
 
         assert all(g.gate is not GateId.REWATCH_ODDS for g in body.gates)
 
-    def test_the_gate_is_already_authorable_and_buildable(self) -> None:
-        """Not a new pin: ``test_the_save_boundary_allows_exactly_what_the_builder_can_build``
-        above already asserts ``POLICY_AUTHORABLE_GATES == _BUILDABLE_GATES`` for the whole
-        set, which is where a future drift on this gate specifically would be caught. This
-        only confirms the membership landed rather than silently missing both lists."""
-        assert GateId.REWATCH_ODDS in POLICY_AUTHORABLE_GATES
-        assert GateId.REWATCH_ODDS in _BUILDABLE_GATES
-
     def test_the_row_changes_the_stored_hash_from_what_a_pre_upgrade_install_wrote(
         self,
     ) -> None:
