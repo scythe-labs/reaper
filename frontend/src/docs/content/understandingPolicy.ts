@@ -212,6 +212,11 @@ export const understandingPolicy: Doc = {
       "Your lists protect through **keep rules**, below: each list on Settings, Lists acts through a rule here naming it. A list you add starts with no rule, so it protects nothing until you give it one here, and you choose whether it keeps every title outright or only leans that way. The lists Reaper ships come with a keep-everything rule already. Removing the list removes its rules with it.",
     ),
 
+    h3("Titles most likely to be rewatched", "rewatch-keep"),
+    p(
+      "Movies only for now. A title anyone has watched at least 10 times, most recently within 2 years, gets its score lowered by up to 20 points. Plays that got at least halfway count, and plays within a week of each other count as one watch. All three numbers are yours to tune; the starting values were measured against real watch history. It is a lean, never a protection: it can tip a close call toward keeping, never keep a title outright, and watch history Reaper cannot read only ever leans toward keeping.",
+    ),
+
     h3("Pace and limits", "pace"),
     p(
       "These limit how much can happen, and are shared by movies and TV. They take effect the moment you save.",

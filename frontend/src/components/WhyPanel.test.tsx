@@ -15,6 +15,7 @@ import {
   type CandidateDetail,
   type GateOutcome,
   type Match,
+  REWATCH_KEEP,
   type SignalContribution,
 } from "../api";
 import { Announcer } from "../announce";
@@ -25,15 +26,23 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { CSS } from "../test/stylesheet";
 import { Synopsis, WhyPanel, allocateShares } from "./WhyPanel";
 
-vi.mock("../api", () => ({
-  api: {
-    override: vi.fn(),
-    clearOverride: vi.fn(),
-    profile: vi.fn(),
-    general: vi.fn(),
-    forgetWatchEvidenceFor: vi.fn(),
-  },
-}));
+// Real exports preserved (`...actual`), not just `api` stubbed out: WhyPanel.tsx reads the
+// real `REWATCH_KEEP` constant from this same module, and a bare `{ api: {...} }` factory
+// would hand it `undefined` -- which compares unequal to every keep name, so the row this
+// suite exists to single out would never be singled out.
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    api: {
+      override: vi.fn(),
+      clearOverride: vi.fn(),
+      profile: vi.fn(),
+      general: vi.fn(),
+      forgetWatchEvidenceFor: vi.fn(),
+    },
+  };
+});
 
 // The panel reads two settings on its own, through hooks no test here names: the unmeasured
 // allowance (["profile"], via useHoldsBackUnmeasured) and the default spare length
@@ -460,6 +469,59 @@ describe("the scoring receipt", () => {
     const unread = groupOf("Couldn't check");
     expect(visibleRows(unread)).toBe(12);
     expect(unread.querySelector("details")).toBeNull();
+  });
+});
+
+describe("the built-in rewatch keep", () => {
+  // REWATCH_KEEP is a built-in row, not one the operator authored, so "Your rule" beside it
+  // would be false about who wrote it. An operator's own keep row sitting right next to it
+  // keeps the tag, which is the contrast this test proves rather than assumes.
+  function withKeeps() {
+    const base = detail(WORKED_ROWS);
+    return detail(WORKED_ROWS, {
+      score: 40,
+      explanation: {
+        ...base.explanation,
+        score: 40,
+        base_score: 55,
+        keep_discount: 15,
+        keeps: [
+          {
+            name: REWATCH_KEEP,
+            discount: 15,
+            max_discount: 20,
+            detail: "Watched 14 times, most recently 3 weeks ago. Likely to be watched again.",
+            evaluated: true,
+          },
+          {
+            name: "asked for lately",
+            discount: 8,
+            max_discount: 15,
+            detail: "requested 30 days ago",
+            evaluated: true,
+          },
+        ],
+      },
+    });
+  }
+
+  it("renders with no rule tag, while the operator's own keep beside it keeps its tag", () => {
+    show(withKeeps());
+
+    const builtin = screen.getByText(/Watched 14 times/).closest("li");
+    expect(builtin).not.toBeNull();
+    expect(within(builtin as HTMLElement).queryByText("Your rule")).toBeNull();
+
+    const yours = screen.getByText("requested 30 days ago").closest("li");
+    expect(yours).not.toBeNull();
+    expect(within(yours as HTMLElement).getByText("Your rule")).toBeTruthy();
+  });
+
+  it('drops "Your" from the keeps blurb', () => {
+    show(withKeeps());
+
+    expect(screen.getByText(/^Soft keep rules lowered the score/)).toBeTruthy();
+    expect(screen.queryByText(/Your soft/)).toBeNull();
   });
 });
 

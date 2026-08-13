@@ -546,6 +546,11 @@ export interface RatingRule {
   min_votes: number;
 }
 
+/** The built-in rewatch keep's name, as it arrives on `KeepContribution.name`. Mirrors
+ *  `engine/signals.py`'s `REWATCH_KEEP`; a mirror test pins the two together later.
+ *  Declared beside `PolicyBody` because that is where the keep's own four fields live. */
+export const REWATCH_KEEP = "rewatch_habit";
+
 export interface PolicyBody {
   name: string;
   media_type: string;
