@@ -146,6 +146,42 @@ STATUS row edited; LEARNINGS gains the fitted-vs-borrowed comparison, as shapes.
   the opt-in protective hold above.
 - Exposing cycle facts in the rule-authoring vocabulary. Simple knobs only, until asked.
 
+## Execution order
+
+An implementing agent works each stage top to bottom, inside that stage's single PR. The
+repo's rule files load as the governed trees are touched and carry the fine-grained
+conventions; this list is the sequence.
+
+Stage 1:
+
+1. Mockups: load the `reaper-artifact` skill, mock the why-card keep row (active, stopped,
+   unreadable) and the Policy row, and iterate with the operator until approved. No frontend
+   code before approval.
+2. `src/reaper/services/rewatch.py`: viewing clustering, gap statistics, the cycle and
+   aliveness judgment, the TV replay check. Unit tests beside it.
+3. The new observations: declare on `Facts`, populate in all four sites (rule 35 list above),
+   state the thaw for stored rows that predate them.
+4. The keep: built-in `KeepConfig` where `services/snapshot.py` assembles keeps, both lanes;
+   the two policy body fields with their loader defaults; the policy API schema.
+5. Frontend, matching the approved mockups: the Policy row (`policyMeta.ts`,
+   `PolicyEditor.tsx`), the why-card keep copy (`WhyPanel.tsx`), the API types.
+6. The stage 1 tests and doc edits listed above.
+7. Gates per Verification, `verify` end-to-end, then PR, labels, squash-merge.
+
+Stage 2, only after stage 1 has landed:
+
+1. Mockups: the probability block in all three states and the threshold Policy row; approval
+   first.
+2. The curve fit in `services/rewatch.py`: candidate-set population, cutoff, buckets,
+   `MIN_SAMPLES`, horizon withholding.
+3. The explanation block: `engine/explanation.py` declaration, `snapshot._explain` writer,
+   thaw for old rows.
+4. The gate: new `GateId`, `build_gates` wiring, policy schema and body field, facts input.
+5. Frontend, matching the approved mockups: the why-card block, the Policy row, the API types.
+6. The stage 2 tests and doc edits listed above, including the `docs/SIGNALS.md` correction.
+7. Gates, `verify` end-to-end, then PR, labels, squash-merge, and move this plan to
+   `docs/history/` with a frozen banner.
+
 ## Verification
 
 Per CONTRIBUTING gates, each run alone with its exit code read (rule 134): `uv run ruff
