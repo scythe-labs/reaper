@@ -7,7 +7,7 @@
 // either fix is reverted.
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -1907,9 +1907,81 @@ describe("the section rail", () => {
   // upward, and a rail drawn from what it is handed back rather than from a second copy of its
   // own.
   //
-  // Only the click is driven here. The other way in, scrolling past a heading, is measured from
-  // four rects and the document's height, and jsdom answers 0 for both, so a test of it would be
-  // measuring jsdom (rule 119). `AppUrl.test.tsx` carries the shell's half.
+  // Scrolling is measured from four rects and the document's height, and jsdom answers 0 for
+  // both, so the three tests below STATE a geometry rather than read one (rule 119). The numbers
+  // are the shape #795 reproduces at in Chromium: a click on "Pace and limits" scrolls to the end
+  // of the document, so the page is bottomed out with all four headings on screen. That is the
+  // same position scrolling down to read Deletion leaves you in, which is why no rule reading
+  // rects can separate the two, and why the click has to be remembered rather than re-measured.
+  // `AppUrl.test.tsx` carries the shell's half.
+  const VIEWPORT = 900;
+  const PAGE = 3000;
+  const BOTTOM = PAGE - VIEWPORT;
+  /** Each heading's top, in the order they sit on the page: flags, kept, pace, deletion. */
+  const LAST_SCREENFUL = [-2000, -1000, 0, 400];
+  const MIDWAY = [-2000, 0, 400, 890];
+
+  // Rule 133: `innerHeight` and `scrollY` outlive a render tree, so every stub is handed back.
+  // All three are configurable accessors under jsdom, which is what lets a getter spy stand in.
+  afterEach(() => vi.restoreAllMocks());
+
+  function state(scrollY: number, tops: number[]) {
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(VIEWPORT);
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(scrollY);
+    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(PAGE);
+    document.querySelectorAll("h3.policy-section").forEach((heading, i) => {
+      vi.spyOn(heading, "getBoundingClientRect").mockReturnValue({ top: tops[i] } as DOMRect);
+    });
+  }
+
+  /** One scroll event, and the frame the listener coalesces it into. */
+  const scrolled = async () =>
+    await act(async () => {
+      window.dispatchEvent(new Event("scroll"));
+      await new Promise((settle) => requestAnimationFrame(() => settle(null)));
+    });
+
+  const railTab = (name: string) =>
+    within(document.querySelector(".policy-rail") as HTMLElement).getByRole("button", { name });
+
+  it("keeps the section a click asked for, where the click bottoms the page out", async () => {
+    const person = userEvent.setup();
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    state(BOTTOM, LAST_SCREENFUL);
+
+    await person.click(railTab("Pace and limits"));
+    await scrolled();
+
+    expect(railTab("Pace and limits")).toHaveAttribute("aria-current", "page");
+    expect(railTab("Deletion")).not.toHaveAttribute("aria-current");
+  });
+
+  it("hands the rail back to the scroll once the operator moves the page", async () => {
+    const person = userEvent.setup();
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    state(BOTTOM, LAST_SCREENFUL);
+    await person.click(railTab("Pace and limits"));
+    await scrolled();
+
+    state(500, MIDWAY);
+    await scrolled();
+
+    expect(railTab("What's always kept")).toHaveAttribute("aria-current", "page");
+    expect(railTab("Pace and limits")).not.toHaveAttribute("aria-current");
+  });
+
+  it("still marks the last section for someone who scrolls to the end", async () => {
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    state(BOTTOM, LAST_SCREENFUL);
+
+    await scrolled();
+
+    expect(railTab("Deletion")).toHaveAttribute("aria-current", "page");
+  });
+
   it("reports the section a click asks for, and marks what it is handed back", async () => {
     const person = userEvent.setup();
     renderEditor({ body: body() });
