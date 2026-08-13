@@ -263,44 +263,77 @@ Until then the season lane populates the stage 1 observations `Absent` with a co
   is the opt-in protective hold above.
 - Exposing the new facts in the rule-authoring vocabulary. Simple knobs only, until asked.
 
+## Orchestration
+
+Written so a fresh session can execute this plan without re-litigating anything above.
+
+- **The strongest available model orchestrates; mid-tier subagents do the mechanical
+  steps.** Implementation from this plan's exact specs suits a mid-tier subagent: the
+  derivation module, the field wiring per the three-state table, frontend built against
+  approved mockups, the pinned tests. The orchestrator keeps the judgment: it designs and
+  iterates the mockups, reviews every diff against this plan, owns anything touching the
+  engine invariants or the policy-hash classification, and runs the gates itself. No
+  small-tier model anywhere in this repo; the rule density defeats it.
+- **The one operator checkpoint is the mockups.** Iterate them with the operator to approval
+  before any frontend code. Everything else proceeds without check-ins.
+- **Settled; do not reopen without new evidence.** The protection is a soft keep discount,
+  not a hard gate, decided twice, the second time after an explicit hard-versus-soft
+  comparison. The cycle premise is refuted (`docs/LEARNINGS.md`). Both stages are
+  movies-only, TV behind its own validation. Controls are simple knobs, not rule authoring.
+  New evidence means a measurement clearing `docs/SIGNALS.md`'s bar, not a preference.
+
 ## Execution order
 
 An implementing agent works each stage top to bottom, inside that stage's single PR. The
 repo's rule files load as the governed trees are touched and carry the fine-grained
 conventions; this list is the sequence.
 
+Each step is tagged with who does it, per Orchestration: *orchestrator* keeps judgment work,
+*subagent* takes a mechanical step whose spec above is exact, and every subagent diff is
+reviewed by the orchestrator against this plan before it counts as done.
+
 Stage 1:
 
-1. Mockups: load the `reaper-artifact` skill, mock the why-card keep row (firing, not-met,
-   unreadable) and the Policy row, and iterate with the operator until approved. No frontend
-   code before approval.
-2. `src/reaper/services/rewatch.py`: the play filter, viewing clustering, the keep condition.
-   Unit tests beside it.
-3. The two observations: declare on `Facts`, populate per the three-state table (all four
-   sites), thaw as stated.
-4. The keep: the boolean arm in `evaluate_keep`, the built-in `KeepConfig` in the movie
-   lane's keep assembly, the two `PolicyBody` fields with their classification, the wire
-   schema.
-5. Frontend, matching the approved mockups: the Policy row (`policyMeta.ts`,
+1. *Orchestrator.* Mockups: load the `reaper-artifact` skill, mock the why-card keep row
+   (firing, not-met, unreadable) and the Policy row, and iterate with the operator until
+   approved. No frontend code before approval.
+2. *Subagent.* `src/reaper/services/rewatch.py`: the play filter, viewing clustering, the
+   keep condition. Unit tests beside it.
+3. *Subagent.* The two observations: declare on `Facts`, populate per the three-state table
+   (all four sites), thaw as stated.
+4. *Orchestrator.* The keep: the boolean arm in `evaluate_keep`, the built-in `KeepConfig`
+   in the movie lane's keep assembly, the two `PolicyBody` fields with their classification,
+   the wire schema. Kept here because the hash classification and the keep invariants are
+   the two places a plausible wrong guess is silent.
+5. *Subagent.* Frontend, matching the approved mockups: the Policy row (`policyMeta.ts`,
    `PolicyEditor.tsx`), the why-card keep copy (`WhyPanel.tsx`), the API types.
-6. The stage 1 tests and doc edits listed above.
-7. Gates per Verification, `verify` end-to-end, then PR, labels, squash-merge.
+6. *Subagent.* The stage 1 tests and doc edits listed above.
+7. *Independent subagent.* Verification of the implementation, not the plan: rerun the play
+   filter and clustering against the live mirror, read-only, and confirm the implemented
+   module reproduces the verified qualifying-play and viewing counts.
+8. *Orchestrator.* Gates per Verification, `verify` end-to-end, then PR, labels,
+   squash-merge.
 
 Stage 2, only after stage 1 has landed:
 
-1. Mockups: the probability block in all three states and the threshold Policy row with its
-   consequence echo; approval first.
-2. The fit in `services/rewatch.py`: candidate-set population, cutoff, buckets, the monotone
-   merge, the floor, horizon withholding.
-3. The explanation block: `engine/explanation.py` declaration, `snapshot._explain` writer,
-   thaw for old rows.
-4. The gate: new `GateId`, `build_gates` wiring, the Wilson-bound comparison, policy schema
-   and body field, facts input.
-5. Frontend, matching the approved mockups: the why-card block, the Policy row with the
-   echo, the API types.
-6. The stage 2 tests and doc edits listed above, including the `docs/SIGNALS.md` correction.
-7. Gates, `verify` end-to-end, then PR, labels, squash-merge, and move this plan to
-   `docs/history/` with a frozen banner.
+1. *Orchestrator.* Mockups: the probability block in all three states and the threshold
+   Policy row with its consequence echo; approval first.
+2. *Subagent.* The fit in `services/rewatch.py`: candidate-set population, cutoff, buckets,
+   the monotone merge, the floor, horizon withholding.
+3. *Subagent.* The explanation block: `engine/explanation.py` declaration,
+   `snapshot._explain` writer, thaw for old rows.
+4. *Orchestrator.* The gate: new `GateId`, `build_gates` wiring, the Wilson-bound
+   comparison, policy schema and body field, facts input. Protection code stays with the
+   orchestrator.
+5. *Subagent.* Frontend, matching the approved mockups: the why-card block, the Policy row
+   with the echo, the API types.
+6. *Subagent.* The stage 2 tests and doc edits listed above, including the
+   `docs/SIGNALS.md` correction.
+7. *Independent subagent.* Rerun the fit against the live data, read-only, and confirm the
+   implemented estimator reproduces the verified bucket rates, merge behavior, and withhold
+   states.
+8. *Orchestrator.* Gates, `verify` end-to-end, then PR, labels, squash-merge, and move this
+   plan to `docs/history/` with a frozen banner.
 
 ## Verification
 
