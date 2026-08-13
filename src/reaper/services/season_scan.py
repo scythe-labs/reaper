@@ -692,6 +692,14 @@ def build_season_facts(
         release_age_days=Absent(source="sonarr"),
         quality=Absent(source="sonarr"),
         show_ended=show_ended,
+        # The season lane ships no TV rewatch answer: the movie-only backtest behind
+        # rewatch_viewings/rewatch_last_play_days does not validate a season's watch
+        # pattern, and a TV formulation only ships once the same out-of-sample harness
+        # that refuted the movie cycle detector shows lift for it (docs/REWATCH_PLAN.md,
+        # TV section). Absent, not Unknown: this is a checked "not offered here", never a
+        # failed read, so it takes zero discount and never claims a check that never ran.
+        rewatch_viewings=Absent(source="tautulli"),
+        rewatch_last_play_days=Absent(source="tautulli"),
         ratings=rating_set,
     )
 

@@ -44,6 +44,7 @@ from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
 from reaper.engine.signals import (
     MAX_SCORE,
+    REWATCH_KEEP,
     CustomSignalConfig,
     KeepConfig,
     Score,
@@ -130,6 +131,12 @@ def facts(draw: st.DrawFn) -> Facts:
         # `Absent`, which the gate reads as un-checkable: every example would block, and
         # the invariants below would hold for a reason that has nothing to do with them.
         history_reach_days=draw(observations(st.floats(0, 5000, allow_nan=False))),
+        # The built-in rewatch keep's two frozen inputs (docs/REWATCH_PLAN.md, Stage 1). Left
+        # at their default (`Absent`, the season-lane shape) the rewatch entry in `_KEEPS`
+        # would only ever take its zero-discount arm, and the property tests below would say
+        # nothing about the met/not-met/unreadable arms `_rewatch_keep` actually branches on.
+        rewatch_viewings=draw(observations(small_ints)),
+        rewatch_last_play_days=draw(observations(st.floats(0, 5000, allow_nan=False))),
     )
 
 
@@ -1504,6 +1511,21 @@ _KEEPS = [
         field="watchers_all_time",
         floor=0,
         saturate_at=5,
+    ),
+    # The built-in rewatch keep (docs/REWATCH_PLAN.md, Stage 1): a flat arm keyed on
+    # `field == REWATCH_KEEP`, deciding its condition over `rewatch_viewings` /
+    # `rewatch_last_play_days` rather than ramping one field, so it needs its own entry here
+    # to be under the same property tests as the two ramped keeps above. Bars off the shipped
+    # 10/730 default (rule 141): a fixture pinned to the default could not tell this config's
+    # own bars from a caller that silently fell back to them.
+    KeepConfig(
+        name=REWATCH_KEEP,
+        max_discount=18,
+        field=REWATCH_KEEP,
+        floor=0,
+        saturate_at=1,
+        min_viewings=6,
+        recent_days=400,
     ),
 ]
 

@@ -2325,6 +2325,68 @@ export function PolicyEditor({
           </div>
         )}
 
+        {/* Movies only: the config `keep_configs()` builds is gated on `media_type == "movie"`
+            (engine/policy.py), so the TV policy carries these four fields inertly and this card
+            renders nothing for it -- there is no TV control to show. */}
+        {mediaType === "movie" && (
+          <div className="rules-card">
+            <div className="card-head">
+              <label className="toggle">
+                <Switch
+                  checked={draft.rewatch_keep_enabled}
+                  onChange={(rewatch_keep_enabled) => update({ rewatch_keep_enabled })}
+                />
+                <span className="rule-name">Keep titles most likely to be rewatched</span>
+              </label>
+              <DocLink doc="understanding-policy" anchor="rewatch-keep" className="doc-learn">
+                Learn more
+              </DocLink>
+            </div>
+            <p className="help rule-help">
+              A title people here keep coming back to will probably be watched again. It only lowers
+              the score, never keeps a title outright.
+            </p>
+            {draft.rewatch_keep_enabled && (
+              <>
+                <div className="rule-control">
+                  <span>watched by anyone at least</span>
+                  <FixedQuantity
+                    value={draft.rewatch_min_viewings}
+                    suffix="times"
+                    min={1}
+                    max={1000}
+                    width="narrow"
+                    ariaLabel="Watched by anyone at least"
+                    onChange={(v) => update({ rewatch_min_viewings: v })}
+                  />
+                </div>
+                <div className="rule-control">
+                  <span>most recently within</span>
+                  <QuantityInput
+                    value={draft.rewatch_recent_days}
+                    units={TIME_UNITS}
+                    min={1}
+                    ariaLabel="Most recently within"
+                    onChange={(v) => update({ rewatch_recent_days: v })}
+                  />
+                </div>
+                <div className="rule-control">
+                  <span>lowers the score by</span>
+                  <FixedQuantity
+                    value={draft.rewatch_keep_discount}
+                    suffix="points"
+                    min={1}
+                    max={50}
+                    width="narrow"
+                    ariaLabel="Lowers the score by"
+                    onChange={(v) => update({ rewatch_keep_discount: v })}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         <KeepRulesEditor
           conditions={draft.protect_conditions}
           keeps={draft.graded_keeps}

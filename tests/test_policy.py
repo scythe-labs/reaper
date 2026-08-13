@@ -62,7 +62,7 @@ from reaper.engine.policy_migrations import (
     recover_rating_rules,
 )
 from reaper.engine.policy_warnings import PolicyWarning, inspect
-from reaper.engine.signals import Score, SignalConfig, SignalId, score
+from reaper.engine.signals import REWATCH_KEEP, Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 from reaper.services.scan_runner import GATE_TYPES, ScanConfigError, build_gates
@@ -2186,6 +2186,77 @@ class TestRestoringALostRatingBar:
         """``services.profiles.active_policy`` must not raise on anything a hand-edited row
         can hold: it keeps the one page that fixes a broken policy reachable."""
         assert recover_rating_rules(raw) is None
+
+
+class TestTheBuiltinRewatchKeep:
+    """The built-in habitual-rewatch keep (``docs/REWATCH_PLAN.md``, Stage 1): four
+    ``PolicyBody`` fields, translated into one ``KeepConfig`` by ``keep_configs()`` on the
+    movie lane only."""
+
+    def test_a_stored_body_missing_the_four_fields_thaws_to_the_defaults(self) -> None:
+        """A body saved before this release carries none of the four keys. Rule 1's spirit:
+        an omission is not an operator's explicit off, so it thaws to the keep direction."""
+        raw = _policy().model_dump(mode="json")
+        for key in (
+            "rewatch_keep_enabled",
+            "rewatch_keep_discount",
+            "rewatch_min_viewings",
+            "rewatch_recent_days",
+        ):
+            del raw[key]
+
+        body = PolicyBody.model_validate(raw)
+
+        assert body.rewatch_keep_enabled is True
+        assert body.rewatch_keep_discount == 20
+        assert body.rewatch_min_viewings == 10
+        assert body.rewatch_recent_days == 730
+
+    def test_a_movie_body_appends_exactly_one_rewatch_config(self) -> None:
+        """Bars off the shipped 10/730 default (rule 141), so this proves the config carries
+        the body's OWN numbers rather than the fallback they happen to share."""
+        body = _policy(
+            media_type="movie",
+            rewatch_keep_enabled=True,
+            rewatch_keep_discount=33,
+            rewatch_min_viewings=6,
+            rewatch_recent_days=400,
+        )
+
+        rewatch = [k for k in body.keep_configs() if k.name == REWATCH_KEEP]
+
+        assert len(rewatch) == 1
+        assert rewatch[0].field == REWATCH_KEEP
+        assert rewatch[0].max_discount == 33
+        assert rewatch[0].min_viewings == 6
+        assert rewatch[0].recent_days == 400
+
+    def test_a_movie_body_with_the_switch_off_appends_none(self) -> None:
+        body = _policy(media_type="movie", rewatch_keep_enabled=False)
+
+        assert all(k.name != REWATCH_KEEP for k in body.keep_configs())
+
+    def test_a_tv_body_appends_none_whatever_the_flag(self) -> None:
+        """Movies only until a TV formulation clears the backtest bar
+        (``docs/REWATCH_PLAN.md``, TV section): the switch has no effect on the TV lane, so
+        both states of it are driven here rather than just the shipped default."""
+        for enabled in (True, False):
+            body = _policy(media_type="tv", rewatch_keep_enabled=enabled)
+            assert all(k.name != REWATCH_KEEP for k in body.keep_configs())
+
+    def test_a_graded_keep_cannot_take_the_built_ins_name(self) -> None:
+        with pytest.raises(ValidationError, match="built-in rewatch keep"):
+            _policy(
+                graded_keeps=(
+                    GradedKeepSpec(
+                        name=REWATCH_KEEP,
+                        field="watchers_all_time",
+                        max_discount=10,
+                        floor=0,
+                        saturate_at=5,
+                    ),
+                )
+            )
 
 
 class TestEveryReachSpanIsRoutedByName:

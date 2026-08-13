@@ -59,7 +59,13 @@ from reaper.engine.gates import (
     GateId,
     RatingRule,
 )
-from reaper.engine.signals import MAX_SCORE, CustomSignalConfig, KeepConfig, SignalId
+from reaper.engine.signals import (
+    MAX_SCORE,
+    REWATCH_KEEP,
+    CustomSignalConfig,
+    KeepConfig,
+    SignalId,
+)
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 
 SCHEMA_VERSION = 3
@@ -556,6 +562,30 @@ class PolicyBody(Frozen):
     score, fail-closed. A softer companion to a hard protect condition; it lowers a score
     but never vetoes, and missing data keeps the file. See GradedKeepSpec."""
 
+    rewatch_keep_enabled: bool = True
+    """The built-in rewatch keep (stage 1 of ``docs/REWATCH_PLAN.md``): a movie watched at
+    least ``rewatch_min_viewings`` times, most recently within ``rewatch_recent_days``, has
+    its score lowered by ``rewatch_keep_discount`` points. A soft keep exactly like a
+    ``graded_keeps`` row, never a protection. Movies only until a TV formulation clears the
+    backtest bar (``keep_configs`` gates it on ``media_type``). A stored body predating
+    these fields thaws to the defaults, the keep direction; an explicit ``False`` is the
+    operator's choice and honored."""
+
+    rewatch_keep_discount: int = Field(default=20, ge=1, le=50)
+    """Points subtracted while the rewatch condition holds. ``ge=1``: off is the switch
+    above, not a zero."""
+
+    rewatch_min_viewings: int = Field(default=10, ge=1, le=1_000)
+    """Qualified viewings (any user, plays inside ``services.rewatch.VIEWING_GAP_DAYS`` of
+    each other clustered as one) at or above which the keep can fire. The default is a
+    starting value from an out-of-sample backtest on one heavy-rewatch library
+    (``docs/LEARNINGS.md``), not a truth: a quieter library is untested, and loosening
+    buys coverage at some precision. The ceiling is arithmetic hygiene (rule 95)."""
+
+    rewatch_recent_days: int = Field(default=730, ge=1, le=36_500)
+    """How recent the last qualified play must be for the keep to fire. Same backtested
+    starting value and the same 100-year ceiling as ``in_progress_hold_days``."""
+
     # ``keep_tags`` / ``keep_tags_match`` lived here: the *arr tags that spared a title,
     # configured on Policy while every other list lived on Settings -> Lists. They are a
     # LIST now -- defined once, on Lists, protecting through an ``on_list`` keep rule like
@@ -634,6 +664,13 @@ class PolicyBody(Frozen):
         keep_names = [k.name for k in self.graded_keeps]
         if len(set(keep_names)) != len(keep_names):
             raise ValueError("Two keep rules share a name; the second would silently double-count.")
+        # The stored explanation identifies keep rows by name, and the built-in rewatch keep
+        # rides in the same list -- the same collision the custom-rule check above prevents.
+        if REWATCH_KEEP in keep_names:
+            raise ValueError(
+                f'"{REWATCH_KEEP}" is the name of the built-in rewatch keep. Give your rule '
+                "a different name so the score breakdown cannot confuse the two."
+            )
         rating_sources = [r.source for r in self.keep_rating_rules]
         if len(set(rating_sources)) != len(rating_sources):
             raise ValueError(
@@ -668,8 +705,15 @@ class PolicyBody(Frozen):
         )
 
     def keep_configs(self) -> list[KeepConfig]:
-        """Translate the graded-keep specs into engine keep configs for ``score()``."""
-        return [
+        """Translate the graded-keep specs into engine keep configs for ``score()``.
+
+        The built-in rewatch keep is appended HERE rather than where the scan assembles its
+        keeps, because this method has two callers -- ``services.snapshot.scan`` and the
+        simulator replay (``api.simulate``) -- and a built-in appended at one of them is a
+        keep the other silently drops (rule 104; ``docs/REWATCH_PLAN.md`` records the
+        deviation). Movie lane only: no TV formulation has cleared the backtest bar.
+        """
+        configs = [
             KeepConfig(
                 name=k.name,
                 max_discount=k.max_discount,
@@ -681,6 +725,20 @@ class PolicyBody(Frozen):
             )
             for k in self.graded_keeps
         ]
+        if self.media_type == "movie" and self.rewatch_keep_enabled:
+            configs.append(
+                KeepConfig(
+                    name=REWATCH_KEEP,
+                    max_discount=self.rewatch_keep_discount,
+                    field=REWATCH_KEEP,
+                    # The flat rewatch arm reads neither ramp bound; its bars ride below.
+                    floor=0,
+                    saturate_at=1,
+                    min_viewings=self.rewatch_min_viewings,
+                    recent_days=self.rewatch_recent_days,
+                )
+            )
+        return configs
 
     def custom_signal_configs(self) -> list[CustomSignalConfig]:
         """Translate the custom-condemn specs into engine configs for ``score()``.
@@ -811,6 +869,17 @@ class PolicyBody(Frozen):
             "signals",
             "custom_condemn",
             "graded_keeps",
+            # The rewatch keep's four knobs judge two frozen observations
+            # (``Facts.rewatch_viewings`` / ``rewatch_last_play_days``), so an edit replays
+            # exactly, like every other keep. Classifying them as evidence would force a
+            # fresh scan on every strength edit forever. One transient window, accepted in
+            # ``docs/REWATCH_PLAN.md``: a replay over a snapshot frozen before the upgrade
+            # thaws both observations Unknown, so the preview takes the full discount
+            # (toward keeping, shown as "couldn't check") until the first post-upgrade scan.
+            "rewatch_keep_enabled",
+            "rewatch_keep_discount",
+            "rewatch_min_viewings",
+            "rewatch_recent_days",
             "keep_rating_rules",
             "keep_rating_match",
             "protect_conditions",

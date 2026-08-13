@@ -1585,7 +1585,12 @@ class TestTheMatchStatusVocabulary:
         # 43 -> 39: the retired replay engine's four, three of them its own copy of the
         # watch-blind reason and one its no-arrival-date placeholder. Both reasons survive
         # on the live lanes, so nothing lost its coverage with them.
-        assert walked == 39, (
+        # 39 -> 43: the rewatch fields (#554 stage 1) in snapshot.build_facts. Both new
+        # observations take the no-Plex-key and watch-blind arms `days_observed_unwatched`
+        # and the popularity counts already take, so all four reuse `no_key_reason` and
+        # `watch_blind_reason` rather than naming a new constant -- no new coverage gap,
+        # just two more call sites reading the same two named reasons.
+        assert walked == 43, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."

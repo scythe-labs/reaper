@@ -1123,6 +1123,33 @@ class TestTheCentralVocabularyIsOneDeclaration:
         )
 
 
+class TestTheRewatchKeepNameIsOneDeclaration:
+    """The built-in rewatch keep's name is typed twice (rule 144). ``engine/signals.py``'s
+    ``REWATCH_KEEP`` is the field ``evaluate_keep`` special-cases and the row name the stored
+    explanation carries; ``frontend/src/api.ts``'s ``REWATCH_KEEP`` mirrors it so
+    ``WhyPanel.tsx`` can suppress the "Your rule" tag on the built-in row without a second
+    hardcoded string. A drift here renders the built-in row tagged as if the operator wrote
+    it, or leaves an operator's own rule of the same name silently untagged.
+    """
+
+    def test_the_two_declarations_agree(self) -> None:
+        from reaper.engine.signals import REWATCH_KEEP
+
+        found = re.search(
+            r'export const REWATCH_KEEP = "([^"]+)";', API_TS.read_text(encoding="utf-8")
+        )
+        assert found is not None, (
+            "frontend/src/api.ts no longer declares `export const REWATCH_KEEP` as one "
+            "statement, so this guard is reading nothing. Re-point it at the new spelling."
+        )
+        assert found.group(1) == REWATCH_KEEP, (
+            f"engine/signals.py's REWATCH_KEEP ({REWATCH_KEEP!r}) and frontend/src/api.ts's "
+            f"REWATCH_KEEP ({found.group(1)!r}) disagree. WhyPanel.tsx's "
+            "`keep.name !== REWATCH_KEEP` check would then suppress the built-in row's tag "
+            "on the wrong name, or never suppress it at all."
+        )
+
+
 class TestEveryGateIdHasOperatorCopy:
     """A gate id the browser has no copy for is printed at the operator as a slug.
 

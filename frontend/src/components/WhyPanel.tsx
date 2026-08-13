@@ -28,6 +28,7 @@ import {
   type GateOutcome,
   type Links,
   type Match,
+  REWATCH_KEEP,
   type Ratings,
   type SignalContribution,
   type SignalState,
@@ -1486,7 +1487,7 @@ export function WhyPanel({
         <section className="block">
           <h3>Leaning toward keeping</h3>
           <p className="blurb">
-            Your soft “keep” rules lowered the score
+            Soft keep rules lowered the score
             {explanation.base_score != null
               ? ` from ${explanation.base_score.toFixed(0)} to ${explanation.score.toFixed(0)}`
               : ""}
@@ -1502,8 +1503,9 @@ export function WhyPanel({
                   </span>
                   <span className="signal-detail">
                     {keep.detail}
-                    {/* Every graded keep is operator-authored, so every row is yours. */}
-                    <RuleTag />
+                    {/* Every graded keep except the built-in rewatch keep is operator-authored,
+                        so every row but that one is yours. */}
+                    {keep.name !== REWATCH_KEEP && <RuleTag />}
                   </span>
                 </div>
                 {!keep.evaluated && (

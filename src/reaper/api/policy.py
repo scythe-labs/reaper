@@ -112,6 +112,10 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             # Already engine specs (BooleanCondemnSpec / GradedCondemnSpec) -- passed through.
             custom_condemn=tuple(payload.custom_condemn),
             graded_keeps=tuple(payload.graded_keeps),
+            rewatch_keep_enabled=payload.rewatch_keep_enabled,
+            rewatch_keep_discount=payload.rewatch_keep_discount,
+            rewatch_min_viewings=payload.rewatch_min_viewings,
+            rewatch_recent_days=payload.rewatch_recent_days,
             # Already engine specs (RatingRuleSpec) -- passed through, validated on the wire.
             keep_rating_rules=tuple(payload.keep_rating_rules),
             keep_rating_match=payload.keep_rating_match,
@@ -235,6 +239,10 @@ def _policy_out(
             ],
             custom_condemn=list(body.custom_condemn),
             graded_keeps=list(body.graded_keeps),
+            rewatch_keep_enabled=body.rewatch_keep_enabled,
+            rewatch_keep_discount=body.rewatch_keep_discount,
+            rewatch_min_viewings=body.rewatch_min_viewings,
+            rewatch_recent_days=body.rewatch_recent_days,
             keep_rating_rules=list(body.keep_rating_rules),
             keep_rating_match=body.keep_rating_match,
         ),

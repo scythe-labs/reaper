@@ -64,6 +64,8 @@ def _facts(draw: st.DrawFn) -> Facts:
         release_age_days=draw(_obs(st.floats(0, 40000, allow_nan=False))),
         quality=draw(_obs(st.text(max_size=15))),
         show_ended=draw(_obs(st.booleans())),
+        rewatch_viewings=draw(_obs(st.integers(0, 5_000))),
+        rewatch_last_play_days=draw(_obs(st.floats(0, 9000, allow_nan=False))),
         ratings=tuple(draw(st.lists(_RATING, max_size=5))),
     )
 
