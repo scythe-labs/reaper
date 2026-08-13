@@ -714,7 +714,7 @@ class TestBuildSeasonFacts:
         assert isinstance(facts.days_observed_unwatched, Unknown)
 
     def test_a_season_carries_no_rewatch_answer_yet(self) -> None:
-        """Both rewatch observations (``docs/REWATCH_PLAN.md``, Stage 1, rule 35's builder
+        """Both rewatch observations (``docs/history/REWATCH_PLAN.md``, Stage 1, rule 35's builder
         sweep) are ``Absent`` on every season, whatever else the fixture varies: a checked
         "not offered here", never a failed read (rule 93), so the built-in rewatch keep
         discounts nothing rather than fail-open keeping every season fully

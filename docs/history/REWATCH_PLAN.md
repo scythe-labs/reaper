@@ -1,12 +1,13 @@
 # Rewatch likelihood (#554): the plan
 
-> **PLAN — approved, staged, nothing landed yet.** Written 2026-08-12; revised the same day
-> after three independent verification passes ran out-of-sample backtests against a live
-> library. The issue's interval-first premise did not survive measurement (see
-> `docs/LEARNINGS.md`, *A regular-gap "rewatch cycle" does not exist here*); stage 1 is the
-> formulation that did. Two stages, each its own PR; stage 1 ships before stage 2 starts.
-> Kept current as work proceeds, and moved to `docs/history/` when both stages have landed or
-> the work is abandoned.
+> **FROZEN 2026-08-13. Do not update this file; it is history, not state.**
+>
+> Both movie stages landed on `dev`: stage 1 as #803, stage 2 as #805. The TV backtest in
+> the TV section below ran and cleared its bar (`docs/LEARNINGS.md`, the TV validation
+> entry), but the TV stage is not scoped or started, and #554 stays open for it. Anything
+> below that reads as outstanding work describes the moment it was written. The plan was
+> written 2026-08-12 and revised after three verification passes refuted the issue's
+> interval-first premise; stage 1 is the formulation that survived measurement.
 
 ## Context
 

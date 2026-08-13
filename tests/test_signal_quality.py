@@ -214,7 +214,7 @@ def _cohort(n: Observation[int], k: Observation[int]) -> Facts:
 
 
 class TestTheRewatchOddsGate:
-    """Stage 2's opt-in hold (``docs/REWATCH_PLAN.md``): keep anything whose dormancy
+    """Stage 2's opt-in hold (``docs/history/REWATCH_PLAN.md``): keep anything whose dormancy
     cohort gets watched again at or above the operator's percentage, compared against the
     Wilson 95% UPPER BOUND of the cohort's rate rather than its point estimate."""
 

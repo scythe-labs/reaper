@@ -597,7 +597,7 @@ class PolicyBody(Frozen):
     but never vetoes, and missing data keeps the file. See GradedKeepSpec."""
 
     rewatch_keep_enabled: bool = True
-    """The built-in rewatch keep (stage 1 of ``docs/REWATCH_PLAN.md``): a movie watched at
+    """The built-in rewatch keep (stage 1 of ``docs/history/REWATCH_PLAN.md``): a movie watched at
     least ``rewatch_min_viewings`` times, most recently within ``rewatch_recent_days``, has
     its score lowered by ``rewatch_keep_discount`` points. A soft keep exactly like a
     ``graded_keeps`` row, never a protection. Movies only until a TV formulation clears the
@@ -744,7 +744,7 @@ class PolicyBody(Frozen):
         The built-in rewatch keep is appended HERE rather than where the scan assembles its
         keeps, because this method has two callers -- ``services.snapshot.scan`` and the
         simulator replay (``api.simulate``) -- and a built-in appended at one of them is a
-        keep the other silently drops (rule 104; ``docs/REWATCH_PLAN.md`` records the
+        keep the other silently drops (rule 104; ``docs/history/REWATCH_PLAN.md`` records the
         deviation). Movie lane only: no TV formulation has cleared the backtest bar.
         """
         configs = [
@@ -907,7 +907,7 @@ class PolicyBody(Frozen):
             # (``Facts.rewatch_viewings`` / ``rewatch_last_play_days``), so an edit replays
             # exactly, like every other keep. Classifying them as evidence would force a
             # fresh scan on every strength edit forever. One transient window, accepted in
-            # ``docs/REWATCH_PLAN.md``: a replay over a snapshot frozen before the upgrade
+            # ``docs/history/REWATCH_PLAN.md``: a replay over a snapshot frozen before the upgrade
             # thaws both observations Unknown, so the preview takes the full discount
             # (toward keeping, shown as "couldn't check") until the first post-upgrade scan.
             "rewatch_keep_enabled",
@@ -1177,7 +1177,7 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365),
         # Off by default: it overlaps the dormancy floor above, and its threshold only
         # means something once the operator has read their own fitted ladder
-        # (docs/REWATCH_PLAN.md, stage 2). 25 is the shipped starting percentage.
+        # (docs/history/REWATCH_PLAN.md, stage 2). 25 is the shipped starting percentage.
         GateSetting(gate=GateId.REWATCH_ODDS, enabled=False, threshold=25),
     ),
     signals=(

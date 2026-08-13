@@ -476,7 +476,7 @@
    library's own measured rate by dormancy range, read before the operator decides where to
    set the percentage below it. One column, unlike the simulator's two-column .sim-delta
    (16-simulator.css) -- that class is simulator chrome, and the mockup borrowed it only for
-   the picture (docs/REWATCH_PLAN.md, Stage 2). */
+   the picture (docs/history/REWATCH_PLAN.md, Stage 2). */
 .rewatch-ladder {
   display: grid;
   grid-template-columns: 1fr;

@@ -631,7 +631,7 @@ def _branch_custom(
     )
 
 
-#: The built-in habitual-rewatch keep (stage 1 of ``docs/REWATCH_PLAN.md``). One string for
+#: The built-in habitual-rewatch keep (stage 1 of ``docs/history/REWATCH_PLAN.md``). One string for
 #: both the ``KeepConfig.field`` it evaluates by and its row name in the stored explanation.
 #: Not a ``fields.BY_KEY`` key: the keep is not authorable, the vocabulary never offers it,
 #: and ``evaluate_keep`` reads the facts directly. ``PolicyBody._no_duplicates`` refuses an
@@ -681,7 +681,7 @@ def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
 
     No reach arm, deliberately (rule 140): the viewing count is drawn from the mirror and
     bounded by its reach, and the backtest that set the default bars measured that same
-    bounded view (``docs/REWATCH_PLAN.md``), so a Known miss is an honest zero-discount
+    bounded view (``docs/history/REWATCH_PLAN.md``), so a Known miss is an honest zero-discount
     answer rather than a claim about plays nobody saw.
     """
     viewings = facts.rewatch_viewings
@@ -697,7 +697,7 @@ def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
     if isinstance(viewings, Absent):
         # The season lane, and any hand-built Facts: no TV formulation has cleared the
         # backtest bar, so the keep has nothing to say there and discounts nothing
-        # (``docs/REWATCH_PLAN.md``, the TV section).
+        # (``docs/history/REWATCH_PLAN.md``, the TV section).
         return KeepResult(config.name, 0.0, config.max_discount, "Does not apply here.", True)
     met = (
         config.min_viewings is not None

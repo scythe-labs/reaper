@@ -2508,7 +2508,7 @@ export function PolicyEditor({
             )}
 
             {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second
-                half, per "Approved with the mockups, 2026-08-13" in docs/REWATCH_PLAN.md.
+                half, per "Approved with the mockups, 2026-08-13" in docs/history/REWATCH_PLAN.md.
                 Wired to draft.gates the same way RatingFloorRow is above, by index. */}
             {(() => {
               const gi = draft.gates.findIndex((g) => g.gate === "rewatch_odds");

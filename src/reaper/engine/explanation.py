@@ -203,7 +203,7 @@ class KeepContributionOut(BaseModel):
 
 class RewatchOddsOut(BaseModel):
     """The Stage 2 rewatch-probability context (#554): what fraction of similarly-dormant
-    titles got watched again, from the operator's own history (``docs/REWATCH_PLAN.md``,
+    titles got watched again, from the operator's own history (``docs/history/REWATCH_PLAN.md``,
     Stage 2, "Storage and display"). Display only -- no verdict input and no signal; the
     opt-in protective hold reads the frozen ``Facts.rewatch_cohort_n`` / ``rewatch_cohort_k``
     directly, never this block.
@@ -298,7 +298,7 @@ class Explanation(BaseModel):
     rewatch_odds: RewatchOddsOut | None = None
     """The Stage 2 rewatch-probability context (#554), movie lane only. ``None`` for a
     season row (the fit is movie-only and the writer sends nothing for one, per
-    ``docs/REWATCH_PLAN.md``, Stage 2) and for a row stored before this field existed --
+    ``docs/history/REWATCH_PLAN.md``, Stage 2) and for a row stored before this field existed --
     both read as nothing to show, the same safe default every optional block here takes
     (rule 104)."""
 
