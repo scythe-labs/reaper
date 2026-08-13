@@ -28,7 +28,7 @@ Last verified against the code: 2026-08-02.
 | **M3d** Field registry + authorable protect rules | ✅ done |
 | **M3e** Snapshot pipeline + REST API + polled progress | ✅ done |
 | **M3f** Signal quality — banked as the shipped defaults, `docs/SIGNALS.md` | ✅ done |
-| **M3g** Calibration — a fitted rewatch prior | 🟡 stage 1 shipped, stage 2 next, #554 |
+| **M3g** Rewatch — a fitted rewatch prior | 🟡 stage 1 shipped, stage 2 next, #554 |
 | **M4** React SPA — review queue, why-panel, policy editor, live simulator | ✅ done |
 | **M5** The reap loop — journal, planner, executor, canary, caps | ✅ done |
 | **M6** Season pruning | ✅ done |
