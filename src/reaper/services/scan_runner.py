@@ -40,6 +40,7 @@ from reaper.engine.gates import (
     GateId,
     MinDormancyGate,
     RatingFloorGate,
+    RewatchOddsGate,
     ServerPopularityGate,
     StreamingNowGate,
 )
@@ -141,6 +142,7 @@ GATE_TYPES: dict[GateId, type] = {
     GateId.SERVER_POPULARITY: ServerPopularityGate,
     GateId.DATA_HORIZON: DataHorizonGate,
     GateId.MIN_DORMANCY: MinDormancyGate,
+    GateId.REWATCH_ODDS: RewatchOddsGate,
 }
 
 

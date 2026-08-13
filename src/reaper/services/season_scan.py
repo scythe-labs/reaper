@@ -700,6 +700,12 @@ def build_season_facts(
         # failed read, so it takes zero discount and never claims a check that never ran.
         rewatch_viewings=Absent(source="tautulli"),
         rewatch_last_play_days=Absent(source="tautulli"),
+        # Same reasoning, same Absent (#554 stage 2): the rewatch-probability fit is
+        # movie-only too, so a season carries no cohort to report and the stored
+        # explanation's rewatch_odds context writes nothing for it
+        # (services.snapshot._rewatch_odds_context).
+        rewatch_cohort_n=Absent(source="tautulli"),
+        rewatch_cohort_k=Absent(source="tautulli"),
         ratings=rating_set,
     )
 

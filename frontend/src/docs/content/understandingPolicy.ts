@@ -176,7 +176,7 @@ export const understandingPolicy: Doc = {
 
     h3("Protections: what's always kept", "protections"),
     p(
-      "All of these are on by default, in both the movie and TV policies. Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file.",
+      "Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file. All of these are on by default, in both the movie and TV policies, except the rewatch hold at the foot of the table: movies only, and off until you turn it on.",
     ),
     table(
       ["Protection", "What it keeps", "Default"],
@@ -206,6 +206,11 @@ export const understandingPolicy: Doc = {
         // abstain (see `components/policyMeta.ts`). The row has to say what it keeps,
         // because the sentence above this table promises every row keeps something.
         ["Stop if the unwatched time can't be read", "Anything Reaper couldn't measure", "On"],
+        [
+          "Keep anything likely to be watched above a percentage",
+          "Anything whose kind gets watched again above your percentage",
+          "Off by default",
+        ],
       ],
     ),
     p(
@@ -215,6 +220,9 @@ export const understandingPolicy: Doc = {
     h3("Titles most likely to be rewatched", "rewatch-keep"),
     p(
       "Movies only for now. A title anyone has watched at least 10 times, most recently within 2 years, gets its score lowered by up to 20 points. Plays that got at least halfway count, and plays within a week of each other count as one watch. All three numbers are yours to tune; the starting values were measured against real watch history. It is a lean, never a protection: it can tip a close call toward keeping, never keep a title outright, and watch history Reaper cannot read only ever leans toward keeping.",
+    ),
+    p(
+      "A second, opt-in switch on the same card is hard rather than soft: turned on, it keeps a title outright once its dormancy range clears your percentage, checked against your library's own fitted numbers shown right there on the card. It only ever fires on a group of at least 30 similarly-dormant titles, so a thin slice of your library never decides it.",
     ),
 
     h3("Pace and limits", "pace"),

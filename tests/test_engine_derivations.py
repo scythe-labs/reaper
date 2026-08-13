@@ -402,6 +402,13 @@ def _written_explanation() -> dict[str, Any]:
             merged_rating_keys=(4242, 4243),
             match_candidates=(4242, 4243),
             watch_blind=False,
+            rewatch_odds={
+                "n": 599,
+                "k": 207,
+                "lo_days": 365.0,
+                "hi_days": 730.0,
+                "state": "measured",
+            },
         )
     )
     return document
@@ -501,6 +508,7 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
 
         assert set(_nested_models(Explanation)) == {
             "match",
+            "rewatch_odds",
             "signals",
             "keeps",
             "protections_fired",
@@ -510,6 +518,7 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         assert {label for label, _, _ in _blocks(document)} == {
             "<top level>",
             "match",
+            "rewatch_odds",
             "signals[0]",
             "keeps[0]",
             "protections_fired[0]",
@@ -536,3 +545,30 @@ class TestTheStoredExplanationIsWrittenAsItIsDeclared:
         assert body is not None
         assert body.match is not None and body.match.merged_rating_keys == [4242, 4243]
         assert [keep.name for keep in body.keeps] == ["Rated well"]
+
+    def test_a_row_without_rewatch_odds_reads_as_nothing_to_show(self) -> None:
+        """#554 stage 2: a row stored before this field existed carries no key at all, not
+        a null value written by a version that knows about it -- the same thaw rule 104
+        gives every other optional block here (``match``, ``keeps``)."""
+        document = _written_explanation()
+        del document["rewatch_odds"]
+
+        body = read_explanation(document)
+
+        assert body is not None
+        assert body.rewatch_odds is None
+
+    def test_rewatch_odds_round_trips_the_written_block(self) -> None:
+        """The state written by the scan (``services.snapshot._rewatch_odds_context``) is
+        exactly the state the panel reads back."""
+        document = _written_explanation()
+
+        body = read_explanation(document)
+
+        assert body is not None
+        assert body.rewatch_odds is not None
+        assert body.rewatch_odds.n == 599
+        assert body.rewatch_odds.k == 207
+        assert body.rewatch_odds.lo_days == 365.0
+        assert body.rewatch_odds.hi_days == 730.0
+        assert body.rewatch_odds.state == "measured"

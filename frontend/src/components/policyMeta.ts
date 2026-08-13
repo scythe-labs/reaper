@@ -49,6 +49,7 @@ export type GateId =
   | "data_horizon"
   | "unmanaged"
   | "min_dormancy"
+  | "rewatch_odds"
   | "season_progression"
   | "custom";
 
@@ -79,6 +80,14 @@ export const GATE_META: Record<string, GateMeta> = {
   rating_floor: {
     label: "Keep well-rated titles",
     help: "A title well rated on any source you trust is kept.",
+  },
+  // Rendered inside the rewatch card, not in the protections list: `PolicyEditor`'s gate
+  // loop skips this id the way it skips `rating_floor`, and the card wires the same
+  // stored gate row. The entry stays complete so the simulator's spared-by list and any
+  // stored explanation name it properly.
+  rewatch_odds: {
+    label: "Keep anything likely to be watched above a percentage",
+    help: "Measured from your own history: when titles that sat unwatched this long got watched again often enough, this one is kept.",
   },
   streaming_now: {
     label: "Never touch something playing right now",

@@ -198,6 +198,9 @@ the fit ever reads keys outside the candidate set.
   any completion), else cutoff minus the added date. Via the shared `engine/dormancy.py`
   derivation. Outcome = any play in the following 365 days.
 - Buckets, half-open (lo, hi] days: 0-365, 365-548, 548-730, 730-1095, 1095-1825, 1825+.
+  The first bucket is closed at zero: dormancy of exactly 0 is a title played the day of
+  the cutoff, and a strict lower edge dropped real titles from the fit while their panel
+  read "not enough watch history" (found live, 2026-08-13).
 - Point estimate: k/n per bucket, then **merge adjacent buckets that violate
   monotone-decreasing** (pool-adjacent-violators). A merged block's rate, counts, and
   dormancy range are the pooled ones, and the display sentence uses them. Without the merge,
@@ -229,6 +232,17 @@ dormancy cutoff in the operator's own outcome units. So the row **echoes the con
 beside the input, recomputed from the current fit: "At 25%, this protects titles unwatched
 under about 3 years, 2,475 of 3,192." Ships opt-in (default off) because it overlaps the
 dormancy floor. Rule 38 holds: the gate ships wired to its facts in the same PR.
+
+**Approved with the mockups, 2026-08-13.** The threshold is exposable, and the operator chose
+all three exposures: the why-panel sentence carries the percentage beside the counts; the
+Policy surface shows the library's fitted ladder (one row per merged block, rate beside the
+range) above the percentage box, with the consequence echo below it; and the simulator
+re-decides the stored scan live as the percentage moves, off each item's frozen cohort
+numbers. **Placement is the grouped card**: the hold joins stage 1's card as its second half
+(a divider between them, each with its own switch), titled "Keep anything likely to be
+watched above a percentage". Soft and hard stay separate switches; only the placement merges,
+and the hold remains the one protection living outside "What's always kept", stated in its
+help. Why-block heading: "Watched again within a year".
 
 ### Storage and display
 

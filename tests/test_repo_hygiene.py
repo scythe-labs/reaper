@@ -3703,8 +3703,11 @@ def test_every_silent_notice_says_why_it_is_silent() -> None:
 # `ReapPlan` and `ReapConfirm`'s safety reads, both `usePlexTrash` call sites, `ReapBreakdown`'s
 # unknown-size allowance AND its ledger (which states delete counts, so a held one would be a stale
 # number shown as current), `queueSettings`' allowance, and `PolicyEditor`'s simulator column,
-# which argues the same thing in as many words. A ban would have to exempt all of them; a count
-# does not care which way a site resolved, only that nobody added one without deciding.
+# which argues the same thing in as many words. The rewatch-odds fit (#554 stage 2) joins them:
+# `RewatchLadder` says "couldn't read" outright rather than holding a previous ladder on screen,
+# because the ladder and the echo below it exist so the operator's percentage box means what it
+# says, and a stale library number would defeat that. A ban would have to exempt all of them; a
+# count does not care which way a site resolved, only that nobody added one without deciding.
 _QUERY_FAILURE_HANDLES = {
     "frontend/src/App.tsx": 7,
     # The seven settings panels below held one entry between them, ``Settings.tsx: 8``, until the
@@ -3737,7 +3740,9 @@ _QUERY_FAILURE_HANDLES = {
     # where a directly-bound ``useQuery`` had been one. Counted rather than excused, because
     # the population is the thing this pins.
     "frontend/src/components/PlexPanel.tsx": 6,
-    "frontend/src/components/PolicyEditor.tsx": 4,
+    # 4 -> 5 for #554 stage 2's rewatch-odds fit (`RewatchLadder`'s `isError`): undivided, see
+    # the docstring above.
+    "frontend/src/components/PolicyEditor.tsx": 5,
     "frontend/src/components/PolicyRuleEditors.tsx": 3,
     "frontend/src/components/ReapBreakdown.tsx": 2,
     "frontend/src/components/ReapConfirm.tsx": 2,
@@ -6458,6 +6463,7 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
         "bounded: both take a subquery, so nothing is bound at all",
     ),
     "src/reaper/services/retention.py::sweep_old_snapshots": (1, "bounded: SWEEP_BATCH ids"),
+    "src/reaper/services/rewatch.py::movie_rewatch_outcomes": (1, "chunked"),
     "src/reaper/services/rewatch.py::movie_rewatch_stats": (1, "chunked"),
     "src/reaper/services/season_scan.py::season_watch_stats": (3, "chunked"),
     "src/reaper/services/snapshot.py::record_first_flagged_bulk": (1, "chunked"),

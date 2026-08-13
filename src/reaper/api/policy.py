@@ -12,6 +12,7 @@ cannot drift.
 
 from __future__ import annotations
 
+import json
 from typing import assert_never
 
 import structlog
@@ -33,15 +34,20 @@ from reaper.api.schemas import (
     PolicyProbeOut,
     PolicyValidateIn,
     PolicyWarningOut,
+    RewatchOddsBlockOut,
+    RewatchOddsFitOut,
     SignalSettingIn,
 )
 from reaper.clock import utcnow
 from reaper.db.models import (
+    Candidate,
     Instance,
     InstanceKind,
+    Snapshot,
 )
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.dormancy import history_reach_days
+from reaper.engine.gates import wilson_upper
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
@@ -271,6 +277,62 @@ def _policy_out(
 def _candidate_media_type(policy_media_type: str) -> str:
     """The candidate ``media_type`` a policy governs: a TV policy scores *seasons*."""
     return "season" if policy_media_type == "tv" else "movie"
+
+
+@router.get("/policy/rewatch-odds", tags=[api_tags.POLICY])
+async def rewatch_odds_fit(request: Request) -> RewatchOddsFitOut:
+    """The latest scan's fitted rewatch ladder, for the Policy page's rungs and echo.
+
+    Aggregated from the per-candidate ``rewatch_odds`` blocks the scan froze, never refit
+    here (rule 104): the page states what the gate will actually compare, and the two cannot
+    disagree. A row that is thin, has no usable block, or cannot be read at all contributes
+    to ``total_items`` and no block -- the conservative display answer (rule 96); this route
+    decides nothing about a reap.
+    """
+    blocks: dict[tuple[float, float | None], dict[str, int]] = {}
+    total = 0
+    async with session_factory(request)() as session:
+        newest = (
+            await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
+        ).scalar_one_or_none()
+        if newest is None:
+            return RewatchOddsFitOut(blocks=[], total_items=0)
+        rows = (
+            await session.execute(
+                select(Candidate.explanation_json).where(
+                    Candidate.snapshot_id == newest.id, Candidate.media_type == "movie"
+                )
+            )
+        ).scalars()
+        for blob in rows:
+            total += 1
+            try:
+                context = json.loads(blob or "{}").get("rewatch_odds")
+            except (ValueError, TypeError):
+                context = None
+            if not isinstance(context, dict) or context.get("state") in ("no_history", "thin"):
+                continue
+            try:
+                key = (float(context["lo_days"]), context["hi_days"])
+                n, k = int(context["n"]), int(context["k"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            entry = blocks.setdefault(key, {"n": n, "k": k, "items": 0})
+            entry["items"] += 1
+    return RewatchOddsFitOut(
+        blocks=[
+            RewatchOddsBlockOut(
+                lo_days=lo,
+                hi_days=hi,
+                n=entry["n"],
+                k=entry["k"],
+                upper_bound_pct=round(wilson_upper(entry["k"], entry["n"]) * 100, 1),
+                items=entry["items"],
+            )
+            for (lo, hi), entry in sorted(blocks.items(), key=lambda pair: pair[0][0])
+        ],
+        total_items=total,
+    )
 
 
 @router.get("/policy", tags=[api_tags.POLICY])

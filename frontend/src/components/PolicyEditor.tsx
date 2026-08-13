@@ -44,6 +44,7 @@ import {
   type ProfileSettings,
   type RatingRule,
   type RatingSource,
+  type RewatchOddsFit,
   type SignalSetting,
 } from "../api";
 import { announce } from "../announce";
@@ -1228,6 +1229,113 @@ export function anchorClaims(anchor: WarningAnchor, field: string): boolean {
   );
 }
 
+/** One dormancy edge in plain years: "1", "1.5", "3". The six canonical buckets
+ *  (services/rewatch.py) land on round fractions of a year, and the monotonicity merge only
+ *  ever joins adjacent ones, so every lo/hi the ladder and the echo read is still one of
+ *  those six edges. */
+function rewatchYears(days: number): string {
+  const years = Math.round((days / 365) * 2) / 2;
+  return Number.isInteger(years) ? String(years) : years.toFixed(1);
+}
+
+/** The edge above, with its unit: "1 year", "1.5 years", "5 years". */
+function rewatchYearsPhrase(days: number): string {
+  const label = rewatchYears(days);
+  return `${label} ${label === "1" ? "year" : "years"}`;
+}
+
+/** One ladder row's dormancy range in plain words: "sat under 1 year", "1 to 1.5 years",
+ *  "over 5 years". */
+function rewatchRangeLabel(lo: number, hi: number | null): string {
+  if (hi === null) return `over ${rewatchYearsPhrase(lo)}`;
+  return lo === 0
+    ? `sat under ${rewatchYearsPhrase(hi)}`
+    : `${rewatchYears(lo)} to ${rewatchYearsPhrase(hi)}`;
+}
+
+/** Why the ladder or the echo cannot show a real number right now, or `null` when the fit
+ *  is ready to read (rule 17: a fit that cannot be read says so beside the control, never a
+ *  silent absence). Shared by both, so the two cannot describe the same failure two ways.
+ *
+ *  No reload advice on the error branch (#195): this sits inside an editor whose savebar
+ *  may be holding unsaved policy edits, and a reload takes them with no ask -- the same
+ *  reason the caps-and-grace read below states its own failure bare. */
+function rewatchFitStatus(
+  fit: RewatchOddsFit | undefined,
+  isPending: boolean,
+  isError: boolean,
+): string | null {
+  if (isPending) return "Reading your library's rewatch numbers…";
+  if (isError) return "Couldn't read your library's rewatch numbers.";
+  if (!fit || fit.blocks.length === 0) {
+    return fit && fit.total_items > 0
+      ? "Not enough scanned titles yet to show your library's own numbers."
+      : "Run a scan first to see your library's own numbers.";
+  }
+  return null;
+}
+
+/** The library's own fitted rewatch ladder, read before the operator decides where to set
+ *  the percentage below it. Not itself a sub-control (rule 41): it renders whenever the fit
+ *  has something to show, switch on or off, since it is what the operator reads BEFORE
+ *  turning the hold on. */
+function RewatchLadder({
+  fit,
+  isPending,
+  isError,
+}: {
+  fit: RewatchOddsFit | undefined;
+  isPending: boolean;
+  isError: boolean;
+}) {
+  const status = rewatchFitStatus(fit, isPending, isError);
+  if (status || !fit) return <p className="help rule-help">{status}</p>;
+  return (
+    <dl className="rewatch-ladder">
+      {[...fit.blocks]
+        .sort((a, b) => a.lo_days - b.lo_days)
+        .map((block) => (
+          <div key={`${block.lo_days}-${String(block.hi_days)}`}>
+            <dt>{rewatchRangeLabel(block.lo_days, block.hi_days)}</dt>
+            <dd>{Math.round((100 * block.k) / block.n)}%</dd>
+          </div>
+        ))}
+    </dl>
+  );
+}
+
+/** The consequence echo beside the percentage box: what the current threshold protects,
+ *  recomputed from the fetched fit rather than read off the stored gate, so it tracks the
+ *  box as it moves, before Save. `fit.blocks` sorts ascending by dormancy, and the
+ *  monotonicity merge that built them makes the rate non-increasing with it, so the
+ *  cleared set is the leading run whose upper bound still clears the bar. */
+function rewatchEchoSentence(fit: RewatchOddsFit, thresholdPct: number): string {
+  // Every clearing block counts, not just the leading run: the gate fires per block, and
+  // the merge only makes point RATES monotone -- an upper bound can invert across blocks
+  // of very different cohort sizes, and an echo that stopped at the first miss would then
+  // undercount what the gate actually protects (rule 62's class: the number beside a
+  // control derives from the same set the server acts on).
+  const sorted = [...fit.blocks].sort((a, b) => a.lo_days - b.lo_days);
+  const cleared = sorted.filter((block) => block.upper_bound_pct >= thresholdPct);
+  const protectedItems = cleared.reduce((sum, block) => sum + block.items, 0);
+  if (cleared.length === 0) {
+    return `At ${thresholdPct}%, nothing in your library clears that bar yet, 0 of ${count(fit.total_items)}.`;
+  }
+  const last = cleared[cleared.length - 1]!;
+  // The "under about N years" clause is only true of a contiguous leading run; on the rare
+  // non-contiguous clear, the count stands alone rather than claiming a range it isn't.
+  const contiguous = cleared.length === sorted.indexOf(last) + 1;
+  const range =
+    last.hi_days === null
+      ? "at any age"
+      : contiguous
+        ? `unwatched under about ${rewatchYearsPhrase(last.hi_days)}`
+        : null;
+  return range === null
+    ? `At ${thresholdPct}%, this protects ${count(protectedItems)} of ${count(fit.total_items)} titles.`
+    : `At ${thresholdPct}%, this protects titles ${range}, ${count(protectedItems)} of ${count(fit.total_items)}.`;
+}
+
 export function PolicyEditor({
   focus,
   mediaType,
@@ -1275,6 +1383,19 @@ export function PolicyEditor({
   const { data: saved, isError: policyFailed } = useQuery({
     queryKey: ["policy", mediaType],
     queryFn: () => api.policy(mediaType),
+  });
+
+  // The rewatch card's own fitted ladder and consequence echo (#554 stage 2), movie lane
+  // only: the query never fires for TV, whose card does not render. Independent of `draft`
+  // -- it reads the last scan's frozen numbers, not anything a save would change.
+  const {
+    data: rewatchFit,
+    isPending: rewatchFitPending,
+    isError: rewatchFitError,
+  } = useQuery({
+    queryKey: ["rewatch-odds"],
+    queryFn: () => api.rewatchOddsFit(),
+    enabled: mediaType === "movie",
   });
 
   const [draft, setDraft] = useState<PolicyBody | null>(null);
@@ -2091,9 +2212,10 @@ export function PolicyEditor({
               update({ gates: draft.gates.filter((_, j) => j !== i) });
             };
             // A protection that carries its own settings renders as a card below the plain
-            // rows (the rating card), so the visual weight says which protections have more
-            // to configure. It is skipped here.
-            if (gate.gate === "rating_floor") return null;
+            // rows (the rating card, and the rewatch-odds hold folded into stage 1's rewatch
+            // card), so the visual weight says which protections have more to configure.
+            // Both are skipped here.
+            if (gate.gate === "rating_floor" || gate.gate === "rewatch_odds") return null;
             return (
               <GateRow
                 key={gate.gate}
@@ -2384,6 +2506,65 @@ export function PolicyEditor({
                 </div>
               </>
             )}
+
+            {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second
+                half, per "Approved with the mockups, 2026-08-13" in docs/REWATCH_PLAN.md.
+                Wired to draft.gates the same way RatingFloorRow is above, by index. */}
+            {(() => {
+              const gi = draft.gates.findIndex((g) => g.gate === "rewatch_odds");
+              const hold = gi >= 0 ? draft.gates[gi] : undefined;
+              // Always present on a movie body (PolicyBody._rewatch_odds_row appends it on
+              // load), so undefined only guards a body this editor has not re-seeded yet.
+              if (!hold) return null;
+              const setHold = (g: GateSetting) => {
+                const gates = [...draft.gates];
+                gates[gi] = g;
+                update({ gates });
+              };
+              const status = rewatchFitStatus(rewatchFit, rewatchFitPending, rewatchFitError);
+              return (
+                <>
+                  <div className="policy-divider" />
+                  <label className="toggle rule-toggle">
+                    <Switch
+                      checked={hold.enabled}
+                      onChange={(enabled) => setHold({ ...hold, enabled })}
+                    />
+                    <span className="rule-name">
+                      Keep anything likely to be watched above a percentage
+                    </span>
+                  </label>
+                  <p className="help rule-help">
+                    The hard companion, off by default: kept outright, whatever it scored, while
+                    titles that sat this long get watched again often enough.
+                  </p>
+                  <RewatchLadder
+                    fit={rewatchFit}
+                    isPending={rewatchFitPending}
+                    isError={rewatchFitError}
+                  />
+                  {hold.enabled && (
+                    <>
+                      <div className="rule-control">
+                        <span>kept when the chance is at least</span>
+                        <FixedQuantity
+                          value={hold.threshold}
+                          suffix="%"
+                          min={1}
+                          max={99}
+                          width="narrow"
+                          ariaLabel="Kept when the chance is at least"
+                          onChange={(v) => setHold({ ...hold, threshold: v })}
+                        />
+                      </div>
+                      <p className="help rule-help">
+                        {status ?? rewatchEchoSentence(rewatchFit!, hold.threshold)}
+                      </p>
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 

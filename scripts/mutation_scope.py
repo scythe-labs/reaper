@@ -1219,6 +1219,7 @@ ZONES: dict[str, Zone] = {
             "RatingRuleSpec._vote_floor_matches_the_source",
             "PolicyBody._pin_to_the_running_scorer",
             "PolicyBody._drop_retired_gates",
+            "PolicyBody._rewatch_odds_row",
             "PolicyBody._weights_total_one_hundred",
             "PolicyBody._no_duplicates",
             "ProfileSettings._run_cap_within_rolling_cap",
@@ -1271,6 +1272,8 @@ ZONES: dict[str, Zone] = {
             "progress_is_establishable",
             "ServerPopularityGate.evaluate",
             "MinDormancyGate.evaluate",
+            "RewatchOddsGate.evaluate",
+            "wilson_upper",
             "DataHorizonGate.evaluate",
             "evaluate_all",
             # The eight the zone omitted while reporting a clean sweep of the gate layer

@@ -376,7 +376,14 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
         for c in (0, 2_500, 7_500, 10_000)
     ],
     # --- every shipped gate, dropped ------------------------------------------------
-    *[(f"drop:{g.gate.value}", _without(g.gate)) for g in BASE.gates],
+    # Except the rewatch-odds row: a movie body cannot NOT carry it
+    # (`PolicyBody._rewatch_odds_row` re-appends it on validation), so a dropped copy is a
+    # shape no wire round-trip can preserve and no operator can produce.
+    *[
+        (f"drop:{g.gate.value}", _without(g.gate))
+        for g in BASE.gates
+        if g.gate is not GateId.REWATCH_ODDS
+    ],
     # --- every shipped list protection, dropped -------------------------------------
     # Where `drop:whitelisted` and `drop:curated_list` used to sit. Those gates retired and
     # list membership now protects through an `on_list` condition per list, so the lane is

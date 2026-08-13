@@ -348,6 +348,23 @@ export interface KeepContribution {
   evaluated: boolean;
 }
 
+/** The Stage 2 rewatch-probability context (#554): what fraction of similarly-dormant
+ *  titles got watched again, from the operator's own history. Display only -- no verdict
+ *  input and no signal; the opt-in protective hold reads the frozen cohort facts directly,
+ *  never this block.
+ *
+ *  `n`/`k` are the block's pooled cohort size and watched-again count, `lo_days`/`hi_days`
+ *  its half-open dormancy range (`hi_days` null on the open tail bucket). In the
+ *  `"no_history"` state there is no usable block and those four carry a placeholder;
+ *  render off `state` first and never them in that state. */
+export interface RewatchOdds {
+  n: number;
+  k: number;
+  lo_days: number;
+  hi_days: number | null;
+  state: "measured" | "thin" | "no_history";
+}
+
 export interface Explanation {
   score: number;
   /** The condemnation subtotal before any keep discount. Optional so an item scored before
@@ -392,6 +409,10 @@ export interface Explanation {
    *  parses (its explanation JSON has no match block), and nullable because a row that was
    *  never matched arrives as an explicit `null`. Both consumers already guard it. */
   match?: Match | null;
+  /** The Stage 2 rewatch-probability context (#554), movie lane only. `null` for a season
+   *  row (the fit is movie-only) and for a row stored before this field existed -- both
+   *  read as nothing to show. */
+  rewatch_odds?: RewatchOdds | null;
 }
 
 /** Where the item can be opened. Each link is null when it can't be built (unmatched in
@@ -584,6 +605,30 @@ export interface PolicyBody {
 export interface SeasonShape {
   total_shows: number;
   season_counts: Record<number, number>;
+}
+
+/** One measured rung of the fitted rewatch ladder (#554 stage 2): a merged dormancy block
+ *  from the latest scan's fit, aggregated across every movie candidate that landed in it. */
+export interface RewatchOddsBlock {
+  lo_days: number;
+  hi_days: number | null;
+  n: number;
+  k: number;
+  /** The Wilson 95% upper bound of k/n, in percent: what the hold actually compares against
+   *  the operator's threshold, so the ladder and the gate can never disagree. */
+  upper_bound_pct: number;
+  /** Movie candidates of the latest scan whose current dormancy falls in this rung: what
+   *  the consequence echo counts. */
+  items: number;
+}
+
+/** The latest scan's fitted rewatch curve, for the Policy page's ladder and consequence
+ *  echo. Empty `blocks` with `total_items === 0` means no scan has run on this build yet. */
+export interface RewatchOddsFit {
+  blocks: RewatchOddsBlock[];
+  /** Every movie candidate of the latest scan, block or no block: what the consequence echo
+   *  states its protected count out of. */
+  total_items: number;
 }
 
 /** What a vocabulary field's value IS, which decides how it is typed, stored and read back
@@ -1994,6 +2039,10 @@ export const api = {
   /** The season-count distribution from the latest snapshot, for the keep-last advisory.
    *  Independent of the current keep-last value, so it needs no re-scan. */
   seasonShape: () => request<SeasonShape>("/api/snapshot/season-shape"),
+  /** The latest scan's fitted rewatch ladder (#554 stage 2), for the rewatch card's ladder
+   *  and consequence echo. Aggregated server-side from the stored explanation blocks, never
+   *  refit here, so the page states exactly what the gate will actually compare. */
+  rewatchOddsFit: () => request<RewatchOddsFit>("/api/policy/rewatch-odds"),
 
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),

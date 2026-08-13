@@ -125,7 +125,7 @@ Each signal pushes the score up by up to its number of points. The default mix d
 
 ### Protections: what's always kept {#protections}
 
-All of these are on by default, in both the movie and TV policies. Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file.
+Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file. All of these are on by default, in both the movie and TV policies, except the rewatch hold at the foot of the table: movies only, and off until you turn it on.
 
 | Protection | What it keeps | Default |
 | --- | --- | --- |
@@ -134,12 +134,15 @@ All of these are on by default, in both the movie and TV policies. Any one that 
 | Keep well-rated titles | Anything clearing your rating bar | IMDb 7.5, at least 1,000 votes |
 | Never touch something playing right now | Anything being watched at that moment | On, re-checked live |
 | Stop if the unwatched time can't be read | Anything Reaper couldn't measure | On |
+| Keep anything likely to be watched above a percentage | Anything whose kind gets watched again above your percentage | Off by default |
 
 Your lists protect through **keep rules**, below: each list on Settings, Lists acts through a rule here naming it. A list you add starts with no rule, so it protects nothing until you give it one here, and you choose whether it keeps every title outright or only leans that way. The lists Reaper ships come with a keep-everything rule already. Removing the list removes its rules with it.
 
 ### Titles most likely to be rewatched {#rewatch-keep}
 
 Movies only for now. A title anyone has watched at least 10 times, most recently within 2 years, gets its score lowered by up to 20 points. Plays that got at least halfway count, and plays within a week of each other count as one watch. All three numbers are yours to tune; the starting values were measured against real watch history. It is a lean, never a protection: it can tip a close call toward keeping, never keep a title outright, and watch history Reaper cannot read only ever leans toward keeping.
+
+A second, opt-in switch on the same card is hard rather than soft: turned on, it keeps a title outright once its dormancy range clears your percentage, checked against your library's own fitted numbers shown right there on the card. It only ever fires on a group of at least 30 similarly-dormant titles, so a thin slice of your library never decides it.
 
 ### Pace and limits {#pace}
 

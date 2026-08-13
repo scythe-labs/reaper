@@ -35,6 +35,8 @@ reap.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from reaper.engine.gates import thaw_defers_to_owner
@@ -199,6 +201,28 @@ class KeepContributionOut(BaseModel):
     evaluated: bool
 
 
+class RewatchOddsOut(BaseModel):
+    """The Stage 2 rewatch-probability context (#554): what fraction of similarly-dormant
+    titles got watched again, from the operator's own history (``docs/REWATCH_PLAN.md``,
+    Stage 2, "Storage and display"). Display only -- no verdict input and no signal; the
+    opt-in protective hold reads the frozen ``Facts.rewatch_cohort_n`` / ``rewatch_cohort_k``
+    directly, never this block.
+
+    ``n`` and ``k`` are the block's pooled cohort size and watched-again count, ``lo_days``
+    and ``hi_days`` its half-open dormancy range (``hi_days`` null on the open tail bucket).
+    In the ``"no_history"`` state there is no usable block, and ``n``/``k``/``lo_days`` carry
+    the placeholder ``0``/``0``/``0.0`` -- the panel reads ``state`` first and never these
+    three in that state."""
+
+    n: int
+    k: int
+    lo_days: float
+    hi_days: float | None
+    state: Literal["measured", "thin", "no_history"]
+    """``"measured"`` at or above ``gates.REWATCH_BLOCK_FLOOR_N``, ``"thin"`` below it,
+    ``"no_history"`` when the item's dormancy has no usable block at all."""
+
+
 def thaw_threshold(value: object) -> int | None:
     """Read the stored score-to-beat, or nothing where the row carries no legible one.
 
@@ -271,6 +295,13 @@ class Explanation(BaseModel):
     """
     match: MatchOut | None = None
 
+    rewatch_odds: RewatchOddsOut | None = None
+    """The Stage 2 rewatch-probability context (#554), movie lane only. ``None`` for a
+    season row (the fit is movie-only and the writer sends nothing for one, per
+    ``docs/REWATCH_PLAN.md``, Stage 2) and for a row stored before this field existed --
+    both read as nothing to show, the same safe default every optional block here takes
+    (rule 104)."""
+
     signals: list[SignalContribution]
     keeps: list[KeepContributionOut] = Field(default_factory=list)
 
@@ -325,6 +356,15 @@ class Explanation(BaseModel):
         still raises, and is left to do so rather than silently emptying a match the panel could
         have partly rendered. Rule 7/24 -- this guards the outer shape only, and says so.
         """
+        return value if value is None or isinstance(value, dict) else None
+
+    @field_validator("rewatch_odds", mode="before")
+    @classmethod
+    def _thaw_rewatch_odds(cls, value: object) -> object:
+        """Read a rewatch-odds block that is not a mapping as absent, for the same reason
+        ``_thaw_match`` does (rule 72): a row predating this field, or one carrying a
+        non-mapping value, has nothing to show rather than a reason to blank the whole
+        panel. Scoped to the outer shape only, exactly as ``_thaw_match`` is (rule 7/24)."""
         return value if value is None or isinstance(value, dict) else None
 
 

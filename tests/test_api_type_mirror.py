@@ -85,10 +85,13 @@ API_TS = REPO / "frontend" / "src" / "api.ts"
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
-#: Reconciled by hand against the tree: 125 under ``reaper.api.*`` and 15 across the two engine
-#: modules. It is here because the collision assertion below is flag-shaped, and a flag cannot
-#: see a member that left the walk (rule 145).
-_EXPECTED_SERVER_MODELS = 140
+#: Reconciled by hand against the tree: 127 under ``reaper.api.*`` and 16 across the two engine
+#: modules (+1 for ``RewatchOddsOut``, #554 stage 2, mirrored in the browser as ``RewatchOdds``;
+#: +2 more for the same stage's ``RewatchOddsFitOut``/``RewatchOddsBlockOut``, the Policy page's
+#: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``). It is here
+#: because the collision assertion below is flag-shaped, and a flag cannot see a member that
+#: left the walk (rule 145).
+_EXPECTED_SERVER_MODELS = 143
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
 #: field sets are compared -- and the rename is the only reason a suffix rule cannot find it.
@@ -154,8 +157,11 @@ CLIENT_ONLY = {
 # without being a new interface.
 # Both +1 again for the second half of W8-1: `GroupRollup` pairs with `GroupRollupOut` on the
 # suffix rule. It is the show-level rollup that used to be four fields on every season row.
-EXPECTED_INTERFACES = 94
-EXPECTED_PAIRS = 92
+# Both +3 again for #554 stage 2's frontend step: `RewatchOdds` pairs with `RewatchOddsOut`,
+# `RewatchOddsFit` with `RewatchOddsFitOut`, and `RewatchOddsBlock` with `RewatchOddsBlockOut`,
+# all three on the plain suffix rule with no ALIAS entry needed.
+EXPECTED_INTERFACES = 97
+EXPECTED_PAIRS = 95
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
