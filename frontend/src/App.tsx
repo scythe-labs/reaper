@@ -226,6 +226,7 @@ function Dashboard({ user }: { user: AuthUser }) {
   // commit, so a single render can hold the previous view's aim while the new view is on screen.
   const reviewFocus = focus?.view === "review" ? focus : null;
   const policyFocus = focus?.view === "policy" ? focus : null;
+  const settingsFocus = focus?.view === "settings" ? focus : null;
 
   // A destination dies with the visit it aimed at, and a nav click is not the only way a view is
   // left: a Back press restores `view` through the raw setter and runs no handler at all. The
@@ -321,7 +322,16 @@ function Dashboard({ user }: { user: AuthUser }) {
         setPolicySection("flags");
       }
     } else if (intent.view === "settings") {
-      if (intent.panel !== undefined) setSettingsPanel(intent.panel);
+      if (intent.panel !== undefined) {
+        // Already on Settings: the panel this would close can be holding unsaved edits, so ASK
+        // for the new one and let the confirm inside Settings refuse. Setting it from here moved
+        // the operator off General mid-sentence and dropped what they had typed, with no confirm
+        // either way (#794). Coming from another view there is nothing mounted to lose, so seed
+        // the panel directly rather than paint the old one for a frame first.
+        if (view === "settings")
+          setFocus({ view: "settings", panel: intent.panel, nonce: Date.now() });
+        else setSettingsPanel(intent.panel);
+      }
     }
     setView(intent.view);
   };
@@ -633,6 +643,7 @@ function Dashboard({ user }: { user: AuthUser }) {
             <Settings
               panel={settingsPanel}
               onPanelChange={setSettingsPanel}
+              jump={settingsFocus}
               // The Lists rows' policy-use links land on the keep-rules card's section.
               onGoToPolicy={() => goToPolicySection("kept")}
             />

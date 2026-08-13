@@ -10,7 +10,7 @@
 // Nothing here can delete anything: the deletion switch lives in Policy -> Deletion, and the
 // Security panel only manages the admin password that confirms it.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { AboutPanel } from "./AboutPanel";
 import { BackupPanel } from "./BackupPanel";
@@ -67,6 +67,7 @@ export const PANELS: { id: Panel; label: string }[] = [
 export function Settings({
   panel,
   onPanelChange,
+  jump,
   onGoToPolicy,
 }: {
   /** Which section is open. Owned by `App`, not by this file: the address bar names the open
@@ -75,6 +76,10 @@ export function Settings({
   /** Where a rail click goes. Every path that changes the panel runs the confirm below first,
    *  so this is called with a destination the operator has already agreed to leave for. */
   onPanelChange: (next: Panel) => void;
+  /** A panel asked for from outside, by the user menu's update item. An ask rather than an
+   *  instruction: it goes through the same confirm the rail does, so edits on the panel it would
+   *  close are not lost without a word (#794). The nonce makes each ask fire once. */
+  jump?: { panel: Panel; nonce: number } | null;
   /** Jump to the Policy screen's keep-rules section, for the Lists rows' policy-use links.
    *  Optional the way `SafetyBanner`'s jump is: tests mount Settings without a navigator. */
   onGoToPolicy?: (() => void) | undefined;
@@ -142,12 +147,21 @@ export function Settings({
   // the policy editor's Movies/TV switch. This file supplies only what is local: which panel is
   // open, whether it holds anything, and what a yes does.
   //
-  // A yes commits through `onPanelChange`, which is where the open panel lives now. Every switch
-  // still goes through this hook: the rail, the narrow-screen picker, and the Jobs panel's link
-  // to Plex all call `request`. What it does not cover is `App` setting `panel` itself, which is
-  // one route: a jump from the user menu's About and update items. That route unmounted the whole
-  // of Settings before this change, so a draft was dropped there with no confirm either way.
+  // A yes commits through `onPanelChange`, which is where the open panel lives now. EVERY switch
+  // goes through this hook: the rail, the narrow-screen picker, the Jobs panel's link to Plex,
+  // and the jump below, which is the one that used to go around it (#794).
   const confirmSwitch = useSwitchConfirm(panel, leavingDirty, onPanelChange);
+
+  // A jump asks for its panel exactly once. `request` reads `dirty` and either moves or raises
+  // the notice, so the ask and a rail click are the same press from here down. Handled once per
+  // nonce, so a re-render never re-asks: the operator may have pressed "Keep editing", and
+  // asking again would put the notice back under a rail they did not touch.
+  const handledJump = useRef(0);
+  useEffect(() => {
+    if (!jump || jump.nonce === handledJump.current) return;
+    handledJump.current = jump.nonce;
+    confirmSwitch.request(jump.panel);
+  }, [jump, confirmSwitch]);
   const pendingLabel = PANELS.find((p) => p.id === confirmSwitch.pending)?.label ?? "";
   // The section being LEFT, so one string serves every panel that raises the shared sentence.
   const leavingLabel = PANELS.find((p) => p.id === panel)?.label ?? "";

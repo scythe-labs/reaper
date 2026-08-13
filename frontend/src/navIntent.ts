@@ -71,11 +71,14 @@ export type NavIntent =
  *  every aim through a check on the name rather than trusting the state to be clean. A third
  *  destination is a member here and nothing else.
  *
- *  **Settings was a member and is not.** Its open panel is `App` state now, so the address bar
- *  can name it, and a place you can come back to is not a one-shot aim: the panel is where the
- *  operator left it, the way the review lane is. What stays here is what only fires once. The
- *  search box seeded by a jump must not refill itself on the way back, and a policy section is a
- *  scroll position on one long page, which is an instruction rather than a state. */
+ *  **Settings' member is the ASK, not the panel.** Which panel is open is `App` state, so the
+ *  address bar can name it, and a place you can come back to is not a one-shot aim. A jump that
+ *  wants a different panel is: it fires once, and Settings may refuse it, because the panel it
+ *  would leave can be holding unsaved edits. So `App` names a destination here instead of setting
+ *  the panel, and the panel moves only when the confirm inside Settings lets it (#794). Everything
+ *  in this union fires once. The search box seeded by a jump must not refill itself on the way
+ *  back, and a policy section is a scroll position on one long page. */
 export type Focus =
   | { view: "review"; search: string; nonce: number }
-  | { view: "policy"; section: PolicySectionId; nonce: number };
+  | { view: "policy"; section: PolicySectionId; nonce: number }
+  | { view: "settings"; panel: Panel; nonce: number };

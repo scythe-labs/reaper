@@ -122,18 +122,32 @@ afterEach(() => {
 /** `App` owns which panel is open, so the address bar can name it (`/settings/logs`, navUrl.ts).
  *  This is that owner, so a rail click moves here the way it moves in the app. A test rendering
  *  `Settings` with a fixed `panel` would sit still through every click and prove nothing. */
-function SettingsAt({ open }: { open: Panel }) {
+function SettingsAt({ open, jumper = false }: { open: Panel; jumper?: boolean }) {
   const [panel, setPanel] = useState(open);
-  return <Settings panel={panel} onPanelChange={setPanel} />;
+  // The user menu's update item, wired the way `App` wires it: it asks for About rather than
+  // setting it, so the confirm inside Settings gets to refuse (#794). Rendered only for the
+  // tests about that route, so the rail tests keep counting the rail's own buttons.
+  const [jump, setJump] = useState<{ panel: Panel; nonce: number } | null>(null);
+  return (
+    <>
+      {jumper && (
+        <button onClick={() => setJump((j) => ({ panel: "about", nonce: (j?.nonce ?? 0) + 1 }))}>
+          Update available
+        </button>
+      )}
+      <Settings panel={panel} onPanelChange={setPanel} jump={jump} />
+    </>
+  );
 }
 
 function renderSettings(
   initialPanel: "about" | "general" | "plex" | "notifications" | "security" | "backup" = "about",
+  jumper = false,
 ) {
   // Seeded, not just mocked: the General panel renders its fields from this read, and a mocked
   // answer lands a microtask later -- after a synchronous assertion, which would then be about
   // the "Loading…" panel rather than the one an operator types into (rule 136).
-  renderWithProviders(<SettingsAt open={initialPanel} />, {
+  renderWithProviders(<SettingsAt open={initialPanel} jumper={jumper} />, {
     client: seedSettings(testQueryClient()),
   });
   return userEvent.setup();
@@ -294,6 +308,47 @@ describe("leaving General with something unsaved", () => {
 
     expect(warning()).toBeNull();
     expect(await screen.findByRole("heading", { name: "Security" })).toBeInTheDocument();
+  });
+
+  // The third way in, and the one that went around this confirm entirely: the user menu's update
+  // item is outside Settings, so it asked `App` for a panel and `App` set it. Everything typed
+  // went with the panel that unmounted, on a press that says nothing about settings at all (#794).
+  it("holds a jump from outside the page, the same as a rail click", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("general", true);
+    const url = await typeADraft(person);
+
+    await person.click(screen.getByRole("button", { name: "Update available" }));
+
+    expect(warning()!.textContent).toContain(
+      "You have unsaved General settings. Switching to About discards them.",
+    );
+    expect(heading()).toBe("General");
+    expect(url).toHaveValue("https://reaper.example.com");
+  });
+
+  it("lets a jump through on Discard and switch", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("general", true);
+    await typeADraft(person);
+
+    await person.click(screen.getByRole("button", { name: "Update available" }));
+    await person.click(screen.getByRole("button", { name: "Discard and switch" }));
+
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
+    expect(warning()).toBeNull();
+    expect(apiMock.saveGeneral).not.toHaveBeenCalled();
+  });
+
+  it("takes a jump straight through when the panel holds nothing", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("general", true);
+    await screen.findByLabelText("Application URL");
+
+    await person.click(screen.getByRole("button", { name: "Update available" }));
+
+    expect(warning()).toBeNull();
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
   });
 
   it("stops warning once the draft is discarded", async () => {
