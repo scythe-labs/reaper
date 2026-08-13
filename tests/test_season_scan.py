@@ -713,6 +713,18 @@ class TestBuildSeasonFacts:
         facts = _facts(season_added_at=None, last_played=None)
         assert isinstance(facts.days_observed_unwatched, Unknown)
 
+    def test_a_season_carries_no_rewatch_answer_yet(self) -> None:
+        """Both rewatch observations (``docs/REWATCH_PLAN.md``, Stage 1, rule 35's builder
+        sweep) are ``Absent`` on every season, whatever else the fixture varies: a checked
+        "not offered here", never a failed read (rule 93), so the built-in rewatch keep
+        discounts nothing rather than fail-open keeping every season fully
+        (``signals._rewatch_keep``'s ``Absent`` arm). No TV formulation has cleared the
+        backtest bar yet."""
+        facts = _facts(plex_rating_key=700)
+
+        assert isinstance(facts.rewatch_viewings, Absent)
+        assert isinstance(facts.rewatch_last_play_days, Absent)
+
     def test_no_arrival_date_but_a_play_measures_from_the_play(self) -> None:
         """The state neither lane had a test for (#257), on the lane that got it right.
 

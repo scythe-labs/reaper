@@ -564,6 +564,28 @@ cycle, due again." The first sentence is plainly true; the second is unsupported
 one heavy-rewatch library, so the constants ship as starting values (`docs/REWATCH_PLAN.md`).
 Re-opening periodicity means clearing the lift bar in `docs/SIGNALS.md` first.
 
+### Stage 1 implementation verification: an exact reproduction (measured 2026-08-13)
+
+Read-only pass against the live mirror, independent of the committed module: an outside
+reimplementation of the play filter and viewing clustering was compared against
+`services.rewatch`, and the shipped module's qualified-viewing count and last-play date
+matched it exactly on every movie key checked.
+
+- The play filter is not a rounding error: it excluded about a third of raw movie
+  `watch_event` rows, in line with the abandoned-play finding above.
+- About 7% of played movies carried no qualified play at all -- the never-watched shape
+  (`Known(0)` viewings paired with an `Absent` last play).
+- Of movies with at least one qualified play, roughly one in six cleared the shipped
+  10-viewing default bar, and about four in five of those also cleared the 730-day
+  recency window.
+- `watched_status` was never `NULL` anywhere on this source, so the play filter's
+  `percent_complete` fallback arms are exercised by the unit suite alone here, not by any
+  live data seen so far.
+
+⇒ Stage 2 must not assume `percent_complete` is a well-populated input before leaning on it
+in any fit: on this source it has never been the deciding field, and its coverage on a
+library where `watched_status` is sometimes unset is still unmeasured.
+
 ### Unknown must be structurally incapable of condemning
 
 Three states, never two: `Known` / `Absent` / `Unknown`.
