@@ -586,6 +586,35 @@ matched it exactly on every movie key checked.
 in any fit: on this source it has never been the deciding field, and its coverage on a
 library where `watched_status` is sometimes unset is still unmeasured.
 
+### TV: the replay-period formulation clears the lift bar (measured 2026-08-13)
+
+Read-only, the plan's TV harness exactly: detection from pre-cutoff plays only, qualified
+plays through the shipped filter, 30-day show-level periods, the quarter-replayed
+discriminator, controls matched half-to-double on dormancy and period count, bootstrap CIs.
+Four cutoffs: three a year apart plus one interleaved six months before the newest, added
+after the first pass to widen the newest leg's support.
+
+- **Two or more replay periods, plus a qualified play inside two years, cleared the bar at
+  every cutoff** (lifts about 1.13 to 1.28, every CI clear of 1), and three replay periods
+  cleared it too. One replay period alone failed at half the cutoffs: the two-period
+  threshold carries the signal, not replay activity as such.
+- **The discriminator separates rewatching from following**: about three fifths of the
+  qualifying shows' outcome-window plays were replays of already-seen episodes, rising
+  toward seven tenths as the bar tightens. The keep would protect actual rewatching.
+- **A named harness limit**: the frequency-plus-recency positive control failed at the
+  cutoff nearest the data's edge, and diagnosis showed a ceiling, not thin pools. Tripling
+  the matched-control pool barely moved its lift (still astride 1) while both arms sat
+  around two and a half times the population base rate. Matched-control lift compresses
+  when both arms share a ceiling; the formulation's own pools at that cutoff stayed
+  healthy, and its pass stands on the other three legs regardless.
+- Episode rows lacking a show key were under 2% and excluded. The episode-identity
+  fallback (parent key plus index) was never needed on this mirror: every episode row
+  carried its own key.
+
+⇒ A TV keep is unblocked per `docs/SIGNALS.md`'s bar, as a period-based, replay-discriminated
+condition, never a play count alone. It ships as its own stage with its own mockups, and
+nothing in the movie lane moves for it.
+
 ### Unknown must be structurally incapable of condemning
 
 Three states, never two: `Known` / `Absent` / `Unknown`.
