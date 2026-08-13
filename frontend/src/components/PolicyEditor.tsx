@@ -1553,6 +1553,27 @@ export function PolicyEditor({
     () => ({ flags: flagsRef, kept: keptRef, pace: paceRef, deletion: deletionRef }),
     [],
   );
+  // A rail click and a cross-page jump both STATE a section. The spy below measures one, and the
+  // two disagree wherever a click lands on the last screenful: scrolling to "Pace and limits"
+  // reaches the end of the document, and that is the same position as scrolling down to read
+  // Deletion. The rects are identical, so the spy cannot tell them apart and it overwrote the
+  // click, marking a section nobody asked for (#795). What was stated holds until the page moves
+  // again, which is the one thing that does separate the two.
+  // The position a click or a jump left the page at. Which section it named is already in
+  // `section`, so only the position is kept.
+  const statedAt = useRef<number | null>(null);
+  const goToSection = useCallback(
+    (id: SectionId) => {
+      // Instant, not smooth: smooth scrolling silently no-ops in some environments, and a jump
+      // that always lands beats an animation that sometimes doesn't happen at all. It also
+      // finishes before the next line runs, so the position recorded is where the page ended up.
+      sectionRefs[id].current?.scrollIntoView({ block: "start" });
+      statedAt.current = window.scrollY;
+      onSectionChange(id);
+    },
+    [sectionRefs, onSectionChange],
+  );
+
   // A cross-page jump lands on a specific section, and so does a cold load on a URL naming one
   // (`/policy/tv/deletion`). `App` seeds the same aim from both, so they scroll through one path.
   // The editor may still be loading when the aim arrives (the headings do not exist until the
@@ -1561,12 +1582,10 @@ export function PolicyEditor({
   const handledFocus = useRef(0);
   useEffect(() => {
     if (!focus || draft === null || focus.nonce === handledFocus.current) return;
-    const target = sectionRefs[focus.section]?.current;
-    if (!target) return;
+    if (!sectionRefs[focus.section]?.current) return;
     handledFocus.current = focus.nonce;
-    target.scrollIntoView({ block: "start" });
-    onSectionChange(focus.section);
-  }, [focus, sectionRefs, draft, onSectionChange]);
+    goToSection(focus.section);
+  }, [focus, sectionRefs, draft, goToSection]);
 
   // The rail states the section being READ, which is what its aria-current="page" claims.
   // Until this effect existed that claim only held for someone who had clicked the rail:
@@ -1600,6 +1619,14 @@ export function PolicyEditor({
     if (first === undefined) return;
 
     const pick = () => {
+      // A click or a jump named this section and the page has not moved since, so nothing
+      // measured here is more current than what was asked for. One pixel of slack, because a
+      // scroll position is fractional on a zoomed page.
+      const said = statedAt.current;
+      if (said !== null) {
+        if (Math.abs(window.scrollY - said) <= 1) return;
+        statedAt.current = null;
+      }
       // A page that does not scroll is read whole, so the first section is the one you are
       // on; there is no "further down" to have reached.
       const scrollable = document.documentElement.scrollHeight > window.innerHeight + 1;
@@ -1870,13 +1897,7 @@ export function PolicyEditor({
               // observer above keeps activeSection on whatever heading has reached the
               // read line.
               aria-current={section === s.id ? "page" : undefined}
-              onClick={() => {
-                // Instant, not smooth: smooth scrolling silently no-ops in some
-                // environments, and a jump that always lands beats an animation that
-                // sometimes doesn't happen at all.
-                sectionRefs[s.id].current?.scrollIntoView({ block: "start" });
-                onSectionChange(s.id);
-              }}
+              onClick={() => goToSection(s.id)}
             >
               {s.label}
             </button>
