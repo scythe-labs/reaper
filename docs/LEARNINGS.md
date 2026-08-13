@@ -534,6 +534,36 @@ Most of the apparent sophistication of a weighted scorer is usually one variable
 wearing a hat. Measure each one's marginal lift or you will carry four signals'-worth
 of complexity and bug surface for one signal's-worth of skill.
 
+### A regular-gap "rewatch cycle" does not exist here (measured 2026-08-12)
+
+The tempting protect signal, and the one #554 originally asked for: a title played at steady
+intervals (every October, every ~12 months) is due again. Backtested out-of-sample at three
+cutoffs over 8+ years of history, it is chance, and the eyeballed examples that motivated it
+(a horror film landing in the same month several years running) are what chance produces
+across a few thousand titles.
+
+- With exactly two gaps, max-deviation, MAD, and CV all reduce to the same statistic, and
+  random play times pass a spread threshold `t` with probability exactly `t`. Three-viewing
+  titles were ~3/4 of everything the detector found.
+- The ablation: titles passing the regularity test replayed **no more often** than titles
+  failing it, matched on dormancy and viewing count. Every lift CI straddled 1, at every
+  parameter setting tried, including the annual-cycle subcase.
+- The phase test: among detected titles the next play landed around 1.3x the supposed period,
+  with only a minority inside a generous window. There is no phase structure to detect.
+- A positive control on the same harness (a heavy viewing count) showed strong lift, so the
+  null is the data's answer, not the harness's.
+
+What does carry signal is **frequency plus recency, with no periodicity claim**: many
+qualified viewings plus a recent play replays at roughly 1.5-2x the dormancy-matched base
+rate, across hundreds of titles and all three cutoffs. And the count must be of *qualified*
+plays: unfiltered, over half of the apparently cyclic titles owed their pattern to abandoned
+sub-50%-complete plays.
+
+⇒ Reaper's rewatch protection says "watched again and again, and recently," never "on a
+cycle, due again." The first sentence is plainly true; the second is unsupported. Measured on
+one heavy-rewatch library, so the constants ship as starting values (`docs/REWATCH_PLAN.md`).
+Re-opening periodicity means clearing the lift bar in `docs/SIGNALS.md` first.
+
 ### Unknown must be structurally incapable of condemning
 
 Three states, never two: `Known` / `Absent` / `Unknown`.
