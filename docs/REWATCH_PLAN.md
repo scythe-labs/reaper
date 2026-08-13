@@ -251,6 +251,16 @@ for the follow-up:
   that refuted the movie cycle detector shows lift for the TV formulation, per
   `docs/SIGNALS.md`'s bar for any new signal.
 
+**The harness, exactly, so the follow-up needs no archaeology.** Detect from plays at or
+before a cutoff only; use at least three cutoffs a year apart. Outcome: a qualified play
+within a fixed window after the cutoff, capped at the data's end. Controls: titles matched on
+dormancy at cutoff (half to double the candidate's) and on viewing count, evaluated over the
+same window. Lift: protected hit rate over the matched control rate, with a bootstrap CI; a
+formulation ships only if the CI clears 1 at every cutoff. Always include a positive control,
+a condition already known to carry signal in that data, so a null result indicts the
+formulation and not the harness. Population is the current candidate set (survivorship
+inflates both arms equally, so the comparison stands, but say so).
+
 Until then the season lane populates the stage 1 observations `Absent` with a comment
 (rule 35), and no operator copy names a TV rewatch mechanism (rule 25).
 
