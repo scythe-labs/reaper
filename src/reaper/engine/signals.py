@@ -176,6 +176,12 @@ class KeepConfig:
     on the list takes the full discount, off it none, and a membership that could not be
     read takes the full one, the same fail-closed arm every keep has. ``None`` ramps."""
 
+    min_viewings: int | None = None
+    """The built-in rewatch keep's two bars (``REWATCH_KEEP``), carried on the config so the
+    condition is decided at judge time over frozen facts and a bar edit replays exactly.
+    ``None`` on every authored keep; only ``policy.PolicyBody.keep_configs`` sets them."""
+    recent_days: int | None = None
+
     @property
     def enabled(self) -> bool:
         return self.max_discount > 0
@@ -625,10 +631,98 @@ def _branch_custom(
     )
 
 
+#: The built-in habitual-rewatch keep (stage 1 of ``docs/REWATCH_PLAN.md``). One string for
+#: both the ``KeepConfig.field`` it evaluates by and its row name in the stored explanation.
+#: Not a ``fields.BY_KEY`` key: the keep is not authorable, the vocabulary never offers it,
+#: and ``evaluate_keep`` reads the facts directly. ``PolicyBody._no_duplicates`` refuses an
+#: operator keep with this name so the panel's per-name rows cannot collide.
+REWATCH_KEEP = "rewatch_habit"
+
+
+def _rewatch_firing_detail(facts: Facts) -> str:
+    """The figures behind a firing rewatch keep, then the claim. Draft copy from the
+    approved mockup; the recency figure is the last qualified play the condition read."""
+    viewings = facts.rewatch_viewings
+    count = (
+        f"Watched {viewings.value} times"
+        if isinstance(viewings, Known)
+        else "Watched again and again"
+    )
+    last = facts.rewatch_last_play_days
+    if isinstance(last, Known):
+        return (
+            f"{count}, most recently {humanize_days(last.value)} ago. Likely to be watched again."
+        )
+    return f"{count}, and recently. Likely to be watched again."
+
+
+def _rewatch_miss_detail(config: KeepConfig, facts: Facts) -> str:
+    """Why the rewatch keep did not fire, with the item's own numbers."""
+    viewings = facts.rewatch_viewings
+    if not isinstance(viewings, Known) or viewings.value == 0:
+        return "Never watched here."
+    n = int(viewings.value)
+    if config.min_viewings is not None and n < config.min_viewings:
+        return f"Watched {n} {'time' if n == 1 else 'times'} in all."
+    window = humanize_window(config.recent_days) if config.recent_days is not None else "window"
+    return f"Watched {n} times, but not in the last {window}."
+
+
+def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
+    """The built-in habitual-rewatch keep: flat, mirroring the membership arm.
+
+    The condition is decided HERE, over two frozen observations, against the two bars the
+    config carries -- never at scan time -- so a threshold edit replays exactly from a
+    stored snapshot (``policy.PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``). Met takes the full
+    discount; read-and-not-met and Absent take zero, evaluated, with the honest figures;
+    an input that could not be read takes the full discount with ``evaluated=False``. The
+    keep invariants come free: a discount can only lower a score and never un-protects a
+    gated item (``services.snapshot._verdict``).
+
+    No reach arm, deliberately (rule 140): the viewing count is drawn from the mirror and
+    bounded by its reach, and the backtest that set the default bars measured that same
+    bounded view (``docs/REWATCH_PLAN.md``), so a Known miss is an honest zero-discount
+    answer rather than a claim about plays nobody saw.
+    """
+    viewings = facts.rewatch_viewings
+    last = facts.rewatch_last_play_days
+    if isinstance(viewings, Unknown) or isinstance(last, Unknown):
+        return KeepResult(
+            config.name,
+            float(config.max_discount),
+            config.max_discount,
+            "kept fully: could not check your watch history",
+            evaluated=False,
+        )
+    if isinstance(viewings, Absent):
+        # The season lane, and any hand-built Facts: no TV formulation has cleared the
+        # backtest bar, so the keep has nothing to say there and discounts nothing
+        # (``docs/REWATCH_PLAN.md``, the TV section).
+        return KeepResult(config.name, 0.0, config.max_discount, "Does not apply here.", True)
+    met = (
+        config.min_viewings is not None
+        and config.recent_days is not None
+        and int(viewings.value) >= config.min_viewings
+        and isinstance(last, Known)
+        and float(last.value) <= float(config.recent_days)
+    )
+    if met:
+        return KeepResult(
+            config.name,
+            float(config.max_discount),
+            config.max_discount,
+            _rewatch_firing_detail(facts),
+            True,
+        )
+    return KeepResult(
+        config.name, 0.0, config.max_discount, _rewatch_miss_detail(config, facts), True
+    )
+
+
 def evaluate_keep(
     config: KeepConfig, facts: Facts, *, window_days: int | None = None
 ) -> KeepResult:
-    """One user-authored graded keep. A discount in ``[0, max_discount]``, fail-closed.
+    """One graded keep. A discount in ``[0, max_discount]``, fail-closed.
 
     A value we cannot read yields the FULL discount -- missing data pushes toward keeping.
     An ``Absent`` value (we looked, there genuinely is none) yields no discount: absence is
@@ -639,6 +733,9 @@ def evaluate_keep(
     """
     if not config.enabled:
         return KeepResult(config.name, 0.0, 0, "disabled", evaluated=True)
+
+    if config.field == REWATCH_KEEP:
+        return _rewatch_keep(config, facts)
 
     spec = fields.BY_KEY.get(config.field)
     label = spec.label if spec is not None else config.field

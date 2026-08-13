@@ -90,6 +90,14 @@ _RECORDED_SURFACE: tuple[str, ...] = (
     "facts.ratings: tuple[Rating, ...] = ()",
     "facts.release_age_days: Observation[float] = Absent(unset)",
     "facts.requested: Observation[bool] = Absent(unset)",
+    # Recorded without a SCORER_VERSION bump, per _SURFACE_MOVED's second path: the change
+    # adding these two (#554 stage 1) also added four PolicyBody fields
+    # (rewatch_keep_enabled and siblings), and a body field with a default moves every
+    # stored body's policy_hash unconditionally -- the thaw dumps the new keys -- so every
+    # pre-upgrade approval is already voided at execute time (rule 113) and every stored
+    # scoring_hash already misses. The bump would re-void what is void.
+    "facts.rewatch_last_play_days: Observation[float] = Absent(unset)",
+    "facts.rewatch_viewings: Observation[int] = Absent(unset)",
     "facts.season_rank: Observation[int] = required",
     "facts.show_ended: Observation[bool] = Absent(unset)",
     "facts.size_bytes: Observation[int] = required",

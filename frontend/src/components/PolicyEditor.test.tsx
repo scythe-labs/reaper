@@ -65,6 +65,12 @@ function body(custom: CustomCondemn[] = []): PolicyBody {
     protect_conditions: [],
     custom_condemn: custom,
     graded_keeps: [],
+    // Off the server defaults (rule 141): a fixture pinning 20/10/730 could not prove the
+    // editor passed anything.
+    rewatch_keep_enabled: true,
+    rewatch_keep_discount: 15,
+    rewatch_min_viewings: 8,
+    rewatch_recent_days: 365,
     keep_rating_rules: [],
     keep_rating_match: "any",
   };

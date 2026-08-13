@@ -810,6 +810,12 @@ class PolicyBodyOut(BaseModel):
     # validation runs on the wire and the two cannot drift.
     custom_condemn: list[CustomCondemnSpec] = Field(default_factory=list)
     graded_keeps: list[GradedKeepSpec] = Field(default_factory=list)
+    # The built-in rewatch keep's knobs, bounds mirroring engine.policy.PolicyBody
+    # (rule 131; test_policy.py fails when the two declarations drift).
+    rewatch_keep_enabled: bool = True
+    rewatch_keep_discount: int = Field(default=20, ge=1, le=50)
+    rewatch_min_viewings: int = Field(default=10, ge=1, le=1_000)
+    rewatch_recent_days: int = Field(default=730, ge=1, le=36_500)
     # The engine spec is reused directly (like custom_condemn/graded_keeps) so its
     # per-source vote-floor validation runs on the wire.
     keep_rating_rules: list[RatingRuleSpec] = Field(default_factory=list)

@@ -382,6 +382,37 @@ class Facts:
     ``Known`` is "cannot establish", the keep direction (rule 104).
     """
 
+    # --- rewatch (#554 stage 1) ---------------------------------------------------------
+
+    rewatch_viewings: Observation[int] = _UNSET
+    """How many qualified viewings this title has, all time, any user -- a viewing being a
+    cluster of qualified plays under ``services.rewatch.viewing_count``. Exists for the
+    built-in habitual-rewatch keep and is not offered in the rule-authoring vocabulary.
+    Movies only in v1; the season lane sets it ``Absent`` (``season_scan.build_season_facts``).
+
+    Defaulted like the fields above, and read the same way: anything but ``Known`` never
+    condemns and never argues the keep (rule 104)."""
+
+    rewatch_last_play_days: Observation[float] = _UNSET
+    """Days since the most recent QUALIFIED play, at scan time. A raw, frozen input, not a
+    verdict: whether ``rewatch_viewings`` and this add up to a habitual-rewatch keep is a
+    policy-configurable bar (a viewing floor, a recency window) decided in
+    ``engine/signals.py``, not here, so an operator's threshold edit replays against these
+    frozen facts in the simulator without a re-scan (``docs/REWATCH_PLAN.md``, Stage 1).
+    Four states:
+
+    * ``Known(n)`` -- the mirror was read and at least one qualified play exists.
+    * ``Absent`` -- the mirror was read and this movie has no qualified play at all: we
+      looked, there is genuinely nothing to measure from. ``rewatch_viewings`` is
+      ``Known(0)`` alongside it, never ``Unknown``.
+    * ``Unknown`` -- the mirror could not be read for this item (no Plex key, or the item
+      is watch-blind). Never a measured absence (rule 93).
+    * The season lane sets this ``Absent`` too, with its own comment
+      (``season_scan.build_season_facts``): it ships no validated TV rewatch answer yet.
+
+    Defaulted like the fields above; a stored snapshot predating this field thaws as
+    ``Unknown``, never as a false "checked, nothing there" (rule 104)."""
+
     ratings: tuple[Rating, ...] = ()
     """Every interpretable rating the scan froze for this item, one per source (IMDb,
     TMDb, Rotten Tomatoes critics/audience, Metacritic). Read only by the multi-source

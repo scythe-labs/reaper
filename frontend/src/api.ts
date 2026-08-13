@@ -565,6 +565,11 @@ export interface PolicyBody {
   protect_conditions: Condition[];
   custom_condemn: CustomCondemn[];
   graded_keeps: GradedKeep[];
+  // The built-in rewatch keep's knobs (movies only; the TV policy carries them inertly).
+  rewatch_keep_enabled: boolean;
+  rewatch_keep_discount: number;
+  rewatch_min_viewings: number;
+  rewatch_recent_days: number;
   keep_rating_rules: RatingRule[];
   keep_rating_match: "any" | "all";
 }

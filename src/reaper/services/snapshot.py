@@ -92,9 +92,15 @@ from reaper.services.display_meta import (
     normalize_resolution,
 )
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
+from reaper.services.rewatch import RewatchStats, movie_rewatch_stats
 from reaper.text import fold
 
 log = structlog.get_logger(__name__)
+
+#: Default for a caller (mainly a test) that does not pass rewatch stats: every item reads
+#: as zero qualified viewings rather than an unreadable mirror. ``scan`` always passes the
+#: real map, gathered beside ``_watch_stats`` over the same candidate key set.
+_NO_REWATCH_STATS: Mapping[int, RewatchStats] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +279,7 @@ def build_facts(
     whitelisted: set[str],
     request_index: requested_by.RequestIndex | None = None,
     watch_blind_reason: str | None = None,
+    rewatch: Mapping[int, RewatchStats] = _NO_REWATCH_STATS,
 ) -> Facts:
     """Assemble one item's evidence.
 
@@ -363,6 +370,33 @@ def build_facts(
     else:
         recent = Known(value=watchers_window.get(rating_key, 0), source="tautulli")
         all_time = Known(value=watchers_all_time.get(rating_key, 0), source="tautulli")
+
+    # --- rewatch (#554 stage 1) ----------------------------------------------
+    # `rewatch` is already folded over any merged Plex listings: `scan` gathers it via
+    # `services.rewatch.movie_rewatch_stats` with the same `groups` mapping
+    # `_fold_merged_watch_stats` uses, so a lookup by the canonical `rating_key` alone is
+    # correct here, exactly as it is for `watchers_window`/`watchers_all_time` above.
+    viewings_obs: Observation[int]
+    last_play_days_obs: Observation[float]
+    if rating_key is None:
+        viewings_obs = Unknown(reason=no_key_reason, source="plex")
+        last_play_days_obs = Unknown(reason=no_key_reason, source="plex")
+    elif watch_blind_reason is not None:
+        viewings_obs = Unknown(reason=watch_blind_reason, source="tautulli")
+        last_play_days_obs = Unknown(reason=watch_blind_reason, source="tautulli")
+    else:
+        # The mirror was read either way, so viewings is Known even at 0. Recency is
+        # Absent (not Unknown) when this movie has no qualified play at all: we looked,
+        # and there is genuinely nothing to measure the last one from (rule 93).
+        rewatch_stats = rewatch.get(rating_key)
+        viewings_obs = Known(
+            value=rewatch_stats.viewings if rewatch_stats is not None else 0, source="tautulli"
+        )
+        last_play_days_obs = (
+            Known(value=dormancy_days(rewatch_stats.last_play, now=utcnow()), source="tautulli")
+            if rewatch_stats is not None and rewatch_stats.last_play is not None
+            else Absent(source="tautulli")
+        )
 
     # --- ratings ------------------------------------------------------------
     rating: Observation[int]
@@ -512,6 +546,8 @@ def build_facts(
         in_curated_list=curated,
         is_whitelisted=is_whitelisted,
         on_lists=on_lists,
+        rewatch_viewings=viewings_obs,
+        rewatch_last_play_days=last_play_days_obs,
         # Not applicable outside the requester rule: with no requester, "others" is
         # everyone, and the gate would protect anything ever played.
         # --- fields authorable in custom rules ---------------------------------
@@ -884,9 +920,18 @@ async def scan(
             context.degrade(str(exc))
             imdb = {}
             context.imdb_degraded = True
+        movie_candidate_keys = {i.plex_rating_key for i in items if i.plex_rating_key}
+        # Every merged bind's listing keys, by its canonical key -- shared below by the
+        # popularity fold and the rewatch gather, so a file listed twice in Plex is
+        # clustered over the same union of listings for both (rule 72).
+        merged_groups = {
+            i.plex_rating_key: i.merged_rating_keys
+            for i in items
+            if i.plex_rating_key is not None and i.merged_rating_keys
+        }
         last_played, watchers_window, watchers_all_time = await _watch_stats(
             engine,
-            rating_keys={i.plex_rating_key for i in items if i.plex_rating_key},
+            rating_keys=movie_candidate_keys,
             window_days=movie_policy.popularity_window_days(),
         )
         # A merged bind is one file listed several times in Plex; its plays are split
@@ -895,15 +940,17 @@ async def scan(
         # condemns.
         await _fold_merged_watch_stats(
             engine,
-            groups={
-                i.plex_rating_key: i.merged_rating_keys
-                for i in items
-                if i.plex_rating_key is not None and i.merged_rating_keys
-            },
+            groups=merged_groups,
             window_days=movie_policy.popularity_window_days(),
             last_played=last_played,
             watchers_window=watchers_window,
             watchers_all_time=watchers_all_time,
+        )
+        # Qualified viewing stats for the habitual-rewatch keep (#554 stage 1), over the
+        # same candidate set and the same merged-listing fold as the popularity counts
+        # above.
+        rewatch_stats = await movie_rewatch_stats(
+            engine, movie_candidate_keys, groups=merged_groups
         )
         if season_task is not None:
             emit(Progress("gathering", 4, 5, "TV seasons from Sonarr"))
@@ -1038,6 +1085,7 @@ async def scan(
             whitelisted=tag_only_whitelist,
             request_index=request_index,
             watch_blind_reason=blind_reason,
+            rewatch=rewatch_stats,
         )
         movie_size_source = SizeSource.RADARR if item.size_bytes is not None else None
         size_sources[_size_bucket(movie_size_source)] += 1

@@ -95,6 +95,8 @@ def _bare_facts(field: str, value: float) -> Facts:
         "in_curated_list": _NOTHING,
         "is_whitelisted": _NOTHING,
         "history_reach_days": Known(value=_REACH_DAYS, source="preview"),
+        "rewatch_viewings": _NOTHING,
+        "rewatch_last_play_days": _NOTHING,
     }
     observations[field] = Known(value=value, source="preview")
     return Facts(**observations)  # type: ignore[arg-type]

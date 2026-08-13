@@ -79,12 +79,15 @@ per rule 94; the existing `(rating_key, watched_at)` index covers it. **No schem
 anywhere**: no new `watch_event` column (that drops the mirror), no migration.
 
 - **Viewings**: a movie's qualified plays (any user), sorted ascending; a play more than 7
-  days after the previous play starts a new viewing. Equal timestamps share a viewing.
-- **The keep condition**: `viewing_count >= 10` and last qualified play within 730 days.
-  No median, no gaps, no spread, no periodicity. Constants live in the module with the
-  backtest that set them cited; they are starting values from one heavy-rewatch library, not
-  truths (a quieter library is untested; loosening to 8 viewings buys coverage at some
-  precision, and that trade is written at the constant).
+  days after the previous play starts a new viewing. Equal timestamps share a viewing. The
+  7-day gap is the module's constant; it defines a viewing and is not a knob.
+- **The keep condition**: viewings at or above a bar, and the last qualified play within a
+  window. No median, no gaps, no spread, no periodicity. **Both bars are policy fields**
+  (operator decision, 2026-08-13), defaulting to 10 viewings and 730 days: starting values
+  from one heavy-rewatch library, not truths (a quieter library is untested; loosening buys
+  coverage at some precision, and that trade is written at the field). Because the bars are
+  editable, the condition is decided in the engine at judge time over frozen observations,
+  never at scan time, so a bar edit replays exactly in the simulator.
 
 ### Engine wiring
 
@@ -93,38 +96,44 @@ Two new observations on `Facts` (`engine/gates.py`), populated in every `Facts` 
 `engine/facts_codec.facts_from_dict` thaw, `preview._bare_facts`):
 
 - `rewatch_viewings: Observation[int]` — qualified viewing count, all time.
-- `rewatch_habit: Observation[bool]` — the keep condition above, decided by the builder.
+- `rewatch_last_play_days: Observation[float]` — days since the last qualified play at scan
+  time. (Replaced the planned builder-decided `rewatch_habit: Observation[bool]` when the
+  bars became policy knobs: a frozen yes/no under old bars cannot replay a bar edit.)
 
 Three-state semantics, exact:
 
-| Situation | `rewatch_viewings` | `rewatch_habit` |
+| Situation | `rewatch_viewings` | `rewatch_last_play_days` |
 | --- | --- | --- |
-| History read; condition met | Known n | Known True |
-| History read; condition not met (few viewings, or stale) | Known n (0 included) | Known False |
+| History read; qualified plays exist | Known n | Known days |
+| History read; no qualified play at all | Known 0 | Absent |
 | Watch history source failed (snapshot degrades anyway) | Unknown | Unknown |
 | Title is watch-blind (#275 forget control) | Unknown | Unknown |
 | Season lane, this release | Absent, with a comment | Absent, with a comment |
 | Stored row predating the fields (codec thaw) | Unknown | Unknown |
 
-Rule 93 throughout: a read failure is never `Absent`. `Known False` and `Absent` both take
-zero discount; `Unknown` takes the full one.
+Rule 93 throughout: a read failure is never `Absent`.
 
-The protection is a **built-in `KeepConfig`** appended where `snapshot.py` assembles keeps
-for the movie lane. `evaluate_keep` today ramps numeric fields and has a flat membership arm
-for `on_list`; add a third arm for a boolean field, mirroring the membership arm's shape:
-Known True takes the full discount, Known False and Absent take zero (evaluated, honest
-detail), Unknown takes the full discount with `evaluated=False`. The existing invariants
+The protection is a **built-in `KeepConfig`** constructed in `PolicyBody.keep_configs()`,
+gated on `media_type == "movie"` — not appended in `snapshot.py` as first planned, because
+`keep_configs()` has two callers (the scan and the simulator replay) and a built-in appended
+at one is a keep the other silently drops (rule 104). The config carries the two bars.
+`evaluate_keep` gets a rewatch arm mirroring the flat membership arm: it decides the
+condition over the two frozen observations against the config's bars. Condition met takes
+the full discount; read-and-not-met and Absent take zero (evaluated, honest detail); either
+observation Unknown takes the full discount with `evaluated=False`. The existing invariants
 (a discount can only lower a score, and never un-protects a gated item) come free.
 
 ### Policy body, hashes, and the supply chain
 
-Two fields on `PolicyBody` (`engine/policy.py`):
+Four fields on `PolicyBody` (`engine/policy.py`):
 
 - `rewatch_keep_enabled: bool = True`
 - `rewatch_keep_discount: int` with `ge=1, le=50`, default 20
+- `rewatch_min_viewings: int` with `ge=1, le=1_000`, default 10
+- `rewatch_recent_days: int` with `ge=1, le=36_500`, default 730
 
 A stored body lacking them thaws to the defaults (the keep direction); an explicit
-`enabled=False` is the operator's choice and honored (rule 1's spirit). Classify both into
+`enabled=False` is the operator's choice and honored (rule 1's spirit). Classify all four into
 `_EVIDENCE_REPLAYABLE_FIELDS`: they are judging knobs over frozen Facts, exactly like
 `graded_keeps`, and classifying them into the evidence hash instead would force a fresh scan
 on every strength edit forever. The cost of the right classification is one transient window:
@@ -139,15 +148,27 @@ Wire the fields through the whole supply chain in the same change (rule 64):
 `api/schemas.py`, `frontend/src/api.ts`, the editor. Not added to the rule-authoring field
 vocabulary; that is a follow-up only if asked for.
 
-### Operator copy (draft; final strings come from the approved mockups)
+### Operator copy (approved with the mockups, 2026-08-13)
 
-- Why-card keep row, firing: "Watched 14 times, most recently 3 weeks ago. Titles watched
-  this often keep getting watched."
-- Why-card, condition not met: renders in the existing "didn't apply" group, no special copy.
-- Why-card, Unknown: the existing "couldn't check" treatment.
-- Policy row label: "Keep the titles you rewatch". Help: "A title watched again and again,
-  and seen recently, tends to be watched once more. While that holds, its score is lowered."
-- Strength control label: "How strongly it argues to keep".
+- Why-card keep row, firing: "Watched 14 times, most recently 3 weeks ago. Likely to be
+  watched again."
+- Why-card, condition not met: the plain figures at zero discount, no special copy
+  ("Watched 3 times in all." / "Watched 11 times, but not in the last 2 years." /
+  "Never watched here.").
+- Why-card, Unknown: the existing "couldn't check" treatment
+  ("kept fully: could not check your watch history").
+- The built-in row carries no "Your rule" tag, and the keeps blurb drops "Your"
+  ("Soft keep rules lowered the score…").
+- Policy surface is a **card**, not a row (three controls; the "Keep well-rated titles"
+  grammar), between that card and "Your own keep rules". Label: "Keep titles most likely
+  to be rewatched". Help: "A title people here keep coming back to will probably be watched
+  again. It only lowers the score, never keeps a title outright."
+- Controls read as one sentence: "watched by anyone at least [10] times", "most recently
+  within [2 years]", "lowers the score by [20] points".
+- The card head carries the section headings' "Learn more" link, opening the manual at a new
+  "Titles most likely to be rewatched" section (`understandingPolicy.ts`, after the
+  protections table) that holds the halfway-play and one-week-cluster details, the tunable
+  defaults, and the lean-not-protection bound.
 
 ### UI, docs, and tests
 
