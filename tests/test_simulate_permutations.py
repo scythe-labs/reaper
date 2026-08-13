@@ -391,9 +391,7 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
         BASE.model_copy(
             update={
                 "gates": tuple(
-                    g.model_copy(update={"enabled": True})
-                    if g.gate is GateId.REWATCH_ODDS
-                    else g
+                    g.model_copy(update={"enabled": True}) if g.gate is GateId.REWATCH_ODDS else g
                     for g in BASE.gates
                 )
             }

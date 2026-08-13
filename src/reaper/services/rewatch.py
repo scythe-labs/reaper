@@ -226,7 +226,11 @@ def fit_blocks(pairs: Sequence[tuple[float, bool]]) -> RewatchCurve:
         n = 0
         k = 0
         for days, watched_again in pairs:
-            if days > lo and (hi is None or days <= hi):
+            # The first bucket is closed at zero: a dormancy of exactly 0 days is a title
+            # played the day of the cutoff, and a strict (0, 365] dropped it from the fit
+            # while `block_for` told its panel "not enough watch history" about the one
+            # title watched most recently of all (found on live data, 18 of ~3,500).
+            if (days > lo or (lo == 0 and days == 0)) and (hi is None or days <= hi):
                 n += 1
                 k += 1 if watched_again else 0
         if n > 0:
@@ -247,7 +251,9 @@ def block_for(curve: RewatchCurve, dormancy_days: float) -> RewatchBlock | None:
     fitted curve covers it: past the fitted range, or inside a bucket that was dropped
     empty at fit time and never absorbed into a neighbor."""
     for block in curve.blocks:
-        if dormancy_days > block.lo_days and (
+        # Same closed-at-zero first edge as the fit's bucketing above (rule 104: the two
+        # must agree, or a just-watched title trains the curve and then reads as unmeasured).
+        if (dormancy_days > block.lo_days or (block.lo_days == 0 and dormancy_days == 0)) and (
             block.hi_days is None or dormancy_days <= block.hi_days
         ):
             return block

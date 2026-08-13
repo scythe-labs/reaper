@@ -586,6 +586,32 @@ matched it exactly on every movie key checked.
 in any fit: on this source it has never been the deciding field, and its coverage on a
 library where `watched_status` is sometimes unset is still unmeasured.
 
+### Stage 2: the fitted curve tracks the borrowed one (measured 2026-08-13)
+
+Read-only pass against the live mirror after the stage 2 estimator landed: an independent
+reimplementation of the bucketing, eligibility, and monotone merge agreed with the shipped
+`fit_blocks` exactly, block for block, over the current candidate population.
+
+- **The library's own curve is nearly the borrowed default.** Every band's fitted rate sits
+  within about 3 points of the `docs/SIGNALS.md` ground-truth table, in both directions.
+  The display is honest and the shipped scoring defaults were never far off here.
+- **The merge earns its keep on real data**: the raw curve inverted once (the one-to-one-
+  and-a-half-year band sat just under the band after it), and pool-adjacent-violators pooled
+  exactly that pair. Nothing else moved.
+- **The floor and the withhold never fired on this population**: the thinnest block held
+  a couple hundred titles, and the mirror reaches far past the deepest bucket. Both arms
+  live on unit coverage here, like the play filter's fallback arms.
+- **The hold is coarse by construction and the echo matters**: at a 25% threshold about four
+  in five movie candidates are protected; at 40%, about half. A percentage without the
+  consequence echo would read as a fine-grained dial while acting as a dormancy cliff.
+- A title played the day of the scan has dormancy exactly 0 and fell through the strict
+  first bucket edge (a fraction of a percent of candidates, live). The first bucket is
+  closed at zero now, in the fit and the lookup both.
+
+⇒ Stage 2 ships as designed. The named limit from the TV backtest below (matched-control
+lift compresses near a shared ceiling) does not arise here: the estimator states cohort
+rates, never lift.
+
 ### TV: the replay-period formulation clears the lift bar (measured 2026-08-13)
 
 Read-only, the plan's TV harness exactly: detection from pre-cutoff plays only, qualified

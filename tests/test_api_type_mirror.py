@@ -86,14 +86,11 @@ WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
 #: Reconciled by hand against the tree: 127 under ``reaper.api.*`` and 16 across the two engine
-#: modules (+1 for ``RewatchOddsOut``, #554 stage 2 -- server-only for now, no browser mirror
-#: yet, which this count does not require: see ``TestEveryBrowserTypeIsPairedOrClassified``,
-#: which only demands every BROWSER type pair with a server model, never the reverse; +2 more
-#: for the same stage's ``RewatchOddsFitOut``/``RewatchOddsBlockOut``, the Policy page's
-#: ladder-and-echo payload, server-only on the same terms until the frontend step lands its
-#: types). It is
-#: here because the collision assertion below is flag-shaped, and a flag cannot see a member
-#: that left the walk (rule 145).
+#: modules (+1 for ``RewatchOddsOut``, #554 stage 2, mirrored in the browser as ``RewatchOdds``;
+#: +2 more for the same stage's ``RewatchOddsFitOut``/``RewatchOddsBlockOut``, the Policy page's
+#: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``). It is here
+#: because the collision assertion below is flag-shaped, and a flag cannot see a member that
+#: left the walk (rule 145).
 _EXPECTED_SERVER_MODELS = 143
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
@@ -132,13 +129,10 @@ CLIENT_ONLY = {
 #: Fields a paired server model sends that ``frontend/src/api.ts`` deliberately does not
 #: mirror yet, classified rather than silenced (rule 103): every entry is a real, declared
 #: field (see the server-side record above), just one with no browser reader today.
-_DELIBERATE_FIELD_DIFFERENCES: dict[str, frozenset[str]] = {
-    # #554 stage 2: the rewatch-probability context ships on the server ahead of the
-    # WhyPanel row that renders it (this plan's frontend step, not yet landed in this same
-    # PR). Declared in ``engine.explanation.RewatchOddsOut``; move this out once the
-    # browser type gains the field.
-    "Explanation": frozenset({"rewatch_odds"}),
-}
+#:
+#: Empty today: #554 stage 2's ``Explanation.rewatch_odds`` was the one entry here, and the
+#: frontend step landed it as ``RewatchOdds`` (``WhyPanel.tsx``), so the two copies agree.
+_DELIBERATE_FIELD_DIFFERENCES: dict[str, frozenset[str]] = {}
 
 #: Reconciled by hand against the tree (rule 145). ``grep -c '^export interface'`` on api.ts is
 #: the first number; a walk that silently stopped collecting would drop below it while every
@@ -171,8 +165,11 @@ _DELIBERATE_FIELD_DIFFERENCES: dict[str, frozenset[str]] = {
 # without being a new interface.
 # Both +1 again for the second half of W8-1: `GroupRollup` pairs with `GroupRollupOut` on the
 # suffix rule. It is the show-level rollup that used to be four fields on every season row.
-EXPECTED_INTERFACES = 94
-EXPECTED_PAIRS = 92
+# Both +3 again for #554 stage 2's frontend step: `RewatchOdds` pairs with `RewatchOddsOut`,
+# `RewatchOddsFit` with `RewatchOddsFitOut`, and `RewatchOddsBlock` with `RewatchOddsBlockOut`,
+# all three on the plain suffix rule with no ALIAS entry needed.
+EXPECTED_INTERFACES = 97
+EXPECTED_PAIRS = 95
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

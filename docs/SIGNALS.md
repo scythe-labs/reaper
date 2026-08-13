@@ -156,12 +156,12 @@ The rewatch curve varies with **the audience that produced it**: how many people
 how often they return. Every curve in this file was measured on one library, so its shape
 carries that library's viewing habits.
 
-**The curve is borrowed, full stop.** Reaper fits nothing to your server and has no code
-that could: the module that could fit one from the owner's own Tautulli history was deleted
-with the backtest that would have consumed it (M3g in `docs/STATUS.md`, dropped). Every
-number Reaper reads is the table above, and it is one library's curve.
+**The curve behind the score is still borrowed.** Every gate and signal above reads only
+the table on this page, and nothing in the scorer refits it. Stage 2 of #554 changed the
+*display*, not the score: at every scan, Reaper now fits a rewatch-probability curve from
+the operator's own watch history and shows it, block by block, in the why-panel and the
+Policy page, never feeding a score or a gate's default.
 
-Treat the numbers here as a shape to reason about, never as a measurement of *your* server.
-Nothing in the app labels them as borrowed, because nothing in the app can tell the
-difference. #554 is the successor if a per-operator answer is ever wanted, and it asks a
-different question.
+Treat the numbers here as a shape to reason about, never as a measurement of *your* server:
+they are what the scorer still uses, not what your library's own fit shows. #554 is where
+that fit lives now, for display and its one opt-in protective hold.

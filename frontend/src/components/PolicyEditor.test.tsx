@@ -8,7 +8,15 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
+import type {
+  CustomCondemn,
+  Policy,
+  PolicyBody,
+  PolicyWarning,
+  ProfileSettings,
+  RewatchOddsBlock,
+  RewatchOddsFit,
+} from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -117,6 +125,16 @@ function renderEditor(
   /** Where the page opens, as a cold load on `/policy/<media>/<section>` does. */
   openAt: PolicySectionId = "flags",
   openMedia: "movie" | "tv" = "movie",
+  /** What GET /api/policy/rewatch-odds answers, or an Error for a failed read. Defaults to
+   *  the "no scan yet" shape (empty blocks, zero total) so a test that does not care about
+   *  the hold still gets a quiet card; the rewatch-odds hold's own describe block below
+   *  passes a seeded fit. */
+  rewatchFit: RewatchOddsFit | Error = {
+    blocks: [],
+    thin_items: 0,
+    no_history_items: 0,
+    total_items: 0,
+  },
 ) {
   apiMock.policy.mockResolvedValue({
     policy_hash: "hash",
@@ -144,6 +162,8 @@ function renderEditor(
     followup_queued: false,
   });
   apiMock.seasonShape.mockResolvedValue({ total_shows: 0, season_counts: {} });
+  if (rewatchFit instanceof Error) apiMock.rewatchOddsFit.mockRejectedValue(rewatchFit);
+  else apiMock.rewatchOddsFit.mockResolvedValue(rewatchFit);
   if (vocabulary) apiMock.vocabulary.mockImplementation(() => Promise.reject(vocabulary));
   else apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [] });
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
@@ -672,6 +692,155 @@ describe("the rewatch keep card", () => {
     await waitFor(() =>
       expect(apiMock.validatePolicy.mock.calls.at(-1)?.[0].rewatch_recent_days).toBe(9 * 365),
     );
+  });
+});
+
+describe("the rewatch-odds hold, the grouped card's second half (#554 stage 2)", () => {
+  const HOLD_SWITCH_NAME = "Keep anything likely to be watched above a percentage";
+  const PERCENT_LABEL = "Kept when the chance is at least";
+
+  // Off the server default (25, rule 141): a fixture pinning 25 could not prove an edit
+  // reaches the draft.
+  function holdGate(over: Partial<PolicyBody["gates"][number]> = {}) {
+    return { gate: "rewatch_odds", enabled: true, threshold: 30, window_days: 0, ...over };
+  }
+
+  // Three rungs, monotone decreasing, chosen so the cleared set actually changes between
+  // the two thresholds the recompute test drives.
+  const RUNGS: RewatchOddsBlock[] = [
+    { lo_days: 0, hi_days: 365, n: 200, k: 122, upper_bound_pct: 68, items: 900 },
+    { lo_days: 365, hi_days: 1095, n: 150, k: 45, upper_bound_pct: 38, items: 600 },
+    { lo_days: 1095, hi_days: null, n: 100, k: 13, upper_bound_pct: 20, items: 500 },
+  ];
+
+  function measuredFit(over: Partial<RewatchOddsFit> = {}): RewatchOddsFit {
+    return { blocks: RUNGS, thin_items: 0, no_history_items: 0, total_items: 2500, ...over };
+  }
+
+  it("renders the hold's toggle and the fitted ladder from a seeded fit", async () => {
+    renderEditor(
+      { body: { ...body(), gates: [holdGate()] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      measuredFit(),
+    );
+
+    expect(await screen.findByRole("switch", { name: HOLD_SWITCH_NAME })).toBeInTheDocument();
+    // Rate is round(100*k/n), and the range is plain words off lo/hi -- not the raw days.
+    expect(await screen.findByText("sat under 1 year")).toBeInTheDocument();
+    expect(screen.getByText("61%")).toBeInTheDocument();
+    expect(screen.getByText("1 to 3 years")).toBeInTheDocument();
+    expect(screen.getByText("30%")).toBeInTheDocument();
+    expect(screen.getByText("over 3 years")).toBeInTheDocument();
+    expect(screen.getByText("13%")).toBeInTheDocument();
+  });
+
+  it("recomputes the echo when the threshold edit lands", async () => {
+    const user = userEvent.setup();
+    renderEditor(
+      { body: { ...body(), gates: [holdGate({ threshold: 30 })] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      measuredFit(),
+    );
+
+    // At 30%, the first two rungs clear (68 and 38 both >= 30): 900 + 600 of 2,500, and the
+    // range takes the second rung's upper edge.
+    expect(
+      await screen.findByText(
+        "At 30%, this protects titles unwatched under about 3 years, 1,500 of 2,500.",
+      ),
+    ).toBeInTheDocument();
+
+    const percent = screen.getByLabelText(PERCENT_LABEL);
+    await user.clear(percent);
+    await user.type(percent, "50");
+
+    // At 50%, only the first rung clears (68 >= 50, 38 does not): the sentence AND the
+    // draft the Save button would post both move off the initial value.
+    expect(
+      await screen.findByText(
+        "At 50%, this protects titles unwatched under about 1 year, 900 of 2,500.",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      const gates = apiMock.validatePolicy.mock.calls.at(-1)?.[0].gates as PolicyBody["gates"];
+      expect(gates.find((g) => g.gate === "rewatch_odds")?.threshold).toBe(50);
+    });
+  });
+
+  it("hides the percentage control while the switch is off, but keeps the ladder", async () => {
+    const user = userEvent.setup();
+    renderEditor(
+      { body: { ...body(), gates: [holdGate({ enabled: false })] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      measuredFit(),
+    );
+
+    const toggle = await screen.findByRole("switch", { name: HOLD_SWITCH_NAME });
+    expect(await screen.findByText("sat under 1 year")).toBeInTheDocument();
+    expect(screen.queryByLabelText(PERCENT_LABEL)).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(await screen.findByLabelText(PERCENT_LABEL)).toBeInTheDocument();
+  });
+
+  it("says the fit could not be read, beside the control, rather than nothing", async () => {
+    renderEditor(
+      { body: { ...body(), gates: [holdGate({ enabled: false })] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      new Error("network error"),
+    );
+
+    expect(
+      await screen.findByText("Couldn't read your library's rewatch numbers."),
+    ).toBeInTheDocument();
+    // No reload advice (#195): the savebar elsewhere on this page can be holding unsaved edits.
+    expect(screen.queryByText(/reload/i)).not.toBeInTheDocument();
+  });
+
+  it("says to run a scan first when no scan has ever populated the fit", async () => {
+    renderEditor(
+      { body: { ...body(), gates: [holdGate({ enabled: false })] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      { blocks: [], thin_items: 0, no_history_items: 0, total_items: 0 },
+    );
+
+    expect(
+      await screen.findByText("Run a scan first to see your library's own numbers."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render the rewatch-odds row a second time through the plain protections list", async () => {
+    renderEditor(
+      { body: { ...body(), gates: [holdGate()] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      measuredFit(),
+    );
+
+    expect(await screen.findAllByRole("switch", { name: HOLD_SWITCH_NAME })).toHaveLength(1);
   });
 });
 

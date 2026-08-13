@@ -30,6 +30,7 @@ import {
   type Match,
   REWATCH_KEEP,
   type Ratings,
+  type RewatchOdds,
   type SignalContribution,
   type SignalState,
 } from "../api";
@@ -1295,6 +1296,20 @@ function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
  *  which plays get used. */
 const WATCH_RECORD_STALE = [["candidate"], ["candidates"], ["watch-evidence"]];
 
+/** The Stage 2 rewatch-probability sentence (#554), display only. Three states, modeled on
+ *  `watchReach.ts`'s three-state reads: `"measured"` names the cohort and counts, never a
+ *  bare percentage, so the sentence carries its own evidence; the other two say why there is
+ *  no number rather than printing one. */
+function rewatchOddsSentence(odds: RewatchOdds): string {
+  if (odds.state === "no_history") return "Not enough watch history yet.";
+  if (odds.state === "thin") return "Too few titles like this to say.";
+  const pct = Math.round((100 * odds.k) / odds.n);
+  return (
+    `Of ${odds.n} titles that had sat unwatched about this long, ${odds.k} (${pct}%) were ` +
+    "watched again within a year. Measured from your own history at the last scan."
+  );
+}
+
 export function WhyPanel({
   item,
   onClose,
@@ -1517,6 +1532,13 @@ export function WhyPanel({
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {explanation.rewatch_odds && (
+        <section className="block">
+          <h3>Watched again within a year</h3>
+          <p className="blurb">{rewatchOddsSentence(explanation.rewatch_odds)}</p>
         </section>
       )}
 

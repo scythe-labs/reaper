@@ -8,6 +8,7 @@ themselves at random, or (far worse) silently survive an edit the human never sa
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 from collections.abc import Callable, Sequence
@@ -2257,6 +2258,92 @@ class TestTheBuiltinRewatchKeep:
                     ),
                 )
             )
+
+
+class TestTheRewatchOddsRow:
+    """The Stage 2 opt-in hold's policy row (``docs/REWATCH_PLAN.md``): unlike the Stage 1
+    keep, it carries no dedicated ``PolicyBody`` fields -- the operator's one knob is the
+    ``GateSetting.threshold`` an ordinary gate row already has. ``PolicyBody._rewatch_odds_row``
+    appends or strips the row instead."""
+
+    def test_a_movie_body_without_the_row_gets_it_appended_disabled_at_25(self) -> None:
+        """A stored body predating this release carries no ``rewatch_odds`` gate row at
+        all. It comes back with one, appended DISABLED at the shipped starting
+        percentage, so it changes no verdict until the operator turns it on."""
+        body = _policy(media_type="movie", gates=(GateSetting(gate=GateId.WHITELISTED),))
+
+        rows = [g for g in body.gates if g.gate is GateId.REWATCH_ODDS]
+
+        assert len(rows) == 1
+        assert rows[0].enabled is False
+        assert rows[0].threshold == 25
+
+    def test_a_movie_body_that_already_carries_the_row_keeps_the_operators_threshold(
+        self,
+    ) -> None:
+        """40 is off the shipped 25% default (rule 141), so this proves the row survives
+        validation as the operator's own number rather than the appended fallback."""
+        body = _policy(
+            media_type="movie",
+            gates=(
+                GateSetting(gate=GateId.WHITELISTED),
+                GateSetting(gate=GateId.REWATCH_ODDS, enabled=True, threshold=40),
+            ),
+        )
+
+        rows = [g for g in body.gates if g.gate is GateId.REWATCH_ODDS]
+
+        assert len(rows) == 1
+        assert rows[0].enabled is True
+        assert rows[0].threshold == 40
+
+    def test_a_tv_body_never_carries_the_row(self) -> None:
+        """The season lane freezes the gate's two cohort facts ``Absent``, so on a TV
+        body the gate could never fire (rule 38); this catches a hand-crafted body
+        arriving through the API or a restore, since the editor never offers the row
+        there. Driven with the row explicitly present, not just omitted, so the strip is
+        proven rather than a no-op over a row that was never there."""
+        body = _policy(
+            media_type="tv",
+            gates=(
+                GateSetting(gate=GateId.WHITELISTED),
+                GateSetting(gate=GateId.REWATCH_ODDS, enabled=True, threshold=40),
+            ),
+        )
+
+        assert all(g.gate is not GateId.REWATCH_ODDS for g in body.gates)
+
+    def test_the_gate_is_already_authorable_and_buildable(self) -> None:
+        """Not a new pin: ``test_the_save_boundary_allows_exactly_what_the_builder_can_build``
+        above already asserts ``POLICY_AUTHORABLE_GATES == _BUILDABLE_GATES`` for the whole
+        set, which is where a future drift on this gate specifically would be caught. This
+        only confirms the membership landed rather than silently missing both lists."""
+        assert GateId.REWATCH_ODDS in POLICY_AUTHORABLE_GATES
+        assert GateId.REWATCH_ODDS in _BUILDABLE_GATES
+
+    def test_the_row_changes_the_stored_hash_from_what_a_pre_upgrade_install_wrote(
+        self,
+    ) -> None:
+        """Rule 113: ``_rewatch_odds_row`` always appends the row to a movie body, so
+        there is no way to build a *validated* ``PolicyBody`` without it any more -- which
+        is exactly why the consequence has to be shown at the JSON level, the same level a
+        stored approval's hash is actually computed at. A body dict identical except for
+        the row hashes differently through the SAME canonicalisation ``policy_hash`` uses,
+        which is what voids a plan a pre-upgrade install approved and asks for a re-scan.
+        """
+        body = _policy(media_type="movie", gates=(GateSetting(gate=GateId.WHITELISTED),))
+        raw = body.model_dump(mode="json")
+        assert any(g["gate"] == "rewatch_odds" for g in raw["gates"])  # the row landed
+
+        pre_upgrade = {**raw, "gates": [g for g in raw["gates"] if g["gate"] != "rewatch_odds"]}
+
+        def _hash(payload: dict[str, object]) -> str:
+            canonical = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            )
+            return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+        assert _hash(pre_upgrade) != _hash(raw) == body.policy_hash()
 
 
 class TestEveryReachSpanIsRoutedByName:

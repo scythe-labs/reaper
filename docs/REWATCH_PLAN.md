@@ -198,6 +198,9 @@ the fit ever reads keys outside the candidate set.
   any completion), else cutoff minus the added date. Via the shared `engine/dormancy.py`
   derivation. Outcome = any play in the following 365 days.
 - Buckets, half-open (lo, hi] days: 0-365, 365-548, 548-730, 730-1095, 1095-1825, 1825+.
+  The first bucket is closed at zero: dormancy of exactly 0 is a title played the day of
+  the cutoff, and a strict lower edge dropped real titles from the fit while their panel
+  read "not enough watch history" (found live, 2026-08-13).
 - Point estimate: k/n per bucket, then **merge adjacent buckets that violate
   monotone-decreasing** (pool-adjacent-violators). A merged block's rate, counts, and
   dormancy range are the pooled ones, and the display sentence uses them. Without the merge,

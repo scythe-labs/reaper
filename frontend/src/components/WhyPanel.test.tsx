@@ -525,6 +525,85 @@ describe("the built-in rewatch keep", () => {
   });
 });
 
+describe("the rewatch-probability block (#554 stage 2)", () => {
+  // Placed after "Leaning toward keeping" and before the protections: display only, no
+  // verdict input, so its own heading has to sit between those two sections rather than
+  // inside either.
+  function withOdds(
+    rewatch_odds: NonNullable<CandidateDetail["explanation"]["rewatch_odds"]> | null,
+  ) {
+    const base = detail(WORKED_ROWS);
+    return detail(WORKED_ROWS, { explanation: { ...base.explanation, rewatch_odds } });
+  }
+
+  it("states the cohort, the count and the percentage when measured", () => {
+    show(withOdds({ n: 599, k: 207, lo_days: 730, hi_days: 1095, state: "measured" }));
+
+    expect(
+      screen.getByText(
+        "Of 599 titles that had sat unwatched about this long, 207 (35%) were watched again " +
+          "within a year. Measured from your own history at the last scan.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says too few titles when the cohort is thin", () => {
+    show(withOdds({ n: 4, k: 1, lo_days: 730, hi_days: 1095, state: "thin" }));
+
+    expect(screen.getByText("Too few titles like this to say.")).toBeInTheDocument();
+    // Never a percentage on a cohort too thin to trust one.
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+  });
+
+  it("says the mirror is too short when there is no usable block", () => {
+    show(withOdds({ n: 0, k: 0, lo_days: 0, hi_days: null, state: "no_history" }));
+
+    expect(screen.getByText("Not enough watch history yet.")).toBeInTheDocument();
+  });
+
+  it("renders nothing at all for a row stored before the field existed", () => {
+    // A season row, and any row predating this field, both arrive with the key present and
+    // `null` rather than the key missing (`Explanation` defaults it and nothing excludes
+    // `None`) -- this is the shape the browser actually reads over the wire.
+    show(withOdds(null));
+
+    expect(
+      screen.queryByRole("heading", { name: "Watched again within a year" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("sits after Leaning toward keeping and before What spared it", () => {
+    const base = detail(WORKED_ROWS);
+    show(
+      detail(WORKED_ROWS, {
+        explanation: {
+          ...base.explanation,
+          keep_discount: 15,
+          keeps: [
+            {
+              name: "asked for lately",
+              discount: 15,
+              max_discount: 20,
+              detail: "requested 30 days ago",
+              evaluated: true,
+            },
+          ],
+          rewatch_odds: { n: 10, k: 3, lo_days: 0, hi_days: 365, state: "measured" },
+          protections_fired: [{ gate: "whitelisted", detail: "on your keep list, never reaped" }],
+        },
+      }),
+    );
+
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    const leaning = headings.indexOf("Leaning toward keeping");
+    const odds = headings.indexOf("Watched again within a year");
+    const spared = headings.indexOf("What spared it");
+    expect(leaning).toBeGreaterThanOrEqual(0);
+    expect(odds).toBeGreaterThan(leaning);
+    expect(spared).toBeGreaterThan(odds);
+  });
+});
+
 // The three protection blocks read at different volumes. What spared the file is the reason it
 // lives, so it stays open. The checks that came back clear are the quiet "nothing to see here"
 // block, so they rest folded behind one disclosure the operator opens only to read the list.

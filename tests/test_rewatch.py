@@ -678,3 +678,22 @@ class TestRewatchOddsContext:
         ctx = snapshot._rewatch_odds_context(facts, block)
         assert ctx is not None
         assert ctx["state"] == "thin"
+
+
+class TestTheZeroDormancyEdge:
+    """A title played the day of the cutoff (dormancy exactly 0) is real data, not a gap.
+
+    Found on live data during stage 2 verification: 18 of ~3,500 candidates sat at exactly
+    zero days and a strict (0, 365] first bucket dropped them from the fit while
+    ``block_for`` sent their panel to the no-history state. The first bucket is closed at
+    zero in both places, and rule 104 holds the two edges together.
+    """
+
+    def test_a_zero_dormancy_pair_trains_the_first_bucket(self) -> None:
+        curve = rewatch.fit_blocks([(0.0, True)] + [(10.0, False)] * 3)
+        first = curve.blocks[0]
+        assert (first.lo_days, first.n, first.k) == (0.0, 4, 1)
+
+    def test_a_zero_dormancy_item_reads_the_first_block(self) -> None:
+        curve = rewatch.fit_blocks([(5.0, True)] * 40)
+        assert rewatch.block_for(curve, 0.0) is curve.blocks[0]

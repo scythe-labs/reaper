@@ -43,6 +43,7 @@ from reaper.db.models import (
     StepState,
 )
 from reaper.db.models import Policy as PolicyModel
+from reaper.engine.gates import wilson_upper
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
@@ -2216,6 +2217,156 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert [
             w for w in body["warnings"] if w["field"] == "gates.server_popularity.window_days"
         ] != []
+
+
+def _rewatch_explanation(score: float, rewatch_odds: dict[str, Any]) -> str:
+    """A candidate's explanation JSON, carrying a ``rewatch_odds`` context block on top of
+    the ordinary shape (docs/REWATCH_PLAN.md, Stage 2, "Storage and display")."""
+    payload = json.loads(_explanation(score))
+    payload["rewatch_odds"] = rewatch_odds
+    return json.dumps(payload)
+
+
+@pytest.fixture
+def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A snapshot whose movie candidates carry every ``rewatch_odds`` state GET
+    /api/policy/rewatch-odds aggregates: two "measured" rows sharing one block (so
+    aggregation is provable, not just present), one "thin" row, one explicit "no_history"
+    row, and one row whose explanation JSON cannot be parsed at all.
+    """
+    settings = Settings(data_dir=tmp_path, secret_key="k")
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+    list_hash = seeded_fingerprint(settings)
+
+    now = utcnow()
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=_fixture_policy_hash(),
+            scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
+            horizon_at=now,
+            item_count=5,
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+
+        measured_block = {"state": "measured", "lo_days": 365.0, "hi_days": 548.0, "n": 40, "k": 12}
+        session.add_all(
+            [
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:30",
+                    title="Measured One",
+                    media_type="movie",
+                    verdict="abstain",
+                    score=10,
+                    coverage_bp=10_000,
+                    explanation_json=_rewatch_explanation(10, measured_block),
+                    created_at=now,
+                ),
+                Candidate(
+                    # Same fitted block as the row above -- one scan freezes one fit for
+                    # every candidate, so both real rows in a block always agree on n/k.
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:31",
+                    title="Measured Two",
+                    media_type="movie",
+                    verdict="abstain",
+                    score=10,
+                    coverage_bp=10_000,
+                    explanation_json=_rewatch_explanation(10, measured_block),
+                    created_at=now,
+                ),
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:32",
+                    title="Thin One",
+                    media_type="movie",
+                    verdict="abstain",
+                    score=10,
+                    coverage_bp=10_000,
+                    explanation_json=_rewatch_explanation(
+                        10, {"state": "thin", "lo_days": 1825.0, "hi_days": None, "n": 4, "k": 1}
+                    ),
+                    created_at=now,
+                ),
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:33",
+                    title="No History One",
+                    media_type="movie",
+                    verdict="abstain",
+                    score=10,
+                    coverage_bp=10_000,
+                    explanation_json=_rewatch_explanation(
+                        10, {"state": "no_history", "lo_days": 0.0, "hi_days": None, "n": 0, "k": 0}
+                    ),
+                    created_at=now,
+                ),
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:34",
+                    title="Unreadable Row",
+                    media_type="movie",
+                    verdict="abstain",
+                    score=10,
+                    coverage_bp=10_000,
+                    # Malformed JSON entirely, not merely a missing key: the "we could not
+                    # read this row at all" case rule 96 resolves toward the conservative
+                    # reading (api.policy.rewatch_odds_fit).
+                    explanation_json="{not valid json",
+                    created_at=now,
+                ),
+            ]
+        )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestTheRewatchOddsFitEndpoint:
+    """GET /api/policy/rewatch-odds: the Policy page's fitted ladder and consequence echo
+    (docs/REWATCH_PLAN.md, Stage 2). Aggregated from the newest snapshot's frozen
+    ``rewatch_odds`` explanation blocks, never refit here (rule 104)."""
+
+    def test_no_snapshot_returns_the_empty_shape(self, tmp_path: Path) -> None:
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        engine.dispose()
+
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            body = c.get("/api/policy/rewatch-odds").json()
+
+        assert body == {"blocks": [], "thin_items": 0, "no_history_items": 0, "total_items": 0}
+
+    def test_blocks_aggregate_by_identity_and_thin_and_unreadable_rows_count_as_no_history(
+        self, rewatch_odds_client: TestClient
+    ) -> None:
+        body = rewatch_odds_client.get("/api/policy/rewatch-odds").json()
+
+        assert body["total_items"] == 5
+        assert body["thin_items"] == 1
+        # The explicit no_history row plus the unreadable one: an explanation this route
+        # cannot read counts as no_history too (rule 96), never a silently dropped item
+        # and never a measured block. Proven by elimination against total_items and the
+        # other two counts, since the unreadable row is not separately labeled on the wire.
+        assert body["no_history_items"] == 2
+        assert len(body["blocks"]) == 1
+        block = body["blocks"][0]
+        assert block["lo_days"] == 365.0
+        assert block["hi_days"] == 548.0
+        assert block["n"] == 40
+        assert block["k"] == 12
+        assert block["items"] == 2  # both measured rows share this one identity
+        assert block["upper_bound_pct"] == round(wilson_upper(12, 40) * 100, 1)
 
 
 class TestPolicyValidation:
