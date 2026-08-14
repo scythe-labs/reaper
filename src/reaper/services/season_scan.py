@@ -88,6 +88,7 @@ from reaper.services import (
     library_index,
     lists,
     requested_by,
+    rewatch,
     season_evidence,
     watch_evidence,
 )
@@ -494,6 +495,10 @@ def build_season_facts(
     requested: Observation[bool] = _UNSET_OBS,
     show_ended: Observation[bool] = _UNSET_OBS,
     genres: Observation[str] = _UNSET_OBS,
+    # The show's replay-period count and last qualified play (#554 TV), computed once per
+    # show in _judge_series -- exactly like show_ended above -- and handed in ready-made.
+    rewatch_viewings: Observation[int] = _UNSET_OBS,
+    rewatch_last_play_days: Observation[float] = _UNSET_OBS,
     show_match_status: identity.MatchStatus | None = None,
     # Set when this season measured fewer plays than it has measured before, which a
     # library cannot do -- see ``services.watch_evidence``. The season's history is read by
@@ -692,18 +697,14 @@ def build_season_facts(
         release_age_days=Absent(source="sonarr"),
         quality=Absent(source="sonarr"),
         show_ended=show_ended,
-        # The season lane ships no TV rewatch answer: the movie-only backtest behind
-        # rewatch_viewings/rewatch_last_play_days does not validate a season's watch
-        # pattern, and a TV formulation only ships once the same out-of-sample harness
-        # that refuted the movie cycle detector shows lift for it (docs/history/REWATCH_PLAN.md,
-        # TV section). Absent, not Unknown: this is a checked "not offered here", never a
-        # failed read, so it takes zero discount and never claims a check that never ran.
-        rewatch_viewings=Absent(source="tautulli"),
-        rewatch_last_play_days=Absent(source="tautulli"),
-        # Same reasoning, same Absent (#554 stage 2): the rewatch-probability fit is
-        # movie-only too, so a season carries no cohort to report and the stored
-        # explanation's rewatch_odds context writes nothing for it
-        # (services.snapshot._rewatch_odds_context).
+        # The show's replay-period count and its last qualified play, stamped on every
+        # season of the show it belongs to (services.rewatch.show_rewatch_stats;
+        # docs/LEARNINGS.md, TV entry). Ready-made observations, computed once per show.
+        rewatch_viewings=rewatch_viewings,
+        rewatch_last_play_days=rewatch_last_play_days,
+        # The rewatch-probability fit is movie-only (#554 stage 2): a season carries no
+        # cohort to report, and the stored explanation's rewatch_odds context writes
+        # nothing for it (services.snapshot._rewatch_odds_context).
         rewatch_cohort_n=Absent(source="tautulli"),
         rewatch_cohort_k=Absent(source="tautulli"),
         ratings=rating_set,
@@ -1507,6 +1508,8 @@ async def gather(
             all_season_keys.update(s.rating_key for s in item.seasons_in_plex.values())
 
     stats = await season_watch_stats(engine, all_season_keys, window_days=window_days)
+    # Same mirror as season_watch_stats above, same failure semantics: no try/except here.
+    rewatch_stats = await rewatch.show_rewatch_stats(engine, set(show_keys))
 
     # Series-level IMDb ratings, from the dataset we already ingest, applied to each season
     # (a season has no IMDb title of its own). A degraded dataset degrades the whole snapshot
@@ -1546,6 +1549,7 @@ async def gather(
             _judge_series(
                 item,
                 stats=stats,
+                rewatch_stats=rewatch_stats,
                 horizon=horizon,
                 reach_days=reach_days,
                 now=now,
@@ -1575,6 +1579,10 @@ def _judge_series(
     item: _SeriesWork,
     *,
     stats: SeasonWatchStats,
+    # Show-level replay-period counts, read once per scan beside `stats` above
+    # (`services.rewatch.show_rewatch_stats`, gathered in `gather`). A show key with no
+    # qualified play carries no entry; a caller reads a missing key as zero viewings.
+    rewatch_stats: Mapping[int, rewatch.RewatchStats],
     horizon: datetime,
     reach_days: int,
     now: datetime | None = None,
@@ -1709,6 +1717,35 @@ def _judge_series(
     # expiry inside the plan. It is frozen onto the bundle, so a replay expires viewers
     # against the instant the evidence was taken rather than whenever the editor was opened.
     judged_at = now or utcnow()
+
+    # --- rewatch (#554 TV) -----------------------------------------------------
+    # Show-level, exactly like show_ended_obs above: computed once per show and stamped on
+    # every season below, off the mirror `rewatch_stats` already read once per scan. Uses
+    # `judged_at`, the driver's one clock read, the same discipline the movie twin follows
+    # (`snapshot.build_facts`'s rewatch block, rule 72).
+    rewatch_viewings_obs: Observation[int]
+    rewatch_last_play_days_obs: Observation[float]
+    if item.show_rating_key is None:
+        # No key to look this show's plays up under -- a failed look, never a checked
+        # absence (rule 93). The same cause `progress_unknown_reason` above already names
+        # for the mid-binge hold, through the one shared reader (rule 104).
+        no_show_key_reason = season_evidence.no_key_reason(item.match_status)
+        rewatch_viewings_obs = Unknown(reason=no_show_key_reason, source="tautulli")
+        rewatch_last_play_days_obs = Unknown(reason=no_show_key_reason, source="tautulli")
+    else:
+        # The mirror was read either way, so viewings is Known even at 0. Recency is
+        # Absent (not Unknown) when this show has no qualified play at all: we looked, and
+        # there is genuinely nothing to measure the last one from (rule 93).
+        show_rewatch = rewatch_stats.get(item.show_rating_key)
+        rewatch_viewings_obs = Known(
+            value=show_rewatch.viewings if show_rewatch is not None else 0, source="tautulli"
+        )
+        rewatch_last_play_days_obs = (
+            Known(value=dormancy_days(show_rewatch.last_play, now=judged_at), source="tautulli")
+            if show_rewatch is not None and show_rewatch.last_play is not None
+            else Absent(source="tautulli")
+        )
+
     # Built over the seasons ON DISK -- the exact set the conflict detector compares --
     # not over the ones Plex happened to resolve (rule 30). A season on disk that Plex
     # never resolved has no rating key, so nobody could read its history: that is None,
@@ -1862,6 +1899,8 @@ def _judge_series(
             requested=requested_obs,
             show_ended=show_ended_obs,
             genres=show_genres_obs,
+            rewatch_viewings=rewatch_viewings_obs,
+            rewatch_last_play_days=rewatch_last_play_days_obs,
             show_match_status=item.match_status,
         )
         # Requested-by, display only, never a gate. The tier precedence (including B-10's

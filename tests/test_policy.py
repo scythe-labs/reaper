@@ -2190,9 +2190,10 @@ class TestRestoringALostRatingBar:
 
 
 class TestTheBuiltinRewatchKeep:
-    """The built-in habitual-rewatch keep (``docs/history/REWATCH_PLAN.md``, Stage 1): four
-    ``PolicyBody`` fields, translated into one ``KeepConfig`` by ``keep_configs()`` on the
-    movie lane only."""
+    """The built-in habitual-rewatch keep (``docs/history/REWATCH_PLAN.md``, Stage 1; the TV
+    lane joined once its formulation cleared the same bar, ``docs/LEARNINGS.md``): four
+    ``PolicyBody`` fields, translated into one ``KeepConfig`` by ``keep_configs()`` on both
+    lanes, with ``media_type`` carried for the lane's wording."""
 
     def test_a_stored_body_missing_the_four_fields_thaws_to_the_defaults(self) -> None:
         """A body saved before this release carries none of the four keys. Rule 1's spirit:
@@ -2231,19 +2232,42 @@ class TestTheBuiltinRewatchKeep:
         assert rewatch[0].max_discount == 33
         assert rewatch[0].min_viewings == 6
         assert rewatch[0].recent_days == 400
+        assert rewatch[0].media_type == "movie"
 
     def test_a_movie_body_with_the_switch_off_appends_none(self) -> None:
         body = _policy(media_type="movie", rewatch_keep_enabled=False)
 
         assert all(k.name != REWATCH_KEEP for k in body.keep_configs())
 
-    def test_a_tv_body_appends_none_whatever_the_flag(self) -> None:
-        """Movies only until a TV formulation clears the backtest bar
-        (``docs/history/REWATCH_PLAN.md``, TV section): the switch has no effect on the TV lane, so
-        both states of it are driven here rather than just the shipped default."""
-        for enabled in (True, False):
-            body = _policy(media_type="tv", rewatch_keep_enabled=enabled)
-            assert all(k.name != REWATCH_KEEP for k in body.keep_configs())
+    def test_a_tv_body_appends_the_config_with_tv_wording(self) -> None:
+        """The TV lane joined when its formulation cleared the backtest bar
+        (``docs/LEARNINGS.md``, the TV entry). Bars off both shipped defaults (rule 141):
+        3/500 is neither the movie 10/730 nor the TV default 2, so this proves the config
+        carries the body's own numbers on this lane too."""
+        body = _policy(
+            media_type="tv",
+            rewatch_keep_enabled=True,
+            rewatch_min_viewings=3,
+            rewatch_recent_days=500,
+        )
+
+        rewatch = [k for k in body.keep_configs() if k.name == REWATCH_KEEP]
+
+        assert len(rewatch) == 1
+        assert rewatch[0].min_viewings == 3
+        assert rewatch[0].recent_days == 500
+        assert rewatch[0].media_type == "tv"
+
+    def test_a_tv_body_with_the_switch_off_appends_none(self) -> None:
+        body = _policy(media_type="tv", rewatch_keep_enabled=False)
+
+        assert all(k.name != REWATCH_KEEP for k in body.keep_configs())
+
+    def test_the_default_tv_policy_ships_the_validated_rewatch_bar(self) -> None:
+        """2 whole re-watches is the bar the TV backtest validated (``docs/LEARNINGS.md``);
+        the class default stays the movie lane's 10, so the default TV body must override
+        it or a fresh install ships a keep that fires on almost nothing."""
+        assert DEFAULT_TV_POLICY.rewatch_min_viewings == 2
 
     def test_a_graded_keep_cannot_take_the_built_ins_name(self) -> None:
         with pytest.raises(ValidationError, match="built-in rewatch keep"):

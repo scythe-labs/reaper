@@ -713,17 +713,24 @@ class TestBuildSeasonFacts:
         facts = _facts(season_added_at=None, last_played=None)
         assert isinstance(facts.days_observed_unwatched, Unknown)
 
-    def test_a_season_carries_no_rewatch_answer_yet(self) -> None:
-        """Both rewatch observations (``docs/history/REWATCH_PLAN.md``, Stage 1, rule 35's builder
-        sweep) are ``Absent`` on every season, whatever else the fixture varies: a checked
-        "not offered here", never a failed read (rule 93), so the built-in rewatch keep
-        discounts nothing rather than fail-open keeping every season fully
-        (``signals._rewatch_keep``'s ``Absent`` arm). No TV formulation has cleared the
-        backtest bar yet."""
-        facts = _facts(plex_rating_key=700)
+    def test_a_season_carries_whatever_rewatch_observations_it_is_given(self) -> None:
+        """The builder no longer hardcodes the show's rewatch pair (#554 TV): it is a
+        pass-through, exactly like ``show_ended`` -- ``_judge_series`` computes the real
+        Known/Absent/Unknown once per show and hands it in ready-made
+        (``TestShowLevelRewatchFacts`` covers that computation end to end). A caller that
+        supplies neither still gets the fail-closed ``Absent`` default, which is what a raw
+        call with nothing to report should read as."""
+        viewings = Known(value=3, source="tautulli")
+        last_play_days = Known(value=17, source="tautulli")
+        facts = _facts(
+            plex_rating_key=700, rewatch_viewings=viewings, rewatch_last_play_days=last_play_days
+        )
+        assert facts.rewatch_viewings is viewings
+        assert facts.rewatch_last_play_days is last_play_days
 
-        assert isinstance(facts.rewatch_viewings, Absent)
-        assert isinstance(facts.rewatch_last_play_days, Absent)
+        defaulted = _facts(plex_rating_key=700)
+        assert isinstance(defaulted.rewatch_viewings, Absent)
+        assert isinstance(defaulted.rewatch_last_play_days, Absent)
 
     def test_no_arrival_date_but_a_play_measures_from_the_play(self) -> None:
         """The state neither lane had a test for (#257), on the lane that got it right.
@@ -2367,6 +2374,160 @@ class TestGatherEndToEnd:
         )
         assert judgments == []
         assert any("sonarr" in r and "unreachable" in r for r in reasons)
+
+
+class TestShowLevelRewatchFacts:
+    """#554 TV: ``services.rewatch.show_rewatch_stats`` is read once per scan, and
+    ``_judge_series`` turns it into the show's ``rewatch_viewings``/``rewatch_last_play_days``
+    pair, stamped identically on every season of that show -- the same shape ``show_ended``
+    already carries. The cohort pair stays ``Absent`` throughout: the rewatch-probability fit
+    is movie-only.
+    """
+
+    async def test_a_show_with_replayed_episodes_is_known_on_every_season(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        series = [
+            {
+                "id": 1,
+                "title": "Replayed Show",
+                "year": 2011,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1), _season_payload(2)],
+            }
+        ]
+        tautulli = show_library(
+            rows=[
+                {"rating_key": 900, "title": "Replayed Show", "year": 2011, "added_at": "1000000"}
+            ],
+            children={
+                900: [{"media_index": 1, "rating_key": 901}, {"media_index": 2, "rating_key": 902}]
+            },
+        )
+        # Two episodes, each played twice ~150 days apart: an older viewing and a later
+        # replay of the same two episode keys (rewatch.replay_period_count's >= 1/4-overlap
+        # floor), never a release-following binge.
+        for days_ago, episode in ((200, 1), (195, 2), (50, 1), (45, 2)):
+            await _episode(
+                cache_engine,
+                season_key=901,
+                user_id=1,
+                show_key=900,
+                days_ago=days_ago,
+                episode=episode,
+            )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+        )
+
+        by_key = {j.media_key: j for j in judgments}
+        s1, s2 = by_key["sonarr:1:1:1"].facts, by_key["sonarr:1:1:2"].facts
+        # 1 replay period, never a value the "no entry" fallback (0) would also produce
+        # (rule 141); last play is the more recent pair, 45 days back.
+        assert s1.rewatch_viewings == Known(value=1, source="tautulli")
+        assert s1.rewatch_last_play_days == Known(value=45, source="tautulli")
+        # Show-level: computed once and stamped as the same object on the show's other season.
+        assert s2.rewatch_viewings is s1.rewatch_viewings
+        assert s2.rewatch_last_play_days is s1.rewatch_last_play_days
+        assert isinstance(s1.rewatch_cohort_n, Absent)
+        assert isinstance(s1.rewatch_cohort_k, Absent)
+
+    async def test_a_resolved_show_with_no_qualified_plays_is_known_zero_and_absent(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The show resolved and the mirror was read, but it holds nothing for this show: a
+        checked zero, not the failed read Unknown would claim (rule 93)."""
+        series = [
+            {
+                "id": 2,
+                "title": "Unwatched Show",
+                "year": 2012,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1)],
+            }
+        ]
+        tautulli = show_library(
+            rows=[
+                {"rating_key": 800, "title": "Unwatched Show", "year": 2012, "added_at": "1000000"}
+            ],
+            children={800: [{"media_index": 1, "rating_key": 801}]},
+        )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+        )
+
+        facts = next(j for j in judgments if j.media_key == "sonarr:1:2:1").facts
+        assert facts.rewatch_viewings == Known(value=0, source="tautulli")
+        assert isinstance(facts.rewatch_last_play_days, Absent)
+        assert isinstance(facts.rewatch_cohort_n, Absent)
+        assert isinstance(facts.rewatch_cohort_k, Absent)
+
+    async def test_an_unresolved_show_is_unknown_on_both_rewatch_observations(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """No Plex show key means no key to look this show's plays up under -- a failed
+        look, never the checked absence the resolved cases above record (rule 93)."""
+        series = [
+            {
+                "id": 3,
+                "title": "Missing Show",
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1)],
+            }
+        ]
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=show_library([]),
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+        )
+
+        facts = next(j for j in judgments if j.media_key == "sonarr:1:3:1").facts
+        assert isinstance(facts.rewatch_viewings, Unknown)
+        assert isinstance(facts.rewatch_last_play_days, Unknown)
+        assert facts.rewatch_viewings.reason == "Plex has not matched this season"
+        assert facts.rewatch_last_play_days.reason == "Plex has not matched this season"
+        assert isinstance(facts.rewatch_cohort_n, Absent)
+        assert isinstance(facts.rewatch_cohort_k, Absent)
 
 
 class TestUserSeasonProgress:

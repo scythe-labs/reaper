@@ -67,7 +67,7 @@ from reaper.ratings import _PERCENTAGE_SOURCES, _PLEX_IMAGE_PREFIXES, RatingSour
 #: The ``SCORER_VERSION`` the surface below was recorded against. Both move together or
 #: neither does -- re-recording the list without touching this leaves every operator's
 #: pending approval bound to a scorer that no longer exists.
-_RECORDED_AT_SCORER_VERSION = 3
+_RECORDED_AT_SCORER_VERSION = 4
 
 #: Every declaration below is one a stored policy body dereferences without carrying, so a
 #: change to it re-interprets that body while ``policy_hash`` holds still. Spelled by

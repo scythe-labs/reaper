@@ -635,9 +635,23 @@ describe("the rewatch keep card", () => {
     expect(await screen.findByRole("switch", { name: SWITCH_NAME })).toBeInTheDocument();
   });
 
-  it("renders nothing on the TV policy, which carries the same four fields inertly", async () => {
-    await renderTvEditor();
-    expect(screen.queryByRole("switch", { name: SWITCH_NAME })).not.toBeInTheDocument();
+  it("renders on the TV policy too, with TV wording, no hold half, and no rewatch-odds fetch", async () => {
+    // `apiMock` is module-level, so its call counts carry across this file. Counted from zero
+    // here, or the premise below reads whatever the preceding tests happened to leave.
+    apiMock.rewatchOddsFit.mockClear();
+    renderEditor({ body: tvBody() }, pace, null, [], "flags", "tv");
+
+    expect(
+      await screen.findByRole("switch", { name: "Keep shows most likely to be rewatched" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Watched again by anyone at least")).toBeInTheDocument();
+    // The hold half is movie-only: a TV body carries no rewatch_odds gate row at all.
+    expect(
+      screen.queryByRole("switch", {
+        name: "Keep anything likely to be watched above a percentage",
+      }),
+    ).not.toBeInTheDocument();
+    expect(apiMock.rewatchOddsFit).not.toHaveBeenCalled();
   });
 
   it("hides its three controls while the switch is off, like every other settings card", async () => {

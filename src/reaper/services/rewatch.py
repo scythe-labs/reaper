@@ -2,8 +2,11 @@
 """What counts as a play, and when a viewing starts over.
 
 Successor to the deleted ``engine/calibration.py``: one derivation module for both stages
-of the rewatch plan, not two that could drift (rule 104). Movies only in this release; TV
-is deferred behind its own validation (``docs/history/REWATCH_PLAN.md``, TV section).
+of the rewatch plan, not two that could drift (rule 104). Movies shipped first; TV's own
+formulation has since cleared its validation (``docs/LEARNINGS.md``, "TV: the replay-period
+formulation clears the lift bar") and is period-based and replay-discriminated
+(:func:`replay_period_count`) where the movie lane is a plain viewing count
+(:func:`viewing_count`).
 
 This module freezes raw inputs only -- qualified viewing count, and the most recent
 qualified play -- from an out-of-sample backtest against one heavy-rewatch library
@@ -45,6 +48,13 @@ from reaper.services import history_sync
 #: exactly this many days shares the same viewing.
 VIEWING_GAP_DAYS = 7
 
+#: A qualified episode play more than this many days after the PREVIOUS play starts a new
+#: show-level viewing period. A gap of exactly this many days shares the same period. 30,
+#: not ``VIEWING_GAP_DAYS``'s 7: a weekly airing run's 7-day spacing must bridge into one
+#: period rather than fragment into one per episode (``docs/history/REWATCH_PLAN.md``, TV
+#: section).
+SHOW_PERIOD_GAP_DAYS = 30
+
 
 def qualifies(watched_status: float | None, percent_complete: int) -> bool:
     """Whether one ``watch_event`` row counts as a play.
@@ -84,9 +94,60 @@ def viewing_count(play_times: Sequence[datetime]) -> int:
     return viewings
 
 
+def replay_period_count(plays: Sequence[tuple[datetime, int]]) -> int:
+    """Count REPLAY periods among a show's qualified episode plays.
+
+    Each element is ``(play time, episode identity)``. Episode identity is the episode's
+    own Plex rating key; the plan's ``(parent_rating_key, media_index)`` fallback is not
+    implemented here, because ``watch_event.rating_key`` is ``NOT NULL``
+    (``services/history_sync.py``'s schema) and the live validation measured every episode
+    row carrying its own key, needing no fallback (``docs/LEARNINGS.md``, TV entry, last
+    bullet).
+
+    Sorted ascending, then clustered into periods by :data:`SHOW_PERIOD_GAP_DAYS`: a play
+    more than that many days after the PREVIOUS play (not the period's start) opens a new
+    period, the same rule :func:`viewing_count` applies to movies.
+
+    A period is a REPLAY period when it holds at least two distinct episode identities AND
+    at least a quarter of its distinct identities were already played in an EARLIER period
+    (``seen``, the union over every period walked so far, whatever that period's own size).
+    The quarter is inclusive -- ``4 * overlap >= distinct`` in integer arithmetic, never a
+    float division: 1 of 4 replays, 1 of 5 does not. This is the validated discriminator
+    separating rewatching from release-following (``docs/history/REWATCH_PLAN.md``, TV
+    section; ``docs/LEARNINGS.md``, TV entry): a period below either floor reads as
+    new-episode following, never a replay.
+
+    Returns the count of replay periods. Empty input is zero.
+    """
+    if not plays:
+        return 0
+    ordered = sorted(plays, key=lambda play: play[0])
+    gap = timedelta(days=SHOW_PERIOD_GAP_DAYS)
+
+    periods: list[set[int]] = [{ordered[0][1]}]
+    previous = ordered[0][0]
+    for played, episode_key in ordered[1:]:
+        if played - previous > gap:
+            periods.append(set())
+        periods[-1].add(episode_key)
+        previous = played
+
+    seen: set[int] = set()
+    replay_periods = 0
+    for period in periods:
+        distinct = len(period)
+        overlap = len(period & seen)
+        if distinct >= 2 and 4 * overlap >= distinct:
+            replay_periods += 1
+        seen |= period
+    return replay_periods
+
+
 @dataclass(frozen=True, slots=True)
 class RewatchStats:
-    """One movie's qualified viewing history, folded over any merged Plex listings."""
+    """One title's qualified viewing history: a movie's plain viewing count (folded over
+    any merged Plex listings, :func:`movie_rewatch_stats`) or a show's replay-period count
+    (:func:`show_rewatch_stats`)."""
 
     viewings: int
     last_play: datetime | None
@@ -150,6 +211,62 @@ async def movie_rewatch_stats(
     return {
         key: RewatchStats(viewings=viewing_count(times), last_play=max(times))
         for key, times in plays.items()
+    }
+
+
+async def show_rewatch_stats(engine: AsyncEngine, show_keys: set[int]) -> dict[int, RewatchStats]:
+    """Qualified viewing stats for shows in ``show_keys``, from the local history mirror.
+
+    Mirrors :func:`movie_rewatch_stats`'s shape, with two differences. No ``groups``
+    parameter: the TV lane's existing per-season watch stats
+    (``season_scan.season_watch_stats``) do not fold merged Plex listings either, and this
+    follows that lane's precedent rather than adding a fold the sibling function lacks
+    (rule 72, written deferral -- when TV's watch stats gain a merge fold, this one gets it
+    too). And a show's ``viewings`` is :func:`replay_period_count`'s replay-period count,
+    not a plain viewing count, per the TV formulation's validation
+    (``docs/history/REWATCH_PLAN.md``, TV section).
+
+    A show key with at least one qualified play gets an entry; a caller reads a missing key
+    as zero viewings, the same contract as the movie twin.
+    """
+    if not show_keys:
+        return {}
+    await history_sync.ensure_schema(engine)
+
+    all_keys = sorted(show_keys)
+    plays: dict[int, list[tuple[datetime, int]]] = {}
+    async with engine.connect() as conn:
+        # Chunked on db.KEY_CHUNK, like every sibling that expands an IN over a
+        # scan-sized key set (movie_rewatch_stats above, rule 94).
+        for start in range(0, len(all_keys), KEY_CHUNK):
+            chunk = all_keys[start : start + KEY_CHUNK]
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT grandparent_rating_key, rating_key, watched_at, "
+                        "watched_status, percent_complete FROM watch_event "
+                        "WHERE media_type = 'episode' AND grandparent_rating_key IN :keys"
+                    ).bindparams(bindparam("keys", expanding=True)),
+                    {"keys": chunk},
+                )
+            ).all()
+            for row in rows:
+                # The one filter this feature's play counts are allowed to use (module
+                # docstring). Never re-expressed as a second SQL WHERE clause.
+                if not qualifies(row.watched_status, int(row.percent_complete)):
+                    continue
+                played = from_epoch(row.watched_at)
+                if played is None:
+                    continue
+                show_key = int(row.grandparent_rating_key)
+                plays.setdefault(show_key, []).append((played, int(row.rating_key)))
+
+    return {
+        key: RewatchStats(
+            viewings=replay_period_count(show_plays),
+            last_play=max(played for played, _ in show_plays),
+        )
+        for key, show_plays in plays.items()
     }
 
 

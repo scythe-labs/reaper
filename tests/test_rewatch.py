@@ -53,19 +53,21 @@ async def _insert(
     percent_complete: int,
     media_type: str = "movie",
     user_id: int = 1,
+    grandparent_rating_key: int | None = None,
 ) -> None:
     await history_sync.ensure_schema(engine)
     async with engine.begin() as conn:
         await conn.execute(
             text(
                 "INSERT INTO watch_event "
-                "(rating_key, user_id, watched_at, watched_status, percent_complete, "
-                " media_type) "
-                "VALUES (:rating_key, :user_id, :watched_at, :watched_status, "
-                " :percent_complete, :media_type)"
+                "(rating_key, grandparent_rating_key, user_id, watched_at, watched_status, "
+                " percent_complete, media_type) "
+                "VALUES (:rating_key, :grandparent_rating_key, :user_id, :watched_at, "
+                " :watched_status, :percent_complete, :media_type)"
             ),
             {
                 "rating_key": rating_key,
+                "grandparent_rating_key": grandparent_rating_key,
                 "user_id": user_id,
                 "watched_at": watched_at,
                 "watched_status": watched_status,
@@ -136,6 +138,119 @@ class TestViewingClustering:
         start = datetime(2026, 1, 1, tzinfo=UTC)
         later = start + timedelta(days=1)
         assert rewatch.viewing_count([later, start]) == 1
+
+
+_PERIOD_START = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _play(days: float, episode: int, *, seconds: float = 0) -> tuple[datetime, int]:
+    """One ``(play time, episode identity)`` pair, ``days``/``seconds`` offset from a fixed
+    origin -- only the offsets between plays matter to ``replay_period_count``."""
+    return _PERIOD_START + timedelta(days=days, seconds=seconds), episode
+
+
+class TestReplayPeriodCount:
+    """rule: the TV period/replay derivation (docs/history/REWATCH_PLAN.md, TV section;
+    docs/LEARNINGS.md, "TV: the replay-period formulation clears the lift bar"). Expectations
+    are written from that spec, never from the implementation (rule 119)."""
+
+    def test_empty_input_is_zero(self) -> None:
+        assert rewatch.replay_period_count([]) == 0
+
+    def test_one_period_first_watch_only_is_zero(self) -> None:
+        # Three new episodes, all inside the gap: one period, and a first period never has
+        # anything in `seen` to overlap against.
+        plays = [_play(0, 1), _play(1, 2), _play(2, 3)]
+        assert rewatch.replay_period_count(plays) == 0
+
+    def test_two_periods_of_the_same_episodes_is_one_replay(self) -> None:
+        plays = [
+            _play(0, 1),
+            _play(1, 2),  # period 1: {1, 2}, first period, not a replay; seen = {1, 2}
+            _play(40, 1),
+            _play(41, 2),  # period 2: {1, 2} again, full overlap -> replay
+        ]
+        assert rewatch.replay_period_count(plays) == 1
+
+    def test_quarter_boundary_four_distinct_one_seen_is_a_replay(self) -> None:
+        plays = [
+            _play(0, 1),  # period 1: {1}, seeds `seen`
+            _play(40, 1),
+            _play(41, 2),
+            _play(42, 3),
+            _play(43, 4),  # period 2: {1, 2, 3, 4}, overlap 1 of 4 -- exactly a quarter
+        ]
+        assert rewatch.replay_period_count(plays) == 1
+
+    def test_quarter_boundary_five_distinct_one_seen_is_not_a_replay(self) -> None:
+        plays = [
+            _play(0, 1),
+            _play(40, 1),
+            _play(41, 2),
+            _play(42, 3),
+            _play(43, 4),
+            _play(44, 5),  # period 2: {1..5}, overlap 1 of 5 -- under a quarter
+        ]
+        assert rewatch.replay_period_count(plays) == 0
+
+    def test_a_single_episode_period_is_never_a_replay_even_with_full_overlap(self) -> None:
+        plays = [
+            _play(0, 1),
+            _play(1, 2),  # period 1: {1, 2}, not a replay; seen = {1, 2}
+            _play(40, 1),  # period 2: {1} alone -- 100% overlap, but only one distinct episode
+        ]
+        assert rewatch.replay_period_count(plays) == 0
+
+    def test_a_single_episode_first_period_feeds_seen_for_the_second(self) -> None:
+        """Period 1 holds one episode and is never itself a replay (the floor above), but
+        its identity still lands in `seen`: period 2 clears the quarter bar only because of
+        it (without period 1, its overlap would be zero)."""
+        plays = [
+            _play(0, 9),  # period 1: {9} alone, not a replay
+            _play(40, 9),
+            _play(41, 10),
+            _play(42, 11),
+            _play(43, 12),  # period 2: {9, 10, 11, 12}, overlap 1 of 4 via episode 9
+        ]
+        assert rewatch.replay_period_count(plays) == 1
+
+    def test_exactly_the_gap_shares_a_period(self) -> None:
+        gap = rewatch.SHOW_PERIOD_GAP_DAYS
+        plays = [
+            _play(0, 1),
+            _play(1, 2),  # period 1: {1, 2}, not a replay; seen = {1, 2}
+            _play(100, 1),  # period 2 starts, one distinct episode so far
+            _play(100 + gap, 2),  # exactly the gap from the PREVIOUS play: shares period 2
+        ]
+        # Merged, period 2 is {1, 2}: full overlap with `seen`, and a replay.
+        assert rewatch.replay_period_count(plays) == 1
+
+    def test_one_second_past_the_gap_splits(self) -> None:
+        gap = rewatch.SHOW_PERIOD_GAP_DAYS
+        plays = [
+            _play(0, 1),
+            _play(1, 2),  # period 1: {1, 2}, not a replay; seen = {1, 2}
+            _play(100, 1),  # period 2: {1} alone
+            _play(100 + gap, 2, seconds=1),  # one second past the gap: period 3, not 2
+        ]
+        # Split, periods 2 and 3 each hold one distinct episode: neither clears the floor,
+        # whatever their overlap with `seen`.
+        assert rewatch.replay_period_count(plays) == 0
+
+    def test_unsorted_input_is_sorted_first(self) -> None:
+        plays = [
+            _play(40, 1),
+            _play(41, 2),
+            _play(0, 1),
+            _play(1, 2),
+        ]
+        assert rewatch.replay_period_count(plays) == 1
+
+    def test_a_weekly_airing_run_stays_one_period_and_is_not_a_replay(self) -> None:
+        """Ten weekly episodes, all new: SHOW_PERIOD_GAP_DAYS=30 bridges the 7-day airing
+        gaps into one period, and nothing in it repeats an earlier period."""
+        plays = [_play(7 * i, i) for i in range(10)]
+        assert rewatch.replay_period_count(plays) == 0
 
 
 class TestMovieRewatchStatsEndToEnd:
@@ -286,6 +401,137 @@ class TestTheOnlyUnqualifiedPlaysPairingThroughBuildFacts:
 
         assert facts.rewatch_viewings == Known(value=0, source="tautulli")
         assert isinstance(facts.rewatch_last_play_days, Absent)
+
+
+class TestShowRewatchStatsEndToEnd:
+    """``rewatch.show_rewatch_stats``: episode plays folded onto their show via
+    ``grandparent_rating_key``, and ``viewings`` derived from `replay_period_count`, not a
+    plain viewing count (docs/history/REWATCH_PLAN.md, TV section)."""
+
+    async def test_plays_land_under_the_show_via_grandparent_key(self, engine: AsyncEngine) -> None:
+        # Two replay periods of the same two episodes, mirroring
+        # TestReplayPeriodCount.test_two_periods_of_the_same_episodes_is_one_replay.
+        for rating_key, offset in ((10, 0), (11, DAY)):
+            await _insert(
+                engine,
+                rating_key=rating_key,
+                grandparent_rating_key=2000,
+                watched_at=NOW_EPOCH + offset,
+                watched_status=1.0,
+                percent_complete=100,
+                media_type="episode",
+            )
+        for rating_key, offset in ((10, 40 * DAY), (11, 41 * DAY)):
+            await _insert(
+                engine,
+                rating_key=rating_key,
+                grandparent_rating_key=2000,
+                watched_at=NOW_EPOCH + offset,
+                watched_status=1.0,
+                percent_complete=100,
+                media_type="episode",
+            )
+
+        stats = await rewatch.show_rewatch_stats(engine, {2000})
+
+        assert stats[2000].viewings == 1
+        assert stats[2000].last_play == from_epoch(NOW_EPOCH + 41 * DAY)
+
+    async def test_a_movie_row_is_excluded(self, engine: AsyncEngine) -> None:
+        await _insert(
+            engine,
+            rating_key=100,
+            grandparent_rating_key=2000,
+            watched_at=NOW_EPOCH,
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="movie",
+        )
+
+        stats = await rewatch.show_rewatch_stats(engine, {2000})
+
+        assert stats == {}
+
+    async def test_another_shows_row_is_excluded(self, engine: AsyncEngine) -> None:
+        await _insert(
+            engine,
+            rating_key=200,
+            grandparent_rating_key=3000,  # not in the candidate set below
+            watched_at=NOW_EPOCH,
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="episode",
+        )
+
+        stats = await rewatch.show_rewatch_stats(engine, {2000})
+
+        assert stats == {}
+
+    async def test_an_unqualified_play_does_not_count(self, engine: AsyncEngine) -> None:
+        await _insert(
+            engine,
+            rating_key=300,
+            grandparent_rating_key=2100,
+            watched_at=NOW_EPOCH,
+            watched_status=None,
+            percent_complete=10,  # abandoned: under half, no reported status
+            media_type="episode",
+        )
+
+        stats = await rewatch.show_rewatch_stats(engine, {2100})
+
+        assert stats == {}  # the one filter this feature's play counts are allowed to use
+
+    async def test_last_play_is_the_max_qualified_play(self, engine: AsyncEngine) -> None:
+        await _insert(
+            engine,
+            rating_key=400,
+            grandparent_rating_key=2200,
+            watched_at=NOW_EPOCH,
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="episode",
+        )
+        await _insert(
+            engine,
+            rating_key=401,
+            grandparent_rating_key=2200,
+            watched_at=NOW_EPOCH + 10 * DAY,  # later, but unqualified
+            watched_status=None,
+            percent_complete=10,
+            media_type="episode",
+        )
+
+        stats = await rewatch.show_rewatch_stats(engine, {2200})
+
+        assert stats[2200].last_play == from_epoch(NOW_EPOCH)
+
+    async def test_a_show_with_no_qualified_plays_is_absent(self, engine: AsyncEngine) -> None:
+        stats = await rewatch.show_rewatch_stats(engine, {2300})
+
+        assert stats == {}  # caller reads a missing key as zero viewings
+
+    async def test_a_key_outside_the_candidate_set_is_not_fetched(
+        self, engine: AsyncEngine
+    ) -> None:
+        await _insert(
+            engine,
+            rating_key=500,
+            grandparent_rating_key=2400,
+            watched_at=NOW_EPOCH,
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="episode",
+        )
+
+        stats = await rewatch.show_rewatch_stats(engine, {9999})
+
+        assert stats == {}
+
+    async def test_an_empty_candidate_set_short_circuits(self, engine: AsyncEngine) -> None:
+        stats = await rewatch.show_rewatch_stats(engine, set())
+
+        assert stats == {}
 
 
 # ---------------------------------------------------------------------------

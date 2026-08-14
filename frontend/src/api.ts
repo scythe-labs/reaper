@@ -591,7 +591,8 @@ export interface PolicyBody {
   protect_conditions: Condition[];
   custom_condemn: CustomCondemn[];
   graded_keeps: GradedKeep[];
-  // The built-in rewatch keep's knobs (movies only; the TV policy carries them inertly).
+  // The built-in rewatch keep's knobs, live on both lanes: a movie body counts title
+  // re-watches, a TV body counts whole show re-watches.
   rewatch_keep_enabled: boolean;
   rewatch_keep_discount: number;
   rewatch_min_viewings: number;
