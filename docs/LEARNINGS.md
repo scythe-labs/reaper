@@ -485,7 +485,14 @@ it?" to get it tested.
 
 Roughly one movie entry in 150 shares its TMDb id with a second entry on the measured library,
 one per copy, each binding a different Plex listing. A 4K alongside an HD, or two instances
-managing the same title.
+managing the same title. Seasons do it too, at a lower rate.
+
+**Counting it has its own trap, and the measuring script hit it first.** A show's TVDb id is
+shared by every season the show has, so grouping season rows on the id alone counts the season
+structure and reports a duplicate for almost every multi-season show. The season's identity is
+the show id **plus the season number**. The first run of the script reported that wrong number by
+two orders of magnitude, which is the argument for the script existing rather than the query
+living in a transcript.
 
 This was found while designing #553, whose first shape was a ledger keyed on external id
 recording the Plex rating key last seen for that id. Keyed that way, the two copies overwrite

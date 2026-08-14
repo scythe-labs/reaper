@@ -294,6 +294,26 @@ Reaper's look and feel (the `reaper-artifact` skill), approved before any fronte
 edited. It is a cheap round here, because the row reuses a control and a layout that already
 exist.
 
+### Build order inside the stage
+
+The pieces above have one ordering constraint, and it is at the end.
+
+**The operator documentation is written last, after the behavior is settled.** The Policy and
+Safety manual pages are generated from the app's own help content
+(`frontend/src/docs/content/*.ts`) through `toMdx.ts`, and `manual.gen.test.ts` fails on drift.
+So the help text is not a separate artifact to keep in step, it *is* the manual, and every pivot
+during the build rewrites it. Written first, it is rewritten three times and one of those
+rewrites gets missed. Written last, it is written once against what actually shipped.
+
+Rule 144 is the reason this is a stated step rather than a habit. One fact about what the app
+does ends up in the help paragraph, the gate's `detail` string, the chip, and the policy row's
+help copy. Generating one of those from the declaration makes the ungenerated siblings **more**
+dangerous, not less, because the generated copy is demonstrably correct and vouches for a
+consistency that does not exist. So the last step is a sweep of all four, not a docs page.
+
+Everything else can land in whatever order suits the work. The ledger and the gate have to ship
+together (rule 25), and the frontend opens with its mockup, but nothing else is ordered.
+
 ## The gates this has to clear
 
 Named now, because three of them fail on a new gate id by construction and are cheaper to plan
@@ -388,10 +408,16 @@ It costs the feature its memory and nothing else.
 The parts that can be validated on real data, and the parts that cannot, stated separately so
 neither borrows the other's credibility.
 
-**Can be validated now.** The detector's noise floor, by replaying the rule over the existing
-snapshot history: for each stable `media_key`, did its bound Plex rating key change, and was the
-old key still present. That measurement is what produced the two ratios above, and it re-runs
-against any install with snapshot history.
+**Can be validated now**, by `scripts/return_signal_measure.py`, which is what produced every
+number above and re-runs read-only against any install with snapshot history:
+
+```
+uv run python scripts/return_signal_measure.py data/reaper.db
+```
+
+It prints the four findings as ratios and spans, never a title or an id. Run it against a second
+library before trusting the cooling-off default, since that default is set by one library's
+churn ceiling and nothing else.
 
 **Cannot be validated now.** The hold's usefulness, the default window, and the rate of genuine
 regrets. All three need an install that has actually deleted something and had it come back.
