@@ -1848,6 +1848,23 @@ export function PolicyEditor({
 
   const kind = mediaType === "tv" ? "TV" : "movie";
   const otherKind = mediaType === "tv" ? "movie" : "TV";
+
+  // The rewatch card's lane-dependent copy. `bar` and `barLabel` are one sentence in two
+  // places, the span and the screen reader's label, so they are written together.
+  const rewatchCopy =
+    mediaType === "tv"
+      ? {
+          name: "Keep shows most likely to be rewatched",
+          help: "A show people here keep coming back to will probably be watched again. It only lowers the score, never keeps a show outright.",
+          bar: "watched again by anyone at least",
+          barLabel: "Watched again by anyone at least",
+        }
+      : {
+          name: "Keep titles most likely to be rewatched",
+          help: "A title people here keep coming back to will probably be watched again. It only lowers the score, never keeps a title outright.",
+          bar: "watched by anyone at least",
+          barLabel: "Watched by anyone at least",
+        };
   const preset = activePreset(draft);
   const presetHelp =
     PRESETS.find((p) => p.id === preset)?.help ?? "Custom: your own tuning, not a preset.";
@@ -2448,13 +2465,9 @@ export function PolicyEditor({
           </div>
         )}
 
-        {/* Live on both lanes: `keep_configs()` (engine/policy.py) no longer gates the keep
-            half on `media_type == "movie"`, so a TV body scores it off show-level re-watch
-            counts the same way a movie body scores it off title-level ones. The hold half
-            below stays movie-only -- a TV body never carries a `rewatch_odds` gate row
-            (`PolicyBody._rewatch_odds_row` only appends one for movies), so the IIFE's
-            `findIndex` would already render nothing for TV, but it is gated explicitly here
-            rather than left for a reader to derive. */}
+        {/* The keep half is live on both lanes: a TV body scores it off show-level re-watch
+            counts, a movie body off title-level ones (`keep_configs()`, engine/policy.py).
+            The hold half below is movie-only. */}
         <div className="rules-card">
           <div className="card-head">
             <label className="toggle">
@@ -2462,40 +2475,24 @@ export function PolicyEditor({
                 checked={draft.rewatch_keep_enabled}
                 onChange={(rewatch_keep_enabled) => update({ rewatch_keep_enabled })}
               />
-              <span className="rule-name">
-                {mediaType === "tv"
-                  ? "Keep shows most likely to be rewatched"
-                  : "Keep titles most likely to be rewatched"}
-              </span>
+              <span className="rule-name">{rewatchCopy.name}</span>
             </label>
             <DocLink doc="understanding-policy" anchor="rewatch-keep" className="doc-learn">
               Learn more
             </DocLink>
           </div>
-          <p className="help rule-help">
-            {mediaType === "tv"
-              ? "A show people here keep coming back to will probably be watched again. It only lowers the score, never keeps a show outright."
-              : "A title people here keep coming back to will probably be watched again. It only lowers the score, never keeps a title outright."}
-          </p>
+          <p className="help rule-help">{rewatchCopy.help}</p>
           {draft.rewatch_keep_enabled && (
             <>
               <div className="rule-control">
-                <span>
-                  {mediaType === "tv"
-                    ? "watched again by anyone at least"
-                    : "watched by anyone at least"}
-                </span>
+                <span>{rewatchCopy.bar}</span>
                 <FixedQuantity
                   value={draft.rewatch_min_viewings}
                   suffix="times"
                   min={1}
                   max={1000}
                   width="narrow"
-                  ariaLabel={
-                    mediaType === "tv"
-                      ? "Watched again by anyone at least"
-                      : "Watched by anyone at least"
-                  }
+                  ariaLabel={rewatchCopy.barLabel}
                   onChange={(v) => update({ rewatch_min_viewings: v })}
                 />
               </div>
@@ -2524,10 +2521,11 @@ export function PolicyEditor({
             </>
           )}
 
-          {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second
-              half, movie-only, per "Approved with the mockups, 2026-08-13" in
-              docs/history/REWATCH_PLAN.md. Wired to draft.gates the same way RatingFloorRow
-              is above, by index. */}
+          {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second half,
+              movie-only, per "Approved with the mockups, 2026-08-13" in
+              docs/history/REWATCH_PLAN.md. Gated on the lane as well as on the row, because a
+              TV body carries no `rewatch_odds` row at all (`PolicyBody._rewatch_odds_row`).
+              Wired to draft.gates the same way RatingFloorRow is above, by index. */}
           {mediaType === "movie" &&
             (() => {
               const gi = draft.gates.findIndex((g) => g.gate === "rewatch_odds");
