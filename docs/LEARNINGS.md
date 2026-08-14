@@ -481,6 +481,34 @@ opener's handle, and the fix was to stop needing one. This one had been settled 
 commit message for months, and it took an operator asking "we opened it, why can we not close
 it?" to get it tested.
 
+### 16. An external id names one copy. **It names one or two** (measured 2026-08-14)
+
+Roughly one movie entry in 150 shares its TMDb id with a second entry on the measured library,
+one per copy, each binding a different Plex listing. A 4K alongside an HD, or two instances
+managing the same title. Seasons do it too, at a lower rate.
+
+**Counting it has its own trap, and the measuring script hit it first.** A show's TVDb id is
+shared by every season the show has, so grouping season rows on the id alone counts the season
+structure and reports a duplicate for almost every multi-season show. The season's identity is
+the show id **plus the season number**. The first run of the script reported that wrong number by
+two orders of magnitude, which is the argument for the script existing rather than the query
+living in a transcript.
+
+This was found while designing #553, whose first shape was a ledger keyed on external id
+recording the Plex rating key last seen for that id. Keyed that way, the two copies overwrite
+each other every scan, so the ledger reads a changed key forever and every one of those titles
+takes a permanent hold nothing can clear.
+
+It is worth being precise about why the code review would not have caught it. `identity.py`
+already documents that one id can name several Plex items, at length, and narrows among them
+with four corroborators. The mistake was on the other side: assuming the **\*arr** holds one
+entry per id. Nothing said otherwise, and nothing was wrong, so there was nothing to read.
+
+⇒ A ledger keyed on an id holds a **set**, and identity churn is only real when the keys it
+displaced are gone from the index too. More generally: an id-keyed store wants its cardinality
+measured against real data before it is keyed, not reasoned about from the code that produces
+the ids.
+
 ---
 
 
@@ -948,6 +976,47 @@ rewatch curve as if it were physics. **Reaper still does, and now deliberately**
 that could have fitted one per operator never had a caller and was deleted with the replay it
 served (M3g, dropped). The curve in `docs/SIGNALS.md` is what every default reads, it is one
 library's, and #554 is the successor if a fitted answer is ever wanted.
+
+### A title does not leave an active library by accident (measured 2026-08-14)
+
+Over 35 snapshots spanning 24 days, across roughly 3,500 movies and 2,500 seasons, **nothing
+disappeared and came back**. One movie and two seasons left and stayed gone. The library only
+grew, every scan.
+
+A **negative result, and the one that sizes #553.** Its whole worry was that an innocent cause
+would drag a title back, an import list or a pack, and produce a false regret. On an active
+library the base rate for a title leaving at all is near zero, so a return is not something that
+happens by mistake. It is also why the design needs no exclusion-list round trip to prove a
+re-add was deliberate: there is nothing to tell it apart from.
+
+A floor, not a proof. One library, 24 days, an operator who adds rather than removes.
+
+### The Plex rating key is stable enough to detect a return (measured 2026-08-14)
+
+Same window. Holding the \*arr entry fixed, roughly **one movie entry in a thousand** changed the
+Plex rating key it was bound to, and **no season did**.
+
+**Every one of those changes was fast.** Between the last scan showing the old key and the first
+showing the new one: 2.5, 4.2, 18 and 30 hours. Each is an upper bound on the true absence.
+
+⇒ Mechanical churn and a regret are separable **by duration**, and they are not close. A file
+replaced in place, or a title deleted by mistake and put straight back, resolves in hours. A
+regret takes as long as it takes someone to notice they miss it. So a detector for "this left and
+came back" earns its precision from a **minimum absence**, not from working out what caused the
+change, and a multi-day bar removes the whole measured noise floor without trading away
+sensitivity.
+
+**A clock alone does not survive an irregular scan cadence**, and the same library shows it. The
+interval between scans averaged 17 hours and reached **202**. A last sighting records when Reaper
+last *looked*, not when a title left, so a measured absence overstates the real one by up to one
+scan interval, and an eight-day pause turns a minutes-long file swap into an eight-day absence.
+The fix is to require that Reaper actually **ran** while the title was missing, by counting the
+scans between the two timestamps. It costs nothing, needs no per-item state, and holds at both
+extremes: a dense cadence leans on the clock, a sparse one leans on the count.
+
+**Measured with a query, not a rebuild**: `candidate` keeps `plex_rating_key` and the external
+ids per scan, and `snapshot` keeps the timings, so any install with snapshot history can re-run
+all of this against itself before trusting the detector.
 
 ---
 
