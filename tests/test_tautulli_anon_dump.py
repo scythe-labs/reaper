@@ -20,6 +20,7 @@ import gzip
 import io
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -29,7 +30,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "tautulli_anon_dump.p
 
 
 @pytest.fixture(scope="module")
-def dump_tool():
+def dump_tool() -> Any:
     return load_script(SCRIPT)
 
 
@@ -59,7 +60,7 @@ class FakeTautulli:
     def __init__(self) -> None:
         self.calls = 0
 
-    def __call__(self, cmd, **params):
+    def __call__(self, cmd: str, **params: Any) -> Any:
         self.calls += 1
         if cmd == "get_libraries":
             return [
@@ -178,8 +179,8 @@ class FakeTautulli:
             ]
         raise AssertionError(f"unexpected command {cmd}")
 
-    def paged(self, cmd, *, cap=None, **params):
-        rows = []
+    def paged(self, cmd: str, *, cap: int | None = None, **params: Any) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
         start = 0
         while True:
             data = self(cmd, start=start, length=1000, **params)
@@ -189,7 +190,7 @@ class FakeTautulli:
                 return rows
             start += len(page)
 
-    def children(self, rating_key):
+    def children(self, rating_key: int | str) -> list[dict[str, Any]]:
         if int(rating_key) == 201:
             return [
                 {
@@ -207,48 +208,49 @@ class FakeTautulli:
 
 
 @pytest.fixture
-def built(dump_tool, tmp_path, monkeypatch):
+def built(dump_tool: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """A full dump off the fake server, with the ratings dataset served from memory."""
     tsv = b"tconst\taverageRating\tnumVotes\ntt0000001\t7.4\t1847392\n"
     payload = io.BytesIO()
     with gzip.GzipFile(fileobj=payload, mode="wb") as fh:
         fh.write(tsv)
 
-    def fake_urlopen(request, **kwargs):
+    def fake_urlopen(request: Any, **kwargs: Any) -> io.BytesIO:
         return io.BytesIO(payload.getvalue())
 
     monkeypatch.setattr(dump_tool.urllib.request, "urlopen", fake_urlopen)
     mask = dump_tool.Mask(tmp_path / "salt.json")
     api = FakeTautulli()
-    return dump_tool.build(api, mask, cap=None, quick=False, note=lambda _: None)
+    dump: dict[str, Any] = dump_tool.build(api, mask, cap=None, quick=False, note=lambda _: None)
+    return dump
 
 
 class TestWhatLeaves:
-    def test_no_identifying_field_survives(self, built):
+    def test_no_identifying_field_survives(self, built: dict[str, Any]) -> None:
         serialized = json.dumps(built)
         leaked = [value for value in POISON if value in serialized]
         assert leaked == [], f"the dump carried identifying values: {leaked}"
 
-    def test_the_imdb_id_does_not_survive_its_own_lookup(self, built):
+    def test_the_imdb_id_does_not_survive_its_own_lookup(self, built: dict[str, Any]) -> None:
         movie = next(i for i in built["items"] if i["type"] == "movie")
         assert movie["imdb_rating_tenths"] == 74
         assert "tt0000001" not in json.dumps(built)
 
-    def test_votes_are_rounded_away_from_the_exact_count(self, built):
+    def test_votes_are_rounded_away_from_the_exact_count(self, built: dict[str, Any]) -> None:
         movie = next(i for i in built["items"] if i["type"] == "movie")
         assert movie["imdb_votes"] == 1_800_000
 
-    def test_size_is_rounded_to_a_hundred_megabytes(self, built):
+    def test_size_is_rounded_to_a_hundred_megabytes(self, built: dict[str, Any]) -> None:
         movie = next(i for i in built["items"] if i["type"] == "movie")
         assert movie["size_bytes"] == 1_400_000_000
 
-    def test_genres_and_structure_do_survive(self, built):
+    def test_genres_and_structure_do_survive(self, built: dict[str, Any]) -> None:
         movie = next(i for i in built["items"] if i["type"] == "movie")
         assert movie["genres"] == ["Drama", "Comedy"]
         assert built["seasons"][0]["seasons"][0]["number"] == 2
         assert built["seasons"][0]["seasons"][0]["episodes"] == 2
 
-    def test_an_unreported_watched_status_stays_null(self, built):
+    def test_an_unreported_watched_status_stays_null(self, built: dict[str, Any]) -> None:
         movie_play = next(p for p in built["plays"] if p["type"] == "movie")
         assert movie_play["watched_status"] is None, "an absent status must not become 0.0"
 
@@ -257,31 +259,33 @@ class TestAgreementWithHistorySync:
     """The dump has to hold what ``services.history_sync`` would have stored, or a replay
     against it produces verdicts a real scan never would, and the gap reads as a finding."""
 
-    def test_a_session_still_playing_is_not_history(self, built):
+    def test_a_session_still_playing_is_not_history(self, built: dict[str, Any]) -> None:
         # A null row_id is an in-progress session. history_sync skips those, so a dump that
         # kept them would carry plays Reaper's own mirror never holds.
         assert len(built["plays"]) == 2
         assert all(p["item"] != "303" for p in built["plays"])
 
-    def test_percent_complete_is_coerced_the_way_the_column_demands(self, built):
+    def test_percent_complete_is_coerced_the_way_the_column_demands(
+        self, built: dict[str, Any]
+    ) -> None:
         # history_sync writes `int(percent_complete or 0)` into a NOT NULL column. A null
         # here would be more honest and would disagree with the mirror, which is worse.
         assert all(isinstance(p["percent_complete"], int) for p in built["plays"])
 
 
 class TestTheClock:
-    def test_intervals_survive_the_shift(self, dump_tool, tmp_path):
+    def test_intervals_survive_the_shift(self, dump_tool: Any, tmp_path: Path) -> None:
         mask = dump_tool.Mask(tmp_path / "salt.json")
         first, second = mask.when(1_700_000_000), mask.when(1_700_100_000)
         assert second - first == 100_000
 
-    def test_the_reference_now_moves_with_the_plays(self, built):
+    def test_the_reference_now_moves_with_the_plays(self, built: dict[str, Any]) -> None:
         # "Days since last play" is computed against reference_now, so a shift applied to
         # one and not the other would move every dormancy figure in the dump.
         latest = max(p["at"] for p in built["plays"])
         assert built["reference_now"] > latest
 
-    def test_absent_and_zero_timestamps_stay_absent(self, dump_tool, tmp_path):
+    def test_absent_and_zero_timestamps_stay_absent(self, dump_tool: Any, tmp_path: Path) -> None:
         mask = dump_tool.Mask(tmp_path / "salt.json")
         assert mask.when("") is None
         assert mask.when(0) is None
@@ -289,7 +293,7 @@ class TestTheClock:
 
 
 class TestTheSalt:
-    def test_a_reused_salt_reproduces_every_token(self, dump_tool, tmp_path):
+    def test_a_reused_salt_reproduces_every_token(self, dump_tool: Any, tmp_path: Path) -> None:
         path = tmp_path / "salt.json"
         first = dump_tool.Mask(path)
         again = dump_tool.Mask(path)
@@ -297,12 +301,16 @@ class TestTheSalt:
         assert first.token("movie", 101) == again.token("movie", 101)
         assert first.shift_days == again.shift_days
 
-    def test_a_different_salt_produces_different_tokens(self, dump_tool, tmp_path):
+    def test_a_different_salt_produces_different_tokens(
+        self, dump_tool: Any, tmp_path: Path
+    ) -> None:
         one = dump_tool.Mask(tmp_path / "a.json")
         two = dump_tool.Mask(tmp_path / "b.json")
         assert one.token("movie", 101) != two.token("movie", 101)
 
-    def test_the_rating_key_is_not_recoverable_by_enumeration(self, dump_tool, tmp_path):
+    def test_the_rating_key_is_not_recoverable_by_enumeration(
+        self, dump_tool: Any, tmp_path: Path
+    ) -> None:
         # A bare hash of a small integer is undone by counting to it, which is why the
         # token is an HMAC under a secret salt rather than a digest of the key.
         mask = dump_tool.Mask(tmp_path / "salt.json")
@@ -310,12 +318,12 @@ class TestTheSalt:
 
         assert mask.token("movie", 101) != hashlib.sha256(b"101").hexdigest()[:12]
 
-    def test_the_salt_file_is_owner_only(self, dump_tool, tmp_path):
+    def test_the_salt_file_is_owner_only(self, dump_tool: Any, tmp_path: Path) -> None:
         path = tmp_path / "salt.json"
         dump_tool.Mask(path)
         assert path.stat().st_mode & 0o077 == 0
 
-    def test_a_kind_prefix_keeps_namespaces_apart(self, dump_tool, tmp_path):
+    def test_a_kind_prefix_keeps_namespaces_apart(self, dump_tool: Any, tmp_path: Path) -> None:
         # A season and a movie can hold the same rating key on different servers, and a
         # collision would merge two unrelated items in the dump.
         mask = dump_tool.Mask(tmp_path / "salt.json")
@@ -324,14 +332,16 @@ class TestTheSalt:
 
 class TestTheAddress:
     @pytest.mark.parametrize("scheme", ["file", "ftp", "data", "gopher"])
-    def test_a_non_http_address_is_refused(self, dump_tool, scheme):
+    def test_a_non_http_address_is_refused(self, dump_tool: Any, scheme: str) -> None:
         # urlopen honors file: and reads whatever is behind it. The address is typed by
         # whoever runs the tool, so it is checked before the opener sees it.
         with pytest.raises(ValueError, match="only http and https"):
             dump_tool.http_open(f"{scheme}:///etc/passwd")
 
-    def test_a_refused_address_never_reaches_urlopen(self, dump_tool, monkeypatch):
-        def explode(*args, **kwargs):
+    def test_a_refused_address_never_reaches_urlopen(
+        self, dump_tool: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def explode(*args: Any, **kwargs: Any) -> None:
             raise AssertionError("urlopen was called with an unchecked scheme")
 
         monkeypatch.setattr(dump_tool.urllib.request, "urlopen", explode)
@@ -349,17 +359,23 @@ class TestParsing:
             ({}, None),
         ],
     )
-    def test_imdb_id_reads_both_agent_generations(self, dump_tool, meta, expected):
+    def test_imdb_id_reads_both_agent_generations(
+        self, dump_tool: Any, meta: dict[str, Any], expected: str | None
+    ) -> None:
         assert dump_tool.imdb_id(meta) == expected
 
     @pytest.mark.parametrize(
         ("raw", "expected"), [("", None), (None, None), ("12", 12), ("12.7", 12), ("nope", None)]
     )
-    def test_as_int_treats_the_empty_string_as_absent(self, dump_tool, raw, expected):
+    def test_as_int_treats_the_empty_string_as_absent(
+        self, dump_tool: Any, raw: Any, expected: int | None
+    ) -> None:
         assert dump_tool.as_int(raw) == expected
 
     @pytest.mark.parametrize(
         ("votes", "expected"), [(5, 5), (99, 99), (100, 100), (1847392, 1800000), (12345, 12000)]
     )
-    def test_votes_round_to_two_significant_figures(self, dump_tool, votes, expected):
+    def test_votes_round_to_two_significant_figures(
+        self, dump_tool: Any, votes: int, expected: int
+    ) -> None:
         assert dump_tool.round_votes(votes) == expected
