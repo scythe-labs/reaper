@@ -970,10 +970,12 @@ def _kept_phrase(gate: str, detail: str) -> str:
     if gate == "season_progression":
         return _kept_season_phrase(detail)
     if gate == "returned":
-        # Reached only where this gate is not the one `_came_back_chip` gives its own outlined
-        # countdown chip to -- another caller of this helper, or a stored row it could not
-        # parse. Worded here anyway rather than left to the generic fallback below, which is
-        # what makes a missing member silent (rule 66).
+        # **Not reached today, and that is stated rather than implied** (rule 7/24). The one
+        # caller asks `_came_back_chip` first, and that never returns None for a `returned`
+        # entry: an unparseable detail costs it the countdown and it still answers. So this
+        # arm exists for the reordering, not for a case that fires -- and it exists at all
+        # because the generic fallback below is what makes a missing member silent (rule 66),
+        # which is the whole reason `GATE_META`'s guard was written.
         return "it came back after leaving your library"
     if gate == "custom":
         return "by your rule"

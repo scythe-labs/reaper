@@ -24,7 +24,8 @@ Last verified against the code: 2026-08-02.
 | **M2b** Protection lists — Arr-style registry, act through on_list rules | ✅ done |
 | **M3a** Scoring engine — gates, signals, observations | ✅ done |
 | **M3b** Policy persistence — immutable rows, hash, caps, autonomy grants | 🟡 see open 1 |
-| **M3c** Backtest — replay against the operator's own watch history | ❌ dropped, #553 |
+| **M3c** Backtest — replay against the operator's own watch history | ❌ dropped for #553 |
+| **M3h** A title that came back — Plex-key ledger, hold, chip | ✅ opt-in, off by default, #553 |
 | **M3d** Field registry + authorable protect rules | ✅ done |
 | **M3e** Snapshot pipeline + REST API + polled progress | ✅ done |
 | **M3f** Signal quality — banked as the shipped defaults, `docs/SIGNALS.md` | ✅ done |

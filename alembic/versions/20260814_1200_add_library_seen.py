@@ -43,9 +43,13 @@ def upgrade() -> None:
         "library_seen",
         sa.Column("id_key", sa.String(length=100), primary_key=True),
         sa.Column("rating_keys_json", sa.Text(), nullable=False, server_default="[]"),
-        sa.Column("first_seen_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("returned_at", sa.DateTime(timezone=True), nullable=True),
+        # Integer timestamps, like every other one in this schema: ``UtcTimestamp`` stores
+        # epoch seconds (``db.types.EpochDateTime``, whose ``impl`` is ``Integer``). A
+        # ``DateTime`` column here reads as schema drift against the model and fails
+        # ``alembic check``, which CI runs as a required step.
+        sa.Column("first_seen_at", sa.Integer(), nullable=False),
+        sa.Column("last_seen_at", sa.Integer(), nullable=False),
+        sa.Column("returned_at", sa.Integer(), nullable=True),
         sa.Column("returned_by_reaper", sa.Boolean(), nullable=True),
     )
 

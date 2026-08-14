@@ -48,6 +48,7 @@ from reaper.engine.gates import (
     GateId,
     GateResult,
     MinDormancyGate,
+    ReturnedGate,
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
@@ -1082,6 +1083,101 @@ class TestChip:
             assert _chip(_decode_explanation(raw), "abstain", 50) is None
             assert _chip(_decode_explanation(raw), "protect", 50) is None
         assert _chip(None, "abstain", 50) is None
+
+
+class TestTheCameBackChip:
+    """The countdown chip a returned title wears (#553).
+
+    The hold runs in months against a date the operator cannot see, so the queue row states
+    how long is left without anything being opened. Every case here drives the real ``_chip``
+    over a real ``ReturnedGate`` result, never a transcribed detail string (rule 119), so a
+    reworded gate fails these rather than silently dropping the chip to its fallback.
+    """
+
+    def _fired(self, *, days_ago: float, by_reaper: bool, hold: int = 400) -> dict[str, Any]:
+        """One PROTECT result off the real gate, in the shape ``_explain`` freezes."""
+        facts = Facts(
+            title="x",
+            days_observed_unwatched=Known(value=5000.0, source="t"),
+            distinct_watchers=Known(value=0, source="t"),
+            distinct_watchers_all_time=Known(value=0, source="t"),
+            size_bytes=Known(value=1, source="t"),
+            imdb_rating_tenths=Absent(source="t"),
+            imdb_votes=Absent(source="t"),
+            season_rank=Absent(source="t"),
+            is_streaming_now=Known(value=False, source="t"),
+            is_managed=Known(value=True, source="t"),
+            in_curated_list=Absent(source="t"),
+            is_whitelisted=Known(value=False, source="t"),
+            returned_days_ago=Known(value=days_ago, source="reaper"),
+            returned_by_reaper=Known(value=by_reaper, source="reaper"),
+        )
+        result = ReturnedGate(config=GateConfig(threshold=hold)).evaluate(facts)
+        assert result.outcome == PROTECT
+        return {"gate": result.gate.value, "detail": result.detail}
+
+    def test_the_chip_states_how_long_is_left(self) -> None:
+        chip = _chip(_exp(20, fired=[self._fired(days_ago=35, by_reaper=True)]), "protect", 20)
+        assert chip is not None
+        assert chip.text.startswith("Came back, ")
+        assert chip.text.endswith(" left")
+
+    def test_it_is_the_outlined_tone_and_not_the_filled_one(self) -> None:
+        # Filled means the owner decided; this is Reaper's decision, and it expires.
+        chip = _chip(_exp(20, fired=[self._fired(days_ago=35, by_reaper=False)]), "protect", 20)
+        assert chip is not None
+        assert chip.tone == "held"
+
+    def test_it_takes_the_chip_from_a_protection_that_fired_first(self) -> None:
+        """The one protection with an expiry wins the slot, wherever it sits in the list.
+
+        Every other protection is re-decided next scan and has nothing to count down, so a
+        card led by one of those would never tell the operator when this hold ends.
+        """
+        streaming = {"gate": "streaming_now", "detail": "someone is watching it right now"}
+        chip = _chip(
+            _exp(20, fired=[streaming, self._fired(days_ago=35, by_reaper=True)]), "protect", 20
+        )
+        assert chip is not None
+        assert chip.tone == "held"
+
+    def test_a_hand_spare_still_wins(self) -> None:
+        # The owner's own decision, and it carries its own countdown already.
+        spare = {"gate": "whitelisted", "detail": HAND_SPARE_DETAIL}
+        chip = _chip(
+            _exp(20, fired=[spare, self._fired(days_ago=35, by_reaper=True)]), "protect", 20
+        )
+        assert chip is not None
+        assert chip.tone == "kept"
+        assert chip.text == "Kept, you spared it"
+
+    def test_an_unparseable_detail_costs_the_number_and_not_the_chip(self) -> None:
+        # A stored row from a build that worded the detail differently. Vague but true, and
+        # the next scan restores the countdown (the fallback every parser here has).
+        chip = _chip(
+            _exp(20, fired=[{"gate": "returned", "detail": "something else entirely"}]),
+            "protect",
+            20,
+        )
+        assert chip is not None
+        assert chip.tone == "held"
+        assert chip.text == "Came back"
+
+    def test_the_why_clause_reads_as_a_held_reap_sentence(self) -> None:
+        # It is spoken after "Reap requested, kept for now:", so it has to be a lowercase
+        # clause that finishes that sentence.
+        chip = _chip(_exp(20, fired=[self._fired(days_ago=35, by_reaper=True)]), "protect", 20)
+        assert chip is not None
+        assert chip.why is not None
+        assert chip.why[0].islower()
+        assert f"Reap requested, kept for now: {chip.why}".endswith("came back")
+
+    def test_the_phrase_helper_words_it_too(self) -> None:
+        # Rule 66: a member with no arm falls to "a protection applies", which is what makes
+        # a missing one silent.
+        assert _kept_phrase("returned", "this left your library and came back, 1 year left") != (
+            "a protection applies"
+        )
 
 
 class TestTheReasonLineAgreesWithTheChip:

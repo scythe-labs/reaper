@@ -793,7 +793,7 @@ class LibrarySeen(Base):
     ``services.library_seen.id_key``, off the same id ladders the Plex resolver binds on
     (``identity.MOVIE_ID_PRIORITY`` / ``SHOW_ID_PRIORITY``)."""
 
-    rating_keys_json: Mapped[str] = mapped_column(Text, default="[]")
+    rating_keys_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     """Every Plex rating key ever recorded for this id, as a JSON array of ints. Only ever
     added to. An unreadable value is read as an empty set by
     ``services.library_seen.recall_all``, which costs a detection and never invents one."""

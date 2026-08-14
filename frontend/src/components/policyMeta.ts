@@ -18,7 +18,17 @@ export type GateMeta = {
    *  for a fixed length: the came-back hold keeps a title for exactly this long, not for a
    *  minimum of it. Optional, so every existing row keeps the words it had. */
   lead?: string;
-  window?: { label: string; help: string };
+  /** The floor the threshold box clamps to, when it is not the dormancy gate's 5. Shared
+   *  the way `aria` below is shared, and wrong for the same reason if it is not per-gate:
+   *  the server accepts a came-back hold of one day (`policy.GateSetting._protective_floors`)
+   *  and the control silently snapped anything under five up to five, with nothing said. */
+  min?: number;
+  /** `aria` is the window control's accessible name, and it is per-gate rather than fixed
+   *  because two gates now use this slot for different questions: one asks how far back
+   *  recent plays count, the other how long an absence has to be. A screen reader hearing
+   *  the popularity gate's sentence on the came-back row is told the wrong thing about the
+   *  box it is standing on (rule 21). */
+  window?: { label: string; help: string; aria: string };
   /** No switch a policy can carry sits behind this id -- a retired gate, a pseudo-id the API
    *  tallies under (`hand_spare`), or one the engine emits with no policy row behind it --
    *  but the server still emits it, in stored explanations and in the simulator's spared-by
@@ -78,8 +88,10 @@ export const GATE_META: Record<string, GateMeta> = {
     help: "A title that left your library and was fetched again is kept for a while. Coming back is the clearest sign removing it was wrong.",
     unit: "days",
     lead: "keep it for",
+    min: 1,
     window: {
       label: "counts as gone after",
+      aria: "How long an absence counts",
       help: "How long a title has to be missing before its return counts. A file swapped for a better copy is back within hours.",
     },
   },
@@ -89,6 +101,7 @@ export const GATE_META: Record<string, GateMeta> = {
     unit: "people",
     window: {
       label: "counting plays from the last",
+      aria: "How far back recent plays count",
       help: "How far back “recently” reaches. A year is the usual setting. Make it much shorter and almost nothing counts as watched, so this protection stops catching anything.",
     },
   },

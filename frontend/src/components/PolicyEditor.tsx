@@ -258,7 +258,7 @@ function GateRow({
           <QuantityInput
             value={gate.threshold}
             units={TIME_UNITS}
-            min={5}
+            min={meta.min ?? 5}
             ariaLabel={`${meta.label} threshold`}
             describedBy={describes("threshold")}
             onChange={(v) => onChange({ ...gate, threshold: v })}
@@ -292,7 +292,7 @@ function GateRow({
               value={gate.window_days}
               units={TIME_UNITS}
               min={1}
-              ariaLabel="How far back recent plays count"
+              ariaLabel={meta.window.aria}
               describedBy={describes("window_days")}
               onChange={(v) => onChange({ ...gate, window_days: v })}
             />

@@ -1144,7 +1144,7 @@ async def scan(
     # exactly as `watch_readings` is. `seen_returns` maps an id key to whether Reaper's own
     # journal claims the removal, which is filled in after the loop by one query rather than
     # per item.
-    seen_sightings: dict[str, library_seen.Sighting] = {}
+    seen_keys: dict[str, set[int]] = {}
     seen_returned: set[str] = set()
     movie_absence_days = movie_policy.returned_absence_days()
     for index, item in enumerate(items):
@@ -1193,7 +1193,7 @@ async def scan(
                 rating_key=item.plex_rating_key,
                 added_at=item.added_at,
             )
-            seen_sightings[item_id_key] = sighting
+            library_seen.note_sighting(seen_keys, sighting)
             if seen is not None and library_seen.is_return(
                 seen,
                 sighting,
@@ -1354,7 +1354,7 @@ async def scan(
             # and already put the result on its facts, and the sighting rides out here only so
             # both lanes are written in one statement below. The population cap therefore reads
             # a whole scan rather than one lane.
-            seen_sightings[judgment.seen_sighting.id_key] = judgment.seen_sighting
+            library_seen.note_sighting(seen_keys, judgment.seen_sighting)
             if judgment.seen_returned:
                 seen_returned.add(judgment.seen_sighting.id_key)
         size_sources[_size_bucket(judgment.size_source)] += 1
@@ -1479,11 +1479,11 @@ async def scan(
     # scan's count can see that. Refusing the batch costs the memory of any real return inside
     # it; granting it holds the library. #809 is the general scan-level guard and this stays
     # after it lands, because it is about what THIS feature will believe.
-    if seen_returned and not library_seen.within_cap(len(seen_returned), len(seen_sightings)):
+    if seen_returned and not library_seen.within_cap(len(seen_returned), len(seen_keys)):
         log.warning(
             "scan.returns_refused_population",
             returned=len(seen_returned),
-            bound=len(seen_sightings),
+            bound=len(seen_keys),
         )
         seen_returned = set()
     seen_by_reaper = await library_seen.removed_by_reaper(session, seen_returned)
@@ -1491,7 +1491,7 @@ async def scan(
         log.info("scan.returns_detected", returned=len(seen_returned), ours=len(seen_by_reaper))
     await library_seen.record(
         session,
-        seen_sightings,
+        seen_keys,
         returns={key: key in seen_by_reaper for key in seen_returned},
         now=now,
     )

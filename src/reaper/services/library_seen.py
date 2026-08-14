@@ -369,14 +369,33 @@ async def scan_instants(session: AsyncSession) -> list[datetime]:
     return [row[0] for row in rows]
 
 
+def note_sighting(batch: dict[str, set[int]], sighting: Sighting) -> None:
+    """Fold one item's Plex key into this scan's batch, for :func:`record` to write.
+
+    **A set per id, not one key per id, and that is the measured requirement rather than
+    caution.** One external id routinely carries TWO \\*arr entries, one per copy, each bound
+    to a different Plex listing (``docs/LEARNINGS.md``, assumption 16). A batch keyed one
+    ``Sighting`` per id drops whichever copy the scan judged first, so the ledger never
+    records that copy's key at all -- and a key that was never recorded cannot later be
+    noticed as gone, which is the coverage this feature exists to have for exactly that
+    population. That finding was already paid for once, in the stored row; this is the same
+    failure one layer up, in the batching.
+
+    One helper, called by both lanes, so neither can be the one that overwrites (rule 72).
+    """
+    batch.setdefault(sighting.id_key, set()).add(sighting.rating_key)
+
+
 async def record(
     session: AsyncSession,
-    sightings: Mapping[str, Sighting],
+    keys_seen: Mapping[str, set[int]],
     *,
     returns: Mapping[str, bool],
     now: datetime,
 ) -> None:
     """Write this scan's sightings, and stamp the returns the cap let through.
+
+    ``keys_seen`` is every Plex key this scan bound to each id, built by :func:`note_sighting`.
 
     ``returns`` maps an id key to whether Reaper's journal claims the removal. A key absent
     from it is an ordinary sighting and leaves any stored ``returned_at`` exactly as it was:
@@ -388,12 +407,12 @@ async def record(
     trade is that two concurrent scans could each write a union missing the other's key; only
     one scan runs at a time, and the cost of losing a key is a detection, never a false one.
     """
-    if not sightings:
+    if not keys_seen:
         return
     # Re-read inside the write rather than trusting the map the scan loaded at its start
     # (rule 58), and chunked on ``db.KEY_CHUNK`` because this list is the whole bound library
     # (rule 94).
-    wanted = list(sightings)
+    wanted = list(keys_seen)
     stored: dict[str, LibrarySeen] = {}
     for start in range(0, len(wanted), KEY_CHUNK):
         found = await session.execute(
@@ -401,7 +420,7 @@ async def record(
         )
         stored.update({row.id_key: row for row in found.scalars().all()})
     rows = []
-    for key, sighting in sightings.items():
+    for key, fresh in keys_seen.items():
         previous = stored.get(key)
         keys = _read_keys(previous.rating_keys_json, key) if previous else frozenset()
         returned_at = previous.returned_at if previous else None
@@ -412,7 +431,7 @@ async def record(
         rows.append(
             {
                 "id_key": key,
-                "rating_keys_json": json.dumps(sorted(keys | {sighting.rating_key})),
+                "rating_keys_json": json.dumps(sorted(keys | fresh)),
                 "first_seen_at": previous.first_seen_at if previous else now,
                 "last_seen_at": now,
                 "returned_at": returned_at,
@@ -455,6 +474,7 @@ __all__ = [
     "forget_all",
     "id_key",
     "is_return",
+    "note_sighting",
     "observations",
     "recall_all",
     "record",

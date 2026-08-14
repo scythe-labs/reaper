@@ -509,6 +509,19 @@ displaced are gone from the index too. More generally: an id-keyed store wants i
 measured against real data before it is keyed, not reasoned about from the code that produces
 the ids.
 
+**It came back one layer up, in the build, and the first fix is what hid it.** The stored row was
+a set from the start, because of the finding above. The per-scan BATCH feeding it was a
+`dict[id_key, one sighting]`, so of two copies sharing an id the scan simply kept whichever it
+judged second, and the losing copy's Plex key was never written on any scan while its sibling
+existed. A key never recorded can never later be noticed as gone, so those titles silently had
+none of the coverage the feature exists to give them, on exactly the population the finding named.
+The measuring script prints the size of it: 21 movie ids and 6 season ids on the validation
+library, in one scan.
+
+⇒ **A cardinality finding binds every layer that holds the value, not the one that stores it.**
+Fixing the row and leaving the accumulator is the same defect with a correct comment above it,
+and it reads as done because the field it names is genuinely a set.
+
 ---
 
 
@@ -1017,6 +1030,24 @@ extremes: a dense cadence leans on the clock, a sparse one leans on the count.
 **Measured with a query, not a rebuild**: `candidate` keeps `plex_rating_key` and the external
 ids per scan, and `snapshot` keeps the timings, so any install with snapshot history can re-run
 all of this against itself before trusting the detector.
+
+### The shipped default that changed nothing, and the one number that proved it (2026-08-14)
+
+#553's hold ships **off**, and the evidence for that being free is a count rather than an
+argument. `policy_lab_extract.py --rebaseline` re-judges 440 de-identified fact vectors against
+the shipped defaults and reports how many verdicts moved: with the gate enabled by default,
+**880 of 880 baselines moved**; with it disabled, **0 of 880**. Both runs, same commit, one
+boolean apart.
+
+Not because the hold fires on those vectors, which it cannot: none of them carries a return.
+The gate merely being BUILT puts a row in every item's checked-and-did-not-fire list, which is
+frozen into the stored explanation, so every one of those 880 records changed shape while no
+file's fate did. That is what a default costs even when it protects nothing yet.
+
+⇒ **A new protection's default is a measurement, not a preference.** The lab's move count
+prices it in one run, and it is the same run that decides whether `SCORER_VERSION` owes every
+operator a re-scan. Ship a protection whose LENGTH is a judgment call opt-in, and the count is
+zero: nobody's stored policy, stored explanation or pending approval changes under them.
 
 ---
 

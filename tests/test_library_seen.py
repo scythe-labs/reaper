@@ -14,7 +14,7 @@ Nothing here re-implements the rule (rule 119): every case calls ``is_return``, 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -64,9 +64,15 @@ def _seen(
     )
 
 
-def _sighting(*, key: int = 900, added_days_ago: float = 3) -> library_seen.Sighting:
+#: The one id every helper below sights under, unless a case names another.
+SIGHTING_ID = "movie:tmdb:1"
+
+
+def _sighting(
+    *, key: int = 900, added_days_ago: float = 3, id_key: str = SIGHTING_ID
+) -> library_seen.Sighting:
     return library_seen.Sighting(
-        id_key="movie:tmdb:1",
+        id_key=id_key,
         rating_key=key,
         added_at=NOW - timedelta(days=added_days_ago),
     )
@@ -78,12 +84,20 @@ def _sighting(*, key: int = 900, added_days_ago: float = 3) -> library_seen.Sigh
 SCANS = sorted(NOW - timedelta(days=d) for d in (58, 55, 50, 40, 25, 1))
 
 
+def _batch(*sightings: library_seen.Sighting) -> dict[str, set[int]]:
+    """One scan's keys, folded exactly as both lanes fold them."""
+    batch: dict[str, set[int]] = {}
+    for sighting in sightings:
+        library_seen.note_sighting(batch, sighting)
+    return batch
+
+
 def _is_return(
     seen: library_seen.Seen,
     sighting: library_seen.Sighting,
     *,
     live_keys: set[int] | None = None,
-    scans: list | None = None,
+    scans: list[datetime] | None = None,
 ) -> bool:
     return library_seen.is_return(
         seen,
@@ -241,12 +255,23 @@ class TestWhatCannotManufactureAReturn:
     def test_an_arrival_date_in_the_future_is_clamped(self) -> None:
         """A clock ahead of Reaper's must not widen the gap it is measured against.
 
-        Last seen a day ago, arriving "in a year": unclamped that is a year of absence and
-        clears an eleven-day bar outright.
+        **The fixture is chosen so that only the clamp decides it**, which the obvious one
+        does not: with the shared scan history, deleting the clamp leaves this False anyway,
+        because the widened window still holds under two scans and condition 4 refuses it.
+        A test that both the correct and the broken code pass is not a proof (rule 118).
+
+        So: last seen 5 days ago, arriving "in a year", and two scans inside the last 5 days.
+        Clamped, the gap is 5 days and fails the eleven-day bar. Unclamped it is 370 days,
+        clears the bar, and finds both scans inside, so it would return True.
         """
-        seen = _seen(keys={1}, last_seen_days_ago=1)
+        seen = _seen(keys={1}, last_seen_days_ago=5)
         ahead = _sighting(added_days_ago=-365)
-        assert _is_return(seen, ahead) is False
+        recent = [NOW - timedelta(days=4), NOW - timedelta(days=2)]
+        assert _is_return(seen, ahead, scans=recent) is False
+        # ...and the same fixture with an honest date DOES return True, so the case above
+        # fails for the clamp and not because nothing could ever pass here.
+        honest = _sighting(added_days_ago=1)
+        assert _is_return(_seen(keys={1}, last_seen_days_ago=60), honest, scans=recent) is True
 
     def test_an_arrival_before_the_last_sighting_is_not_a_return(self) -> None:
         seen = _seen(keys={1}, last_seen_days_ago=3)
@@ -406,19 +431,41 @@ class TestTheLedgerRoundTrip:
     async def test_a_first_sighting_records_the_key_and_no_return(
         self, session: AsyncSession
     ) -> None:
-        key = "movie:tmdb:42"
-        await library_seen.record(session, {key: _sighting(key=7)}, returns={}, now=NOW)
+        key = SIGHTING_ID
+        await library_seen.record(session, _batch(_sighting(key=7)), returns={}, now=NOW)
         await session.flush()
         stored = await library_seen.recall_all(session)
         assert stored[key].rating_keys == frozenset({7})
         assert stored[key].returned_at is None
         assert stored[key].returned_by_reaper is None
 
-    async def test_the_key_set_only_ever_grows(self, session: AsyncSession) -> None:
-        key = "movie:tmdb:42"
-        await library_seen.record(session, {key: _sighting(key=7)}, returns={}, now=NOW)
+    async def test_two_copies_of_one_title_both_get_their_key_recorded(
+        self, session: AsyncSession
+    ) -> None:
+        """Assumption 16, one layer up from where it was first paid for.
+
+        One external id routinely carries TWO \\*arr entries, one per copy, each bound to a
+        different Plex listing. A batch holding one sighting per id drops whichever copy the
+        scan judged first, so that copy's key is never recorded on ANY scan while its sibling
+        exists -- and a key that was never recorded can never later be noticed as gone, which
+        is the coverage this feature exists to have for exactly that population.
+
+        The stored row was designed as a set for this reason; the batch feeding it has to be
+        one too.
+        """
+        first = _sighting(key=11)
+        second = _sighting(key=22)
+        await library_seen.record(session, _batch(first, second), returns={}, now=NOW)
         await session.flush()
-        await library_seen.record(session, {key: _sighting(key=8)}, returns={}, now=NOW)
+        assert (await library_seen.recall_all(session))[SIGHTING_ID].rating_keys == frozenset(
+            {11, 22}
+        )
+
+    async def test_the_key_set_only_ever_grows(self, session: AsyncSession) -> None:
+        key = SIGHTING_ID
+        await library_seen.record(session, _batch(_sighting(key=7)), returns={}, now=NOW)
+        await session.flush()
+        await library_seen.record(session, _batch(_sighting(key=8)), returns={}, now=NOW)
         await session.flush()
         stored = await library_seen.recall_all(session)
         assert stored[key].rating_keys == frozenset({7, 8})
@@ -431,11 +478,11 @@ class TestTheLedgerRoundTrip:
         A later scan seeing the title again must not clear it, or the hold would last exactly
         one scan and the countdown the operator reads would be a lie.
         """
-        key = "movie:tmdb:42"
-        await library_seen.record(session, {key: _sighting(key=7)}, returns={key: True}, now=NOW)
+        key = SIGHTING_ID
+        await library_seen.record(session, _batch(_sighting(key=7)), returns={key: True}, now=NOW)
         await session.flush()
         later = NOW + timedelta(days=9)
-        await library_seen.record(session, {key: _sighting(key=7)}, returns={}, now=later)
+        await library_seen.record(session, _batch(_sighting(key=7)), returns={}, now=later)
         await session.flush()
         stored = await library_seen.recall_all(session)
         assert stored[key].returned_at == NOW
@@ -446,8 +493,8 @@ class TestTheLedgerRoundTrip:
         self, session: AsyncSession
     ) -> None:
         # Rule 96's direction: an illegible field costs a detection, never the row.
-        key = "movie:tmdb:42"
-        await library_seen.record(session, {key: _sighting(key=7)}, returns={}, now=NOW)
+        key = SIGHTING_ID
+        await library_seen.record(session, _batch(_sighting(key=7)), returns={}, now=NOW)
         await session.flush()
         row = await session.get(library_seen.LibrarySeen, key)  # type: ignore[attr-defined]
         assert row is not None
@@ -456,7 +503,7 @@ class TestTheLedgerRoundTrip:
         assert (await library_seen.recall_all(session))[key].rating_keys == frozenset()
 
     async def test_forgetting_the_ledger_empties_it(self, session: AsyncSession) -> None:
-        await library_seen.record(session, {"movie:tmdb:42": _sighting(key=7)}, returns={}, now=NOW)
+        await library_seen.record(session, _batch(_sighting(key=7)), returns={}, now=NOW)
         await session.flush()
         assert await library_seen.forget_all(session) == 1
         await session.flush()
