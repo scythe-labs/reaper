@@ -164,22 +164,47 @@ the safe direction.
 
 ## The library-rebuild exposure, and where it goes
 
-Both halves of the rule read Plex. A Plex library rebuilt from scratch reissues every rating
-key at once, so every title in the library would satisfy both halves in the same scan.
+A Plex library rebuilt from scratch reissues every rating key at once, so conditions 1 and 2
+are satisfied for every title in the library in the same scan.
 
-That is not this feature's problem to solve, and it is filed as **#809**. Two reasons.
+**Conditions 3 and 4 are what stop it, and they stop the ordinary case outright.** A rebuild
+gives every item a fresh `added_at` of *now*. So the gap from the last sighting is one scan
+interval, far under a seven-day bar, and no scan ran while the library was away. An operator who
+rebuilds in an afternoon trips nothing.
 
-It is **not a new hole**. A rebuild's other effects already fail safe: an item with prior plays
-goes `Unknown` rather than "never watched", because `WatchHighWater` catches a watcher count
-that fell, and a reset `added_at` *lowers* dormancy and therefore lowers deletion pressure.
+**What still gets through is a slow rebuild**: one that leaves the library unreadable to Plex for
+longer than the cooling-off period while Reaper keeps scanning. A staged migration, or a storage
+outage. Reaper sees the \*arr entries unbound for days, writes nothing because there is no bind,
+and then sees the whole library return at once with new keys and a genuine multi-day gap behind
+it.
+
+That residue is what **#809** covers, and it does not block this work. Three reasons.
+
+It **fails safe**. The outcome is mass protection, which deletes nothing. Clearing the ledger
+repairs it, at the cost of the feature's memory and nothing else.
+
+It is **not a new hole**. A rebuild's other effects already fail safe on their own: an item with
+prior plays goes `Unknown` rather than "never watched", because `WatchHighWater` catches a
+watcher count that fell, and a reset `added_at` *lowers* dormancy and therefore lowers deletion
+pressure.
 
 It is **broader than #553**. A scan-level check on how much of the library changed identity at
 once belongs beside `history_sync._check_regression`, which is the only guard of that shape
 today and is Tautulli-row-count only. Building it inside a gate would put a library-wide safety
 check somewhere nobody would look for it.
 
-This feature's dependency on #809 is one line: until that guard exists, a rebuild produces mass
-protection, which deletes nothing and is repaired by clearing the ledger.
+### Ordering
+
+Neither issue blocks the other, and whichever lands second is the cheaper one.
+
+If **#809 lands first**, this feature needs nothing extra: the general guard already refuses to
+judge a scan where identity moved wholesale.
+
+If **#553 lands first**, it should carry its own population cap, refusing to fire *this* hold
+when an implausible share of the library looks returned in one scan. That is a few lines over
+evidence the gather step already holds, and it is a different altitude from #809: a feature
+declining to act on evidence it does not believe, rather than a scan declining to judge at all.
+It stays after #809 lands, because it is about this feature's own inputs.
 
 ## One stage, not two
 
