@@ -641,6 +641,23 @@ after the first pass to widen the newest leg's support.
 condition, never a play count alone. It ships as its own stage with its own mockups, and
 nothing in the movie lane moves for it.
 
+### TV: the shipped derivation reproduces the validated formulation (measured 2026-08-14)
+
+Read-only, after the TV stage was implemented: `services.rewatch.show_rewatch_stats` over
+every show in the mirror, cross-checked by an independent SQL pull through the same play
+filter fed to the pure `replay_period_count`. Five of five sampled shows agree, spread from
+a zero-replay show to the sample's heaviest rewatcher. Episode rows lacking a show key held
+under the validation's 2% figure.
+
+- Half of watched shows never clear one replay period, and roughly a fifth sit at exactly
+  one: a single burst of activity, the release-following the discriminator is there to
+  exclude.
+- The shipped bar (2 re-watches, last qualified play inside 2 years) covers about a fifth
+  of watched shows on this heavy-rewatch library, the top of the plausible band; a bar of
+  3 covers about a sixth.
+- A TV body stored before this stage keeps the class default of 10, and that bar fires for
+  under 4% of watched shows here. Conservative, visible on the policy card, and not inert.
+
 ### Unknown must be structurally incapable of condemning
 
 Three states, never two: `Known` / `Absent` / `Unknown`.

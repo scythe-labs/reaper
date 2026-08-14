@@ -182,6 +182,12 @@ class KeepConfig:
     ``None`` on every authored keep; only ``policy.PolicyBody.keep_configs`` sets them."""
     recent_days: int | None = None
 
+    media_type: Literal["movie", "tv"] = "movie"
+    """Which lane's wording the rewatch detail speaks: a movie's ``rewatch_viewings`` counts
+    qualified viewings ("Watched 12 times"), a show's counts whole re-watches ("Watched
+    again 3 times", ``services.rewatch.replay_period_count``). Only the ``REWATCH_KEEP``
+    detail helpers read it; authored keeps leave the default."""
+
     @property
     def enabled(self) -> bool:
         return self.max_discount > 0
@@ -639,12 +645,22 @@ def _branch_custom(
 REWATCH_KEEP = "rewatch_habit"
 
 
-def _rewatch_firing_detail(facts: Facts) -> str:
+def _rewatch_count_phrase(config: KeepConfig, n: int) -> str:
+    """The lane-correct count: a movie's viewings are plays, a show's are whole re-watches
+    (``KeepConfig.media_type``), so the show phrasing says "again" everywhere the count
+    appears. Copy from the approved TV mockup."""
+    times = "time" if n == 1 else "times"
+    if config.media_type == "tv":
+        return f"Watched again {n} {times}"
+    return f"Watched {n} {times}"
+
+
+def _rewatch_firing_detail(config: KeepConfig, facts: Facts) -> str:
     """The figures behind a firing rewatch keep, then the claim. Draft copy from the
-    approved mockup; the recency figure is the last qualified play the condition read."""
+    approved mockups; the recency figure is the last qualified play the condition read."""
     viewings = facts.rewatch_viewings
     count = (
-        f"Watched {viewings.value} times"
+        _rewatch_count_phrase(config, int(viewings.value))
         if isinstance(viewings, Known)
         else "Watched again and again"
     )
@@ -660,12 +676,14 @@ def _rewatch_miss_detail(config: KeepConfig, facts: Facts) -> str:
     """Why the rewatch keep did not fire, with the item's own numbers."""
     viewings = facts.rewatch_viewings
     if not isinstance(viewings, Known) or viewings.value == 0:
-        return "Never watched here."
+        # A show at zero was possibly watched once through -- its count is re-watches, not
+        # plays -- so the honest zero there is "never again," not "never."
+        return "Never watched again here." if config.media_type == "tv" else "Never watched here."
     n = int(viewings.value)
     if config.min_viewings is not None and n < config.min_viewings:
-        return f"Watched {n} {'time' if n == 1 else 'times'} in all."
+        return f"{_rewatch_count_phrase(config, n)} in all."
     window = humanize_window(config.recent_days) if config.recent_days is not None else "window"
-    return f"Watched {n} times, but not in the last {window}."
+    return f"{_rewatch_count_phrase(config, n)}, but not in the last {window}."
 
 
 def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
@@ -695,9 +713,10 @@ def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
             evaluated=False,
         )
     if isinstance(viewings, Absent):
-        # The season lane, and any hand-built Facts: no TV formulation has cleared the
-        # backtest bar, so the keep has nothing to say there and discounts nothing
-        # (``docs/history/REWATCH_PLAN.md``, the TV section).
+        # Hand-built Facts (preview._bare_facts and tests): both live builders now write
+        # the observation -- movies as qualified viewings, seasons as the show's replay
+        # periods -- so a genuine Absent means the caller never gathered watch history, and
+        # the keep has nothing to say there and discounts nothing.
         return KeepResult(config.name, 0.0, config.max_discount, "Does not apply here.", True)
     met = (
         config.min_viewings is not None
@@ -711,7 +730,7 @@ def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
             config.name,
             float(config.max_discount),
             config.max_discount,
-            _rewatch_firing_detail(facts),
+            _rewatch_firing_detail(config, facts),
             True,
         )
     return KeepResult(

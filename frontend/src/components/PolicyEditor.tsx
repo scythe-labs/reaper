@@ -1386,7 +1386,8 @@ export function PolicyEditor({
   });
 
   // The rewatch card's own fitted ladder and consequence echo (#554 stage 2), movie lane
-  // only: the query never fires for TV, whose card does not render. Independent of `draft`
+  // only: the card itself renders on both lanes now, but its hold half -- the only thing
+  // this feeds -- stays movie-only, so the query never fires for TV. Independent of `draft`
   // -- it reads the last scan's frozen numbers, not anything a save would change.
   const {
     data: rewatchFit,
@@ -2447,70 +2448,88 @@ export function PolicyEditor({
           </div>
         )}
 
-        {/* Movies only: the config `keep_configs()` builds is gated on `media_type == "movie"`
-            (engine/policy.py), so the TV policy carries these four fields inertly and this card
-            renders nothing for it -- there is no TV control to show. */}
-        {mediaType === "movie" && (
-          <div className="rules-card">
-            <div className="card-head">
-              <label className="toggle">
-                <Switch
-                  checked={draft.rewatch_keep_enabled}
-                  onChange={(rewatch_keep_enabled) => update({ rewatch_keep_enabled })}
+        {/* Live on both lanes: `keep_configs()` (engine/policy.py) no longer gates the keep
+            half on `media_type == "movie"`, so a TV body scores it off show-level re-watch
+            counts the same way a movie body scores it off title-level ones. The hold half
+            below stays movie-only -- a TV body never carries a `rewatch_odds` gate row
+            (`PolicyBody._rewatch_odds_row` only appends one for movies), so the IIFE's
+            `findIndex` would already render nothing for TV, but it is gated explicitly here
+            rather than left for a reader to derive. */}
+        <div className="rules-card">
+          <div className="card-head">
+            <label className="toggle">
+              <Switch
+                checked={draft.rewatch_keep_enabled}
+                onChange={(rewatch_keep_enabled) => update({ rewatch_keep_enabled })}
+              />
+              <span className="rule-name">
+                {mediaType === "tv"
+                  ? "Keep shows most likely to be rewatched"
+                  : "Keep titles most likely to be rewatched"}
+              </span>
+            </label>
+            <DocLink doc="understanding-policy" anchor="rewatch-keep" className="doc-learn">
+              Learn more
+            </DocLink>
+          </div>
+          <p className="help rule-help">
+            {mediaType === "tv"
+              ? "A show people here keep coming back to will probably be watched again. It only lowers the score, never keeps a show outright."
+              : "A title people here keep coming back to will probably be watched again. It only lowers the score, never keeps a title outright."}
+          </p>
+          {draft.rewatch_keep_enabled && (
+            <>
+              <div className="rule-control">
+                <span>
+                  {mediaType === "tv"
+                    ? "watched again by anyone at least"
+                    : "watched by anyone at least"}
+                </span>
+                <FixedQuantity
+                  value={draft.rewatch_min_viewings}
+                  suffix="times"
+                  min={1}
+                  max={1000}
+                  width="narrow"
+                  ariaLabel={
+                    mediaType === "tv"
+                      ? "Watched again by anyone at least"
+                      : "Watched by anyone at least"
+                  }
+                  onChange={(v) => update({ rewatch_min_viewings: v })}
                 />
-                <span className="rule-name">Keep titles most likely to be rewatched</span>
-              </label>
-              <DocLink doc="understanding-policy" anchor="rewatch-keep" className="doc-learn">
-                Learn more
-              </DocLink>
-            </div>
-            <p className="help rule-help">
-              A title people here keep coming back to will probably be watched again. It only lowers
-              the score, never keeps a title outright.
-            </p>
-            {draft.rewatch_keep_enabled && (
-              <>
-                <div className="rule-control">
-                  <span>watched by anyone at least</span>
-                  <FixedQuantity
-                    value={draft.rewatch_min_viewings}
-                    suffix="times"
-                    min={1}
-                    max={1000}
-                    width="narrow"
-                    ariaLabel="Watched by anyone at least"
-                    onChange={(v) => update({ rewatch_min_viewings: v })}
-                  />
-                </div>
-                <div className="rule-control">
-                  <span>most recently within</span>
-                  <QuantityInput
-                    value={draft.rewatch_recent_days}
-                    units={TIME_UNITS}
-                    min={1}
-                    ariaLabel="Most recently within"
-                    onChange={(v) => update({ rewatch_recent_days: v })}
-                  />
-                </div>
-                <div className="rule-control">
-                  <span>lowers the score by</span>
-                  <FixedQuantity
-                    value={draft.rewatch_keep_discount}
-                    suffix="points"
-                    min={1}
-                    max={50}
-                    width="narrow"
-                    ariaLabel="Lowers the score by"
-                    onChange={(v) => update({ rewatch_keep_discount: v })}
-                  />
-                </div>
-              </>
-            )}
+              </div>
+              <div className="rule-control">
+                <span>most recently within</span>
+                <QuantityInput
+                  value={draft.rewatch_recent_days}
+                  units={TIME_UNITS}
+                  min={1}
+                  ariaLabel="Most recently within"
+                  onChange={(v) => update({ rewatch_recent_days: v })}
+                />
+              </div>
+              <div className="rule-control">
+                <span>lowers the score by</span>
+                <FixedQuantity
+                  value={draft.rewatch_keep_discount}
+                  suffix="points"
+                  min={1}
+                  max={50}
+                  width="narrow"
+                  ariaLabel="Lowers the score by"
+                  onChange={(v) => update({ rewatch_keep_discount: v })}
+                />
+              </div>
+            </>
+          )}
 
-            {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second
-                half, per "Approved with the mockups, 2026-08-13" in docs/history/REWATCH_PLAN.md.
-                Wired to draft.gates the same way RatingFloorRow is above, by index. */}
-            {(() => {
+          {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second
+              half, movie-only, per "Approved with the mockups, 2026-08-13" in
+              docs/history/REWATCH_PLAN.md. Wired to draft.gates the same way RatingFloorRow
+              is above, by index. */}
+          {mediaType === "movie" &&
+            (() => {
               const gi = draft.gates.findIndex((g) => g.gate === "rewatch_odds");
               const hold = gi >= 0 ? draft.gates[gi] : undefined;
               // Always present on a movie body (PolicyBody._rewatch_odds_row appends it on
@@ -2565,8 +2584,7 @@ export function PolicyEditor({
                 </>
               );
             })()}
-          </div>
-        )}
+        </div>
 
         <KeepRulesEditor
           conditions={draft.protect_conditions}

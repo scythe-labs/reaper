@@ -1602,7 +1602,12 @@ class TestTheMatchStatusVocabulary:
         # `NO_REWATCH_ESTIMATE_REASON` -- two new call sites, one new reason constant,
         # exempted from CAUSE_COPY in `_NO_PANEL_ROUTE` above (it feeds only the
         # `rewatch_odds` context block's typed `state`, never a gate's blocked detail).
-        assert walked == 45, (
+        # 45 -> 47: the rewatch observations on the season lane (#554 TV) in
+        # season_scan._judge_series. Both take the unresolved-show arm through the same
+        # `season_evidence.no_key_reason` reader the mid-binge hold already reads, so no
+        # new reason constant and no new coverage gap -- two more call sites on a named,
+        # already-covered reason.
+        assert walked == 47, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."

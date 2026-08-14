@@ -535,10 +535,11 @@ class TestBuiltinRewatchKeep:
         assert result.discount == 0.0
         assert result.detail == "Never watched here."
 
-    def test_the_season_lane_shape_discounts_nothing(self) -> None:
-        """``rewatch_viewings`` Absent is the season lane's explicit "not offered here"
-        (``season_scan.build_season_facts``), never a failed read, so the keep withholds no
-        discount over evidence that was never gathered rather than fail-closing on it."""
+    def test_ungathered_facts_discount_nothing(self) -> None:
+        """``rewatch_viewings`` Absent means the caller never gathered watch history
+        (hand-built ``Facts``; both live builders now write the observation), never a
+        failed read, so the keep withholds no discount over evidence that was never
+        gathered rather than fail-closing on it."""
         keep = _rewatch_keep()
         facts = _facts(
             rewatch_viewings=Absent(source="tautulli"),
@@ -550,3 +551,66 @@ class TestBuiltinRewatchKeep:
         assert result.evaluated is True
         assert result.discount == 0.0
         assert result.detail == "Does not apply here."
+
+
+class TestBuiltinRewatchKeepTvWording:
+    """The same flat arm on a TV config (``KeepConfig.media_type == "tv"``): the count is
+    whole re-watches of the show (``services.rewatch.replay_period_count``), so every
+    detail that states it says "again" (the approved TV mockup's copy). Condition
+    arithmetic is the movie class above; only the wording forks."""
+
+    def test_the_condition_met_states_rewatches(self) -> None:
+        keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
+        facts = _facts(
+            rewatch_viewings=Known(value=3, source="tautulli"),
+            rewatch_last_play_days=Known(value=30.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == pytest.approx(22.0)
+        assert (
+            result.detail
+            == "Watched again 3 times, most recently 1 month ago. Likely to be watched again."
+        )
+
+    def test_too_few_rewatches_states_the_count(self) -> None:
+        keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
+        facts = _facts(
+            rewatch_viewings=Known(value=1, source="tautulli"),
+            rewatch_last_play_days=Known(value=10.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.discount == 0.0
+        assert result.detail == "Watched again 1 time in all."
+
+    def test_a_stale_last_play_states_the_window(self) -> None:
+        keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
+        facts = _facts(
+            rewatch_viewings=Known(value=3, source="tautulli"),
+            rewatch_last_play_days=Known(value=501.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.discount == 0.0
+        assert result.detail == "Watched again 3 times, but not in the last 1 year, 4 months."
+
+    def test_zero_rewatches_says_never_again_not_never(self) -> None:
+        """A show at zero was possibly watched once through -- its count is re-watches --
+        so the movie lane's "Never watched here." would overclaim about a show someone
+        followed to the end."""
+        keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
+        facts = _facts(
+            rewatch_viewings=Known(value=0, source="tautulli"),
+            rewatch_last_play_days=Known(value=40.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == 0.0
+        assert result.detail == "Never watched again here."

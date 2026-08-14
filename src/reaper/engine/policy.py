@@ -73,18 +73,19 @@ SCHEMA_VERSION = 3
 off the RATING_FLOOR gate row into ``keep_rating_rules``
 (see ``policy_migrations.recover_rating_rules``, which backfills a body written before it)."""
 
-SCORER_VERSION = 3
+SCORER_VERSION = 4
 """Bumped when the SCORER changes meaning, not when the schema gains a field.
 
-3 marks the build where ``fields._compare`` folds a ``contains`` target the way ``eq`` and
-``in`` already did, so a stored text rule can start matching text it used to miss (#657).
-Neither gate below asked for this bump and both were run: the recorded surface holds the
-operator's vocabulary, not the comparison behind it, and no vector in the lab's fixture
-carries a ``contains`` rule, so 0 of 880 baselines moved. What decided it is that a rule
-which starts matching moves an item in whichever direction it was written for. ``on_list``
-is protect-only, and ``genre`` and ``quality`` take ``contains`` on both lanes, so a plan
-approved before the upgrade can execute over an item this build protects, and can carry a
-score this build would have pushed higher.
+4 marks the build where the rewatch keep goes live on the TV lane (#554): ``keep_configs``
+stops gating it on ``media_type``, and season facts start carrying the show's replay
+periods where they carried ``Absent``. A stored TV body hashes exactly as it did --
+``rewatch_keep_enabled`` defaults on and no field changed -- so without the bump a plan
+approved before the upgrade executes over seasons this build discounts toward keeping,
+the "adding evidence" case two paragraphs down.
+
+3 marked the build where ``fields._compare`` folds a ``contains`` target the way ``eq`` and
+``in`` already did, so a stored text rule could start matching text it used to miss (#657):
+a rule that starts matching moves an item in whichever direction it was written for.
 
 Both are inside the policy hash: an item scored under a different scorer was not
 approved under this one.
@@ -597,24 +598,30 @@ class PolicyBody(Frozen):
     but never vetoes, and missing data keeps the file. See GradedKeepSpec."""
 
     rewatch_keep_enabled: bool = True
-    """The built-in rewatch keep (stage 1 of ``docs/history/REWATCH_PLAN.md``): a movie watched at
+    """The built-in rewatch keep (``docs/history/REWATCH_PLAN.md``): a title watched at
     least ``rewatch_min_viewings`` times, most recently within ``rewatch_recent_days``, has
     its score lowered by ``rewatch_keep_discount`` points. A soft keep exactly like a
-    ``graded_keeps`` row, never a protection. Movies only until a TV formulation clears the
-    backtest bar (``keep_configs`` gates it on ``media_type``). A stored body predating
-    these fields thaws to the defaults, the keep direction; an explicit ``False`` is the
-    operator's choice and honored."""
+    ``graded_keeps`` row, never a protection. Live on both lanes: the TV formulation
+    cleared the same backtest bar a stage later (``docs/LEARNINGS.md``, the TV entry), with
+    the count meaning whole re-watches of the show there (``rewatch_min_viewings`` below).
+    A stored body predating these fields thaws to the defaults, the keep direction; an
+    explicit ``False`` is the operator's choice and honored."""
 
     rewatch_keep_discount: int = Field(default=20, ge=1, le=50)
     """Points subtracted while the rewatch condition holds. ``ge=1``: off is the switch
     above, not a zero."""
 
     rewatch_min_viewings: int = Field(default=10, ge=1, le=1_000)
-    """Qualified viewings (any user, plays inside ``services.rewatch.VIEWING_GAP_DAYS`` of
-    each other clustered as one) at or above which the keep can fire. The default is a
-    starting value from an out-of-sample backtest on one heavy-rewatch library
-    (``docs/LEARNINGS.md``), not a truth: a quieter library is untested, and loosening
-    buys coverage at some precision. The ceiling is arithmetic hygiene (rule 95)."""
+    """The viewing-count bar, whose unit is the lane's. On a movie body: qualified viewings
+    (any user, plays inside ``services.rewatch.VIEWING_GAP_DAYS`` of each other clustered
+    as one). On a TV body: whole re-watches of the show
+    (``services.rewatch.replay_period_count``), where the validated bar is 2
+    (``DEFAULT_TV_POLICY`` sets it; the class default here is the movie backtest's 10, so a
+    TV body stored before the TV stage keeps firing only for heavily re-watched shows until
+    the operator lowers it -- conservative, and visible on the card). Both defaults are
+    starting values from out-of-sample backtests on one heavy-rewatch library
+    (``docs/LEARNINGS.md``), not truths: a quieter library is untested, and loosening buys
+    coverage at some precision. The ceiling is arithmetic hygiene (rule 95)."""
 
     rewatch_recent_days: int = Field(default=730, ge=1, le=36_500)
     """How recent the last qualified play must be for the keep to fire. Same backtested
@@ -745,7 +752,9 @@ class PolicyBody(Frozen):
         keeps, because this method has two callers -- ``services.snapshot.scan`` and the
         simulator replay (``api.simulate``) -- and a built-in appended at one of them is a
         keep the other silently drops (rule 104; ``docs/history/REWATCH_PLAN.md`` records the
-        deviation). Movie lane only: no TV formulation has cleared the backtest bar.
+        deviation). Both lanes: the TV formulation cleared the backtest bar a stage later
+        (``docs/LEARNINGS.md``, the TV entry), and ``media_type`` on the config picks the
+        lane's wording.
         """
         configs = [
             KeepConfig(
@@ -759,7 +768,7 @@ class PolicyBody(Frozen):
             )
             for k in self.graded_keeps
         ]
-        if self.media_type == "movie" and self.rewatch_keep_enabled:
+        if self.rewatch_keep_enabled:
             configs.append(
                 KeepConfig(
                     name=REWATCH_KEEP,
@@ -770,6 +779,7 @@ class PolicyBody(Frozen):
                     saturate_at=1,
                     min_viewings=self.rewatch_min_viewings,
                     recent_days=self.rewatch_recent_days,
+                    media_type=self.media_type,
                 )
             )
         return configs
@@ -1237,6 +1247,10 @@ DEFAULT_TV_POLICY = PolicyBody(
     # IMDb score (from the dataset) is the one bar reliably available. Owners may add
     # Rotten Tomatoes or TMDb bars, which fire only when Plex happens to serve them.
     keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1000),),
+    # The TV lane's viewing count is whole re-watches of the show, and 2 is the validated
+    # bar (docs/LEARNINGS.md, the TV entry) -- the class default is the movie lane's 10.
+    # A stored TV body keeps whatever it saved; this covers fresh policies only.
+    rewatch_min_viewings=2,
 )
 
 
