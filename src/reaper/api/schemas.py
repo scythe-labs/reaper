@@ -778,8 +778,8 @@ class RewatchOddsBlockOut(BaseModel):
     """The Wilson 95% upper bound of k/n, in percent: the number the hold compares against
     the operator's threshold, served so the echo can never disagree with the gate."""
     items: int
-    """Movie candidates of the latest scan whose current dormancy falls in this rung: what
-    the consequence echo counts."""
+    """Candidates of the latest scan (movies, or seasons on the TV lane) whose current
+    dormancy falls in this rung: what the consequence echo counts."""
 
 
 class RewatchOddsFitOut(BaseModel):
@@ -792,8 +792,8 @@ class RewatchOddsFitOut(BaseModel):
 
     blocks: list[RewatchOddsBlockOut]
     total_items: int
-    """Every movie candidate of the latest scan, block or no block: what the consequence
-    echo states its protected count out of."""
+    """Every candidate of the latest scan on the requested lane, block or no block: what the
+    consequence echo states its protected count out of."""
 
 
 class PolicyBodyOut(BaseModel):

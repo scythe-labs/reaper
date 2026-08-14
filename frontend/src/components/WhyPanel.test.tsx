@@ -541,16 +541,16 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
 
     expect(
       screen.getByText(
-        "Of 599 titles that had sat unwatched about this long, 207 (35%) were watched again " +
+        "Of 599 shows that had sat unwatched about this long, 207 (35%) were watched again " +
           "within a year. Measured from your own history at the last scan.",
       ),
     ).toBeInTheDocument();
   });
 
-  it("says too few titles when the cohort is thin", () => {
+  it("says too few shows when the cohort is thin", () => {
     show(withOdds({ n: 4, k: 1, lo_days: 730, hi_days: 1095, state: "thin" }));
 
-    expect(screen.getByText("Too few titles like this to say.")).toBeInTheDocument();
+    expect(screen.getByText("Too few shows like this to say.")).toBeInTheDocument();
     // Never a percentage on a cohort too thin to trust one.
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });

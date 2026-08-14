@@ -618,8 +618,8 @@ export interface RewatchOddsBlock {
   /** The Wilson 95% upper bound of k/n, in percent: what the hold actually compares against
    *  the operator's threshold, so the ladder and the gate can never disagree. */
   upper_bound_pct: number;
-  /** Movie candidates of the latest scan whose current dormancy falls in this rung: what
-   *  the consequence echo counts. */
+  /** Candidates of the latest scan (movies, or seasons on the TV lane) whose current
+   *  dormancy falls in this rung: what the consequence echo counts. */
   items: number;
 }
 
@@ -627,8 +627,8 @@ export interface RewatchOddsBlock {
  *  echo. Empty `blocks` with `total_items === 0` means no scan has run on this build yet. */
 export interface RewatchOddsFit {
   blocks: RewatchOddsBlock[];
-  /** Every movie candidate of the latest scan, block or no block: what the consequence echo
-   *  states its protected count out of. */
+  /** Every candidate of the latest scan on the requested lane, block or no block: what the
+   *  consequence echo states its protected count out of. */
   total_items: number;
 }
 
@@ -2042,8 +2042,10 @@ export const api = {
   seasonShape: () => request<SeasonShape>("/api/snapshot/season-shape"),
   /** The latest scan's fitted rewatch ladder (#554 stage 2), for the rewatch card's ladder
    *  and consequence echo. Aggregated server-side from the stored explanation blocks, never
-   *  refit here, so the page states exactly what the gate will actually compare. */
-  rewatchOddsFit: () => request<RewatchOddsFit>("/api/policy/rewatch-odds"),
+   *  refit here, so the page states exactly what the gate will actually compare. Movies and
+   *  TV seasons carry their own fit, so the ladder never mixes the two lanes. */
+  rewatchOddsFit: (mediaType: "movie" | "tv") =>
+    request<RewatchOddsFit>(`/api/policy/rewatch-odds?media_type=${mediaType}`),
 
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),

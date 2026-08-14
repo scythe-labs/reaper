@@ -28,7 +28,7 @@ Last verified against the code: 2026-08-02.
 | **M3d** Field registry + authorable protect rules | ✅ done |
 | **M3e** Snapshot pipeline + REST API + polled progress | ✅ done |
 | **M3f** Signal quality — banked as the shipped defaults, `docs/SIGNALS.md` | ✅ done |
-| **M3g** Rewatch — a fitted rewatch prior | 🟡 keep on both lanes, the hold movies only, #554 |
+| **M3g** Rewatch — a fitted rewatch prior | ✅ keep and hold on both lanes, #554 |
 | **M4** React SPA — review queue, why-panel, policy editor, live simulator | ✅ done |
 | **M5** The reap loop — journal, planner, executor, canary, caps | ✅ done |
 | **M6** Season pruning | ✅ done |

@@ -1300,12 +1300,15 @@ const WATCH_RECORD_STALE = [["candidate"], ["candidates"], ["watch-evidence"]];
  *  `watchReach.ts`'s three-state reads: `"measured"` names the cohort and counts, never a
  *  bare percentage, so the sentence carries its own evidence; the other two say why there is
  *  no number rather than printing one. */
-function rewatchOddsSentence(odds: RewatchOdds): string {
+function rewatchOddsSentence(odds: RewatchOdds, mediaType: string): string {
   if (odds.state === "no_history") return "Not enough watch history yet.";
-  if (odds.state === "thin") return "Too few titles like this to say.";
+  // Season rows read as shows, the same noun the rest of the panel uses for TV (rule 21:
+  // plain language, no internal vocabulary).
+  const noun = mediaType === "season" ? "shows" : "titles";
+  if (odds.state === "thin") return `Too few ${noun} like this to say.`;
   const pct = Math.round((100 * odds.k) / odds.n);
   return (
-    `Of ${odds.n} titles that had sat unwatched about this long, ${odds.k} (${pct}%) were ` +
+    `Of ${odds.n} ${noun} that had sat unwatched about this long, ${odds.k} (${pct}%) were ` +
     "watched again within a year. Measured from your own history at the last scan."
   );
 }
@@ -1538,7 +1541,7 @@ export function WhyPanel({
       {explanation.rewatch_odds && (
         <section className="block">
           <h3>Watched again within a year</h3>
-          <p className="blurb">{rewatchOddsSentence(explanation.rewatch_odds)}</p>
+          <p className="blurb">{rewatchOddsSentence(explanation.rewatch_odds, item.media_type)}</p>
         </section>
       )}
 

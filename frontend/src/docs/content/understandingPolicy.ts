@@ -176,7 +176,7 @@ export const understandingPolicy: Doc = {
 
     h3("Protections: what's always kept", "protections"),
     p(
-      "Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file. All of these are on by default, in both the movie and TV policies, except the rewatch hold at the foot of the table: movies only, and off until you turn it on.",
+      "Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file. All of these are on by default, in both the movie and TV policies, except the rewatch hold at the foot of the table, which is off until you turn it on.",
     ),
     table(
       ["Protection", "What it keeps", "Default"],
@@ -207,7 +207,7 @@ export const understandingPolicy: Doc = {
         // because the sentence above this table promises every row keeps something.
         ["Stop if the unwatched time can't be read", "Anything Reaper couldn't measure", "On"],
         [
-          "Keep anything likely to be watched above a percentage",
+          "Keep titles most likely to be rewatched above a percentage",
           "Anything whose kind gets watched again above your percentage",
           "Off by default",
         ],
@@ -219,13 +219,28 @@ export const understandingPolicy: Doc = {
 
     h3("Titles most likely to be rewatched", "rewatch-keep"),
     p(
-      "A title anyone has watched at least 10 times, most recently within 2 years, gets its score lowered by up to 20 points. Plays that got at least halfway count, and plays within a week of each other count as one watch. All three numbers are yours to tune; the starting values were measured against real watch history. It is a lean, never a protection: it can tip a close call toward keeping, never keep a title outright, and watch history Reaper cannot read only ever leans toward keeping.",
+      "Some titles get watched again and again. A favorite movie, a show someone replays every winter. This rule spots that habit and lowers the score by up to 20 points, so a title people actually come back to is less likely to be flagged.",
     ),
     p(
-      "For a show, the count is whole re-watches: a sitting that returns to episodes already seen, with a starting bar of 2 instead of 10. Following a new season as it airs never counts toward it.",
+      "For a movie, that means: watched at least 10 times by anyone on the server, at least once in the last 2 years. Getting halfway through counts as a play, and plays within a week of each other count as one watch, so playing a movie three times in one weekend counts once.",
     ),
     p(
-      "A second, opt-in switch on the same card is hard rather than soft, and movies only: turned on, it keeps a title outright once its dormancy range clears your percentage, checked against your library's own fitted numbers shown right there on the card. It only ever fires on a group of at least 30 similarly-dormant titles, so a thin slice of your library never decides it.",
+      "For a show, that means watching it through again: at least 2 separate returns to episodes already seen. A new season watched as it airs is a first watch.",
+    ),
+    p(
+      "Turn the second switch on and Reaper keeps anything that still has a good chance of being watched again, even if its score is high. To work out that chance, Reaper checks how long a title has gone unwatched, then looks at what happened to other titles in your library that went unwatched for about as long. The share of them that got watched again within a year is the chance. If the chance is at or above your percentage, the title is kept.",
+    ),
+    p(
+      "Say a movie has not been watched in 2 years. Reaper finds 100 titles in your history that also sat for 2 years, and 30 of them got watched again within a year. The chance is 30%. With your percentage at 25, the movie is kept. At 40, the score decides instead.",
+    ),
+    p(
+      "Shows are measured as a whole, so playing any episode counts, and a kept show keeps all of its seasons. Say nobody has played an episode of a show for a year. Out of 60 shows that also sat for a year, 20 got watched again. The chance is 33%, so at 25 the show is kept.",
+    ),
+    p(
+      "Where do those numbers come from? At each scan, Reaper pretends today is one year ago and sorts every title by how long it had been sitting at that point: under a year, one to two years, and so on. Because it rewound a year, the year that followed is already in your history, so it can simply count how many titles in each group got played again. Those counts are the table on the card, one row per group. A chance only counts when its group held at least 30 titles.",
+    ),
+    p(
+      "It is the same way you would guess whether a kid will ride the old bike in the garage: don't study the bike, look at what happened to every other bike that sat in the garage that long.",
     ),
 
     h3("Pace and limits", "pace"),

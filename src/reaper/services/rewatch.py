@@ -395,9 +395,26 @@ def cohort_block(
     return block
 
 
+#: Why the rewatch-probability cohort has nothing to show (#554 stage 2): no fit ran this
+#: scan (an empty population), this dormancy falls outside the fitted range or inside a
+#: bucket dropped empty at fit time, or its block is withheld until the mirror's reach
+#: grows into it. One reason for all four -- the operator's takeaway is the same either
+#: way, no number to show (docs/history/REWATCH_PLAN.md, Stage 2). Lives here rather than
+#: in a per-lane module so both lanes' fact builders -- movies' ``snapshot.build_facts``
+#: and TV's, once its cohort fields read a fit -- name the same reason instead of each
+#: growing its own spelling.
+#:
+#: A KEY named by the usual ``*_REASON`` convention, but this one has NO route to the
+#: why-panel's CAUSE slot: ``rewatch_cohort_n``/``rewatch_cohort_k`` feed only the
+#: ``rewatch_odds`` context block (``snapshot._rewatch_odds_context``), read by its typed
+#: ``state``, never by this reason text. See tests/test_review_chips.py's
+#: ``_NO_PANEL_ROUTE``, which checks that claim rather than trusting it.
+NO_REWATCH_ESTIMATE_REASON = "no rewatch estimate for this dormancy"
+
+
 @dataclass(frozen=True, slots=True)
 class RewatchOutcome:
-    """One movie's raw Stage 2 training inputs, before dormancy is derived against a cutoff."""
+    """One title's raw Stage 2 training inputs, before dormancy is derived against a cutoff."""
 
     last_play_at_or_before_cutoff: datetime | None
     watched_again: bool
@@ -473,6 +490,72 @@ async def movie_rewatch_outcomes(
             watched_again=key in watched_again,
         )
         for key in rating_keys
+        if key in last_before or key in watched_again
+    }
+
+
+async def show_rewatch_outcomes(
+    engine: AsyncEngine,
+    show_keys: set[int],
+    *,
+    cutoff: datetime,
+) -> dict[int, RewatchOutcome]:
+    """Per-show training inputs for the Stage 2 fit, from the local history mirror.
+
+    Mirrors :func:`movie_rewatch_outcomes`'s shape. No ``groups`` parameter: the same
+    written lane-precedent deferral as :func:`show_rewatch_stats` above (rule 72).
+
+    Unlike :func:`show_rewatch_stats`, this counts EVERY play, any completion: the fit's
+    dormancy anchor and outcome are any-play, not the stage 1 keep's qualified filter
+    (docs/history/REWATCH_PLAN.md, Stage 2 Fit -- "any user, any completion", unlike the stage 1
+    keep's qualified filter). Chunked on ``db.KEY_CHUNK`` like the movie sibling above (rule
+    94). A key with no rows in either window is absent from the result; a caller reads a
+    missing key as "no play near the cutoff either side".
+    """
+    if not show_keys:
+        return {}
+    await history_sync.ensure_schema(engine)
+
+    all_keys = sorted(show_keys)
+    cutoff_epoch = int(cutoff.timestamp())
+    outcome_end_epoch = int((cutoff + timedelta(days=365)).timestamp())
+
+    last_before: dict[int, datetime] = {}
+    watched_again: set[int] = set()
+    async with engine.connect() as conn:
+        # Chunked on db.KEY_CHUNK, like every sibling that expands an IN over a
+        # scan-sized key set (movie_rewatch_outcomes above, rule 94).
+        for start in range(0, len(all_keys), KEY_CHUNK):
+            chunk = all_keys[start : start + KEY_CHUNK]
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT grandparent_rating_key, watched_at FROM watch_event "
+                        "WHERE media_type = 'episode' AND grandparent_rating_key IN :keys"
+                    ).bindparams(bindparam("keys", expanding=True)),
+                    {"keys": chunk},
+                )
+            ).all()
+            for row in rows:
+                # No `qualifies()` filter here -- see the docstring: this counts any play,
+                # any completion, unlike every play-derived count stage 1 added.
+                played_epoch = int(row.watched_at)
+                show_key = int(row.grandparent_rating_key)
+                if played_epoch <= cutoff_epoch:
+                    played = from_epoch(played_epoch)
+                    if played is not None and (
+                        show_key not in last_before or played > last_before[show_key]
+                    ):
+                        last_before[show_key] = played
+                elif played_epoch <= outcome_end_epoch:
+                    watched_again.add(show_key)
+
+    return {
+        key: RewatchOutcome(
+            last_play_at_or_before_cutoff=last_before.get(key),
+            watched_again=key in watched_again,
+        )
+        for key in show_keys
         if key in last_before or key in watched_again
     }
 

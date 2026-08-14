@@ -37,7 +37,7 @@ export const cheatSheet: Doc = {
         ["Keep well-rated titles", "IMDb 7.5, 1,000 votes"],
         ["Never touch something playing right now", "On"],
         ["Stop if the unwatched time can't be read", "On"],
-        ["Keep anything likely to be watched above a percentage", "Off by default"],
+        ["Keep titles most likely to be rewatched above a percentage", "Off by default"],
       ],
     ),
     p(

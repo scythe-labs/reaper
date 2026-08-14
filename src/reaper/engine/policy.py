@@ -466,36 +466,33 @@ class PolicyBody(Frozen):
 
     @model_validator(mode="after")
     def _rewatch_odds_row(self) -> Self:
-        """A movie body always carries the rewatch-odds row; a TV body never does.
+        """Every body carries the rewatch-odds row, appended on load when missing.
 
-        The append is what puts the new protection's switch in front of an operator whose
-        body was stored before it existed: rows render from the body's own gate list, so
-        without this a pre-upgrade body simply never shows the control. Appended DISABLED at
-        the shipped starting percentage, so it changes no verdict until the operator turns it
+        The append is what puts the protection's switch in front of an operator whose body
+        was stored before it existed: rows render from the body's own gate list, so without
+        this a pre-upgrade body simply never shows the control. Appended DISABLED at the
+        shipped starting percentage, so it changes no verdict until the operator turns it
         on -- not a repair, and no degrade, by the same reasoning as the retirement above:
-        nothing was protecting, so nothing was withdrawn. It moves ``policy_hash`` for every
-        stored movie body (rule 113 voids pre-upgrade approvals) and ``scoring_hash``, and
-        leaves ``evidence_hash`` alone, exactly like the drop above.
+        nothing was protecting, so nothing was withdrawn. It moves ``policy_hash`` for
+        every stored body lacking the row (rule 113 voids pre-upgrade approvals) and
+        ``scoring_hash``, and leaves ``evidence_hash`` alone, exactly like the drop above.
 
-        The strip is rule 38's arm: the season lane freezes the gate's two cohort facts
-        ``Absent``, so on a TV body the gate could never fire and a switch for it would be a
-        protection the operator can enable that keeps nothing. The editor never offers it
-        there; this catches a hand-crafted body arriving through the API or a restore.
+        This appended for movies alone, and stripped the row from TV bodies, while the
+        season lane froze the gate's two cohort facts ``Absent`` (rule 38: a switch for a
+        gate that can never fire). The TV fit cleared its own backtest
+        (``docs/LEARNINGS.md``, the TV fit entry), season rows now freeze real cohorts, and
+        the append moving every stored TV body's hash is what voids pre-upgrade TV
+        approvals for the parity stage the same way the movie append did for stage 2.
         """
-        if self.media_type == "movie":
-            if all(g.gate is not GateId.REWATCH_ODDS for g in self.gates):
-                object.__setattr__(
-                    self,
-                    "gates",
-                    (
-                        *self.gates,
-                        GateSetting(gate=GateId.REWATCH_ODDS, enabled=False, threshold=25),
-                    ),
-                )
-        else:
-            kept = tuple(g for g in self.gates if g.gate is not GateId.REWATCH_ODDS)
-            if len(kept) != len(self.gates):
-                object.__setattr__(self, "gates", kept)
+        if all(g.gate is not GateId.REWATCH_ODDS for g in self.gates):
+            object.__setattr__(
+                self,
+                "gates",
+                (
+                    *self.gates,
+                    GateSetting(gate=GateId.REWATCH_ODDS, enabled=False, threshold=25),
+                ),
+            )
         return self
 
     media_type: Literal["movie", "tv"] = "movie"

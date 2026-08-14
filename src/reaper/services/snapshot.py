@@ -100,6 +100,7 @@ from reaper.services.display_meta import (
 )
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.rewatch import (
+    NO_REWATCH_ESTIMATE_REASON,
     RewatchBlock,
     RewatchCurve,
     RewatchStats,
@@ -281,19 +282,6 @@ NO_ADDED_AT_REASON = "no added-at date"
 #: disk", the same route the request reasons take (rule 144). The season lane says this in
 #: its own words, so the two are named apart rather than shared.
 NO_SIZE_REASON = "the file's size was not reported"
-
-#: Why the rewatch-probability cohort has nothing to show (#554 stage 2): no fit ran this
-#: scan (movie-only, an empty population), this dormancy falls outside the fitted range or
-#: inside a bucket dropped empty at fit time, or its block is withheld until the mirror's
-#: reach grows into it. One reason for all four -- the operator's takeaway is the same
-#: either way, no number to show (docs/history/REWATCH_PLAN.md, Stage 2).
-#:
-#: A KEY named by the usual ``*_REASON`` convention, but this one has NO route to the
-#: why-panel's CAUSE slot: ``rewatch_cohort_n``/``rewatch_cohort_k`` feed only the
-#: ``rewatch_odds`` context block (``_rewatch_odds_context`` below), read by its typed
-#: ``state``, never by this reason text. See tests/test_review_chips.py's
-#: ``_NO_PANEL_ROUTE``, which checks that claim rather than trusting it.
-NO_REWATCH_ESTIMATE_REASON = "no rewatch estimate for this dormancy"
 
 
 def build_facts(
@@ -1012,11 +1000,13 @@ async def scan(
         rewatch_stats = await movie_rewatch_stats(
             engine, movie_candidate_keys, groups=merged_groups
         )
-        # The Stage 2 rewatch-probability fit (#554), refit every scan, movie-only, over
-        # exactly the candidate set the scorer scores below -- the same movie_candidate_keys
-        # and merged_groups the stats gather above uses (rule 72). Cutoff is a year back
-        # from scan time (docs/history/REWATCH_PLAN.md, Stage 2 Fit); added dates for the fallback
-        # training-pair route come off the scan's own items, never a second read.
+        # The Stage 2 rewatch-probability fit (#554), refit every scan -- the movie lane's
+        # fit, over exactly the candidate set the scorer scores below (the same
+        # movie_candidate_keys and merged_groups the stats gather above uses, rule 72). The
+        # season task fits the TV curve the same way, in season_scan.gather, over its own
+        # candidate set. Cutoff is a year back from scan time (docs/history/REWATCH_PLAN.md,
+        # Stage 2 Fit); added dates for the fallback training-pair route come off the scan's
+        # own items, never a second read.
         rewatch_cutoff = utcnow() - timedelta(days=365)
         rewatch_outcomes = await movie_rewatch_outcomes(
             engine, movie_candidate_keys, cutoff=rewatch_cutoff, groups=merged_groups
@@ -1356,6 +1346,10 @@ async def scan(
                 if judgment.watch_reading is not None
                 else None
             ),
+            # The show's Stage 2 rewatch cohort block (#554 TV), the same one that fed
+            # `judgment.facts.rewatch_cohort_n`/`rewatch_cohort_k` -- the movie call above
+            # passes its own the same way, for the same reason (`_rewatch_odds_context`).
+            rewatch_block=judgment.rewatch_block,
         )
         if verdict == "condemn":
             condemned_keys.append(judgment.media_key)
@@ -1557,7 +1551,9 @@ def judge_facts(
     ``rewatch_block`` (#554 stage 2) is the caller's already-derived rewatch cohort block
     for this item -- the same one that fed ``facts.rewatch_cohort_n``/``rewatch_cohort_k``
     -- carried separately because ``Facts`` does not hold the block's dormancy bounds.
-    ``None`` for the season lane, which never has one.
+    Both live lanes freeze a real block off their own fit; ``None`` means this item's cohort
+    could not be measured, or the caller is hand-built ``Facts`` with no fit to derive one
+    from at all (e.g. a policy-lab or test fixture).
     """
     evaluation = Evaluation(results=[*extra_results, *evaluate_all(gates, facts).results])
     item_score = score(
@@ -1784,12 +1780,14 @@ def _rewatch_odds_context(facts: Facts, block: RewatchBlock | None) -> dict[str,
     """The stored ``rewatch_odds`` context (#554 stage 2), from the same in-memory values
     the item's ``Facts`` got.
 
-    ``None`` for the season lane, whose ``rewatch_cohort_n`` is ``Absent`` --
-    ``docs/history/REWATCH_PLAN.md``, Stage 2 says the season lane writes nothing, and Absent is
-    the season-only arm those two fields carry (never reached by a movie). Otherwise a
-    movie item: the Unknown arms' zeroed placeholder with ``state="no_history"`` when there
-    is no usable block, and the block's own pooled counts and range otherwise -- ``"thin"``
-    below ``gates.REWATCH_BLOCK_FLOOR_N``, ``"measured"`` at or above it. ``engine.explanation
+    ``None`` when ``facts.rewatch_cohort_n`` is ``Absent`` -- hand-built ``Facts`` with no
+    fit behind them at all (a policy-lab or test fixture), never a row either live lane
+    froze: both the movie item and the show behind a season row always have an opinion
+    about their own cohort, even when that opinion is Unknown (``services.snapshot
+    .build_facts``, ``services.season_scan.build_season_facts``). Otherwise: the Unknown
+    arms' zeroed placeholder with ``state="no_history"`` when there is no usable block, and
+    the block's own pooled counts and range otherwise -- ``"thin"`` below
+    ``gates.REWATCH_BLOCK_FLOOR_N``, ``"measured"`` at or above it. ``engine.explanation
     .RewatchOddsOut`` declares this same shape; both are held together by
     ``test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared``.
     """
@@ -1835,7 +1833,7 @@ def _explain(
     Plus a ``match`` block that says how (or whether) the item was bound to its Plex row --
     "bound by TMDB id 12345", or "kept: two Plex items share this id" -- so a file that was
     spared for a *matching* reason is not mistaken for one nobody looked at. And a
-    ``rewatch_odds`` block (#554 stage 2), display only, movie lane only: see
+    ``rewatch_odds`` block (#554 stage 2), display only, written for both live lanes: see
     ``_rewatch_odds_context``.
 
     **Hand-typed on purpose, and held to the read side by a test rather than built from it.**
@@ -1896,12 +1894,13 @@ def _explain(
                 # is, is why there is no rating_key.
                 "candidate_rating_keys": (list(match_candidates) if match_candidates else None),
             },
-            # The Stage 2 rewatch-probability context (#554), movie lane only -- see
-            # _rewatch_odds_context. None for a season row (the fit is movie-only) and for
-            # a row frozen before this field existed, both read by the panel as nothing to
-            # show. Written unconditionally, like every other optional key here: the
-            # top-level document always carries the keys engine.explanation.Explanation
-            # declares, whatever their value (test_engine_derivations
+            # The Stage 2 rewatch-probability context (#554), written for both live lanes --
+            # see _rewatch_odds_context. None for an item whose own cohort could not be
+            # measured, for hand-built Facts with no fit behind them at all, and for a row
+            # frozen before this field existed, all read by the panel as nothing to show.
+            # Written unconditionally, like every other optional key here: the top-level
+            # document always carries the keys engine.explanation.Explanation declares,
+            # whatever their value (test_engine_derivations
             # .TestTheStoredExplanationIsWrittenAsItIsDeclared).
             "rewatch_odds": rewatch_odds,
             "signals": [

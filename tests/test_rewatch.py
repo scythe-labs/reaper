@@ -742,6 +742,126 @@ class TestMovieRewatchOutcomesEndToEnd:
         assert outcomes[900].last_play_at_or_before_cutoff == from_epoch(NOW_EPOCH)
 
 
+class TestShowRewatchOutcomesEndToEnd:
+    """`rewatch.show_rewatch_outcomes`: any-completion episode plays, chunked, folded onto
+    the show via `grandparent_rating_key` -- the show-level twin of
+    `TestMovieRewatchOutcomesEndToEnd` above."""
+
+    async def test_an_empty_candidate_set_short_circuits(self, engine: AsyncEngine) -> None:
+        outcomes = await rewatch.show_rewatch_outcomes(engine, set(), cutoff=_at(NOW_EPOCH))
+        assert outcomes == {}
+
+    async def test_plays_land_under_the_show_via_grandparent_key(self, engine: AsyncEngine) -> None:
+        await _insert(
+            engine,
+            rating_key=10,
+            grandparent_rating_key=5000,
+            watched_at=NOW_EPOCH,
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="episode",
+        )
+        outcomes = await rewatch.show_rewatch_outcomes(engine, {5000}, cutoff=_at(NOW_EPOCH + DAY))
+        assert outcomes[5000].last_play_at_or_before_cutoff == from_epoch(NOW_EPOCH)
+
+    async def test_the_last_before_pick_is_the_max_not_one_after_cutoff(
+        self, engine: AsyncEngine
+    ) -> None:
+        await _insert(
+            engine,
+            rating_key=10,
+            grandparent_rating_key=5100,
+            watched_at=NOW_EPOCH - 10 * DAY,
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="episode",
+        )
+        await _insert(
+            engine,
+            rating_key=11,
+            grandparent_rating_key=5100,
+            watched_at=NOW_EPOCH,
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="episode",
+        )
+        await _insert(
+            engine,
+            rating_key=12,
+            grandparent_rating_key=5100,
+            watched_at=NOW_EPOCH + 10 * DAY,  # after cutoff, must not win the max
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="episode",
+        )
+        outcomes = await rewatch.show_rewatch_outcomes(engine, {5100}, cutoff=_at(NOW_EPOCH))
+        assert outcomes[5100].last_play_at_or_before_cutoff == from_epoch(NOW_EPOCH)
+
+    async def test_a_play_after_cutoff_within_the_year_is_watched_again(
+        self, engine: AsyncEngine
+    ) -> None:
+        await _insert(
+            engine,
+            rating_key=10,
+            grandparent_rating_key=5200,
+            watched_at=NOW_EPOCH + 100 * DAY,
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="episode",
+        )
+        outcomes = await rewatch.show_rewatch_outcomes(engine, {5200}, cutoff=_at(NOW_EPOCH))
+        assert outcomes[5200].watched_again is True
+        assert outcomes[5200].last_play_at_or_before_cutoff is None
+
+    async def test_a_play_past_the_outcome_window_does_not_count(self, engine: AsyncEngine) -> None:
+        await _insert(
+            engine,
+            rating_key=10,
+            grandparent_rating_key=5300,
+            watched_at=NOW_EPOCH + 400 * DAY,  # past the 365-day outcome window
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="episode",
+        )
+        outcomes = await rewatch.show_rewatch_outcomes(engine, {5300}, cutoff=_at(NOW_EPOCH))
+        assert outcomes == {}
+
+    async def test_an_unqualified_play_still_counts(self, engine: AsyncEngine) -> None:
+        """Unlike `show_rewatch_stats`, no `qualifies()` filter: an under-50%, no-status
+        play still sets the last play before cutoff (docs/history/REWATCH_PLAN.md, Stage 2
+        Fit). The any-play contract, pinned explicitly since it is the one most likely to be
+        "fixed" wrongly later."""
+        await _insert(
+            engine,
+            rating_key=10,
+            grandparent_rating_key=5400,
+            watched_at=NOW_EPOCH,
+            watched_status=None,
+            percent_complete=10,  # abandoned: under half, no reported status
+            media_type="episode",
+        )
+        outcomes = await rewatch.show_rewatch_outcomes(engine, {5400}, cutoff=_at(NOW_EPOCH + DAY))
+        assert outcomes[5400].last_play_at_or_before_cutoff == from_epoch(NOW_EPOCH)
+        assert outcomes[5400].watched_again is False
+
+    async def test_a_movie_row_is_excluded(self, engine: AsyncEngine) -> None:
+        await _insert(
+            engine,
+            rating_key=10,
+            grandparent_rating_key=5500,
+            watched_at=NOW_EPOCH,
+            watched_status=1.0,
+            percent_complete=100,
+            media_type="movie",
+        )
+        outcomes = await rewatch.show_rewatch_outcomes(engine, {5500}, cutoff=_at(NOW_EPOCH + DAY))
+        assert outcomes == {}
+
+    async def test_a_show_with_no_rows_near_the_cutoff_is_absent(self, engine: AsyncEngine) -> None:
+        outcomes = await rewatch.show_rewatch_outcomes(engine, {5600}, cutoff=_at(NOW_EPOCH))
+        assert outcomes == {}  # caller reads a missing key as no play near the cutoff either side
+
+
 ANCIENT = datetime(2000, 1, 1, tzinfo=UTC)
 
 

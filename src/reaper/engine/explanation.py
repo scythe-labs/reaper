@@ -296,11 +296,10 @@ class Explanation(BaseModel):
     match: MatchOut | None = None
 
     rewatch_odds: RewatchOddsOut | None = None
-    """The Stage 2 rewatch-probability context (#554), movie lane only. ``None`` for a
-    season row (the fit is movie-only and the writer sends nothing for one, per
-    ``docs/history/REWATCH_PLAN.md``, Stage 2) and for a row stored before this field existed --
-    both read as nothing to show, the same safe default every optional block here takes
-    (rule 104)."""
+    """The rewatch-probability context (#554), both lanes: a movie's own dormancy block, a
+    season's the show's, off the lane's per-scan fit. ``None`` for a row stored before the
+    lane froze cohorts -- read as nothing to show, the same safe default every optional
+    block here takes (rule 104)."""
 
     signals: list[SignalContribution]
     keeps: list[KeepContributionOut] = Field(default_factory=list)

@@ -100,7 +100,7 @@ _NO_PANEL_ROUTE = {
         "and a detail string and builds no candidate, stores no Explanation and touches no "
         "snapshot, so nothing carries this reason to a panel"
     ),
-    "snapshot.NO_REWATCH_ESTIMATE_REASON": (
+    "rewatch.NO_REWATCH_ESTIMATE_REASON": (
         "rewatch_cohort_n/rewatch_cohort_k (#554 stage 2) feed only the stored explanation's "
         "rewatch_odds context block, read by its typed `state` in "
         "{measured, thin, no_history}; no gate reads either field, so this reason never "
@@ -1607,7 +1607,11 @@ class TestTheMatchStatusVocabulary:
         # `season_evidence.no_key_reason` reader the mid-binge hold already reads, so no
         # new reason constant and no new coverage gap -- two more call sites on a named,
         # already-covered reason.
-        assert walked == 47, (
+        # 47 -> 49: the rewatch cohort pair on the season lane (#554 TV hold), same
+        # season_scan._judge_series block. Both read `rewatch.NO_REWATCH_ESTIMATE_REASON`,
+        # the constant the movie lane's pair already reads (moved to rewatch.py so both
+        # lanes import one definition) -- two more call sites, no new reason.
+        assert walked == 49, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."
