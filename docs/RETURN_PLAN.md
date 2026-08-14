@@ -274,12 +274,20 @@ Frontend:
 | `GateId` union gains the new id | `frontend/src/components/policyMeta.ts` |
 | Both duration controls | `QuantityInput`, `units={TIME_UNITS}`, `min={1}` |
 | Typed mirror of the new policy fields | `frontend/src/api.ts` |
-| Why-panel sentence | `frontend/src/components/WhyPanel.tsx` |
+| Why-panel sentence with its countdown | `frontend/src/components/WhyPanel.tsx` |
+| The queue chip, outlined, with its countdown | `frontend/src/components/StatusChip.tsx` |
+| One chip class | the chip's stylesheet |
 
-No CSS. The control renders into the existing `.qty` shape
-(`frontend/src/styles/31-qty.css`), which `styles-control-standard.test.ts` explicitly exempts
-from the shared-control walk because the wrapper carries the border. A hand-rolled box would
-fail that walk, which is another reason not to build one.
+**The controls need no CSS. The chip does.** Both durations render into the existing `.qty`
+shape (`frontend/src/styles/31-qty.css`), which `styles-control-standard.test.ts` explicitly
+exempts from the shared-control walk because the wrapper carries the border, so a hand-rolled
+box would fail that walk. The chip is the opposite case: the `.chip` family has solid variants
+for the owner's decisions and outlined ones for Reaper's, and this needs an outlined variant
+that does not exist yet.
+
+The countdown also has to reach the browser. The stored explanation carries the numbers a panel
+renders, so the hold's end date belongs in the why-record beside the sentence rather than being
+recomputed in the browser from a policy value the card does not hold.
 
 Per the `CLAUDE.md` mock-up rule the frontend work still opens with a rendered HTML artifact in
 Reaper's look and feel (the `reaper-artifact` skill), approved before any frontend file is
@@ -312,13 +320,51 @@ for than to discover.
 Two sentences, one hold. Both are `rule 21` register: what happened, what it means for their
 files.
 
-- Reaper removed it, and the journal join confirms it: **"You removed this before and it came
+- Reaper removed it, and the journal join confirms it: **"you removed this before and it came
   back."** This is the confirmed regret, and it is the only mechanism Reaper has that can tell
   an operator their settings are too aggressive using their own library.
-- It left some other way: **"This left your library and came back."**
+- It left some other way: **"this left your library and came back."**
 
 Same hold strength for both. The distinction is the sentence, not the weight, because splitting
 them means a second knob for a difference nobody has measured.
+
+### It has to say how long, and it has to say it where the card is closed
+
+A hold measured in **months** is unlike every other protection Reaper has. The others are
+re-decided from scratch every scan, so "why is this kept" is answered by conditions the operator
+can go and look at. This one is a countdown against a date they cannot see, on evidence from a
+scan that may be a year old. Left unstated, the honest operator question is not "why" but "is it
+stuck forever."
+
+So the remaining time rides on both surfaces, not just in the card:
+
+- **The gate's `detail`, in the why card.** House style already carries the measurement inside
+  the detail string (`gates.py`: "watched here: 3 people in the last 90 days", "titles like this
+  keep getting watched: 12 of 40 within a year"). So: *"you removed this before and it came
+  back, 412 days left."*
+- **A chip on the queue row**, so it reads without opening anything: *"Came back, 412 days
+  left."*
+
+**Both patterns already exist**, built for the timed hand spare, and this reuses them rather
+than inventing a surface. `StatusChip` already turns "will be kept" into a countdown ("Spared by
+hand, 27 days left"), and `WhyPanel` already writes the matching sentence.
+
+One thing genuinely is new. The `.chip` family is currently the **owner's** vocabulary, where a
+solid fill means the owner decided and an outline means Reaper did. This hold is Reaper's, so it
+takes an outlined variant, and that is a class the family does not have yet.
+
+**Which protections get a chip: the ones with an expiry, and no others.** This is the line that
+keeps it from becoming a sweep across every gate. "Someone is watching it right now" and "well
+rated" are re-decided next scan and have nothing to count down, so a chip would add noise and no
+information. A hand spare has an expiry and already has one. This has an expiry. That is the
+whole rule, and it is worth writing into the change so the next protection is not argued about
+from scratch.
+
+**The countdown must not promise more than it delivers**, and the repository has already been
+burned here: `WhyPanel.test.tsx` pins the case where a spare kept *forever* was told "10 days
+left, then Reaper judges it again", which Reaper does not do. Here the sentence is true, because
+the hold does expire and the title is then judged normally. It has to keep being true if the
+mechanism is ever changed.
 
 A title with no external id cannot be tracked at all. It resolves `Unknown`, gets no protection,
 and that is a stated limitation rather than a bug: it is the same reach every id-matched feature
