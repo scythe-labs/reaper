@@ -481,6 +481,27 @@ opener's handle, and the fix was to stop needing one. This one had been settled 
 commit message for months, and it took an operator asking "we opened it, why can we not close
 it?" to get it tested.
 
+### 16. An external id names one copy. **It names one or two** (measured 2026-08-14)
+
+Roughly one movie entry in 150 shares its TMDb id with a second entry on the measured library,
+one per copy, each binding a different Plex listing. A 4K alongside an HD, or two instances
+managing the same title.
+
+This was found while designing #553, whose first shape was a ledger keyed on external id
+recording the Plex rating key last seen for that id. Keyed that way, the two copies overwrite
+each other every scan, so the ledger reads a changed key forever and every one of those titles
+takes a permanent hold nothing can clear.
+
+It is worth being precise about why the code review would not have caught it. `identity.py`
+already documents that one id can name several Plex items, at length, and narrows among them
+with four corroborators. The mistake was on the other side: assuming the **\*arr** holds one
+entry per id. Nothing said otherwise, and nothing was wrong, so there was nothing to read.
+
+⇒ A ledger keyed on an id holds a **set**, and identity churn is only real when the keys it
+displaced are gone from the index too. More generally: an id-keyed store wants its cardinality
+measured against real data before it is keyed, not reasoned about from the code that produces
+the ids.
+
 ---
 
 
@@ -948,6 +969,36 @@ rewatch curve as if it were physics. **Reaper still does, and now deliberately**
 that could have fitted one per operator never had a caller and was deleted with the replay it
 served (M3g, dropped). The curve in `docs/SIGNALS.md` is what every default reads, it is one
 library's, and #554 is the successor if a fitted answer is ever wanted.
+
+### A title does not leave an active library by accident (measured 2026-08-14)
+
+Over 35 snapshots spanning 24 days, across roughly 3,500 movies and 2,500 seasons, **nothing
+disappeared and came back**. One movie and two seasons left and stayed gone. The library only
+grew, every scan.
+
+A **negative result, and the one that sizes #553.** Its whole worry was that an innocent cause
+would drag a title back, an import list or a pack, and produce a false regret. On an active
+library the base rate for a title leaving at all is near zero, so a return is not something that
+happens by mistake. It is also why the design needs no exclusion-list round trip to prove a
+re-add was deliberate: there is nothing to tell it apart from.
+
+A floor, not a proof. One library, 24 days, an operator who adds rather than removes.
+
+### The Plex rating key is stable enough to detect a return (measured 2026-08-14)
+
+Same window. Holding the \*arr entry fixed, roughly **one movie entry in a thousand** changed the
+Plex rating key it was bound to, and **no season did**. Some of those are the case #553 exists to
+catch, an operator deleting a file and re-fetching it under the same \*arr entry, and the rest is
+Plex churn.
+
+⇒ "A different rating key than last time" is usable as the detector for a title that left and
+came back, and the residue is small and fails protective. A feature built on it should expect a
+low single-digit percentage of a library to accumulate a hold over a multi-year window, and
+should say so in advance rather than treat it as a defect later.
+
+**Measured with a query, not a rebuild**: `candidate` keeps `plex_rating_key` and the external
+ids per scan, so any install with snapshot history can re-run this against itself before
+trusting the detector.
 
 ---
 
