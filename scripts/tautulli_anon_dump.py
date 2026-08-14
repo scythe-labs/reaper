@@ -139,20 +139,29 @@ class Tautulli:
                 time.sleep(1 + attempt)
         raise RuntimeError(f"{cmd} failed after 3 tries: {last}")
 
-    def paged(self, cmd: str, *, cap: int | None = None, **params: Any) -> list[dict[str, Any]]:
+    def paged(
+        self, cmd: str, *, cap: int | None = None, note: Any = None, **params: Any
+    ) -> list[dict[str, Any]]:
         """Every row of a paginated table endpoint, or the first ``cap`` of them.
 
         ``start`` advances by what came back rather than by what was asked for. A server
         answering with more rows than the page requested would otherwise leave the cursor
         behind the data and re-read the overlap forever.
+
+        ``note`` reports every tenth page. A six-figure history is a few minutes of silence
+        otherwise, which reads as a hang to the one person this tool needs to keep waiting.
         """
         out: list[dict[str, Any]] = []
         start = 0
+        pages = 0
         while cap is None or len(out) < cap:
             length = PAGE if cap is None else min(PAGE, cap - len(out))
             data = self(cmd, start=start, length=length, **params)
             rows = (data or {}).get("data") or []
             out.extend(rows)
+            pages += 1
+            if note is not None and pages % 10 == 0:
+                note(f"    {len(out)} rows so far")
             if len(rows) < length:
                 break
             start += len(rows)
@@ -351,7 +360,7 @@ def collect_plays(api: Tautulli, mask: Mask, *, cap: int | None, note) -> list[d
     mirror drops, or types a missing value differently, replays into verdicts a real scan
     would not produce, and the difference would be read as an engine finding.
     """
-    rows = api.paged("get_history", cap=cap)
+    rows = api.paged("get_history", cap=cap, note=note)
     plays = []
     live = 0
     for row in rows:
