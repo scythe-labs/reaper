@@ -3896,6 +3896,59 @@ floor is by construction the slow one against the deepest history. A bound expre
 and read as a claim about another goes stale the moment either factor moves, and nothing in the
 type system or the tests notices. State the reach at the SMALLEST page the code can choose.
 
+## What a Tautulli-only dump can and cannot feed the engine (2026-08-14)
+
+Measured against a live instance while building `scripts/tautulli_anon_dump.py`, which asks
+other operators for a de-identified copy of their watch history so the scoring is tuned
+against more than one library.
+
+**Nine of the engine's facts come free, and they are the ones that needed real data.**
+`days_observed_unwatched`, `distinct_watchers`, `distinct_watchers_all_time`, `size_bytes`,
+`days_since_added`, `history_reach_days`, `season_rank`, `rewatch_viewings` and
+`rewatch_last_play_days` are all derivable from `get_library_media_info` plus `get_history`.
+So `MIN_DORMANCY`, `SERVER_POPULARITY`, `DATA_HORIZON`, `REWATCH_ODDS`, the rewatch fit and
+the whole of season pruning are testable from a foreign library. `services/rewatch.py` reads
+four columns, and a history dump carries all four.
+
+**The rating facts need a second source, and that source is free.**
+`imdb_rating_tenths` and `imdb_votes` are not in Tautulli, but `get_metadata` returns
+`guids` as `["imdb://tt...", "tmdb://...", "tvdb://..."]`, and the IMDb ratings dataset the
+app already uses needs no key. Joining locally and discarding the id is what keeps the dump
+from being reversible by whoever receives it: the id IS the title.
+
+**No show status anywhere.** `get_metadata` has no continuing-or-ended field on a show, so
+`show_ended` stays Sonarr-only. `release_age_days` does come back, as
+`originally_available_at`, and `quality` has a near-equivalent in `video_resolution`
+(a different vocabulary: "1080" where Sonarr says "Bluray-1080p").
+
+**A TV section's sweep reports no size at all.** 0 of 200 rows carried a `file_size`,
+against 200 of 200 in a movie section, and re-ordering the sweep by `file_size` did not
+change that. An episode's size lives only in `get_metadata(episode)`, under
+`media_info[0].parts[0].file_size`; `get_children_metadata` returns neither `media_info` nor
+`file_size` on its children. Totalling seasons that way costs one call per episode, roughly
+25,000 for a 990-show section. So the dump carries a null season size, which reads as
+"could not measure" rather than as zero, and TV size signals stay untestable from it.
+
+**Season structure is cheap by comparison.** One call per show for its seasons, one per
+season for the episode count that tells "part-way through" from "finished". Measured at 2.1
+seasons per show, that is about 3,000 calls for the same 990-show section, a few minutes.
+
+**The endpoints volunteer far more identity than the field names suggest.** A `get_history`
+row carries `ip_address`, `user`, `friendly_name`, `machine_id`, `platform`, `player`,
+`location`, `guid` and `full_title`. A `get_users` row carries `email` and `username`. An
+episode's `media_info` carries the full file path. None of that is needed by anything, and
+a dump tool written as a denylist would have shipped the IP addresses, because nobody
+looking at "watch history" expects them to be in it. `tautulli_anon_dump.py` copies named
+fields onto fresh dicts instead, and its test asserts the absent values rather than the
+present keys: a right-keys test passes just as well when a future Tautulli adds a field.
+
+**Rating keys churn, so a repeat dump needs a stored salt.** The high-water check exists
+because a re-added file gets a new key while its plays stay under the old one, and it can
+only be exercised by two dumps months apart that agree on which item is which. The tool
+therefore derives its tokens from a saved salt rather than drawing one per run, and shifts
+every timestamp by one stored whole-day offset so intervals survive while the wall clock
+does not.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

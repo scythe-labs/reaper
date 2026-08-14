@@ -27,6 +27,13 @@ If you want to know who writes this and how, the README has an honest answer und
 - **Ask a question.** [Discussions](https://github.com/scythe-labs/reaper/discussions) is the
   place for setup help, ideas that are still forming, and anything that is not yet an issue.
 - **Fix the docs.** Instructions that did not work are a bug.
+- **Send a watch-history dump.** Reaper's scoring is tuned against real libraries, and it has
+  been tuned against very few of them. `scripts/tautulli_anon_dump.py` reads your Tautulli and
+  writes a file holding the numbers the engine reads, with no titles, usernames, email
+  addresses, IP addresses or file paths in it. It is one file, it imports nothing from Reaper,
+  and it needs no install, so you can read all of it first. `--dry-run` prints a sample and
+  writes nothing. The script's own header says exactly what it keeps, what it rounds off, and
+  what it cannot hide.
 - **Try a pull request.** Every push builds an image, so a change can be run before it lands:
   `scripts/try-image.sh up --pr <number> --port 8421` on any machine with docker. It runs
   beside whatever else is on that host, and `--data copy:<volume-or-path>` gives it a copy of
