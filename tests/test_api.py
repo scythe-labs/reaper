@@ -2221,7 +2221,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
 def _rewatch_explanation(score: float, rewatch_odds: dict[str, Any]) -> str:
     """A candidate's explanation JSON, carrying a ``rewatch_odds`` context block on top of
-    the ordinary shape (docs/REWATCH_PLAN.md, Stage 2, "Storage and display")."""
+    the ordinary shape (docs/history/REWATCH_PLAN.md, Stage 2, "Storage and display")."""
     payload = json.loads(_explanation(score))
     payload["rewatch_odds"] = rewatch_odds
     return json.dumps(payload)
@@ -2332,7 +2332,7 @@ def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
 
 class TestTheRewatchOddsFitEndpoint:
     """GET /api/policy/rewatch-odds: the Policy page's fitted ladder and consequence echo
-    (docs/REWATCH_PLAN.md, Stage 2). Aggregated from the newest snapshot's frozen
+    (docs/history/REWATCH_PLAN.md, Stage 2). Aggregated from the newest snapshot's frozen
     ``rewatch_odds`` explanation blocks, never refit here (rule 104)."""
 
     def test_no_snapshot_returns_the_empty_shape(self, tmp_path: Path) -> None:

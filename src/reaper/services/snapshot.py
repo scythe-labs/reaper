@@ -286,7 +286,7 @@ NO_SIZE_REASON = "the file's size was not reported"
 #: scan (movie-only, an empty population), this dormancy falls outside the fitted range or
 #: inside a bucket dropped empty at fit time, or its block is withheld until the mirror's
 #: reach grows into it. One reason for all four -- the operator's takeaway is the same
-#: either way, no number to show (docs/REWATCH_PLAN.md, Stage 2).
+#: either way, no number to show (docs/history/REWATCH_PLAN.md, Stage 2).
 #:
 #: A KEY named by the usual ``*_REASON`` convention, but this one has NO route to the
 #: why-panel's CAUSE slot: ``rewatch_cohort_n``/``rewatch_cohort_k`` feed only the
@@ -436,7 +436,7 @@ def build_facts(
     # Known only when the current dormancy is Known AND the fit found a non-withheld block
     # for it; Unknown for every other reason at once (no fit, dormancy Unknown, past the
     # fitted range, a dropped bucket, withheld by reach) -- one reason constant, since the
-    # operator's takeaway is the same either way (docs/REWATCH_PLAN.md, Stage 2).
+    # operator's takeaway is the same either way (docs/history/REWATCH_PLAN.md, Stage 2).
     #
     # `cohort_block` is the one place the lookup and the withhold combine (rule 104):
     # `scan`'s per-item judge call re-derives the identical block off this same dormancy
@@ -1015,7 +1015,7 @@ async def scan(
         # The Stage 2 rewatch-probability fit (#554), refit every scan, movie-only, over
         # exactly the candidate set the scorer scores below -- the same movie_candidate_keys
         # and merged_groups the stats gather above uses (rule 72). Cutoff is a year back
-        # from scan time (docs/REWATCH_PLAN.md, Stage 2 Fit); added dates for the fallback
+        # from scan time (docs/history/REWATCH_PLAN.md, Stage 2 Fit); added dates for the fallback
         # training-pair route come off the scan's own items, never a second read.
         rewatch_cutoff = utcnow() - timedelta(days=365)
         rewatch_outcomes = await movie_rewatch_outcomes(
@@ -1785,7 +1785,7 @@ def _rewatch_odds_context(facts: Facts, block: RewatchBlock | None) -> dict[str,
     the item's ``Facts`` got.
 
     ``None`` for the season lane, whose ``rewatch_cohort_n`` is ``Absent`` --
-    ``docs/REWATCH_PLAN.md``, Stage 2 says the season lane writes nothing, and Absent is
+    ``docs/history/REWATCH_PLAN.md``, Stage 2 says the season lane writes nothing, and Absent is
     the season-only arm those two fields carry (never reached by a movie). Otherwise a
     movie item: the Unknown arms' zeroed placeholder with ``state="no_history"`` when there
     is no usable block, and the block's own pooled counts and range otherwise -- ``"thin"``

@@ -2190,7 +2190,7 @@ class TestRestoringALostRatingBar:
 
 
 class TestTheBuiltinRewatchKeep:
-    """The built-in habitual-rewatch keep (``docs/REWATCH_PLAN.md``, Stage 1): four
+    """The built-in habitual-rewatch keep (``docs/history/REWATCH_PLAN.md``, Stage 1): four
     ``PolicyBody`` fields, translated into one ``KeepConfig`` by ``keep_configs()`` on the
     movie lane only."""
 
@@ -2239,7 +2239,7 @@ class TestTheBuiltinRewatchKeep:
 
     def test_a_tv_body_appends_none_whatever_the_flag(self) -> None:
         """Movies only until a TV formulation clears the backtest bar
-        (``docs/REWATCH_PLAN.md``, TV section): the switch has no effect on the TV lane, so
+        (``docs/history/REWATCH_PLAN.md``, TV section): the switch has no effect on the TV lane, so
         both states of it are driven here rather than just the shipped default."""
         for enabled in (True, False):
             body = _policy(media_type="tv", rewatch_keep_enabled=enabled)
@@ -2261,7 +2261,7 @@ class TestTheBuiltinRewatchKeep:
 
 
 class TestTheRewatchOddsRow:
-    """The Stage 2 opt-in hold's policy row (``docs/REWATCH_PLAN.md``): unlike the Stage 1
+    """The Stage 2 opt-in hold's policy row (``docs/history/REWATCH_PLAN.md``): unlike the Stage 1
     keep, it carries no dedicated ``PolicyBody`` fields -- the operator's one knob is the
     ``GateSetting.threshold`` an ordinary gate row already has. ``PolicyBody._rewatch_odds_row``
     appends or strips the row instead."""

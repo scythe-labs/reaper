@@ -561,7 +561,7 @@ sub-50%-complete plays.
 
 ⇒ Reaper's rewatch protection says "watched again and again, and recently," never "on a
 cycle, due again." The first sentence is plainly true; the second is unsupported. Measured on
-one heavy-rewatch library, so the constants ship as starting values (`docs/REWATCH_PLAN.md`).
+one heavy-rewatch library, so the constants ship as starting values (`docs/history/REWATCH_PLAN.md`).
 Re-opening periodicity means clearing the lift bar in `docs/SIGNALS.md` first.
 
 ### Stage 1 implementation verification: an exact reproduction (measured 2026-08-13)

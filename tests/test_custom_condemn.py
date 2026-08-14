@@ -407,7 +407,7 @@ def _rewatch_keep(**over: object) -> KeepConfig:
 
 
 class TestBuiltinRewatchKeep:
-    """The built-in habitual-rewatch keep (``docs/REWATCH_PLAN.md`` Stage 1): a flat arm of
+    """The built-in habitual-rewatch keep (``docs/history/REWATCH_PLAN.md`` Stage 1): a flat arm of
     ``evaluate_keep`` keyed on ``field == REWATCH_KEEP``, deciding the condition over two
     frozen observations against the config's own two bars rather than a ramp."""
 

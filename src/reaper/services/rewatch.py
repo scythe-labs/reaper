@@ -3,12 +3,12 @@
 
 Successor to the deleted ``engine/calibration.py``: one derivation module for both stages
 of the rewatch plan, not two that could drift (rule 104). Movies only in this release; TV
-is deferred behind its own validation (``docs/REWATCH_PLAN.md``, TV section).
+is deferred behind its own validation (``docs/history/REWATCH_PLAN.md``, TV section).
 
 This module freezes raw inputs only -- qualified viewing count, and the most recent
 qualified play -- from an out-of-sample backtest against one heavy-rewatch library
 (``docs/LEARNINGS.md``, "Frequency plus recency is the signal that survived";
-``docs/REWATCH_PLAN.md``, Stage 1). Every play-derived count this feature adds goes through
+``docs/history/REWATCH_PLAN.md``, Stage 1). Every play-derived count this feature adds goes through
 :func:`qualifies`: unfiltered, over half of apparently cyclic titles in that backtest owed
 their pattern to abandoned sub-50%-complete plays. Whether a title's frozen stats amount to
 a rewatch habit is a policy-configurable bar decided in ``engine/signals.py``, not here, so
@@ -166,7 +166,7 @@ class RewatchBlock:
     ``n`` and ``k`` are the pooled counts after :func:`fit_blocks`'s monotonicity merge --
     a block born from several source buckets carries their combined counts and outer range,
     not any one bucket's own. The rate is ``k / n``, derived and never stored separately
-    (``docs/REWATCH_PLAN.md``, Stage 2)."""
+    (``docs/history/REWATCH_PLAN.md``, Stage 2)."""
 
     lo_days: float
     hi_days: float | None
@@ -179,7 +179,7 @@ class RewatchBlock:
 type RewatchCurve = tuple[RewatchBlock, ...]
 
 
-#: Bucket edges for the point estimate, half-open ``(lo, hi]`` (docs/REWATCH_PLAN.md, Stage
+#: Bucket edges for the point estimate, half-open ``(lo, hi]`` (docs/history/REWATCH_PLAN.md, Stage
 #: 2 Fit). The open tail past the last edge is the sentinel ``None`` appended in
 #: :func:`fit_blocks`, never a literal number, so nothing above 1825 days is silently
 #: excluded from the fit.
@@ -197,7 +197,7 @@ def _pool(a: RewatchBlock, b: RewatchBlock) -> RewatchBlock:
 
 def fit_blocks(pairs: Sequence[tuple[float, bool]]) -> RewatchCurve:
     """Fit the rewatch-probability curve over training ``(dormancy_days_at_cutoff,
-    watched_again)`` pairs (docs/REWATCH_PLAN.md, Stage 2 Fit).
+    watched_again)`` pairs (docs/history/REWATCH_PLAN.md, Stage 2 Fit).
 
     Pure: every pair is already computed by the caller (:func:`training_pair`), so this has
     no database, no clock, and no candidate-set boundary to police -- that trap belongs to
@@ -264,7 +264,7 @@ def cohort_block(
     A block is withheld until history grows into it when its NEAR edge is at or past the
     mirror's reach (``Facts.history_reach_days``, ``services.history_sync.horizon``): the
     mirror cannot have observed a real outcome that far back, so a block starting there is
-    not evidence yet, whatever its point estimate says (docs/REWATCH_PLAN.md, Stage 2:
+    not evidence yet, whatever its point estimate says (docs/history/REWATCH_PLAN.md, Stage 2:
     "Floor").
 
     The one place the lookup and the withhold are combined (rule 104), so every reader --
@@ -298,7 +298,7 @@ async def movie_rewatch_outcomes(
 
     Unlike :func:`movie_rewatch_stats`, this counts EVERY play, any completion: the fit's
     dormancy anchor and outcome are any-play, not the stage 1 keep's qualified filter
-    (docs/REWATCH_PLAN.md, Stage 2 Fit -- "any user, any completion", unlike the stage 1
+    (docs/history/REWATCH_PLAN.md, Stage 2 Fit -- "any user, any completion", unlike the stage 1
     keep's qualified filter). Chunked on ``db.KEY_CHUNK`` like the stage 1 sibling above
     (rule 94), and folds a merged Plex bind's listings onto its canonical key the same way
     (``groups``). A key with no rows in either window is absent from the result; a caller
@@ -369,7 +369,7 @@ def training_pair(
     """One candidate's ``(dormancy_days_at_cutoff, watched_again)`` training pair, or
     ``None`` when it is withheld from the population.
 
-    docs/REWATCH_PLAN.md, Stage 2 Fit: dormancy at cutoff is cutoff minus the last play at
+    docs/history/REWATCH_PLAN.md, Stage 2 Fit: dormancy at cutoff is cutoff minus the last play at
     or before cutoff; failing a play, cutoff minus the added date -- and only when the added
     date is itself at or before cutoff, since an item added inside the lookback year has no
     honest measurement at this cutoff and would otherwise fit a negative dormancy. That is

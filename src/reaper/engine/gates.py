@@ -405,7 +405,7 @@ class Facts:
     verdict: whether ``rewatch_viewings`` and this add up to a habitual-rewatch keep is a
     policy-configurable bar (a viewing floor, a recency window) decided in
     ``engine/signals.py``, not here, so an operator's threshold edit replays against these
-    frozen facts in the simulator without a re-scan (``docs/REWATCH_PLAN.md``, Stage 1).
+    frozen facts in the simulator without a re-scan (``docs/history/REWATCH_PLAN.md``, Stage 1).
     Four states:
 
     * ``Known(n)`` -- the mirror was read and at least one qualified play exists.
@@ -432,7 +432,7 @@ class Facts:
     That is what lets the opt-in protective hold (decided in the engine by the gate that
     reads it) and the simulator replay exactly against these frozen counts, the same reason
     ``rewatch_last_play_days`` above is frozen rather than pre-judged
-    (``docs/REWATCH_PLAN.md``, Stage 2).
+    (``docs/history/REWATCH_PLAN.md``, Stage 2).
 
     Known only when the current dormancy is Known AND the fit found a non-withheld block
     for it; Unknown otherwise (no key, watch-blind, dormancy Unknown, past the fitted range,
@@ -449,7 +449,7 @@ class Facts:
     """How many of ``rewatch_cohort_n`` were watched again inside the fit's outcome window --
     the block's watched-again count. Same block, same fit, same freeze as
     ``rewatch_cohort_n`` immediately above, including its Known/Unknown/Absent states; the
-    rate is ``k / n``, derived and never stored separately (``docs/REWATCH_PLAN.md``,
+    rate is ``k / n``, derived and never stored separately (``docs/history/REWATCH_PLAN.md``,
     Stage 2)."""
 
     ratings: tuple[Rating, ...] = ()
@@ -899,7 +899,7 @@ class MinDormancyGate:
 
 
 #: The cohort size under which a fitted rewatch block displays no number and can never fire
-#: the hold (``docs/REWATCH_PLAN.md``, stage 2). It lives here rather than in
+#: the hold (``docs/history/REWATCH_PLAN.md``, stage 2). It lives here rather than in
 #: ``services/rewatch.py`` because ``RewatchOddsGate`` below reads it and an engine module
 #: may not import a service.
 REWATCH_BLOCK_FLOOR_N = 30
@@ -936,7 +936,7 @@ class RewatchOddsGate:
     condemns, because on a shallow mirror most of the library has no measurable cohort and
     an opt-in extra protection must not amber-flag all of it. The items whose history is
     genuinely unreadable are already blocked by the dormancy and popularity gates reading
-    the same sources, so failing quiet here withdraws no cover (``docs/REWATCH_PLAN.md``,
+    the same sources, so failing quiet here withdraws no cover (``docs/history/REWATCH_PLAN.md``,
     stage 2, "The hold").
     """
 

@@ -103,7 +103,7 @@ _RECORDED_SURFACE: tuple[str, ...] = (
     # every stored movie body's policy_hash -- and the combined snapshot hash with it -- the
     # same unconditional way. The two facts feed only that gate and the display-only
     # rewatch_odds explanation context, never the rule-authoring vocabulary
-    # (docs/REWATCH_PLAN.md, Stage 2: "Not exposed in the rule-authoring vocabulary").
+    # (docs/history/REWATCH_PLAN.md, Stage 2: "Not exposed in the rule-authoring vocabulary").
     "facts.rewatch_cohort_k: Observation[int] = Absent(unset)",
     "facts.rewatch_cohort_n: Observation[int] = Absent(unset)",
     "facts.rewatch_last_play_days: Observation[float] = Absent(unset)",

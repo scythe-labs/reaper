@@ -76,7 +76,7 @@ async def _insert(
 
 
 class TestQualifiesTable:
-    """rule: the play filter, exact table from ``docs/REWATCH_PLAN.md`` Stage 1."""
+    """rule: the play filter, exact table from ``docs/history/REWATCH_PLAN.md`` Stage 1."""
 
     @pytest.mark.parametrize(
         ("watched_status", "percent_complete", "expected"),
@@ -294,7 +294,7 @@ class TestTheOnlyUnqualifiedPlaysPairingThroughBuildFacts:
 
 
 class TestFitBlocksBuckets:
-    """Bucket edges, half-open (lo, hi] (docs/REWATCH_PLAN.md, Stage 2 Fit)."""
+    """Bucket edges, half-open (lo, hi] (docs/history/REWATCH_PLAN.md, Stage 2 Fit)."""
 
     def test_365_lands_in_the_first_bucket(self) -> None:
         curve = rewatch.fit_blocks([(365.0, True)] * 40)
@@ -366,7 +366,7 @@ class TestBlockFor:
 
 class TestCohortBlock:
     """`cohort_block` combines the lookup with the reach withhold (rule 104, and
-    docs/REWATCH_PLAN.md, Stage 2, "Floor")."""
+    docs/history/REWATCH_PLAN.md, Stage 2, "Floor")."""
 
     BLOCK = rewatch.RewatchBlock(lo_days=365.0, hi_days=548.0, n=40, k=10)
 
@@ -385,7 +385,7 @@ class TestCohortBlock:
 
 
 class TestTrainingPair:
-    """The population rule, pure (docs/REWATCH_PLAN.md, Stage 2 Fit)."""
+    """The population rule, pure (docs/history/REWATCH_PLAN.md, Stage 2 Fit)."""
 
     CUTOFF = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -442,7 +442,7 @@ class TestMovieRewatchOutcomesEndToEnd:
 
     async def test_an_abandoned_play_still_counts(self, engine: AsyncEngine) -> None:
         """Unlike `movie_rewatch_stats`, no `qualifies()` filter: an under-50%, no-status
-        play still sets the last play before cutoff (docs/REWATCH_PLAN.md, Stage 2 Fit)."""
+        play still sets the last play before cutoff (docs/history/REWATCH_PLAN.md, Stage 2 Fit)."""
         await _insert(
             engine, rating_key=600, watched_at=NOW_EPOCH, watched_status=None, percent_complete=10
         )
@@ -535,7 +535,7 @@ def _scanned_facts(
 
 class TestRewatchCohortFacts:
     """`snapshot.build_facts`'s ``rewatch_cohort_n``/``rewatch_cohort_k``: the states table
-    (docs/REWATCH_PLAN.md, Stage 2, "Population in snapshot.build_facts")."""
+    (docs/history/REWATCH_PLAN.md, Stage 2, "Population in snapshot.build_facts")."""
 
     def test_no_plex_key_is_unknown(self) -> None:
         facts = _scanned_facts(rating_key=None, rewatch_curve=None)
@@ -597,7 +597,7 @@ def _known_cohort(block: rewatch.RewatchBlock) -> Facts:
 
 class TestRewatchOddsContext:
     """`snapshot._rewatch_odds_context`: the explanation block's three states, and the
-    season lane's ``None`` (docs/REWATCH_PLAN.md, Stage 2, "Storage and display")."""
+    season lane's ``None`` (docs/history/REWATCH_PLAN.md, Stage 2, "Storage and display")."""
 
     def test_season_lane_is_none_whatever_the_block(self) -> None:
         facts = replace(

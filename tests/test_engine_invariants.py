@@ -131,8 +131,8 @@ def facts(draw: st.DrawFn) -> Facts:
         # `Absent`, which the gate reads as un-checkable: every example would block, and
         # the invariants below would hold for a reason that has nothing to do with them.
         history_reach_days=draw(observations(st.floats(0, 5000, allow_nan=False))),
-        # The built-in rewatch keep's two frozen inputs (docs/REWATCH_PLAN.md, Stage 1). Left
-        # at their default (`Absent`, the season-lane shape) the rewatch entry in `_KEEPS`
+        # The built-in rewatch keep's two frozen inputs (docs/history/REWATCH_PLAN.md, Stage
+        # 1). Left at their default (`Absent`, the season-lane shape) the rewatch entry in `_KEEPS`
         # would only ever take its zero-discount arm, and the property tests below would say
         # nothing about the met/not-met/unreadable arms `_rewatch_keep` actually branches on.
         rewatch_viewings=draw(observations(small_ints)),
@@ -1512,7 +1512,7 @@ _KEEPS = [
         floor=0,
         saturate_at=5,
     ),
-    # The built-in rewatch keep (docs/REWATCH_PLAN.md, Stage 1): a flat arm keyed on
+    # The built-in rewatch keep (docs/history/REWATCH_PLAN.md, Stage 1): a flat arm keyed on
     # `field == REWATCH_KEEP`, deciding its condition over `rewatch_viewings` /
     # `rewatch_last_play_days` rather than ramping one field, so it needs its own entry here
     # to be under the same property tests as the two ramped keeps above. Bars off the shipped
