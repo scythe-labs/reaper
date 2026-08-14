@@ -2232,7 +2232,10 @@ def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot whose movie candidates carry every ``rewatch_odds`` state GET
     /api/policy/rewatch-odds aggregates: two "measured" rows sharing one block (so
     aggregation is provable, not just present), one "thin" row, one explicit "no_history"
-    row, and one row whose explanation JSON cannot be parsed at all.
+    row, and one row whose explanation JSON cannot be parsed at all. Two season rows carry
+    a second "measured" block with numbers distinguishable from the movie block (rule 141),
+    so a ``media_type=tv`` query can be told apart from the movie-only default rather than
+    merely returning a non-empty answer.
     """
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
@@ -2254,6 +2257,13 @@ def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
         session.flush()
 
         measured_block = {"state": "measured", "lo_days": 365.0, "hi_days": 548.0, "n": 40, "k": 12}
+        season_measured_block = {
+            "state": "measured",
+            "lo_days": 180.0,
+            "hi_days": 270.0,
+            "n": 20,
+            "k": 9,
+        }
         session.add_all(
             [
                 Candidate(
@@ -2320,6 +2330,30 @@ def rewatch_odds_client(tmp_path: Path) -> Iterator[TestClient]:
                     explanation_json="{not valid json",
                     created_at=now,
                 ),
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="sonarr:1:30",
+                    title="Season Measured One",
+                    media_type="season",
+                    verdict="abstain",
+                    score=10,
+                    coverage_bp=10_000,
+                    explanation_json=_rewatch_explanation(10, season_measured_block),
+                    created_at=now,
+                ),
+                Candidate(
+                    # Shares the season block above -- proves tv aggregation the same way
+                    # the two movie rows prove it.
+                    snapshot_id=snapshot.id,
+                    media_key="sonarr:1:31",
+                    title="Season Measured Two",
+                    media_type="season",
+                    verdict="abstain",
+                    score=10,
+                    coverage_bp=10_000,
+                    explanation_json=_rewatch_explanation(10, season_measured_block),
+                    created_at=now,
+                ),
             ]
         )
         session.commit()
@@ -2364,6 +2398,37 @@ class TestTheRewatchOddsFitEndpoint:
         assert block["k"] == 12
         assert block["items"] == 2  # both measured rows share this one identity
         assert block["upper_bound_pct"] == round(wilson_upper(12, 40) * 100, 1)
+
+    def test_media_type_tv_aggregates_season_rows_and_ignores_movie_rows(
+        self, rewatch_odds_client: TestClient
+    ) -> None:
+        # A TV policy scores seasons (_candidate_media_type), so ?media_type=tv reads only
+        # the two season rows and none of the five movie rows above.
+        body = rewatch_odds_client.get("/api/policy/rewatch-odds?media_type=tv").json()
+
+        assert body["total_items"] == 2
+        assert len(body["blocks"]) == 1
+        block = body["blocks"][0]
+        assert block["lo_days"] == 180.0
+        assert block["hi_days"] == 270.0
+        assert block["n"] == 20
+        assert block["k"] == 9
+        assert block["items"] == 2
+        assert block["upper_bound_pct"] == round(wilson_upper(9, 20) * 100, 1)
+
+    def test_media_type_defaults_to_movie(self, rewatch_odds_client: TestClient) -> None:
+        # No media_type param reads the same rows as an explicit ?media_type=movie, and
+        # never the season rows.
+        default_body = rewatch_odds_client.get("/api/policy/rewatch-odds").json()
+        movie_body = rewatch_odds_client.get("/api/policy/rewatch-odds?media_type=movie").json()
+
+        assert default_body == movie_body
+        assert default_body["total_items"] == 5
+
+    def test_media_type_rejects_an_unknown_value(self, rewatch_odds_client: TestClient) -> None:
+        response = rewatch_odds_client.get("/api/policy/rewatch-odds?media_type=book")
+
+        assert response.status_code == 422
 
 
 class TestPolicyValidation:

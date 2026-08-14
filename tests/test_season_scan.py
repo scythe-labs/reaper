@@ -39,11 +39,11 @@ from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
 from reaper.engine.signals import Score, SignalConfig
 from reaper.engine.signals import score as score_signals
 from reaper.ratings import Rating, RatingSource
-from reaper.services import history_sync, lists, requested_by, season_evidence, season_scan
+from reaper.services import history_sync, lists, requested_by, rewatch, season_evidence, season_scan
 from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import plan_series_prune
-from reaper.services.snapshot import _explain, _verdict
+from reaper.services.snapshot import _explain, _verdict, judge_facts
 from tests._fakes import FakeSonarr, FakeTautulli, show_library
 
 GB = 1024**3
@@ -874,6 +874,7 @@ async def _episode(
     days_ago: int = 1,
     episode: int | None = None,
     status: float | None = 1.0,
+    percent_complete: int = 100,
 ) -> None:
     """``status=None`` is the row Tautulli never told us the completion of."""
     when = int((utcnow() - timedelta(days=days_ago)).timestamp())
@@ -883,7 +884,7 @@ async def _episode(
                 "INSERT INTO watch_event (rating_key, parent_rating_key, "
                 "grandparent_rating_key, user_id, watched_at, watched_status, "
                 "percent_complete, media_type, media_index) "
-                "VALUES (:rk, :season, :show, :uid, :ts, :status, 100, 'episode', :ep)"
+                "VALUES (:rk, :season, :show, :uid, :ts, :status, :pct, 'episode', :ep)"
             ),
             {
                 "rk": season_key * 1000 + user_id + (episode or 0),
@@ -893,6 +894,7 @@ async def _episode(
                 "ts": when,
                 "ep": episode,
                 "status": status,
+                "pct": percent_complete,
             },
         )
 
@@ -2380,8 +2382,12 @@ class TestShowLevelRewatchFacts:
     """#554 TV: ``services.rewatch.show_rewatch_stats`` is read once per scan, and
     ``_judge_series`` turns it into the show's ``rewatch_viewings``/``rewatch_last_play_days``
     pair, stamped identically on every season of that show -- the same shape ``show_ended``
-    already carries. The cohort pair stays ``Absent`` throughout: the rewatch-probability fit
-    is movie-only.
+    already carries. The cohort pair (``rewatch_cohort_n``/``rewatch_cohort_k``) is the
+    season lane's own Stage 2 fit now, off the TV curve ``gather`` fits once per scan
+    (``TestTheTVCohortFit`` below); a show whose current dormancy lands nowhere in that
+    curve reads ``Unknown`` with the shared reason, never ``Absent`` -- the season lane
+    always has an opinion about its own cohort now, even when that opinion is "cannot say"
+    (the same discipline ``rewatch_viewings``/``rewatch_last_play_days`` already follow).
     """
 
     async def test_a_show_with_replayed_episodes_is_known_on_every_season(
@@ -2443,14 +2449,25 @@ class TestShowLevelRewatchFacts:
         # Show-level: computed once and stamped as the same object on the show's other season.
         assert s2.rewatch_viewings is s1.rewatch_viewings
         assert s2.rewatch_last_play_days is s1.rewatch_last_play_days
-        assert isinstance(s1.rewatch_cohort_n, Absent)
-        assert isinstance(s1.rewatch_cohort_k, Absent)
+        # This show is the only one in the whole scan and its season carries no added_at
+        # (``children`` above has none), so it contributes no training pair -- the fit is
+        # empty and no dormancy lands anywhere in it (``TestTheTVCohortFit`` below covers a
+        # populated curve).
+        assert s1.rewatch_cohort_n == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+        assert s1.rewatch_cohort_k == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
 
     async def test_a_resolved_show_with_no_qualified_plays_is_known_zero_and_absent(
         self, cache_engine: AsyncEngine
     ) -> None:
         """The show resolved and the mirror was read, but it holds nothing for this show: a
-        checked zero, not the failed read Unknown would claim (rule 93)."""
+        checked zero, not the failed read Unknown would claim (rule 93). It also has no
+        anchor at all for the Stage 2 cohort -- no play, and (like the sibling test above)
+        no season added_at -- so the cohort reads Unknown rather than Known, whatever the fit
+        found elsewhere."""
         series = [
             {
                 "id": 2,
@@ -2484,11 +2501,17 @@ class TestShowLevelRewatchFacts:
             watch_marks={},
         )
 
-        facts = next(j for j in judgments if j.media_key == "sonarr:1:2:1").facts
+        judgment = next(j for j in judgments if j.media_key == "sonarr:1:2:1")
+        facts = judgment.facts
         assert facts.rewatch_viewings == Known(value=0, source="tautulli")
         assert isinstance(facts.rewatch_last_play_days, Absent)
-        assert isinstance(facts.rewatch_cohort_n, Absent)
-        assert isinstance(facts.rewatch_cohort_k, Absent)
+        assert facts.rewatch_cohort_n == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+        assert facts.rewatch_cohort_k == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+        assert judgment.rewatch_block is None
 
     async def test_an_unresolved_show_is_unknown_on_both_rewatch_observations(
         self, cache_engine: AsyncEngine
@@ -2526,8 +2549,198 @@ class TestShowLevelRewatchFacts:
         assert isinstance(facts.rewatch_last_play_days, Unknown)
         assert facts.rewatch_viewings.reason == "Plex has not matched this season"
         assert facts.rewatch_last_play_days.reason == "Plex has not matched this season"
-        assert isinstance(facts.rewatch_cohort_n, Absent)
-        assert isinstance(facts.rewatch_cohort_k, Absent)
+        # The cohort's Unknown carries the one shared reason (rewatch.NO_REWATCH_ESTIMATE_
+        # REASON), not the match-status reason above: every "nothing to show" cause reads
+        # the same to the operator (services.snapshot.build_facts's own comment).
+        assert facts.rewatch_cohort_n == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+        assert facts.rewatch_cohort_k == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+
+
+class TestTheTVCohortFit:
+    """#554 TV, Stage 2: the TV curve ``gather`` fits off
+    ``services.rewatch.show_rewatch_outcomes`` (mirroring the movie lane's own fit in
+    ``snapshot.scan``), and the per-show cohort lookup ``_judge_series`` stamps off it."""
+
+    async def test_a_show_in_a_fitted_block_stamps_known_cohort_on_every_season(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Two shows train the fit's (0, 365] block: Show A watched again inside the year,
+        Show B was not, so the pooled block is a distinguishable, non-default n=2/k=1 (rule
+        141) -- never the "no entry" zero a bug swallowing the fit could also produce. Show
+        A's own current dormancy (its most recent play) falls in that same block, so every
+        one of its seasons is stamped ``Known`` off it, sharing the identical object (``is``)
+        the way ``rewatch_viewings`` already does.
+        """
+        series = [
+            {
+                "id": 10,
+                "title": "Fitted Show A",
+                "year": 2011,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1), _season_payload(2)],
+            },
+            {
+                "id": 11,
+                "title": "Fitted Show B",
+                "year": 2012,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1)],
+            },
+        ]
+        tautulli = show_library(
+            rows=[
+                {"rating_key": 910, "title": "Fitted Show A", "year": 2011},
+                {"rating_key": 920, "title": "Fitted Show B", "year": 2012},
+            ],
+            children={
+                910: [{"media_index": 1, "rating_key": 911}, {"media_index": 2, "rating_key": 912}],
+                920: [{"media_index": 1, "rating_key": 921}],
+            },
+        )
+        # Show A: an old play (well before the year-back cutoff) trains the fit, and a
+        # recent one both marks the training pair "watched again" and anchors its own
+        # current lookup at ~5 days dormant -- inside the (0, 365] block the training pairs
+        # populate.
+        await _episode(cache_engine, season_key=911, user_id=1, show_key=910, days_ago=400)
+        await _episode(cache_engine, season_key=911, user_id=1, show_key=910, days_ago=5, episode=2)
+        # Show B: the same old-play training anchor, never watched again -- the block's
+        # other member.
+        await _episode(cache_engine, season_key=921, user_id=2, show_key=920, days_ago=400)
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+        )
+
+        by_key = {j.media_key: j for j in judgments}
+        s1 = by_key["sonarr:1:10:1"]
+        s2 = by_key["sonarr:1:10:2"]
+        assert s1.facts.rewatch_cohort_n == Known(value=2, source="tautulli")
+        assert s1.facts.rewatch_cohort_k == Known(value=1, source="tautulli")
+        # Every season of the show shares the identical block object.
+        assert s2.facts.rewatch_cohort_n is s1.facts.rewatch_cohort_n
+        assert s2.facts.rewatch_cohort_k is s1.facts.rewatch_cohort_k
+        assert s1.rewatch_block is not None
+        assert s1.rewatch_block is s2.rewatch_block
+        assert (s1.rewatch_block.n, s1.rewatch_block.k) == (2, 1)
+
+        # Pipeline-level (rule 5 of #554 TV): the season lane's Known cohort really reaches
+        # the stored explanation through the shared judge_facts/_explain path snapshot.scan
+        # uses for every season row, not just the in-memory Facts object.
+        gates = build_gates(DEFAULT_TV_POLICY)
+        signals = [
+            SignalConfig(signal=s.signal, weight=s.weight, saturate_at=s.saturate_at, floor=s.floor)
+            for s in DEFAULT_TV_POLICY.signals
+        ]
+        judged = judge_facts(
+            s1.facts,
+            gates,
+            DEFAULT_TV_POLICY,
+            signals=signals,
+            custom_condemn=DEFAULT_TV_POLICY.custom_signal_configs(),
+            keeps=DEFAULT_TV_POLICY.keep_configs(),
+            window_days=DEFAULT_TV_POLICY.popularity_window_days(),
+            extra_results=(s1.guard_result,),
+            rewatch_block=s1.rewatch_block,
+        )
+        stored = json.loads(judged.explanation)
+        assert stored["rewatch_odds"] == {
+            "n": 2,
+            "k": 1,
+            "lo_days": 0.0,
+            "hi_days": 365.0,
+            "state": "thin",
+        }
+
+    async def test_the_cohort_lookup_uses_the_any_play_anchor_not_the_qualified_one(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The discriminating case: this show's only RECENT play is unqualified (low percent
+        complete), so the stage 1 keep's qualified ``rewatch_last_play_days`` reads its older
+        qualified play (~400 days back) -- but the Stage 2 cohort lookup must anchor on the
+        ANY-play last play (~5 days back, unqualified) exactly as
+        ``services.rewatch.show_rewatch_outcomes`` promises, or it reads the wrong dormancy
+        entirely.
+
+        The fit is trained off this show's own old-play-to-recent-play pair, which lands in
+        the (0, 365] block. If the lookup mistakenly anchored on the qualified ~400-day play
+        instead, that dormancy falls in the DIFFERENT (365, 548] block -- which the fit never
+        populated -- and the cohort would read Unknown instead of Known. That divergence is
+        what makes this test discriminate the two anchors rather than merely re-assert the
+        cohort code path test 1 above already covers.
+        """
+        series = [
+            {
+                "id": 20,
+                "title": "Unqualified Recent Play Show",
+                "year": 2013,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1)],
+            }
+        ]
+        tautulli = show_library(
+            rows=[{"rating_key": 930, "title": "Unqualified Recent Play Show", "year": 2013}],
+            children={930: [{"media_index": 1, "rating_key": 931}]},
+        )
+        # The older QUALIFIED play: what rewatch_last_play_days (stage 1) must read, and
+        # what trains the fit's (0, 365] block (~35 days before the year-back cutoff).
+        await _episode(cache_engine, season_key=931, user_id=1, show_key=930, days_ago=400)
+        # The newer play: low percent_complete, no watched_status, so `rewatch.qualifies`
+        # rejects it -- but Stage 2's any-play anchor counts it regardless (module docstring:
+        # "any user, any completion").
+        await _episode(
+            cache_engine,
+            season_key=931,
+            user_id=1,
+            show_key=930,
+            days_ago=5,
+            episode=2,
+            status=None,
+            percent_complete=10,
+        )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+        )
+
+        facts = next(j for j in judgments if j.media_key == "sonarr:1:20:1").facts
+        # Stage 1 stays on the older QUALIFIED play.
+        assert facts.rewatch_last_play_days == Known(value=400, source="tautulli")
+        # Stage 2's cohort is Known -- only possible if the lookup anchored on the recent
+        # any-play (~5 days, inside the trained block), not the qualified ~400-day play
+        # (outside it, where the cohort would read Unknown).
+        assert facts.rewatch_cohort_n == Known(value=1, source="tautulli")
+        assert facts.rewatch_cohort_k == Known(value=1, source="tautulli")
 
 
 class TestUserSeasonProgress:

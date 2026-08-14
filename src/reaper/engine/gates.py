@@ -437,10 +437,11 @@ class Facts:
     Known only when the current dormancy is Known AND the fit found a non-withheld block
     for it; Unknown otherwise (no key, watch-blind, dormancy Unknown, past the fitted range,
     a dropped bucket, or withheld by reach) -- never Absent, unlike the stage 1 pair above:
-    a movie candidate this scan measured always has an opinion about its own dormancy block,
-    even when that opinion is "cannot say" (``services.snapshot.build_facts``). The season
-    lane sets this Absent instead: it ships no rewatch-probability estimate at all
-    (``services.season_scan.build_season_facts``).
+    a candidate this scan measured always has an opinion about its own dormancy block, even
+    when that opinion is "cannot say". Both lanes freeze it -- a movie its own block
+    (``services.snapshot.build_facts``), a season its show's, off the TV curve the season
+    task fits the same way (``services.season_scan._judge_series``). Absent means
+    hand-built Facts that never gathered a curve at all.
 
     Defaulted like the fields above, and read the same way: anything but ``Known`` never
     condemns and never argues the hold (rule 104)."""
@@ -925,10 +926,11 @@ def wilson_upper(k: int, n: int) -> float:
 class RewatchOddsGate:
     """Keep anything whose kind gets watched again at or above the operator's percentage.
 
-    Movies only, opt-in, and the one gate that reads the fitted rewatch curve: the item's
+    Opt-in on both lanes, and the one gate that reads the fitted rewatch curve: the item's
     frozen cohort (``Facts.rewatch_cohort_n`` / ``rewatch_cohort_k``) is its merged dormancy
-    block from the per-scan fit, and the comparison is the Wilson 95% upper bound of that
-    block's rate against ``config.threshold`` percent.
+    block from the per-scan fit -- a movie's own, a season's the show's
+    (``docs/LEARNINGS.md``, the TV fit entry) -- and the comparison is the Wilson 95% upper
+    bound of that block's rate against ``config.threshold`` percent.
 
     **An unreadable cohort abstains without blocking, and that is a documented deviation**
     from the fail-closed ``_blocked`` arm every other gate takes (rule 143's corollary,
@@ -953,8 +955,9 @@ class RewatchOddsGate:
                 detail="Not enough watch history to say how often titles like this get watched.",
             )
         if not (isinstance(n_obs, Known) and isinstance(k_obs, Known)):
-            # The season lane, and any hand-built Facts: the fit ships no TV answer, so
-            # there is genuinely nothing to compare (rule 93's Absent, not a failed read).
+            # Hand-built Facts that never gathered a curve: both live lanes freeze a
+            # cohort now, so a genuine Absent means nothing to compare (rule 93's Absent,
+            # not a failed read).
             return GateResult(self.id, ABSTAIN, detail="Does not apply here.")
         n = int(n_obs.value)
         k = int(k_obs.value)

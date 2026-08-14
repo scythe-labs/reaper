@@ -86,7 +86,7 @@ export const GATE_META: Record<string, GateMeta> = {
   // stored gate row. The entry stays complete so the simulator's spared-by list and any
   // stored explanation name it properly.
   rewatch_odds: {
-    label: "Keep anything likely to be watched above a percentage",
+    label: "Keep titles most likely to be rewatched above a percentage",
     help: "Measured from your own history: when titles that sat unwatched this long got watched again often enough, this one is kept.",
   },
   streaming_now: {

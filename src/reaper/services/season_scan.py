@@ -191,6 +191,15 @@ class SeasonJudgment:
     """Set when this season's watch history stopped being readable, and already applied to
     ``facts``. Carried so the caller can COUNT it without deciding it a second time: one
     decision, made where the marks are compared, read everywhere else."""
+
+    rewatch_block: rewatch.RewatchBlock | None = None
+    """The show's Stage 2 rewatch-probability cohort block (#554 TV), the same one that fed
+    ``facts.rewatch_cohort_n``/``rewatch_cohort_k`` -- carried separately because ``Facts``
+    does not hold a block's dormancy bounds, the movie lane's own reason
+    (``snapshot.scan``'s per-item ``rewatch_block``). Every season of a show shares its
+    show's block (``is`` identity): computed once per show in ``_judge_series``. ``None``
+    when the show has no usable block, read by ``snapshot._rewatch_odds_context`` exactly
+    like the movie lane's."""
     # Display fields, carried onto the candidate. A season's blurb and year are the show's;
     # ``group_key``/``group_title`` collapse every season under one show row in the review
     # queue. None of them affect the verdict. The poster comes off ``show_rating_key`` below
@@ -499,6 +508,11 @@ def build_season_facts(
     # show in _judge_series -- exactly like show_ended above -- and handed in ready-made.
     rewatch_viewings: Observation[int] = _UNSET_OBS,
     rewatch_last_play_days: Observation[float] = _UNSET_OBS,
+    # The show's Stage 2 rewatch-probability cohort (#554 TV), off the TV curve fitted once
+    # per scan in ``gather`` and looked up once per show in ``_judge_series`` -- the season
+    # twin of the pair above, handed in ready-made the same way.
+    rewatch_cohort_n: Observation[int] = _UNSET_OBS,
+    rewatch_cohort_k: Observation[int] = _UNSET_OBS,
     show_match_status: identity.MatchStatus | None = None,
     # Set when this season measured fewer plays than it has measured before, which a
     # library cannot do -- see ``services.watch_evidence``. The season's history is read by
@@ -702,11 +716,11 @@ def build_season_facts(
         # docs/LEARNINGS.md, TV entry). Ready-made observations, computed once per show.
         rewatch_viewings=rewatch_viewings,
         rewatch_last_play_days=rewatch_last_play_days,
-        # The rewatch-probability fit is movie-only (#554 stage 2): a season carries no
-        # cohort to report, and the stored explanation's rewatch_odds context writes
-        # nothing for it (services.snapshot._rewatch_odds_context).
-        rewatch_cohort_n=Absent(source="tautulli"),
-        rewatch_cohort_k=Absent(source="tautulli"),
+        # The show's Stage 2 rewatch-probability cohort (#554 TV), stamped on every season of
+        # the show it belongs to, off the TV curve ``gather`` fits once per scan
+        # (services.rewatch.fit_blocks) -- the season lane's own fit, not the movie lane's.
+        rewatch_cohort_n=rewatch_cohort_n,
+        rewatch_cohort_k=rewatch_cohort_k,
         ratings=rating_set,
     )
 
@@ -1507,9 +1521,51 @@ async def gather(
             item.seasons_in_plex = resolved_shows[item.show_rating_key]
             all_season_keys.update(s.rating_key for s in item.seasons_in_plex.values())
 
+    # The one clock read for the mid-binge expiry AND the rewatch fit below, taken once so
+    # every show in this scan judges viewer activity -- and the fit's cutoff -- against the
+    # same instant (the snapshot discipline).
+    now = utcnow()
+
     stats = await season_watch_stats(engine, all_season_keys, window_days=window_days)
     # Same mirror as season_watch_stats above, same failure semantics: no try/except here.
-    rewatch_stats = await rewatch.show_rewatch_stats(engine, set(show_keys))
+    show_key_set = set(show_keys)
+    rewatch_stats = await rewatch.show_rewatch_stats(engine, show_key_set)
+
+    # The Stage 2 rewatch-probability fit, TV lane (#554): the movie lane's fit runs in
+    # snapshot.scan over its own candidate set (rule 104: same shared pure functions). The
+    # season task runs parallel to the movie gather rather than after it, so it fits its own
+    # TV curve here instead of reading the movie lane's. Cutoff a year back from scan time,
+    # mirroring the movie fit's comment.
+    rewatch_cutoff = now - timedelta(days=365)
+    outcomes_train = await rewatch.show_rewatch_outcomes(
+        engine, show_key_set, cutoff=rewatch_cutoff
+    )
+    # Reused for a second purpose: each show's last ANY-play at or before `now`, the current
+    # dormancy anchor `_judge_series` looks the cohort up against below. Only the
+    # `last_play_at_or_before_cutoff` half is read for that; `watched_again` (a play in the
+    # 365 days after `now`) is unused -- that window has not happened yet.
+    outcomes_now = await rewatch.show_rewatch_outcomes(engine, show_key_set, cutoff=now)
+    # A show's earliest season arrival: the nearest analog here to the movie fit's per-item
+    # library added date, `training_pair`'s fallback anchor when a show has no play at or
+    # before cutoff.
+    show_added: dict[int, datetime | None] = {
+        rk: min(
+            (season.added_at for season in seasons.values() if season.added_at is not None),
+            default=None,
+        )
+        for rk, seasons in resolved_shows.items()
+    }
+    rewatch_pairs = [
+        pair
+        for rk in show_key_set
+        if (
+            pair := rewatch.training_pair(
+                outcomes_train.get(rk), added_at=show_added.get(rk), cutoff=rewatch_cutoff
+            )
+        )
+        is not None
+    ]
+    tv_curve = rewatch.fit_blocks(rewatch_pairs)
 
     # Series-level IMDb ratings, from the dataset we already ingest, applied to each season
     # (a season has no IMDb title of its own). A degraded dataset degrades the whole snapshot
@@ -1539,10 +1595,6 @@ async def gather(
         ratings = {}
         ratings_degraded = True
 
-    # The one clock read for the mid-binge expiry, taken once so every show in this scan
-    # judges viewer activity against the same instant -- the snapshot discipline.
-    now = utcnow()
-
     judgments: list[SeasonJudgment] = []
     for item in work:
         judgments.extend(
@@ -1550,6 +1602,9 @@ async def gather(
                 item,
                 stats=stats,
                 rewatch_stats=rewatch_stats,
+                tv_curve=tv_curve,
+                outcomes_now=outcomes_now,
+                show_added=show_added,
                 horizon=horizon,
                 reach_days=reach_days,
                 now=now,
@@ -1583,6 +1638,18 @@ def _judge_series(
     # (`services.rewatch.show_rewatch_stats`, gathered in `gather`). A show key with no
     # qualified play carries no entry; a caller reads a missing key as zero viewings.
     rewatch_stats: Mapping[int, rewatch.RewatchStats],
+    # The Stage 2 rewatch-probability fit for TV, refit once per scan in `gather` exactly
+    # like the movie lane's own fit in `snapshot.scan` (rule 104: same shared pure functions,
+    # each lane fits its own curve).
+    tv_curve: rewatch.RewatchCurve,
+    # Each show's last ANY-play at or before `gather`'s `now`, read once per scan beside
+    # `rewatch_stats` above (`services.rewatch.show_rewatch_outcomes`). The current-dormancy
+    # anchor for the cohort lookup below -- NOT `rewatch_stats`, which is the stage 1 keep's
+    # QUALIFIED last play, trained on a different filter than the fit was.
+    outcomes_now: Mapping[int, rewatch.RewatchOutcome],
+    # Each show's earliest season arrival, the fallback anchor when it has no any-play at or
+    # before `now` -- the same fallback order `training_pair` trains the curve on.
+    show_added: Mapping[int, datetime | None],
     horizon: datetime,
     reach_days: int,
     now: datetime | None = None,
@@ -1746,6 +1813,49 @@ def _judge_series(
             else Absent(source="tautulli")
         )
 
+    # --- rewatch cohort (#554 TV) -----------------------------------------------------
+    # The current dormancy anchor for the cohort lookup: `outcomes_now`'s last ANY-play at
+    # or before `now`, falling back to the show's earliest season arrival -- the identical
+    # fallback order `training_pair` trains the curve on (rule 104), so a show read as
+    # "just watched" at fit time is read as "just watched" at lookup time too. Deliberately
+    # NOT `rewatch_last_play_days_obs` above: that is the stage 1 keep's QUALIFIED last
+    # play, a different quantity trained on a different filter than the fit was
+    # (`rewatch.show_rewatch_outcomes`'s docstring: any play, any completion).
+    cohort_anchor: datetime | None
+    if item.show_rating_key is None:
+        cohort_anchor = None
+    else:
+        show_outcome = outcomes_now.get(item.show_rating_key)
+        cohort_anchor = (
+            show_outcome.last_play_at_or_before_cutoff
+            if show_outcome is not None
+            else show_added.get(item.show_rating_key)
+        )
+    # `reach_days` is the same mirror-reach quantity `snapshot.build_facts` freezes as
+    # `Facts.history_reach_days` off `context.reach_days` -- both derive from the watch
+    # mirror's horizon, so the movie and TV fits withhold a too-shallow block by the
+    # identical bound (`gather`'s caller passes the same `context.reach_days` in, mirroring
+    # the movie lane's own call).
+    rewatch_block = (
+        rewatch.cohort_block(
+            tv_curve, dormancy_days(cohort_anchor, now=judged_at), reach_days=reach_days
+        )
+        if cohort_anchor is not None
+        else None
+    )
+    rewatch_cohort_n_obs: Observation[int]
+    rewatch_cohort_k_obs: Observation[int]
+    if rewatch_block is not None:
+        rewatch_cohort_n_obs = Known(value=rewatch_block.n, source="tautulli")
+        rewatch_cohort_k_obs = Known(value=rewatch_block.k, source="tautulli")
+    else:
+        # One reason constant for every "nothing to show" cause at once (no fit, no anchor,
+        # past the fitted range, a dropped bucket, withheld by reach) -- the operator's
+        # takeaway is the same either way, the movie lane's own comment
+        # (`snapshot.build_facts`).
+        rewatch_cohort_n_obs = Unknown(reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli")
+        rewatch_cohort_k_obs = Unknown(reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli")
+
     # Built over the seasons ON DISK -- the exact set the conflict detector compares --
     # not over the ones Plex happened to resolve (rule 30). A season on disk that Plex
     # never resolved has no rating key, so nobody could read its history: that is None,
@@ -1901,6 +2011,8 @@ def _judge_series(
             genres=show_genres_obs,
             rewatch_viewings=rewatch_viewings_obs,
             rewatch_last_play_days=rewatch_last_play_days_obs,
+            rewatch_cohort_n=rewatch_cohort_n_obs,
+            rewatch_cohort_k=rewatch_cohort_k_obs,
             show_match_status=item.match_status,
         )
         # Requested-by, display only, never a gate. The tier precedence (including B-10's
@@ -1941,6 +2053,7 @@ def _judge_series(
                 prune_input=prune_input,
                 watch_reading=reading,
                 watch_blind_reason=season_blind,
+                rewatch_block=rewatch_block,
                 year=show_year,
                 summary=show_summary,
                 requested_by=season_requester_name,

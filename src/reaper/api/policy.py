@@ -16,7 +16,7 @@ import json
 from typing import assert_never
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -280,14 +280,18 @@ def _candidate_media_type(policy_media_type: str) -> str:
 
 
 @router.get("/policy/rewatch-odds", tags=[api_tags.POLICY])
-async def rewatch_odds_fit(request: Request) -> RewatchOddsFitOut:
+async def rewatch_odds_fit(
+    request: Request,
+    media_type: str = Query("movie", pattern="^(movie|tv)$"),
+) -> RewatchOddsFitOut:
     """The latest scan's fitted rewatch ladder, for the Policy page's rungs and echo.
 
     Aggregated from the per-candidate ``rewatch_odds`` blocks the scan froze, never refit
     here (rule 104): the page states what the gate will actually compare, and the two cannot
     disagree. A row that is thin, has no usable block, or cannot be read at all contributes
     to ``total_items`` and no block -- the conservative display answer (rule 96); this route
-    decides nothing about a reap.
+    decides nothing about a reap. Covers both lanes: a movie policy scores movies, a TV
+    policy scores seasons (``_candidate_media_type``).
     """
     blocks: dict[tuple[float, float | None], dict[str, int]] = {}
     total = 0
@@ -300,7 +304,8 @@ async def rewatch_odds_fit(request: Request) -> RewatchOddsFitOut:
         rows = (
             await session.execute(
                 select(Candidate.explanation_json).where(
-                    Candidate.snapshot_id == newest.id, Candidate.media_type == "movie"
+                    Candidate.snapshot_id == newest.id,
+                    Candidate.media_type == _candidate_media_type(media_type),
                 )
             )
         ).scalars()

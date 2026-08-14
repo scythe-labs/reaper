@@ -635,23 +635,45 @@ describe("the rewatch keep card", () => {
     expect(await screen.findByRole("switch", { name: SWITCH_NAME })).toBeInTheDocument();
   });
 
-  it("renders on the TV policy too, with TV wording, no hold half, and no rewatch-odds fetch", async () => {
+  it("renders on the TV policy too, with TV wording, the hold half, and a tv-scoped fetch", async () => {
     // `apiMock` is module-level, so its call counts carry across this file. Counted from zero
     // here, or the premise below reads whatever the preceding tests happened to leave.
     apiMock.rewatchOddsFit.mockClear();
-    renderEditor({ body: tvBody() }, pace, null, [], "flags", "tv");
+    const fit: RewatchOddsFit = {
+      blocks: [{ lo_days: 0, hi_days: 365, n: 20, k: 10, upper_bound_pct: 50, items: 40 }],
+      total_items: 40,
+    };
+    renderEditor(
+      {
+        body: tvBody({
+          gates: [{ gate: "rewatch_odds", enabled: true, threshold: 30, window_days: 0 }],
+        }),
+      },
+      pace,
+      null,
+      [],
+      "flags",
+      "tv",
+      fit,
+    );
 
     expect(
       await screen.findByRole("switch", { name: "Keep shows most likely to be rewatched" }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Watched again by anyone at least")).toBeInTheDocument();
-    // The hold half is movie-only: a TV body carries no rewatch_odds gate row at all.
+    // Same grammar as movies (#554): a TV body carries its own rewatch_odds gate row now,
+    // so the hold half renders and fetches the TV lane's own fit.
     expect(
-      screen.queryByRole("switch", {
-        name: "Keep anything likely to be watched above a percentage",
+      await screen.findByRole("switch", {
+        name: "Keep shows most likely to be rewatched above a percentage",
       }),
-    ).not.toBeInTheDocument();
-    expect(apiMock.rewatchOddsFit).not.toHaveBeenCalled();
+    ).toBeInTheDocument();
+    expect(apiMock.rewatchOddsFit).toHaveBeenCalledWith("tv");
+    expect(
+      await screen.findByText(
+        "At 30%, this protects shows unwatched under about 1 year, 40 of 40.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("hides its three controls while the switch is off, like every other settings card", async () => {
@@ -705,7 +727,7 @@ describe("the rewatch keep card", () => {
 });
 
 describe("the rewatch-odds hold, the grouped card's second half (#554 stage 2)", () => {
-  const HOLD_SWITCH_NAME = "Keep anything likely to be watched above a percentage";
+  const HOLD_SWITCH_NAME = "Keep titles most likely to be rewatched above a percentage";
   const PERCENT_LABEL = "Kept when the chance is at least";
 
   // Off the server default (25, rule 141): a fixture pinning 25 could not prove an edit

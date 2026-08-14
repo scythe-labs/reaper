@@ -2321,21 +2321,28 @@ class TestTheRewatchOddsRow:
         assert rows[0].enabled is True
         assert rows[0].threshold == 40
 
-    def test_a_tv_body_never_carries_the_row(self) -> None:
-        """The season lane freezes the gate's two cohort facts ``Absent``, so on a TV
-        body the gate could never fire (rule 38); this catches a hand-crafted body
-        arriving through the API or a restore, since the editor never offers the row
-        there. Driven with the row explicitly present, not just omitted, so the strip is
-        proven rather than a no-op over a row that was never there."""
-        body = _policy(
+    def test_a_tv_body_gets_the_row_appended_and_keeps_an_operators_threshold(self) -> None:
+        """The parity stage: season rows freeze real cohorts now, so a TV body carries the
+        row exactly as a movie body does -- appended disabled at 25 when missing, and an
+        operator's own 40 kept when present (rule 141). The old strip is gone; this class
+        used to prove it with the row explicitly present, and the same construction now
+        proves survival instead."""
+        appended = _policy(media_type="tv", gates=(GateSetting(gate=GateId.WHITELISTED),))
+        rows = [g for g in appended.gates if g.gate is GateId.REWATCH_ODDS]
+        assert len(rows) == 1
+        assert rows[0].enabled is False
+        assert rows[0].threshold == 25
+
+        kept = _policy(
             media_type="tv",
             gates=(
                 GateSetting(gate=GateId.WHITELISTED),
                 GateSetting(gate=GateId.REWATCH_ODDS, enabled=True, threshold=40),
             ),
         )
-
-        assert all(g.gate is not GateId.REWATCH_ODDS for g in body.gates)
+        row = next(g for g in kept.gates if g.gate is GateId.REWATCH_ODDS)
+        assert row.enabled is True
+        assert row.threshold == 40
 
     def test_the_row_changes_the_stored_hash_from_what_a_pre_upgrade_install_wrote(
         self,

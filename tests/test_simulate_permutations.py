@@ -376,7 +376,7 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
         for c in (0, 2_500, 7_500, 10_000)
     ],
     # --- every shipped gate, dropped ------------------------------------------------
-    # Except the rewatch-odds row: a movie body cannot NOT carry it
+    # Except the rewatch-odds row: a validated body cannot NOT carry it, either lane
     # (`PolicyBody._rewatch_odds_row` re-appends it on validation), so a dropped copy is a
     # shape no wire round-trip can preserve and no operator can produce.
     *[

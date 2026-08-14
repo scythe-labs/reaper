@@ -1264,12 +1264,14 @@ function rewatchFitStatus(
   fit: RewatchOddsFit | undefined,
   isPending: boolean,
   isError: boolean,
+  mediaType: "movie" | "tv",
 ): string | null {
   if (isPending) return "Reading your library's rewatch numbers…";
   if (isError) return "Couldn't read your library's rewatch numbers.";
   if (!fit || fit.blocks.length === 0) {
+    const noun = mediaType === "tv" ? "shows" : "titles";
     return fit && fit.total_items > 0
-      ? "Not enough scanned titles yet to show your library's own numbers."
+      ? `Not enough scanned ${noun} yet to show your library's own numbers.`
       : "Run a scan first to see your library's own numbers.";
   }
   return null;
@@ -1283,12 +1285,14 @@ function RewatchLadder({
   fit,
   isPending,
   isError,
+  mediaType,
 }: {
   fit: RewatchOddsFit | undefined;
   isPending: boolean;
   isError: boolean;
+  mediaType: "movie" | "tv";
 }) {
-  const status = rewatchFitStatus(fit, isPending, isError);
+  const status = rewatchFitStatus(fit, isPending, isError, mediaType);
   if (status || !fit) return <p className="help rule-help">{status}</p>;
   return (
     <dl className="rewatch-ladder">
@@ -1309,7 +1313,12 @@ function RewatchLadder({
  *  box as it moves, before Save. `fit.blocks` sorts ascending by dormancy, and the
  *  monotonicity merge that built them makes the rate non-increasing with it, so the
  *  cleared set is the leading run whose upper bound still clears the bar. */
-function rewatchEchoSentence(fit: RewatchOddsFit, thresholdPct: number): string {
+function rewatchEchoSentence(
+  fit: RewatchOddsFit,
+  thresholdPct: number,
+  mediaType: "movie" | "tv",
+): string {
+  const noun = mediaType === "tv" ? "shows" : "titles";
   // Every clearing block counts, not just the leading run: the gate fires per block, and
   // the merge only makes point RATES monotone -- an upper bound can invert across blocks
   // of very different cohort sizes, and an echo that stopped at the first miss would then
@@ -1332,8 +1341,8 @@ function rewatchEchoSentence(fit: RewatchOddsFit, thresholdPct: number): string 
         ? `unwatched under about ${rewatchYearsPhrase(last.hi_days)}`
         : null;
   return range === null
-    ? `At ${thresholdPct}%, this protects ${count(protectedItems)} of ${count(fit.total_items)} titles.`
-    : `At ${thresholdPct}%, this protects titles ${range}, ${count(protectedItems)} of ${count(fit.total_items)}.`;
+    ? `At ${thresholdPct}%, this protects ${count(protectedItems)} of ${count(fit.total_items)} ${noun}.`
+    : `At ${thresholdPct}%, this protects ${noun} ${range}, ${count(protectedItems)} of ${count(fit.total_items)}.`;
 }
 
 export function PolicyEditor({
@@ -1385,18 +1394,18 @@ export function PolicyEditor({
     queryFn: () => api.policy(mediaType),
   });
 
-  // The rewatch card's own fitted ladder and consequence echo (#554 stage 2), movie lane
-  // only: the card itself renders on both lanes now, but its hold half -- the only thing
-  // this feeds -- stays movie-only, so the query never fires for TV. Independent of `draft`
+  // The rewatch card's own fitted ladder and consequence echo (#554 stage 2), on both
+  // lanes: the hold half below now renders for TV too, since a TV body carries its own
+  // rewatch_odds gate row the same way a movie body does. Keyed and refetched on
+  // `mediaType` so a lane switch never shows the other lane's fit. Independent of `draft`
   // -- it reads the last scan's frozen numbers, not anything a save would change.
   const {
     data: rewatchFit,
     isPending: rewatchFitPending,
     isError: rewatchFitError,
   } = useQuery({
-    queryKey: ["rewatch-odds"],
-    queryFn: () => api.rewatchOddsFit(),
-    enabled: mediaType === "movie",
+    queryKey: ["rewatch-odds", mediaType],
+    queryFn: () => api.rewatchOddsFit(mediaType),
   });
 
   const [draft, setDraft] = useState<PolicyBody | null>(null);
@@ -1849,21 +1858,28 @@ export function PolicyEditor({
   const kind = mediaType === "tv" ? "TV" : "movie";
   const otherKind = mediaType === "tv" ? "movie" : "TV";
 
-  // The rewatch card's lane-dependent copy. `bar` and `barLabel` are one sentence in two
-  // places, the span and the screen reader's label, so they are written together.
+  // The rewatch card's lane-dependent copy, both halves. `bar` and `barLabel` are one
+  // sentence in two places, the span and the screen reader's label, so they are written
+  // together.
   const rewatchCopy =
     mediaType === "tv"
       ? {
           name: "Keep shows most likely to be rewatched",
-          help: "A show people here keep coming back to will probably be watched again. It only lowers the score, never keeps a show outright.",
+          help: "A show people here keep coming back to will probably be watched again. It only lowers the score.",
           bar: "watched again by anyone at least",
           barLabel: "Watched again by anyone at least",
+          holdName: "Keep shows most likely to be rewatched above a percentage",
+          holdHelp:
+            "Keeps a show outright, whatever it scored, when its chance of being watched again is at or above your percentage.",
         }
       : {
           name: "Keep titles most likely to be rewatched",
-          help: "A title people here keep coming back to will probably be watched again. It only lowers the score, never keeps a title outright.",
+          help: "A title people here keep coming back to will probably be watched again. It only lowers the score.",
           bar: "watched by anyone at least",
           barLabel: "Watched by anyone at least",
+          holdName: "Keep titles most likely to be rewatched above a percentage",
+          holdHelp:
+            "Keeps a title outright, whatever it scored, when its chance of being watched again is at or above your percentage.",
         };
   const preset = activePreset(draft);
   const presetHelp =
@@ -2465,9 +2481,10 @@ export function PolicyEditor({
           </div>
         )}
 
-        {/* The keep half is live on both lanes: a TV body scores it off show-level re-watch
-            counts, a movie body off title-level ones (`keep_configs()`, engine/policy.py).
-            The hold half below is movie-only. */}
+        {/* Both halves live on both lanes: the keep scores a TV body off show-level
+            re-watch counts and a movie body off title-level ones (`keep_configs()`,
+            engine/policy.py), and `PolicyBody._rewatch_odds_row` appends a rewatch_odds
+            gate row to either body, so the hold's `findIndex` below finds it on both. */}
         <div className="rules-card">
           <div className="card-head">
             <label className="toggle">
@@ -2521,67 +2538,67 @@ export function PolicyEditor({
             </>
           )}
 
-          {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second half,
-              movie-only, per "Approved with the mockups, 2026-08-13" in
-              docs/history/REWATCH_PLAN.md. Gated on the lane as well as on the row, because a
-              TV body carries no `rewatch_odds` row at all (`PolicyBody._rewatch_odds_row`).
-              Wired to draft.gates the same way RatingFloorRow is above, by index. */}
-          {mediaType === "movie" &&
-            (() => {
-              const gi = draft.gates.findIndex((g) => g.gate === "rewatch_odds");
-              const hold = gi >= 0 ? draft.gates[gi] : undefined;
-              // Always present on a movie body (PolicyBody._rewatch_odds_row appends it on
-              // load), so undefined only guards a body this editor has not re-seeded yet.
-              if (!hold) return null;
-              const setHold = (g: GateSetting) => {
-                const gates = [...draft.gates];
-                gates[gi] = g;
-                update({ gates });
-              };
-              const status = rewatchFitStatus(rewatchFit, rewatchFitPending, rewatchFitError);
-              return (
-                <>
-                  <div className="policy-divider" />
-                  <label className="toggle rule-toggle">
-                    <Switch
-                      checked={hold.enabled}
-                      onChange={(enabled) => setHold({ ...hold, enabled })}
-                    />
-                    <span className="rule-name">
-                      Keep anything likely to be watched above a percentage
-                    </span>
-                  </label>
-                  <p className="help rule-help">
-                    The hard companion, off by default: kept outright, whatever it scored, while
-                    titles that sat this long get watched again often enough.
-                  </p>
-                  <RewatchLadder
-                    fit={rewatchFit}
-                    isPending={rewatchFitPending}
-                    isError={rewatchFitError}
+          {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second
+              half, on both lanes now -- same grammar as movies, per "Approved with the
+              mockups, 2026-08-13" in docs/history/REWATCH_PLAN.md. Wired to draft.gates the
+              same way RatingFloorRow is above, by index. */}
+          {(() => {
+            const gi = draft.gates.findIndex((g) => g.gate === "rewatch_odds");
+            const hold = gi >= 0 ? draft.gates[gi] : undefined;
+            // Always present on a loaded body on either lane (PolicyBody._rewatch_odds_row
+            // appends it on load), so undefined only guards a body this editor has not
+            // re-seeded yet.
+            if (!hold) return null;
+            const setHold = (g: GateSetting) => {
+              const gates = [...draft.gates];
+              gates[gi] = g;
+              update({ gates });
+            };
+            const status = rewatchFitStatus(
+              rewatchFit,
+              rewatchFitPending,
+              rewatchFitError,
+              mediaType,
+            );
+            return (
+              <>
+                <div className="policy-divider" />
+                <label className="toggle rule-toggle">
+                  <Switch
+                    checked={hold.enabled}
+                    onChange={(enabled) => setHold({ ...hold, enabled })}
                   />
-                  {hold.enabled && (
-                    <>
-                      <div className="rule-control">
-                        <span>kept when the chance is at least</span>
-                        <FixedQuantity
-                          value={hold.threshold}
-                          suffix="%"
-                          min={1}
-                          max={99}
-                          width="narrow"
-                          ariaLabel="Kept when the chance is at least"
-                          onChange={(v) => setHold({ ...hold, threshold: v })}
-                        />
-                      </div>
-                      <p className="help rule-help">
-                        {status ?? rewatchEchoSentence(rewatchFit!, hold.threshold)}
-                      </p>
-                    </>
-                  )}
-                </>
-              );
-            })()}
+                  <span className="rule-name">{rewatchCopy.holdName}</span>
+                </label>
+                <p className="help rule-help">{rewatchCopy.holdHelp}</p>
+                <RewatchLadder
+                  fit={rewatchFit}
+                  isPending={rewatchFitPending}
+                  isError={rewatchFitError}
+                  mediaType={mediaType}
+                />
+                {hold.enabled && (
+                  <>
+                    <div className="rule-control">
+                      <span>kept when the chance is at least</span>
+                      <FixedQuantity
+                        value={hold.threshold}
+                        suffix="%"
+                        min={1}
+                        max={99}
+                        width="narrow"
+                        ariaLabel="Kept when the chance is at least"
+                        onChange={(v) => setHold({ ...hold, threshold: v })}
+                      />
+                    </div>
+                    <p className="help rule-help">
+                      {status ?? rewatchEchoSentence(rewatchFit!, hold.threshold, mediaType)}
+                    </p>
+                  </>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         <KeepRulesEditor

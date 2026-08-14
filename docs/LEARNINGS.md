@@ -658,6 +658,30 @@ under the validation's 2% figure.
 - A TV body stored before this stage keeps the class default of 10, and that bar fires for
   under 4% of watched shows here. Conservative, visible on the policy card, and not inert.
 
+### TV: the fitted curve clears its own bar, with a cliff movies do not have (measured 2026-08-14)
+
+Read-only, the movie stage-2 fit's exact semantics applied to shows (any-play outcome
+within 365 days, dormancy at cutoff, the shipped `fit_blocks`), at four cutoffs a year
+apart on the same mirror. Run before wiring the TV percent hold, per `docs/SIGNALS.md`'s
+bar for any new displayed figure.
+
+- **Fittable and monotone at every cutoff**: one pool-adjacent-violators merge fired across
+  all four fits, on a pair of thin deep buckets; everything else was monotone raw.
+- **Strongly discriminating**: the least-dormant block's Wilson lower bound sat far above
+  the deepest block's upper bound at every cutoff, roughly 55 to 60 points against 3 to 4.
+- **Stable within sampling noise**: per-band rates spread 2.5 to 6.9 points across
+  cutoffs, about double the movie fit's spread on the middle bands, within the bands' own
+  confidence widths. Thinnest block 76, against the floor of 30.
+- **The finding: TV rewatch cliffs where movies plateau.** Shows dormant under a year got
+  watched again at rates around three in five; by two years the rate is near one in ten,
+  and past three years low single digits, where the movie curve stays double-digit past
+  five years. The added-date fallback arm was unmeasurable from the mirror alone (no added
+  dates there); the shipped fit anchors it on the scan's own added dates.
+
+⇒ The TV hold ships with the same grammar as movies, and the same threshold protects a
+shorter dormancy range on TV. The ladder and the consequence echo carry that difference to
+the operator; nothing in the copy needs to.
+
 ### Unknown must be structurally incapable of condemning
 
 Three states, never two: `Known` / `Absent` / `Unknown`.
