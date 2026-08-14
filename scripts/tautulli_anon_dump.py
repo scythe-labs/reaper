@@ -518,6 +518,12 @@ def main(argv: list[str] | None = None) -> int:
     def note(message: str) -> None:
         print(message, flush=True)
 
+    # Said before the run, not after it. This covers what everyone on the server watched,
+    # and the person typing the command is only one of them.
+    note("This covers what everyone on your server watched, with the names taken off.")
+    note("Nobody else's name, address or viewing times can be read back out of it.")
+    note("")
+
     if mask.fresh:
         note(f"New salt written to {salt_file}. Keep it to send a matching dump later.")
     else:
