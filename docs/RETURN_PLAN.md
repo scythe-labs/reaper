@@ -47,14 +47,48 @@ The journal keeps one job: saying which sentence the why panel gets.
 ## The rule
 
 > A **return** is a title present in the library now under a Plex rating key that Reaper has
-> never recorded for it, when every key Reaper has recorded for it is gone from the Plex index.
+> never recorded for it, when every key Reaper has recorded for it is gone from the Plex index,
+> and it was gone for a real span of time that Reaper was awake for.
 
-Both halves are load-bearing, and the second half exists because of a measurement (below).
+Four conditions. Every one of them exists because of a measurement, not a worry.
 
-- **Never recorded before** rules out the ordinary state of a title that has sat in one place.
-- **The old keys are gone** rules out a title listed more than once, where the bind moved
-  between two listings that both still exist. Reaper already builds a full `PlexIndex` every
-  scan, so this is a set lookup and costs nothing.
+1. **A key never recorded before** rules out the ordinary state of a title that has sat in one
+   place.
+2. **Every recorded key is gone from the index** rules out a title listed more than once, where
+   the bind moved between two listings that both still exist. Reaper already builds a full
+   `PlexIndex` every scan, so this is a set lookup and costs nothing.
+3. **At least `cooling_off_days` between the last sighting and the new copy's Plex `added_at`.**
+   Default 7 days, operator-set.
+4. **At least two scans ran inside that window.** A count of `snapshot` rows between the two
+   timestamps. No new state, no per-item bookkeeping.
+
+### Why the cooling-off period, and why it needs both halves
+
+A file replaced in place is gone and back within minutes. So is a title an operator deleted by
+accident and put straight back. Neither is a regret, and both would otherwise read as one.
+
+Measured: every rating-key change observed on the validation library happened within **2.5 to 30
+hours**, and that figure is an upper bound on the true absence. A cooling-off of three days
+would have rejected all of it. Seven leaves a margin of more than five times over.
+
+**A clock alone is not enough, and the same library shows why.** `last_seen_at` is the last time
+Reaper *looked*, not the moment the title left, so the measured gap overestimates the true
+absence by up to one scan interval. That install averages a 17-hour interval but contains a
+**202-hour** one. A file upgraded during a pause like that would read as an eight-day absence
+against a seven-day bar.
+
+Condition 4 is what closes it, and it closes the opposite failure too. Requiring that Reaper
+actually *ran* while the title was missing makes the rule cadence-robust in both directions: an
+operator scanning nightly satisfies it easily and leans on the clock, while one scanning monthly
+trivially satisfies the clock and leans on the scan count. Neither cadence can be tuned into a
+false return.
+
+**This also retires a claim that was doing work it had not earned.** An earlier draft argued
+Plex was the better witness partly because a rating key survives an in-place quality upgrade.
+That is consistent with the measurement, roughly one entry in a thousand changing key over 24
+days, but it was never verified against Plex's own behavior and it should not have been load
+bearing. With a cooling-off period the feature is correct whether or not an upgrade reissues a
+key, which is worth more than the claim being true.
 
 ## What was measured, 2026-08-14
 
@@ -72,13 +106,17 @@ disappeared from the library and came back over the whole window. One movie and 
 left and stayed gone. The library only grows. This is a floor, not a proof: one library, 24
 days, an operator who adds rather than removes.
 
-**The naive detector has a small but non-zero noise floor.** Roughly one movie entry in a
-thousand (3 in ~3,500) changed its bound Plex rating key over the window while keeping its
-*arr entry, and no season did. Some of those are likely the exact case the design is meant to
-catch, an operator deleting a file and re-fetching it, and the rest is Plex churn. Either way
-the failure direction is protective, so this is a bounded, fail-safe cost worth stating in
-advance: expect a low single-digit percentage of a library to accumulate a hold over the
-default window.
+**The detector's noise is real, and all of it is fast.** Roughly one movie entry in a thousand
+(3 in ~3,500) changed its bound Plex rating key over the window while keeping its *arr entry,
+and no season did. Every one of those changes completed within **2.5 to 30 hours**, measured as
+the span between the last scan showing the old key and the first showing the new one, which is
+an upper bound on the true absence.
+
+That shape is what the cooling-off period is built on. Mechanical churn, a file replaced in
+place or a mistake put straight back, resolves in hours. A regret takes as long as it takes an
+operator to notice. The two populations do not overlap anywhere near a multi-day bar, so
+condition 3 removes the entire measured noise floor rather than trading it off against
+sensitivity.
 
 **A ledger keyed on an external id alone would thrash.** About 21 TMDb ids on the measured
 library carry **two** Radarr entries each, one per copy, each binding a different Plex listing.
@@ -160,6 +198,18 @@ Two frontend rules bind the control and both point the same way. Rule 40 makes `
 the one shared number-with-a-unit control, and rule 41 forbids turning an open list like units
 into a `Segmented`, so the unit stays a `<select>`.
 
+**Two knobs, both durations, both on that control.**
+
+| Knob | Default | What it decides |
+|---|---|---|
+| How long the hold lasts | 1.5 years (548 days) | how long a returned title resists condemning |
+| How long counts as gone | 7 days | how long an absence must be to count as a return |
+
+Both store plain days, as every duration in the policy body does. `GateConfig` already carries
+two numeric fields, so the shape exists. The second knob's default is set by measurement rather
+than taste: the observed churn tops out around 30 hours, so seven days clears it more than five
+times over.
+
 Backend:
 
 | Piece | Where |
@@ -170,7 +220,7 @@ Backend:
 | `Facts.returned_at`, `Facts.returned_by_reaper` | `src/reaper/engine/gates.py`, as `Observation` |
 | Register the gate type | `src/reaper/services/scan_runner.py` `GATE_TYPES` |
 | Allow it in a policy body | `gates.POLICY_AUTHORABLE_GATES` |
-| Row for stored bodies predating it | a `model_validator` on `PolicyBody`, per `_rewatch_odds_row` |
+| Row for stored bodies predating it | `model_validator` on `PolicyBody`, per `_rewatch_odds_row` |
 | Populate the facts on the movie lane | `snapshot.build_facts` |
 | Populate the facts on the TV lane | `season_scan.build_season_facts` (rule 35) |
 | The "Reaper removed it" label | the existing `ActionStep → ReapRun → Candidate` join |
@@ -197,8 +247,8 @@ Frontend:
 | The policy row and its help copy | `frontend/src/components/PolicyEditor.tsx` |
 | `GATE_META` entry, label + help + `unit: "days"` | `frontend/src/components/policyMeta.ts` |
 | `GateId` union gains the new id | `frontend/src/components/policyMeta.ts` |
-| The hold-length control | `QuantityInput`, `units={TIME_UNITS}`, `min={1}` |
-| Typed mirror of the new policy field | `frontend/src/api.ts` |
+| Both duration controls | `QuantityInput`, `units={TIME_UNITS}`, `min={1}` |
+| Typed mirror of the new policy fields | `frontend/src/api.ts` |
 | Why-panel sentence | `frontend/src/components/WhyPanel.tsx` |
 
 No CSS. The control renders into the existing `.qty` shape
@@ -221,8 +271,8 @@ for than to discover.
   that the browser marks exactly the ids no policy row may carry against
   `POLICY_AUTHORABLE_GATES`. A backend-only gate fails this immediately.
 - **`TestTheTwoCopiesAgree` / `TestTheTwoCopiesAgreeOnTypes`** diff every policy field name and
-  type between `api.ts` and the Pydantic models. The new hold-length field has to land on both
-  sides with a matching type.
+  type between `api.ts` and the Pydantic models. Both new duration fields have to land on both
+  sides with matching types.
 - **`PolicyEditor.test.tsx`'s `WARNING_ANCHORS`** is pinned at exactly nine anchors. If the new
   row carries a policy warning it needs a claiming anchor and that count goes to ten; if it does
   not, the warning falls to the bottom stack. Rule 42, and it has to be decided deliberately

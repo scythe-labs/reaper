@@ -987,18 +987,29 @@ A floor, not a proof. One library, 24 days, an operator who adds rather than rem
 ### The Plex rating key is stable enough to detect a return (measured 2026-08-14)
 
 Same window. Holding the \*arr entry fixed, roughly **one movie entry in a thousand** changed the
-Plex rating key it was bound to, and **no season did**. Some of those are the case #553 exists to
-catch, an operator deleting a file and re-fetching it under the same \*arr entry, and the rest is
-Plex churn.
+Plex rating key it was bound to, and **no season did**.
 
-⇒ "A different rating key than last time" is usable as the detector for a title that left and
-came back, and the residue is small and fails protective. A feature built on it should expect a
-low single-digit percentage of a library to accumulate a hold over a multi-year window, and
-should say so in advance rather than treat it as a defect later.
+**Every one of those changes was fast.** Between the last scan showing the old key and the first
+showing the new one: 2.5, 4.2, 18 and 30 hours. Each is an upper bound on the true absence.
+
+⇒ Mechanical churn and a regret are separable **by duration**, and they are not close. A file
+replaced in place, or a title deleted by mistake and put straight back, resolves in hours. A
+regret takes as long as it takes someone to notice they miss it. So a detector for "this left and
+came back" earns its precision from a **minimum absence**, not from working out what caused the
+change, and a multi-day bar removes the whole measured noise floor without trading away
+sensitivity.
+
+**A clock alone does not survive an irregular scan cadence**, and the same library shows it. The
+interval between scans averaged 17 hours and reached **202**. A last sighting records when Reaper
+last *looked*, not when a title left, so a measured absence overstates the real one by up to one
+scan interval, and an eight-day pause turns a minutes-long file swap into an eight-day absence.
+The fix is to require that Reaper actually **ran** while the title was missing, by counting the
+scans between the two timestamps. It costs nothing, needs no per-item state, and holds at both
+extremes: a dense cadence leans on the clock, a sparse one leans on the count.
 
 **Measured with a query, not a rebuild**: `candidate` keeps `plex_rating_key` and the external
-ids per scan, so any install with snapshot history can re-run this against itself before
-trusting the detector.
+ids per scan, and `snapshot` keeps the timings, so any install with snapshot history can re-run
+all of this against itself before trusting the detector.
 
 ---
 
