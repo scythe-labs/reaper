@@ -95,10 +95,15 @@ PAGE = 1000
 #: Not larger, though the curve keeps improving, because a page that times out is retried at
 #: half the size (:meth:`Tautulli.paged`) and the reach that matters is the SMALLEST page
 #: the code can end up choosing on a slower server than this one.
+#:
+#: Reaper's own sweep sits at 5,000 (``services.history_sync.PAGE_SIZE``) and that is not a
+#: disagreement to reconcile: it allows 30s a request where this allows 120, and a 25k page
+#: spent most of that smaller budget. The pair moves together or not at all.
 HISTORY_PAGE = 25_000
 
 #: Seconds a single request may take. Generous because of the fixed cost above: a 25,000-row
-#: page took 13.9s here, and an instance answering three times slower still fits.
+#: page took 13.9s here, and an instance answering three times slower still fits. This is
+#: the number that lets HISTORY_PAGE be what it is.
 TIMEOUT = 120
 
 #: Concurrent requests. The per-item metadata sweep is thousands of independent GETs and is
@@ -456,14 +461,34 @@ def _one_show(work: tuple[Tautulli, Mask, str, int]) -> dict[str, Any] | None:
     return {"show": token, "seasons": entries}
 
 
-def collect_plays(api: Tautulli, mask: Mask, *, cap: int | None, note) -> list[dict[str, Any]]:
+def collect_plays(
+    api: Tautulli, mask: Mask, *, cap: int | None, note
+) -> tuple[list[dict[str, Any]], int | None]:
     """Every finished play, filtered and typed the way ``services.history_sync`` does it.
 
     Matching that mapping field for field is the point. A dump that keeps rows Reaper's own
     mirror drops, or types a missing value differently, replays into verdicts a real scan
     would not produce, and the difference would be read as an engine finding.
+
+    **``grouping=0`` is the whole reason a play is a play here.** Tautulli groups consecutive
+    plays of the same item by default, and the default is what a caller that says nothing
+    gets: asking without it returned 309,013 rows on an instance holding 425,983, a quarter
+    of the history folded away. Those are exactly the rows a rewatch is counted from
+    (``services.rewatch.viewing_count`` clusters plays into viewings itself), so a grouped
+    dump does not merely lose rows, it reports a habitual rewatcher as a single viewing.
     """
-    rows = api.paged("get_history", cap=cap, page=HISTORY_PAGE, note=note)
+    # What the instance says it holds, asked for before the walk and compared with what the
+    # walk got. A silent shortfall is how the grouping default hid: the run looked entirely
+    # healthy and simply carried a quarter less history than the server had. Nothing here can
+    # know WHY a walk came up short, so it records the pair and lets the reader see it.
+    reported = None
+    if cap is None:
+        first = api("get_history", length=1, start=0, grouping=0) or {}
+        reported = as_int(first.get("recordsFiltered")) or as_int(first.get("recordsTotal"))
+
+    rows = api.paged("get_history", cap=cap, page=HISTORY_PAGE, grouping=0, note=note)
+    if reported is not None and len(rows) < reported * 0.99:
+        note(f"    WARNING: collected {len(rows)} of the {reported} rows this server reports")
     plays = []
     live = 0
     for row in rows:
@@ -501,7 +526,7 @@ def collect_plays(api: Tautulli, mask: Mask, *, cap: int | None, note) -> list[d
             }
         )
     note(f"  {len(plays)} plays" + (f", {live} still playing and skipped" if live else ""))
-    return plays
+    return plays, reported
 
 
 def collect_users(api: Tautulli, mask: Mask) -> list[dict[str, Any]]:
@@ -564,7 +589,7 @@ def build(
     seasons = collect_seasons(api, mask, show_keys, jobs=jobs, note=note)
 
     note("history")
-    plays = collect_plays(api, mask, cap=cap, note=note)
+    plays, reported_rows = collect_plays(api, mask, cap=cap, note=note)
 
     note("users")
     users = collect_users(api, mask)
@@ -583,6 +608,9 @@ def build(
         "format": FORMAT_VERSION,
         "reference_now": int(time.time()) + mask.shift_seconds,
         "history_begins_at": min(starts) if starts else None,
+        # What the server said it held, beside what was collected. A reader can tell a dump
+        # that saw the whole history from one that came up short, without trusting this tool.
+        "history_rows_reported": reported_rows,
         "clock_shifted": True,
         "partial": cap is not None,
         "season_sizes": False,

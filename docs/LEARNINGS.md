@@ -3942,6 +3942,31 @@ looking at "watch history" expects them to be in it. `tautulli_anon_dump.py` cop
 fields onto fresh dicts instead, and its test asserts the absent values rather than the
 present keys: a right-keys test passes just as well when a future Tautulli adds a field.
 
+**A history page costs the same at 25,000 rows as at 1,000, so the page size sets the whole
+runtime.** Measured against a live instance holding 425,983 rows: a page of 1,000 took 14.7s
+and one of 50,000 took 20.7s. Nearly all of that is fixed per request. At 1,000 the walk is
+426 requests and 105 minutes; at 25,000 it is 18 requests and 4 minutes. Deep offsets are
+NOT the cause, which was the obvious guess and was measured too: offset 400,000 cost 14.5s
+against 12.3s at offset 0.
+
+**That does not mean `history_sync.PAGE_SIZE` should be raised, and the difference is the
+read budget, not the row count.** The sweep sits at 5,000 with a 30s client budget, where a
+25k page spent 60-80% of it and a slower instance timed out (#780, and the entry above on
+pages versus rows). The dump tool allows 120s per request, which is what lets it afford
+25,000. Raise one number without the other and the timeout comes back. Both shrink by half
+on a timeout, which is the part that actually makes either safe.
+
+**`get_history` groups consecutive plays unless told not to, and the default is what a
+caller that says nothing gets.** Asking without `grouping=0` returned 309,013 rows on an
+instance holding 425,983: a quarter of the history folded away, with the run reporting
+success and no other sign. The folded rows are exactly the ones a rewatch is counted from,
+so a grouped dump does not merely lose rows, it reports a habitual rewatcher as a single
+viewing, which is the one signal this dump exists to validate. `clients/tautulli.py` passes
+`grouping=0` and always has; the dump tool did not, and nothing caught it until the row
+count was compared with the mirror by hand. It now asks the server for its own total first
+and records both numbers in the dump, because no test against a fake can find the next
+member of this class.
+
 **Rating keys churn, so a repeat dump needs a stored salt.** The high-water check exists
 because a re-added file gets a new key while its plays stay under the old one, and it can
 only be exercised by two dumps months apart that agree on which item is which. The tool

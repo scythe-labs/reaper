@@ -277,6 +277,25 @@ class TestAgreementWithHistorySync:
         assert len(built["plays"]) == 2
         assert all(p["item"] != "303" for p in built["plays"])
 
+    def test_history_is_asked_for_ungrouped(self, dump_tool: Any, tmp_path: Path) -> None:
+        # Tautulli groups consecutive plays of the same item unless told not to, and the
+        # default is what a caller that says nothing gets. Measured against a live instance:
+        # 309,013 rows came back where it held 425,983. Those folded rows ARE the rewatches
+        # (``services.rewatch.viewing_count`` clusters plays into viewings itself), so a
+        # grouped dump reports a habitual rewatcher as a single viewing.
+        sent: list[Any] = []
+
+        class Recording(FakeTautulli):
+            def __call__(self, cmd: str, **params: Any) -> Any:
+                if cmd == "get_history":
+                    sent.append(params.get("grouping"))
+                return super().__call__(cmd, **params)
+
+        mask = dump_tool.Mask(tmp_path / "salt.json")
+        dump_tool.collect_plays(Recording(), mask, cap=None, note=lambda _: None)
+        assert sent, "history was never fetched"
+        assert all(g == 0 for g in sent), f"history was asked for with grouping={sent}"
+
     def test_percent_complete_is_coerced_the_way_the_column_demands(
         self, built: dict[str, Any]
     ) -> None:
