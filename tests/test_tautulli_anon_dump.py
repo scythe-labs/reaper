@@ -349,6 +349,45 @@ class TestTheAddress:
             dump_tool.http_open("file:///etc/passwd")
 
 
+class TestPaging:
+    def test_a_cap_stops_the_walk(self, dump_tool: Any) -> None:
+        asked: list[int] = []
+
+        def fake(cmd: str, **params: Any) -> Any:
+            asked.append(params["length"])
+            return {"data": [{"n": i} for i in range(params["length"])]}
+
+        rows = dump_tool.Tautulli.paged(_Stub(fake), "get_history", cap=1500)
+        assert len(rows) == 1500
+        # The second page asks for the remainder, never a full page it would discard.
+        assert asked == [1000, 500]
+
+    def test_an_over_long_page_still_advances_the_cursor(self, dump_tool: Any) -> None:
+        # A server answering with more rows than the page asked for would leave a cursor
+        # advanced by the requested length behind the data, and re-read the overlap forever.
+        starts: list[int] = []
+
+        def fake(cmd: str, **params: Any) -> Any:
+            starts.append(params["start"])
+            if len(starts) > 3:
+                return {"data": []}
+            return {"data": [{"n": i} for i in range(1500)]}
+
+        rows = dump_tool.Tautulli.paged(_Stub(fake), "get_history")
+        assert starts == [0, 1500, 3000, 4500]
+        assert len(rows) == 4500
+
+
+class _Stub:
+    """Just enough of ``Tautulli`` for ``paged`` to be exercised without a server."""
+
+    def __init__(self, responder: Any) -> None:
+        self._responder = responder
+
+    def __call__(self, cmd: str, **params: Any) -> Any:
+        return self._responder(cmd, **params)
+
+
 class TestParsing:
     @pytest.mark.parametrize(
         ("meta", "expected"),

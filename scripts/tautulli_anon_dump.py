@@ -140,17 +140,23 @@ class Tautulli:
         raise RuntimeError(f"{cmd} failed after 3 tries: {last}")
 
     def paged(self, cmd: str, *, cap: int | None = None, **params: Any) -> list[dict[str, Any]]:
-        """Every row of a paginated table endpoint, or the first ``cap`` of them."""
+        """Every row of a paginated table endpoint, or the first ``cap`` of them.
+
+        ``start`` advances by what came back rather than by what was asked for. A server
+        answering with more rows than the page requested would otherwise leave the cursor
+        behind the data and re-read the overlap forever.
+        """
         out: list[dict[str, Any]] = []
         start = 0
-        while True:
+        while cap is None or len(out) < cap:
             length = PAGE if cap is None else min(PAGE, cap - len(out))
             data = self(cmd, start=start, length=length, **params)
             rows = (data or {}).get("data") or []
             out.extend(rows)
-            if len(rows) < length or (cap is not None and len(out) >= cap):
-                return out
-            start += length
+            if len(rows) < length:
+                break
+            start += len(rows)
+        return out
 
     def children(self, rating_key: int) -> list[dict[str, Any]]:
         """A show's seasons, or a season's episodes. Empty for an item with neither."""
