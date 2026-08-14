@@ -99,6 +99,10 @@ class GateId(enum.StrEnum):
     above the operator's percentage. See RewatchOddsGate; a TV body never carries the row
     (``PolicyBody._rewatch_odds_row``)."""
 
+    RETURNED = "returned"
+    """Opt-in, both lanes: hold a title that left the library and came back, because a return
+    is the clearest evidence Reaper can get that removing it was wrong. See ReturnedGate."""
+
     SEASON_PROGRESSION = "season_progression"
     """Not authorable in a policy. The engine emits it from the season judgment
     (``season_evidence.guard_result``); no policy row builds it."""
@@ -131,6 +135,7 @@ POLICY_AUTHORABLE_GATES: frozenset[GateId] = frozenset(
         GateId.DATA_HORIZON,
         GateId.MIN_DORMANCY,
         GateId.REWATCH_ODDS,
+        GateId.RETURNED,
     }
 )
 
@@ -452,6 +457,36 @@ class Facts:
     ``rewatch_cohort_n`` immediately above, including its Known/Unknown/Absent states; the
     rate is ``k / n``, derived and never stored separately (``docs/history/REWATCH_PLAN.md``,
     Stage 2)."""
+
+    # --- a title that came back (#553) ---------------------------------------------------
+
+    returned_days_ago: Observation[float] = _UNSET
+    """Days since Reaper recorded that this title left the library and came back.
+
+    The clock the hold counts down from, frozen at scan time like every other span here. Read
+    off ``db.LibrarySeen.returned_at``, which is written by the scan that DETECTS the return
+    and read back by every scan after it -- a return is visible for one scan only, so the fact
+    has to be stored rather than re-derived (``services.library_seen``).
+
+    Three states, and the third is not "no return":
+
+    * ``Known(n)`` -- the ledger holds a return for this title's external id.
+    * ``Absent`` -- the ledger holds a row for it and no return: we looked, there is genuinely
+      nothing. The ordinary state of a title that has sat in one place.
+    * ``Unknown`` -- there was nothing to look up. No Plex bind, no external id, or a title
+      Reaper is seeing for the first time. Never a measured absence (rule 93).
+
+    Defaulted like the fields above, and a stored snapshot predating it thaws ``Unknown``
+    (rule 104)."""
+
+    returned_by_reaper: Observation[bool] = _UNSET
+    """Whether Reaper's own journal says it removed this title before the return.
+
+    Chooses which sentence the operator reads and nothing else: the hold is the same length
+    either way, because splitting them would mean a second knob for a difference nobody has
+    measured. ``Known(False)`` is a real answer -- Reaper has no record of removing it, so the
+    operator did, or something else did. ``Absent`` beside a ``Known`` ``returned_days_ago``
+    cannot happen; both are written together (``services.library_seen.record``)."""
 
     ratings: tuple[Rating, ...] = ()
     """Every interpretable rating the scan froze for this item, one per source (IMDb,
@@ -982,6 +1017,72 @@ class RewatchOddsGate:
 
 
 @dataclass(frozen=True, slots=True)
+class ReturnedGate:
+    """Hold a title that left the library and came back.
+
+    A return is the clearest evidence Reaper can get that removing something was wrong:
+    somebody went and fetched it again. What counts as one is decided in the scan, not here --
+    four conditions over Plex rating keys, a minimum absence and a count of the scans that ran
+    during it (``services.library_seen``) -- and this gate reads the one number that came out
+    of it. That split is what lets an operator move the hold's length and have the simulator
+    replay it exactly, the same reason ``Facts.rewatch_last_play_days`` is frozen raw.
+
+    ``config.threshold`` is how long the hold lasts, in days. ``config.window_days`` is the
+    minimum absence, read by the scan rather than by this gate.
+
+    **An unreadable return abstains without blocking, and that is a documented deviation**
+    from the fail-closed ``_blocked`` arm every other gate takes (rule 143's corollary, owned
+    here in writing, exactly as ``RewatchOddsGate`` owns its own). The ledger is EMPTY on a
+    fresh install and on every install the scan after this ships, so blocking on ``Unknown``
+    would amber-flag the entire library and abstain every verdict in it until the ledger
+    filled -- months, during which Reaper could condemn nothing at all. The items whose Plex
+    bind genuinely failed are already blocked by the four Plex-dependent gates reading the same
+    resolution, so failing quiet here withdraws no cover.
+    """
+
+    config: GateConfig
+    id: GateId = GateId.RETURNED
+
+    def evaluate(self, facts: Facts) -> GateResult:
+        returned = facts.returned_days_ago
+        if isinstance(returned, Unknown):
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                detail="Reaper has nothing on record about this title leaving and coming back.",
+            )
+        if not isinstance(returned, Known):
+            return GateResult(
+                self.id, ABSTAIN, detail="It has not left your library and come back."
+            )
+
+        hold = self.config.threshold
+        # Rounded UP, so a hold with any of itself left never reads as spent. Rule 31: the
+        # bound that produces less deletion pressure is the one that keeps the file.
+        left = math.ceil(hold - returned.value)
+        if left <= 0:
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                detail=(
+                    f"It came back {humanize_days(returned.value)} ago, past the "
+                    f"{humanize_window(hold)} you keep a title that came back."
+                ),
+            )
+        by_reaper = facts.returned_by_reaper
+        removed_by_us = isinstance(by_reaper, Known) and by_reaper.value
+        # The journal's one job. Same hold either way: splitting the length would mean a
+        # second knob for a difference nobody has measured. A lowercase fragment, because it
+        # renders in the "What spared it" list beside "someone is watching it right now".
+        lead = (
+            "you removed this before and it came back"
+            if removed_by_us
+            else "this left your library and came back"
+        )
+        return GateResult(self.id, PROTECT, detail=f"{lead}, {humanize_days(left)} left")
+
+
+@dataclass(frozen=True, slots=True)
 class DataHorizonGate:
     """Fail closed when we cannot say how long an item has gone unwatched.
 
@@ -1116,6 +1217,7 @@ __all__ = [
     "MinDormancyGate",
     "RatingFloorGate",
     "RatingRule",
+    "ReturnedGate",
     "RewatchOddsGate",
     "ServerPopularityGate",
     "StreamingNowGate",

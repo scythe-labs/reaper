@@ -38,6 +38,7 @@ export const cheatSheet: Doc = {
         ["Never touch something playing right now", "On"],
         ["Stop if the unwatched time can't be read", "On"],
         ["Keep titles most likely to be rewatched above a percentage", "Off by default"],
+        ["Keep a title that came back", "Off by default"],
       ],
     ),
     p(

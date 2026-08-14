@@ -176,7 +176,7 @@ export const understandingPolicy: Doc = {
 
     h3("Protections: what's always kept", "protections"),
     p(
-      "Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file. All of these are on by default, in both the movie and TV policies, except the rewatch hold at the foot of the table, which is off until you turn it on.",
+      "Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file. All of these are on by default, in both the movie and TV policies, except the last two, which are off until you turn them on.",
     ),
     table(
       ["Protection", "What it keeps", "Default"],
@@ -211,6 +211,11 @@ export const understandingPolicy: Doc = {
           "Anything whose kind gets watched again above your percentage",
           "Off by default",
         ],
+        [
+          "Keep a title that came back",
+          "Anything that left your library and was fetched again",
+          "Off by default",
+        ],
       ],
     ),
     p(
@@ -241,6 +246,20 @@ export const understandingPolicy: Doc = {
     ),
     p(
       "It is the same way you would guess whether a kid will ride the old bike in the garage: don't study the bike, look at what happened to every other bike that sat in the garage that long.",
+    ),
+
+    h3("A title that came back", "came-back"),
+    p(
+      "If a title leaves your library and someone fetches it again, that is the clearest sign removing it was wrong. Turn this on and Reaper keeps it for a while afterwards, so the same title is not flagged again next month.",
+    ),
+    p(
+      "Reaper watches for this through Plex. A file that leaves and comes back is a new entry to Plex, even though it is the same film, and that is what Reaper notices. It counts only when the title was gone for a real stretch: a file swapped for a better copy is back within hours, and that is not a title anyone missed. Reaper also has to have run a scan or two while it was away, so a long gap between scans cannot look like a long absence.",
+    ),
+    p(
+      "The card says which happened. If Reaper removed it, it says so, and that is worth reading: it means your settings removed something you wanted. If it left some other way, the card says that instead. Either way the queue shows how long is left on the hold, so a title is never kept for a reason you cannot see the end of.",
+    ),
+    p(
+      "This one starts empty and stays quiet for a while. Reaper can only spot a title coming back if it saw the title before it left, so a new install has nothing to compare against yet. It improves on its own as Reaper watches your library.",
     ),
 
     h3("Pace and limits", "pace"),

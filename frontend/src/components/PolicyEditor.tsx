@@ -254,7 +254,7 @@ function GateRow({
 
       {gate.enabled && meta.unit === "days" && (
         <div className="rule-control">
-          <span>at least</span>
+          <span>{meta.lead ?? "at least"}</span>
           <QuantityInput
             value={gate.threshold}
             units={TIME_UNITS}

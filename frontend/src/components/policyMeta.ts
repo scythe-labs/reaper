@@ -14,6 +14,10 @@ export type GateMeta = {
   label: string;
   help: string;
   unit?: "days" | "people";
+  /** What sits to the LEFT of the threshold box. "at least" is right for a floor and wrong
+   *  for a fixed length: the came-back hold keeps a title for exactly this long, not for a
+   *  minimum of it. Optional, so every existing row keeps the words it had. */
+  lead?: string;
   window?: { label: string; help: string };
   /** No switch a policy can carry sits behind this id -- a retired gate, a pseudo-id the API
    *  tallies under (`hand_spare`), or one the engine emits with no policy row behind it --
@@ -50,6 +54,7 @@ export type GateId =
   | "unmanaged"
   | "min_dormancy"
   | "rewatch_odds"
+  | "returned"
   | "season_progression"
   | "custom";
 
@@ -67,6 +72,16 @@ export const GATE_META: Record<string, GateMeta> = {
     label: "Give every title time to be rewatched",
     help: "Nothing is removed until it has gone at least this long without a single play. Under about three years, people still circle back to a title surprisingly often.",
     unit: "days",
+  },
+  returned: {
+    label: "Keep a title that came back",
+    help: "A title that left your library and was fetched again is kept for a while. Coming back is the clearest sign removing it was wrong.",
+    unit: "days",
+    lead: "keep it for",
+    window: {
+      label: "counts as gone after",
+      help: "How long a title has to be missing before its return counts. A file swapped for a better copy is back within hours.",
+    },
   },
   server_popularity: {
     label: "Keep what your users actually watch",

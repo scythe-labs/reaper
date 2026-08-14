@@ -376,13 +376,14 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
         for c in (0, 2_500, 7_500, 10_000)
     ],
     # --- every shipped gate, dropped ------------------------------------------------
-    # Except the rewatch-odds row: a validated body cannot NOT carry it, either lane
-    # (`PolicyBody._rewatch_odds_row` re-appends it on validation), so a dropped copy is a
-    # shape no wire round-trip can preserve and no operator can produce.
+    # Except the two rows a validated body cannot NOT carry, either lane: the rewatch-odds
+    # row (`PolicyBody._rewatch_odds_row`) and the came-back row (`_returned_row`) are both
+    # re-appended on validation, so a dropped copy is a shape no wire round-trip can
+    # preserve and no operator can produce.
     *[
         (f"drop:{g.gate.value}", _without(g.gate))
         for g in BASE.gates
-        if g.gate is not GateId.REWATCH_ODDS
+        if g.gate not in {GateId.REWATCH_ODDS, GateId.RETURNED}
     ],
     # --- every shipped list protection, dropped -------------------------------------
     # Where `drop:whitelisted` and `drop:curated_list` used to sit. Those gates retired and

@@ -42,7 +42,7 @@ export interface Snapshot {
  *  renders green (a protection fired), `quiet` gray (nothing to act on), `look`
  *  amber-outlined (deliberately left for the owner to decide). */
 export interface Chip {
-  tone: "kept" | "quiet" | "look";
+  tone: "kept" | "quiet" | "look" | "held";
   text: string;
   /** The same fact as `text`, worded as a lowercase clause that can follow "Reap
    *  requested, kept for now:" -- or null when this chip names no reason a reap would

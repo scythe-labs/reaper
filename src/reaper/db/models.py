@@ -752,6 +752,82 @@ class WatchHighWater(Base):
     """When the mark last moved. Diagnostic only: nothing reads it to make a decision."""
 
 
+class LibrarySeen(Base):
+    """Every Plex listing Reaper has ever seen for one external id, and whether it came back.
+
+    A file that leaves the library and returns gets a NEW Plex rating key, while the earlier
+    one stops existing. That is the witness #553 rests on, and this table is the memory behind
+    it: without a record of which keys an id has held, a fresh key is indistinguishable from
+    the only key it ever had.
+
+    ``WatchHighWater`` above is the precedent for every property here. Outside the snapshot
+    lifecycle, keyed on something stable rather than on the Plex key that moves, upserted once
+    per scan, never pruned. Roughly one row per title.
+
+    **Keyed on an external id, not on ``media_key``.** A ``media_key`` is
+    ``{radarr|sonarr}:{instance}:{arr_id}``, and deleting a movie removes Radarr's row, so a
+    re-add gets a fresh internal id and the old key is retired. That is true whether Reaper or
+    the operator did the deleting, which is exactly the case this table exists to notice.
+
+    **``rating_keys`` is a SET, and that is a measured requirement, not caution.** About one
+    movie entry in 150 shares its TMDb id with a second \\*arr entry, one per copy, each bound
+    to a different Plex listing (``docs/LEARNINGS.md``, assumption 16). Storing only the last
+    key seen would read the second copy's key as a change on every scan and hold both copies
+    forever.
+
+    **Written only on a confident Plex bind.** No bind, no write, so a Plex outage, a partial
+    \\*arr, or an item that did not resolve leaves this table untouched rather than recording an
+    absence. Absence is never an input here: a return is only ever found by comparing two keys
+    Reaper actually read, so missing data can delay a detection to the next scan but can never
+    manufacture one.
+    """
+
+    __tablename__ = "library_seen"
+
+    id_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    """The item's external identity, media kind first: ``movie:tmdb:12345``,
+    ``tv:tvdb:678``, ``tv:tvdb:678:s3``.
+
+    The kind leads because movie and TV TMDb ids share one integer space, so a bare
+    ``tmdb:12345`` can name two different titles (rule 52). Built by
+    ``services.library_seen.id_key``, off the same id ladders the Plex resolver binds on
+    (``identity.MOVIE_ID_PRIORITY`` / ``SHOW_ID_PRIORITY``)."""
+
+    rating_keys_json: Mapped[str] = mapped_column(Text, default="[]")
+    """Every Plex rating key ever recorded for this id, as a JSON array of ints. Only ever
+    added to. An unreadable value is read as an empty set by
+    ``services.library_seen.recall_all``, which costs a detection and never invents one."""
+
+    first_seen_at: Mapped[UtcTimestamp]
+    last_seen_at: Mapped[UtcTimestamp]
+    """When Reaper last saw this id bound to a Plex listing. The clock a return is measured
+    against, and it is the last time Reaper *looked*, not the moment the title left, which is
+    why a minimum absence alone cannot settle a return (``docs/RETURN_PLAN.md``)."""
+
+    returned_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+    """When Reaper recorded that this title had come back, or ``NULL`` for the ordinary state
+    of a title that has sat in one place.
+
+    Stored rather than derived, because a return is visible for exactly one scan: the moment
+    the new key is written into ``rating_keys_json`` it stops looking new. The hold runs in
+    months, so the fact has to outlive its own evidence.
+
+    Only ever the instant Reaper *detected* the return, never the copy's own arrival date,
+    which may be earlier. A later start is a longer hold, which is the keep direction
+    (rule 31)."""
+
+    returned_by_reaper: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    """Whether Reaper's own journal shows it removed this title before the return.
+
+    Decided once, at detection, by the ``ActionStep`` -> ``ReapRun`` -> ``Candidate`` join
+    (``services.library_seen.removed_by_reaper``), because that join reads the whole journal
+    and a stored answer costs one query per scan instead of one per item.
+
+    Three states, and the third is not "no" (rule 142). ``NULL`` is a row with no return
+    recorded at all; ``False`` is a return whose removal Reaper cannot claim. Both take the
+    same hold, for the same length. Only the sentence the operator reads differs."""
+
+
 class WhitelistEntry(Base):
     """An item the owner spared by hand -- "never reap this", from the review queue.
 

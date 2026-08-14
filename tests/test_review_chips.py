@@ -100,6 +100,12 @@ _NO_PANEL_ROUTE = {
         "and a detail string and builds no candidate, stores no Explanation and touches no "
         "snapshot, so nothing carries this reason to a panel"
     ),
+    "library_seen.NO_RETURN_RECORD_REASON": (
+        "returned_days_ago/returned_by_reaper (#553) are read only by ReturnedGate, which "
+        "abstains on Unknown without blocking -- the deviation its own docstring owns -- so "
+        "this reason never reaches a 'could not check {what}: {reason}' detail. No signal and "
+        "no rule-authoring field reads either observation either"
+    ),
     "rewatch.NO_REWATCH_ESTIMATE_REASON": (
         "rewatch_cohort_n/rewatch_cohort_k (#554 stage 2) feed only the stored explanation's "
         "rewatch_odds context block, read by its typed `state` in "
@@ -1611,7 +1617,11 @@ class TestTheMatchStatusVocabulary:
         # season_scan._judge_series block. Both read `rewatch.NO_REWATCH_ESTIMATE_REASON`,
         # the constant the movie lane's pair already reads (moved to rewatch.py so both
         # lanes import one definition) -- two more call sites, no new reason.
-        assert walked == 49, (
+        # 49 -> 51: the came-back pair (#553), both in `library_seen.observations` -- the one
+        # derivation both fact builders call, so the two lanes cannot disagree about what a
+        # missing ledger row means (rules 35, 104). Two call sites, one new reason constant,
+        # exempted from CAUSE_COPY in `_NO_PANEL_ROUTE` above.
+        assert walked == 51, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."

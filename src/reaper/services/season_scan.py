@@ -86,6 +86,7 @@ from reaper.ratings import Rating, RatingSource, merge_by_source
 from reaper.services import (
     history_sync,
     library_index,
+    library_seen,
     lists,
     requested_by,
     rewatch,
@@ -191,6 +192,19 @@ class SeasonJudgment:
     """Set when this season's watch history stopped being readable, and already applied to
     ``facts``. Carried so the caller can COUNT it without deciding it a second time: one
     decision, made where the marks are compared, read everywhere else."""
+
+    seen_sighting: library_seen.Sighting | None = None
+    """This season bound to a Plex listing on this scan, for the caller to fold into the
+    came-back ledger (#553). ``None`` when it resolved to no Plex key, which is the "no bind,
+    no write" rule: an absence is never recorded, so nothing about a Plex outage can look like
+    a title that left. Carried out rather than written here for ``watch_reading``'s reason --
+    this lane runs as a concurrent task and holds no session."""
+
+    seen_returned: bool = False
+    """Whether this season's sighting is a return, decided here where the show's own season
+    keys are in hand and read by the caller without being re-derived (``watch_blind_reason``'s
+    shape). The caller still has the last word: the population cap is applied over a whole
+    scan's detections, not this one."""
 
     rewatch_block: rewatch.RewatchBlock | None = None
     """The show's Stage 2 rewatch-probability cohort block (#554 TV), the same one that fed
@@ -477,6 +491,11 @@ def build_season_facts(
     season: SeasonStats,
     rank: int | None,
     plex_rating_key: int | None,
+    # This season's row in the came-back ledger, or None where it has none: no external id,
+    # or a season Reaper has never bound before (#553). Defaultless like `watch_marks`, for
+    # the same reason -- None reads exactly like a first scan, so an omission would turn the
+    # hold off for every season and nothing would say so.
+    seen: library_seen.Seen | None,
     season_added_at: datetime | None,
     horizon: datetime,
     reach_days: int,
@@ -643,6 +662,8 @@ def build_season_facts(
     )
     rating_set = merge_by_source(dataset_rating, list(plex_ratings))
 
+    returned_days_ago, returned_by_reaper = library_seen.observations(seen, now=utcnow())
+
     return Facts(
         title=title,
         days_observed_unwatched=dormancy,
@@ -721,6 +742,11 @@ def build_season_facts(
         # (services.rewatch.fit_blocks) -- the season lane's own fit, not the movie lane's.
         rewatch_cohort_n=rewatch_cohort_n,
         rewatch_cohort_k=rewatch_cohort_k,
+        # Whether this season left the library and came back (#553). The movie lane's twin
+        # (``snapshot.build_facts``, rule 35): one helper, so a missing ledger row cannot mean
+        # one thing on one lane and something else on the other.
+        returned_days_ago=returned_days_ago,
+        returned_by_reaper=returned_by_reaper,
         ratings=rating_set,
     )
 
@@ -1157,6 +1183,14 @@ async def gather(
     # log line and the Settings panel all still read as live. mypy is the gate that catches the
     # omission, because no test can (rule 118).
     watch_marks: Mapping[str, watch_evidence.Mark],
+    # The came-back ledger and the scan timings behind it (#553), read on the caller's session
+    # and handed in whole for the same reason ``watch_marks`` above is: a season's external id
+    # is derived here, so there is nothing to filter on until it is too late. Required and
+    # defaultless for that comment's reason too -- an empty map is byte-identical to a first
+    # scan, so an omission would silently cover no season while every surface read as live.
+    seen_marks: Mapping[str, library_seen.Seen],
+    seen_scans: Sequence[datetime],
+    seen_absence_days: int,
 ) -> list[SeasonJudgment]:
     """Gather the seasons of every show with content on disk, ready to judge.
 
@@ -1618,6 +1652,9 @@ async def gather(
                 ratings_degraded=ratings_degraded,
                 membership_index=membership_index,
                 watch_marks=watch_marks,
+                seen_marks=seen_marks,
+                seen_scans=seen_scans,
+                seen_absence_days=seen_absence_days,
             )
         )
 
@@ -1667,6 +1704,11 @@ def _judge_series(
     # Required for the same reason, and it is the same class of defect: a default that
     # silently exercises a claim the caller never made. Here it disabled a protection.
     watch_marks: Mapping[str, watch_evidence.Mark],
+    # Required for that same reason, third time: an empty ledger reads exactly like a first
+    # scan, so a default here would turn the hold off for every season and say nothing.
+    seen_marks: Mapping[str, library_seen.Seen],
+    seen_scans: Sequence[datetime],
+    seen_absence_days: int,
     ratings: dict[str, ImdbRating] | None = None,
     # True when the IMDb dataset could not be read at all, so `ratings` being empty
     # says nothing about any show in it. See build_season_facts.
@@ -1958,6 +2000,12 @@ def _judge_series(
     whitelists = [m for m in curated_by_series if m.is_whitelist]
     curated = [m for m in curated_by_series if not m.is_whitelist]
 
+    # Every season listing Plex holds for this show right now -- the "is the old key still
+    # there" half of the came-back rule (#553). Built once per show, over the whole map rather
+    # than the content-bearing seasons alone: a key that moved to a season with no files on
+    # disk has still not gone anywhere.
+    live_season_keys = {s.rating_key for s in item.seasons_in_plex.values()}
+
     judgments: list[SeasonJudgment] = []
     for season in item.seasons:
         if not season.has_content:
@@ -1985,11 +2033,47 @@ def _judge_series(
                 media_key=media_key,
                 media_type="season",
             )
+        # The came-back ledger, per season (#553). A season's identity is the SHOW's id plus
+        # the season number: a TVDb id alone is shared by every season the show has, and
+        # grouping on it counts the season structure rather than the seasons
+        # (``docs/LEARNINGS.md``, assumption 16).
+        season_id_key = library_seen.id_key(
+            media_type="season", tvdb=tvdb_id, imdb=show_imdb_id, season=n
+        )
+        seen = seen_marks.get(season_id_key) if season_id_key is not None else None
+        seen_sighting: library_seen.Sighting | None = None
+        seen_returned = False
+        if (
+            season_id_key is not None
+            and plex_key is not None
+            and item.match_status is identity.MatchStatus.MATCHED
+        ):
+            seen_sighting = library_seen.Sighting(
+                id_key=season_id_key,
+                rating_key=plex_key,
+                added_at=in_plex.added_at if in_plex else None,
+            )
+            seen_returned = seen is not None and library_seen.is_return(
+                seen,
+                seen_sighting,
+                # This show's own season listings, not the whole Plex index. Every earlier
+                # key for a season id can only ever have been a season of this show, so the
+                # narrower set answers the same question -- and it is the set that goes empty
+                # when the show itself is re-added, which is the case that has to read as a
+                # return.
+                live_keys=live_season_keys,
+                scan_instants=seen_scans,
+                cooling_off_days=seen_absence_days,
+                # The same instant the show's rewatch cutoff reads, so a season judged in
+                # this pass measures its absence against the moment the pass began.
+                now=judged_at,
+            )
         facts = build_season_facts(
             title=title,
             season=season,
             rank=ranks.get(n),
             plex_rating_key=plex_key,
+            seen=seen,
             watch_blind_reason=season_blind,
             season_added_at=in_plex.added_at if in_plex else None,
             horizon=horizon,
@@ -2053,6 +2137,8 @@ def _judge_series(
                 prune_input=prune_input,
                 watch_reading=reading,
                 watch_blind_reason=season_blind,
+                seen_sighting=seen_sighting,
+                seen_returned=seen_returned,
                 rewatch_block=rewatch_block,
                 year=show_year,
                 summary=show_summary,

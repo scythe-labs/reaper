@@ -58,7 +58,7 @@ from reaper.db.models import (
 )
 from reaper.engine import identity
 from reaper.engine.explanation import read_explanation
-from reaper.engine.gates import thaw_defers_to_owner
+from reaper.engine.gates import GateId, thaw_defers_to_owner
 from reaper.services import (
     app_settings,
     whitelist,
@@ -885,6 +885,11 @@ _RATED_RE = re.compile(r"^well rated: (\d+(?:\.\d+)?) on IMDb")
 _WATCHED_HERE_RE = re.compile(r"^watched here: (\d+) (?:person|people) in the last (.+)$")
 _OTHERS_RE = re.compile(r"^(\d+) other")
 _KEEP_LAST_RE = re.compile(r"^within the last (\d+) seasons")
+#: The countdown out of ``ReturnedGate``'s fired detail, whose two wordings differ only in the
+#: lead ("you removed this before and it came back, 1 year left"). Anchored on the tail rather
+#: than on either lead, so rewording a lead does not silently drop the chip's number to its
+#: static fallback.
+_CAME_BACK_RE = re.compile(r" came back, (.+) left$")
 
 
 def _kept_season_phrase(detail: str) -> str:
@@ -964,9 +969,46 @@ def _kept_phrase(gate: str, detail: str) -> str:
         return "not managed by Sonarr or Radarr"
     if gate == "season_progression":
         return _kept_season_phrase(detail)
+    if gate == "returned":
+        # Reached only where this gate is not the one `_came_back_chip` gives its own outlined
+        # countdown chip to -- another caller of this helper, or a stored row it could not
+        # parse. Worded here anyway rather than left to the generic fallback below, which is
+        # what makes a missing member silent (rule 66).
+        return "it came back after leaving your library"
     if gate == "custom":
         return "by your rule"
     return "a protection applies"
+
+
+def _came_back_chip(fired: list[dict[str, Any]]) -> ChipOut | None:
+    """The came-back hold's chip, or ``None`` when that protection did not fire (#553).
+
+    **It takes the chip wherever it fired, whatever else did, and it is the only protection
+    that does.** Every other protection on the list is re-decided from scratch next scan, so
+    "why is this kept" is answered by conditions the operator can go and look at. This one is a
+    countdown against a date they cannot see, on evidence from a scan that may be a year old,
+    and left unstated the honest question is not "why" but "is it stuck forever". So the chip
+    says how long is left without anything being opened.
+
+    **The line, so the next protection is not argued from scratch: a chip goes to a protection
+    with an EXPIRY, and to no others.** "Someone is watching it right now" and "well rated" have
+    nothing to count down, so a chip for them would add noise and no information.
+
+    A hand spare still wins, because that is the owner's decision and it carries its own
+    countdown already (``OverrideChip``); the caller checks it before asking here.
+    """
+    entry = next((e for e in fired if str(e.get("gate") or "") == GateId.RETURNED.value), None)
+    if entry is None:
+        return None
+    match = _CAME_BACK_RE.search(str(entry.get("detail") or ""))
+    # The static fallback every parser here has: an unrecognized detail costs the number, never
+    # the chip, and the next scan restores it.
+    left = f", {match.group(1)} left" if match else ""
+    return ChipOut(
+        tone="held",
+        text=f"Came back{left}",
+        why="it left your library and came back",
+    )
 
 
 def _chip(
@@ -995,6 +1037,8 @@ def _chip(
             return None
         gate = str(fired[0].get("gate") or "")
         detail = str(fired[0].get("detail") or "")
+        if detail != HAND_SPARE_DETAIL and (came_back := _came_back_chip(fired)) is not None:
+            return came_back
         phrase = _kept_phrase(gate, detail)
         # The kept phrase is already a lowercase clause, so the chip and its why say the
         # same words with and without the "Kept, " lead.

@@ -81,6 +81,7 @@ from reaper.ratings import Rating, RatingSource, from_radarr, merge_by_source
 from reaper.services import (
     history_sync,
     library_index,
+    library_seen,
     list_config,
     lists,
     requested_by,
@@ -298,6 +299,7 @@ def build_facts(
     watch_blind_reason: str | None = None,
     rewatch: Mapping[int, RewatchStats] = _NO_REWATCH_STATS,
     rewatch_curve: RewatchCurve | None = None,
+    seen: library_seen.Seen | None = None,
 ) -> Facts:
     """Assemble one item's evidence.
 
@@ -561,6 +563,8 @@ def build_facts(
                 source="tautulli",
             )
 
+    returned_days_ago, returned_by_reaper = library_seen.observations(seen, now=utcnow())
+
     return Facts(
         title=item.title,
         days_observed_unwatched=dormancy,
@@ -614,6 +618,11 @@ def build_facts(
             Known(value=item.quality, source="radarr") if item.quality else Absent(source="radarr")
         ),
         show_ended=Absent(source="radarr"),  # a movie is not a series
+        # Whether this title left the library and came back (#553). Read off the ledger row
+        # the scan looked up before judging, never re-derived here: the detection is visible
+        # for one scan and the hold runs for months. One helper for both lanes (rule 35).
+        returned_days_ago=returned_days_ago,
+        returned_by_reaper=returned_by_reaper,
         ratings=rating_set,
     )
 
@@ -854,11 +863,19 @@ async def scan(
     # Read before the TV task is spawned, because that task holds no session of its own and
     # its season keys do not exist yet. Serves both lanes: one read per scan, not per item.
     watch_marks = await watch_evidence.recall_all(session)
+    # Read here for the same reason, and handed to the season task the same way (#553): the
+    # ledger is keyed on external ids that lane resolves inside `gather`, and the scan
+    # timings answer "did Reaper run while this was missing" for both lanes at once.
+    seen_marks = await library_seen.recall_all(session)
+    seen_scans = await library_seen.scan_instants(session)
     if sonarrs:
         season_task = _spawn(
             season_scan.gather(
                 engine,
                 watch_marks=watch_marks,
+                seen_marks=seen_marks,
+                seen_scans=seen_scans,
+                seen_absence_days=tv_policy.returned_absence_days(),
                 sonarrs=sonarrs,
                 tautulli=tautulli,
                 plex=plex,
@@ -1123,6 +1140,13 @@ async def scan(
     score_started = time.monotonic()
     watch_readings: dict[str, watch_evidence.Reading] = {}
     watch_blind = 0
+    # This scan's ledger work (#553), accumulated in memory and flushed once after both lanes,
+    # exactly as `watch_readings` is. `seen_returns` maps an id key to whether Reaper's own
+    # journal claims the removal, which is filled in after the loop by one query rather than
+    # per item.
+    seen_sightings: dict[str, library_seen.Sighting] = {}
+    seen_returned: set[str] = set()
+    movie_absence_days = movie_policy.returned_absence_days()
     for index, item in enumerate(items):
         if index % 100 == 0:
             emit(Progress("scoring", index, total, item.title))
@@ -1147,6 +1171,42 @@ async def scan(
                     media_type=item.media_type,
                 )
 
+        # The ledger read, and the detection off it (#553). Both need only values already in
+        # hand, so this stays inside the pure loop and the write is deferred with the rest.
+        # A key is built for every item that HAS one, but a sighting is recorded only on a
+        # confident bind: no bind, no write, so a Plex outage records nothing rather than
+        # recording an absence (`services.library_seen`).
+        item_id_key = library_seen.id_key(
+            media_type="movie",
+            tmdb=item.tmdb_id,
+            # Both spellings, the movie path exactly as the TV path (rule 29/106).
+            imdb=item.imdb_id or item.plex_imdb_id,
+        )
+        seen = seen_marks.get(item_id_key) if item_id_key is not None else None
+        if (
+            item_id_key is not None
+            and item.plex_rating_key is not None
+            and item.match_status is identity.MatchStatus.MATCHED
+        ):
+            sighting = library_seen.Sighting(
+                id_key=item_id_key,
+                rating_key=item.plex_rating_key,
+                added_at=item.added_at,
+            )
+            seen_sightings[item_id_key] = sighting
+            if seen is not None and library_seen.is_return(
+                seen,
+                sighting,
+                # The whole Plex index: an earlier key for this id could have been any
+                # listing, and the index is the only complete answer to "does it still
+                # exist". A dict lookup per recorded key, and a title has one or two.
+                live_keys=plex_index.by_rating_key,
+                scan_instants=seen_scans,
+                cooling_off_days=movie_absence_days,
+                now=now,
+            ):
+                seen_returned.add(item_id_key)
+
         facts = build_facts(
             item,
             context,
@@ -1160,6 +1220,7 @@ async def scan(
             watch_blind_reason=blind_reason,
             rewatch=rewatch_stats,
             rewatch_curve=rewatch_curve,
+            seen=seen,
         )
         # The same cohort_block decision build_facts made internally, re-derived off the
         # dormancy value it froze onto `facts` (rule 104: one derivation, two call sites,
@@ -1288,6 +1349,14 @@ async def scan(
         if judgment.watch_blind_reason is not None:
             # Counted from the decision the TV lane already made, never re-derived here.
             watch_blind += 1
+        if judgment.seen_sighting is not None:
+            # Same shape, same reason (#553): the TV lane decided this against the same marks
+            # and already put the result on its facts, and the sighting rides out here only so
+            # both lanes are written in one statement below. The population cap therefore reads
+            # a whole scan rather than one lane.
+            seen_sightings[judgment.seen_sighting.id_key] = judgment.seen_sighting
+            if judgment.seen_returned:
+                seen_returned.add(judgment.seen_sighting.id_key)
         size_sources[_size_bucket(judgment.size_source)] += 1
         if judgment.size_source is None:
             log.info(
@@ -1398,6 +1467,34 @@ async def scan(
     # careful. `TestTheWatchBlindnessGuardThroughAWholeScan
     # .test_a_degraded_scan_still_records_what_it_measured` goes red if the gate is added.
     await watch_evidence.record(session, watch_readings, now=now)
+    # The came-back ledger, both lanes in one write (#553). Not gated on `context.degraded`,
+    # for `watch_evidence.record`'s reason two paragraphs up: this is evidence a LATER scan
+    # reads to withhold deletion pressure, and skipping it costs a protection. Degradation
+    # cannot manufacture a sighting either -- one is written only where an item bound to Plex,
+    # so an unreadable source leaves the row untouched rather than recording an absence.
+    #
+    # **The cap is applied here rather than per item**, which is why the detection is
+    # accumulated instead of acted on. A Plex library rebuilt slowly enough to outlast the
+    # minimum absence satisfies every condition for every title at once, and only a whole
+    # scan's count can see that. Refusing the batch costs the memory of any real return inside
+    # it; granting it holds the library. #809 is the general scan-level guard and this stays
+    # after it lands, because it is about what THIS feature will believe.
+    if seen_returned and not library_seen.within_cap(len(seen_returned), len(seen_sightings)):
+        log.warning(
+            "scan.returns_refused_population",
+            returned=len(seen_returned),
+            bound=len(seen_sightings),
+        )
+        seen_returned = set()
+    seen_by_reaper = await library_seen.removed_by_reaper(session, seen_returned)
+    if seen_returned:
+        log.info("scan.returns_detected", returned=len(seen_returned), ours=len(seen_by_reaper))
+    await library_seen.record(
+        session,
+        seen_sightings,
+        returns={key: key in seen_by_reaper for key in seen_returned},
+        now=now,
+    )
     # Stored so Settings can say how many items the last scan held back for this reason,
     # which is the one number that tells an operator whether they need the reset at all.
     # Always written, zero included: a scan that counted none is a different fact from a

@@ -67,7 +67,7 @@ from reaper.ratings import _PERCENTAGE_SOURCES, _PLEX_IMAGE_PREFIXES, RatingSour
 #: The ``SCORER_VERSION`` the surface below was recorded against. Both move together or
 #: neither does -- re-recording the list without touching this leaves every operator's
 #: pending approval bound to a scorer that no longer exists.
-_RECORDED_AT_SCORER_VERSION = 4
+_RECORDED_AT_SCORER_VERSION = 5
 
 #: Every declaration below is one a stored policy body dereferences without carrying, so a
 #: change to it re-interprets that body while ``policy_hash`` holds still. Spelled by
@@ -90,20 +90,8 @@ _RECORDED_SURFACE: tuple[str, ...] = (
     "facts.ratings: tuple[Rating, ...] = ()",
     "facts.release_age_days: Observation[float] = Absent(unset)",
     "facts.requested: Observation[bool] = Absent(unset)",
-    # Recorded without a SCORER_VERSION bump, per _SURFACE_MOVED's second path: the change
-    # adding these two (#554 stage 1) also added four PolicyBody fields
-    # (rewatch_keep_enabled and siblings), and a body field with a default moves every
-    # stored body's policy_hash unconditionally -- the thaw dumps the new keys -- so every
-    # pre-upgrade approval is already voided at execute time (rule 113) and every stored
-    # scoring_hash already misses. The bump would re-void what is void.
-    #
-    # The two below (#554 stage 2) take the same path for the same reason, one stage later:
-    # the same change wires the opt-in hold as a gate row that
-    # `PolicyBody._rewatch_odds_row` APPENDS to every stored movie body on load, which moves
-    # every stored movie body's policy_hash -- and the combined snapshot hash with it -- the
-    # same unconditional way. The two facts feed only that gate and the display-only
-    # rewatch_odds explanation context, never the rule-authoring vocabulary
-    # (docs/history/REWATCH_PLAN.md, Stage 2: "Not exposed in the rule-authoring vocabulary").
+    "facts.returned_by_reaper: Observation[bool] = Absent(unset)",
+    "facts.returned_days_ago: Observation[float] = Absent(unset)",
     "facts.rewatch_cohort_k: Observation[int] = Absent(unset)",
     "facts.rewatch_cohort_n: Observation[int] = Absent(unset)",
     "facts.rewatch_last_play_days: Observation[float] = Absent(unset)",
@@ -148,6 +136,7 @@ _RECORDED_SURFACE: tuple[str, ...] = (
     "gate.min_dormancy: authorable",
     "gate.others_watching: not-authorable",
     "gate.rating_floor: authorable",
+    "gate.returned: authorable",
     "gate.rewatch_odds: authorable",
     "gate.season_progression: not-authorable",
     "gate.server_popularity: authorable",

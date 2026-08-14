@@ -5208,7 +5208,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 85
+_EXPECTED_LAYERED_MODULES = 86
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -5536,7 +5536,7 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
 #: A different population from that constant, which counts the 85 under the four packages only.
-_EXPECTED_SOURCE_MODULES = 117
+_EXPECTED_SOURCE_MODULES = 118
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`
@@ -6458,6 +6458,11 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
     "src/reaper/services/grace.py::grace_report": (1, "chunked"),
     "src/reaper/services/imdb_dataset.py::ImdbRatings.lookup": (1, "chunked"),
     "src/reaper/services/instances.py::arr_rows": (1, "bounded: two enum members"),
+    "src/reaper/services/library_seen.py::record": (1, "chunked"),
+    "src/reaper/services/library_seen.py::removed_by_reaper": (
+        1,
+        "bounded: the fixed _REMOVING_KINDS set",
+    ),
     "src/reaper/services/retention.py::_doomed": (
         2,
         "bounded: both take a subquery, so nothing is bound at all",
@@ -7729,7 +7734,7 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned for rule 145's reason: a flag-shaped assertion cannot tell
 #: a revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 25
+_EXPECTED_REVISION_FILES = 26
 _EXPECTED_UNRECOVERABLE_REVISIONS = 4
 
 

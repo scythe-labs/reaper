@@ -1220,6 +1220,7 @@ ZONES: dict[str, Zone] = {
             "PolicyBody._pin_to_the_running_scorer",
             "PolicyBody._drop_retired_gates",
             "PolicyBody._rewatch_odds_row",
+            "PolicyBody._returned_row",
             "PolicyBody._weights_total_one_hundred",
             "PolicyBody._no_duplicates",
             "ProfileSettings._run_cap_within_rolling_cap",
@@ -1240,6 +1241,7 @@ ZONES: dict[str, Zone] = {
                 (
                     "ConditionSpec.to_condition",
                     "PolicyBody.popularity_window_days",
+                    "PolicyBody.returned_absence_days",
                     "PolicyBody.rating_rules",
                     "PolicyBody.keep_configs",
                     "PolicyBody.custom_signal_configs",
@@ -1273,6 +1275,7 @@ ZONES: dict[str, Zone] = {
             "ServerPopularityGate.evaluate",
             "MinDormancyGate.evaluate",
             "RewatchOddsGate.evaluate",
+            "ReturnedGate.evaluate",
             "wilson_upper",
             "DataHorizonGate.evaluate",
             "evaluate_all",
