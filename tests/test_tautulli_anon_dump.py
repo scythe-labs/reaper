@@ -304,6 +304,32 @@ class TestAgreementWithHistorySync:
         assert all(isinstance(p["percent_complete"], int) for p in built["plays"])
 
 
+class TestWhatTheLibraryNoLongerHolds:
+    def test_a_play_of_a_vanished_item_is_counted(self, dump_tool: Any) -> None:
+        # 39% of watched movies and 46% of watched shows were already gone from the first
+        # real library this ran against. A dump that did not say so would read as though
+        # every play it carries is about something still on disk.
+        items = [{"token": "kept", "type": "movie"}, {"token": "show_kept", "type": "show"}]
+        plays = [
+            {"item": "kept", "type": "movie", "show": None},
+            {"item": "gone", "type": "movie", "show": None},
+            {"item": "ep1", "type": "episode", "show": "show_kept"},
+            {"item": "ep2", "type": "episode", "show": "show_gone"},
+        ]
+        assert dump_tool.orphans(items, plays) == {
+            "movies": 1,
+            "movies_played": 2,
+            "shows": 1,
+            "shows_played": 2,
+        }
+
+    def test_a_library_that_lost_nothing_reports_none_gone(self, dump_tool: Any) -> None:
+        items = [{"token": "kept", "type": "movie"}]
+        plays = [{"item": "kept", "type": "movie", "show": None}]
+        counted = dump_tool.orphans(items, plays)
+        assert counted["movies"] == 0 and counted["movies_played"] == 1
+
+
 class TestTheClock:
     def test_intervals_survive_the_shift(self, dump_tool: Any, tmp_path: Path) -> None:
         mask = dump_tool.Mask(tmp_path / "salt.json")

@@ -569,6 +569,26 @@ def add_ratings(items: list[dict[str, Any]], wanted: dict[str, str], *, note) ->
     return hits
 
 
+def orphans(items: list[dict[str, Any]], plays: list[dict[str, Any]]) -> dict[str, int]:
+    """Distinct things played that the library no longer holds, beside the ones it does.
+
+    A rating key in the history is not a promise the item still exists: Tautulli keeps a
+    play after the file is gone, and a re-added file gets a new key while its old plays stay
+    where they were (``services.watch_evidence``). Both read the same way from here, which
+    is why this counts rather than explains.
+    """
+    movies = {i["token"] for i in items if i["type"] == "movie"}
+    shows = {i["token"] for i in items if i["type"] == "show"}
+    played_movies = {p["item"] for p in plays if p["type"] == "movie"}
+    played_shows = {p["show"] for p in plays if p["show"]}
+    return {
+        "movies": len(played_movies - movies),
+        "movies_played": len(played_movies),
+        "shows": len(played_shows - shows),
+        "shows_played": len(played_shows),
+    }
+
+
 # --------------------------------------------------------------------------- entry point
 
 
@@ -623,6 +643,13 @@ def build(
             "users": len(users),
             "rated": rated,
             "api_calls": api.calls,
+            # How much of this history is about media the library no longer holds. Measured
+            # at 39% of watched movies and 46% of watched shows on the first real library
+            # this ran against, which is what a history outliving its library looks like and
+            # not a fault. It belongs in the summary because it decides what the dump can be
+            # asked: a signal read off items still present is answering a question about the
+            # survivors, and the number here says how much of the past that leaves out.
+            "played_but_gone": orphans(items, plays),
         },
         "genre_histogram": dict(
             Counter(g for i in items for g in i.get("genres") or []).most_common()

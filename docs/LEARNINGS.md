@@ -3967,6 +3967,19 @@ count was compared with the mirror by hand. It now asks the server for its own t
 and records both numbers in the dump, because no test against a fake can find the next
 member of this class.
 
+**Roughly two fifths of a mature library's watch history is about media it no longer
+holds.** On the first real library this ran against: 2,240 of 5,792 distinct watched movies
+(39%) and 813 of 1,752 watched shows (46%) had no current item to join to. Tautulli keeps a
+play after the file goes, and a re-added file gets a new key while its old plays stay under
+the old one, and from a dump those two are indistinguishable. This is not a fault and it is
+not the 1.5% to 4.5% figure recorded elsewhere here, which counts something narrower
+(mid-history titles whose plays are unreachable *while the title is still on disk*).
+
+It decides what a dump can be asked. Any signal measured over items still present is
+answering a question about the survivors, and on a library that has been reaped for years
+the survivors are the minority of what was watched. `played_but_gone` is in every dump's
+summary for that reason.
+
 **Rating keys churn, so a repeat dump needs a stored salt.** The high-water check exists
 because a re-added file gets a new key while its plays stay under the old one, and it can
 only be exercised by two dumps months apart that agree on which item is which. The tool
