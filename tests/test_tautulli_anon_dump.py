@@ -198,7 +198,7 @@ class FakeTautulli:
                 return rows
             start += len(batch)
 
-    def spread(self, work: Any, over: Any, *, jobs: int) -> list[Any]:
+    def spread(self, work: Any, over: Any, *, jobs: int, note: Any = None) -> list[Any]:
         """Serial, so a test's ordering is the code's ordering and not the pool's."""
         return [work(item) for item in over]
 

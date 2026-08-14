@@ -163,14 +163,32 @@ class Tautulli:
                 time.sleep(1 + attempt)
         raise RuntimeError(f"{cmd} failed after 3 tries: {last}")
 
-    def spread(self, work: Any, over: Any, *, jobs: int) -> list[Any]:
+    def spread(self, work: Any, over: Any, *, jobs: int, note: Any = None) -> list[Any]:
         """``work`` applied to each of ``over``, in order, several requests in flight.
 
         Every call this fans out is an independent GET against a server that is normally on
         the same machine, and the serial version of this was the longest phase of a run.
+
+        ``map`` returns in the order it was given, so the caller can zip the results back
+        against its own list. The counter is only for the progress line, and it is read
+        under the same lock it is written under because several workers reach it at once.
         """
+        items = list(over)
+        done = 0
+        counting = Lock()
+
+        def counted(item: Any) -> Any:
+            nonlocal done
+            result = work(item)
+            with counting:
+                done += 1
+                at = done
+            if note is not None and at % 250 == 0:
+                note(f"    {at}/{len(items)}")
+            return result
+
         with ThreadPoolExecutor(max_workers=jobs) as pool:
-            return list(pool.map(work, over))
+            return list(pool.map(counted, items))
 
     def paged(
         self,
@@ -358,7 +376,7 @@ def collect_items(
 
         if not quick and keyed:
             note(f"    fetching genres and ids, {jobs} at a time")
-            fetched = api.spread(_metadata, [(api, key) for _, key in keyed], jobs=jobs)
+            fetched = api.spread(_metadata, [(api, key) for _, key in keyed], jobs=jobs, note=note)
             for record, meta in zip(records, fetched, strict=True):
                 if meta is None:
                     record["metadata_failed"] = True
@@ -396,7 +414,10 @@ def collect_seasons(
     """
     note(f"  {len(show_keys)} shows, {jobs} at a time")
     walked = api.spread(
-        _one_show, [(api, mask, token, key) for token, key in show_keys.items()], jobs=jobs
+        _one_show,
+        [(api, mask, token, key) for token, key in show_keys.items()],
+        jobs=jobs,
+        note=note,
     )
     return [show for show in walked if show is not None]
 
