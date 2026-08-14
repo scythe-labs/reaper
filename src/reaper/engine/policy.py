@@ -809,6 +809,13 @@ class PolicyBody(Frozen):
         A gathering value, not a judging one: it decides what the scan RECORDS as a return, and
         the gate reads the recorded answer. That is why it belongs in ``_gathering_evidence``
         and the hold's length does not.
+
+        **It is a gathering value whether the gate is on or off**, because the ledger is
+        written on every scan either way (``services.library_seen``). That is what makes the
+        protection useful the day it is switched on rather than months later: Reaper can only
+        notice a title coming back if it saw the title before it left. So the number is always
+        in the hash, and switching the gate off means gathering under the shipped default
+        rather than gathering nothing.
         """
         return next(
             (g.window_days for g in self.gates if g.gate is GateId.RETURNED and g.enabled),
