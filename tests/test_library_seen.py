@@ -513,7 +513,15 @@ class TestTheLedgerRoundTrip:
 class TestTheJournalJoin:
     """Which sentence the operator reads, and nothing else."""
 
-    async def _journal(self, session: AsyncSession, *, kind: str, state: StepState) -> None:
+    async def _journal(
+        self,
+        session: AsyncSession,
+        *,
+        kind: str,
+        state: StepState,
+        media_type: str = "movie",
+        media_key: str = "radarr:1:5",
+    ) -> None:
         snapshot = Snapshot(
             created_at=NOW,
             policy_hash="p",
@@ -524,10 +532,11 @@ class TestTheJournalJoin:
         session.add(
             Candidate(
                 snapshot_id=snapshot.id,
-                media_key="radarr:1:5",
+                media_key=media_key,
                 title="x",
-                media_type="movie",
+                media_type=media_type,
                 tmdb_id=42,
+                tvdb_id=678,
                 verdict="condemn",
                 explanation_json="{}",
                 created_at=NOW,
@@ -546,7 +555,7 @@ class TestTheJournalJoin:
         session.add(
             ActionStep(
                 run_id=run.id,
-                media_key="radarr:1:5",
+                media_key=media_key,
                 ordinal=0,
                 kind=kind,
                 method="DELETE",
@@ -579,6 +588,24 @@ class TestTheJournalJoin:
     ) -> None:
         await self._journal(session, kind="radarr_delete", state=StepState.VERIFIED)
         assert await library_seen.removed_by_reaper(session, {"movie:tmdb:999"}) == set()
+
+    async def test_a_season_answers_under_its_own_number(self, session: AsyncSession) -> None:
+        """The TV path, which the movie cases above cannot reach.
+
+        ``Candidate`` carries no season number of its own, so the id key is rebuilt by reading
+        the last segment of the season's ``media_key`` (``sonarr:1:42:3``). Get that wrong and
+        every TV return reads as "it left some other way", which is the sentence that tells an
+        operator their settings are innocent when the journal says otherwise.
+        """
+        await self._journal(
+            session,
+            kind="sonarr_delete_files",
+            state=StepState.VERIFIED,
+            media_type="season",
+            media_key="sonarr:1:42:3",
+        )
+        wanted = {"tv:tvdb:678:s3", "tv:tvdb:678:s4"}
+        assert await library_seen.removed_by_reaper(session, wanted) == {"tv:tvdb:678:s3"}
 
     async def test_nothing_asked_is_nothing_queried(self, session: AsyncSession) -> None:
         assert await library_seen.removed_by_reaper(session, set()) == set()

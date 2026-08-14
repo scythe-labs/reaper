@@ -109,6 +109,13 @@ NO_RETURN_RECORD_REASON = "Reaper has not seen this title in your library before
 #: ``sonarr_verify_unmonitor`` change monitoring alone and delete nothing, so a season Reaper
 #: unmonitored but never emptied is not a removal Reaper can claim (``ActionStep.kind`` names
 #: all four).
+#:
+#: **The same two kinds as ``executor._TERMINAL_DELETE_KINDS``, and deliberately a second
+#: copy.** Sharing one declaration would make this module import the executor, which imports
+#: the whole send path, to decide a SENTENCE -- and this reader only ever chooses which of two
+#: wordings the operator sees, where that one prices the rolling delete cap. They are named
+#: for each other here so a third kind reaches both (rule 72); nothing else keeps them in step,
+#: and a miss costs the more specific of two true sentences, never a file.
 _REMOVING_KINDS = frozenset({"radarr_delete", "sonarr_delete_files"})
 
 
