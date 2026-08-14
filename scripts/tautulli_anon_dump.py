@@ -74,15 +74,37 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 FORMAT_VERSION = 1
 
 IMDB_RATINGS_URL = "https://datasets.imdbws.com/title.ratings.tsv.gz"
 
-#: Tautulli pages every table endpoint, and this is its practical ceiling per call.
+#: Rows per page for a library sweep. Only a handful of calls either way, since a sweep row
+#: is cheap and a library is thousands of items rather than hundreds of thousands.
 PAGE = 1000
+
+#: Rows per page of history, which is a different question with a different answer. What a
+#: history page costs is almost entirely FIXED per request: measured against a live instance
+#: at 425,983 rows, one page of 1,000 took 14.7s and one of 50,000 took 20.7s. So the page
+#: size sets the whole runtime, and 1,000 spends 105 minutes where 25,000 spends 4.
+#:
+#: Not larger, though the curve keeps improving, because a page that times out is retried at
+#: half the size (:meth:`Tautulli.paged`) and the reach that matters is the SMALLEST page
+#: the code can end up choosing on a slower server than this one.
+HISTORY_PAGE = 25_000
+
+#: Seconds a single request may take. Generous because of the fixed cost above: a 25,000-row
+#: page took 13.9s here, and an instance answering three times slower still fits.
+TIMEOUT = 120
+
+#: Concurrent requests. The per-item metadata sweep is thousands of independent GETs and is
+#: otherwise the longest phase of a run. Eight is chosen to be unremarkable to a Tautulli
+#: sharing a box with Plex, not to be fast on a big server; ``--jobs`` moves it.
+JOBS = 8
 
 #: How many items a dry run pulls per section. Small enough to finish in seconds, so
 #: someone deciding whether to trust this tool can see real output before committing to a
@@ -120,16 +142,18 @@ class Tautulli:
             self.ctx.check_hostname = False
             self.ctx.verify_mode = ssl.CERT_NONE
         self.calls = 0
+        self._counting = Lock()
 
-    def __call__(self, cmd: str, **params: Any) -> Any:
+    def __call__(self, cmd: str, *, timeout: int = TIMEOUT, **params: Any) -> Any:
         query = urllib.parse.urlencode({"apikey": self.key, "cmd": cmd, **params})
         url = f"{self.base}/api/v2?{query}"
         last: Exception | None = None
         for attempt in range(3):
             try:
-                with http_open(url, timeout=60, context=self.ctx) as fh:
+                with http_open(url, timeout=timeout, context=self.ctx) as fh:
                     payload = json.loads(fh.read().decode("utf-8"))
-                self.calls += 1
+                with self._counting:
+                    self.calls += 1
                 response = payload.get("response") or {}
                 if response.get("result") != "success":
                     raise RuntimeError(f"{cmd}: {response.get('message') or 'no result'}")
@@ -139,8 +163,23 @@ class Tautulli:
                 time.sleep(1 + attempt)
         raise RuntimeError(f"{cmd} failed after 3 tries: {last}")
 
+    def spread(self, work: Any, over: Any, *, jobs: int) -> list[Any]:
+        """``work`` applied to each of ``over``, in order, several requests in flight.
+
+        Every call this fans out is an independent GET against a server that is normally on
+        the same machine, and the serial version of this was the longest phase of a run.
+        """
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            return list(pool.map(work, over))
+
     def paged(
-        self, cmd: str, *, cap: int | None = None, note: Any = None, **params: Any
+        self,
+        cmd: str,
+        *,
+        cap: int | None = None,
+        page: int = PAGE,
+        note: Any = None,
+        **params: Any,
     ) -> list[dict[str, Any]]:
         """Every row of a paginated table endpoint, or the first ``cap`` of them.
 
@@ -148,19 +187,27 @@ class Tautulli:
         answering with more rows than the page requested would otherwise leave the cursor
         behind the data and re-read the overlap forever.
 
-        ``note`` reports every tenth page. A six-figure history is a few minutes of silence
-        otherwise, which reads as a hang to the one person this tool needs to keep waiting.
+        **A page that times out is retried at half the size, down to a floor**, so a server
+        slower than the one ``HISTORY_PAGE`` was measured on degrades to a longer run rather
+        than to no dump at all. The shrink is permanent for the rest of the walk: whatever
+        made one page too slow is a property of the instance, not of that offset.
         """
         out: list[dict[str, Any]] = []
         start = 0
-        pages = 0
         while cap is None or len(out) < cap:
-            length = PAGE if cap is None else min(PAGE, cap - len(out))
-            data = self(cmd, start=start, length=length, **params)
+            length = page if cap is None else min(page, cap - len(out))
+            try:
+                data = self(cmd, start=start, length=length, **params)
+            except RuntimeError:
+                if page <= 250:
+                    raise
+                page = max(250, page // 2)
+                if note is not None:
+                    note(f"    a page took too long, retrying in {page}-row pages")
+                continue
             rows = (data or {}).get("data") or []
             out.extend(rows)
-            pages += 1
-            if note is not None and pages % 10 == 0:
+            if note is not None:
                 note(f"    {len(out)} rows so far")
             if len(rows) < length:
                 break
@@ -255,13 +302,22 @@ def imdb_id(meta: dict[str, Any]) -> str | None:
 
 
 def collect_items(
-    api: Tautulli, mask: Mask, sections: list[dict[str, Any]], *, cap: int | None, quick: bool, note
+    api: Tautulli,
+    mask: Mask,
+    sections: list[dict[str, Any]],
+    *,
+    cap: int | None,
+    quick: bool,
+    jobs: int,
+    note,
 ) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, str]]:
     """One record per movie and per show, the show rating keys, and the ids to enrich with.
 
     The sweep gives size, arrival and play counts in one paginated call. It gives neither
-    genres nor the external id, so those cost one ``get_metadata`` per item, which is the
-    bulk of a run. ``quick`` skips that call and gives up both.
+    genres nor the external id, so those cost one ``get_metadata`` per item, and on a real
+    library that is thousands of requests and the longest phase of a run. They are
+    independent of each other, so they go out several at a time. ``quick`` skips them
+    entirely and gives up both fields.
     """
     items: list[dict[str, Any]] = []
     show_keys: dict[str, int] = {}
@@ -278,43 +334,58 @@ def collect_items(
             order_column="added_at",
             order_dir="desc",
         )
-        note(f"  {kind} section: {len(rows)} items")
-        for done, row in enumerate(rows, 1):
-            key = as_int(row.get("rating_key"))
-            if key is None:
-                continue
+        keyed = [(row, key) for row in rows if (key := as_int(row.get("rating_key"))) is not None]
+        note(f"  {kind} section: {len(keyed)} items")
+
+        records = []
+        for row, key in keyed:
             token = mask.token(kind, key)
-            record: dict[str, Any] = {
-                "token": token,
-                "type": kind,
-                "section": mask.token("section", section_id),
-                "year": as_int(row.get("year")),
-                "size_bytes": round_size(as_int(row.get("file_size"))),
-                "added_at": mask.when(row.get("added_at")),
-                "last_played": mask.when(row.get("last_played")),
-                "play_count": as_int(row.get("play_count")) or 0,
-                "resolution": row.get("video_resolution") or None,
-            }
+            records.append(
+                {
+                    "token": token,
+                    "type": kind,
+                    "section": mask.token("section", section_id),
+                    "year": as_int(row.get("year")),
+                    "size_bytes": round_size(as_int(row.get("file_size"))),
+                    "added_at": mask.when(row.get("added_at")),
+                    "last_played": mask.when(row.get("last_played")),
+                    "play_count": as_int(row.get("play_count")) or 0,
+                    "resolution": row.get("video_resolution") or None,
+                }
+            )
             if kind == "show":
                 show_keys[token] = key
-            if not quick:
-                try:
-                    meta = api("get_metadata", rating_key=key) or {}
-                except RuntimeError:
-                    meta = {}
+
+        if not quick and keyed:
+            note(f"    fetching genres and ids, {jobs} at a time")
+            fetched = api.spread(_metadata, [(api, key) for _, key in keyed], jobs=jobs)
+            for record, meta in zip(records, fetched, strict=True):
+                if meta is None:
                     record["metadata_failed"] = True
+                    meta = {}
                 record["genres"] = [g for g in (meta.get("genres") or []) if isinstance(g, str)]
                 record["released"] = meta.get("originally_available_at") or None
                 if tconst := imdb_id(meta):
-                    wanted[token] = tconst
-            items.append(record)
-            if done % 250 == 0:
-                note(f"    {done}/{len(rows)} ({api.calls} calls)")
+                    wanted[record["token"]] = tconst
+        items.extend(records)
     return items, show_keys, wanted
 
 
+def _metadata(work: tuple[Tautulli, int]) -> dict[str, Any] | None:
+    """One item's metadata, or ``None`` where the instance would not answer for it.
+
+    Returning rather than raising keeps one unreadable item from ending the whole sweep,
+    and the record it belongs to is marked so the gap is visible in the dump.
+    """
+    api, key = work
+    try:
+        return api("get_metadata", rating_key=key) or {}
+    except RuntimeError:
+        return None
+
+
 def collect_seasons(
-    api: Tautulli, mask: Mask, show_keys: dict[str, int], *, note
+    api: Tautulli, mask: Mask, show_keys: dict[str, int], *, jobs: int, note
 ) -> list[dict[str, Any]]:
     """Season structure per show, with each season's episode count.
 
@@ -323,34 +394,45 @@ def collect_seasons(
     count costs one call per season on top of one per show. Sizes are not here: see the
     module docstring for what that measurement cost.
     """
-    out: list[dict[str, Any]] = []
-    for done, (token, key) in enumerate(show_keys.items(), 1):
-        try:
-            seasons = api.children(key)
-        except RuntimeError:
+    note(f"  {len(show_keys)} shows, {jobs} at a time")
+    walked = api.spread(
+        _one_show, [(api, mask, token, key) for token, key in show_keys.items()], jobs=jobs
+    )
+    return [show for show in walked if show is not None]
+
+
+def _one_show(work: tuple[Tautulli, Mask, str, int]) -> dict[str, Any] | None:
+    """One show's seasons and their episode counts, or ``None`` if it would not answer.
+
+    A show is walked whole by one worker rather than fanning its seasons out separately.
+    Two levels of pool nest badly for no gain: there are hundreds of shows to spread over
+    already, and a per-season fan-out would multiply the requests in flight by whatever the
+    widest show happens to be.
+    """
+    api, mask, token, key = work
+    try:
+        seasons = api.children(key)
+    except RuntimeError:
+        return None
+    entries = []
+    for child in seasons:
+        season_key = as_int(child.get("rating_key"))
+        if season_key is None:
             continue
-        entries = []
-        for child in seasons:
-            season_key = as_int(child.get("rating_key"))
-            if season_key is None:
-                continue
-            try:
-                episodes = len(api.children(season_key)) or None
-            except RuntimeError:
-                episodes = None
-            entries.append(
-                {
-                    "token": mask.token("season", season_key),
-                    "number": as_int(child.get("media_index")),
-                    "added_at": mask.when(child.get("added_at")),
-                    "last_played": mask.when(child.get("last_viewed_at")),
-                    "episodes": episodes,
-                }
-            )
-        out.append({"show": token, "seasons": entries})
-        if done % 50 == 0:
-            note(f"    {done}/{len(show_keys)} shows ({api.calls} calls)")
-    return out
+        try:
+            episodes = len(api.children(season_key)) or None
+        except RuntimeError:
+            episodes = None
+        entries.append(
+            {
+                "token": mask.token("season", season_key),
+                "number": as_int(child.get("media_index")),
+                "added_at": mask.when(child.get("added_at")),
+                "last_played": mask.when(child.get("last_viewed_at")),
+                "episodes": episodes,
+            }
+        )
+    return {"show": token, "seasons": entries}
 
 
 def collect_plays(api: Tautulli, mask: Mask, *, cap: int | None, note) -> list[dict[str, Any]]:
@@ -360,7 +442,7 @@ def collect_plays(api: Tautulli, mask: Mask, *, cap: int | None, note) -> list[d
     mirror drops, or types a missing value differently, replays into verdicts a real scan
     would not produce, and the difference would be read as an engine finding.
     """
-    rows = api.paged("get_history", cap=cap, note=note)
+    rows = api.paged("get_history", cap=cap, page=HISTORY_PAGE, note=note)
     plays = []
     live = 0
     for row in rows:
@@ -444,17 +526,21 @@ def add_ratings(items: list[dict[str, Any]], wanted: dict[str, str], *, note) ->
 # --------------------------------------------------------------------------- entry point
 
 
-def build(api: Tautulli, mask: Mask, *, cap: int | None, quick: bool, note) -> dict[str, Any]:
+def build(
+    api: Tautulli, mask: Mask, *, cap: int | None, quick: bool, jobs: int = JOBS, note
+) -> dict[str, Any]:
     note("libraries")
     sections = [
         s for s in (api("get_libraries") or []) if s.get("section_type") in ("movie", "show")
     ]
 
     note("items" + (" (quick: no genres, no ratings)" if quick else ""))
-    items, show_keys, wanted = collect_items(api, mask, sections, cap=cap, quick=quick, note=note)
+    items, show_keys, wanted = collect_items(
+        api, mask, sections, cap=cap, quick=quick, jobs=jobs, note=note
+    )
 
     note("seasons")
-    seasons = collect_seasons(api, mask, show_keys, note=note)
+    seasons = collect_seasons(api, mask, show_keys, jobs=jobs, note=note)
 
     note("history")
     plays = collect_plays(api, mask, cap=cap, note=note)
@@ -517,6 +603,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--quick", action="store_true", help="skip per-item lookups: no genres, no IMDb ratings"
     )
+    parser.add_argument(
+        "--jobs", type=int, default=JOBS, help=f"requests in flight at once (default {JOBS})"
+    )
     parser.add_argument("--insecure", action="store_true", help="accept a self-signed certificate")
     args = parser.parse_args(argv)
 
@@ -545,6 +634,7 @@ def main(argv: list[str] | None = None) -> int:
         mask,
         cap=DRY_RUN_ITEMS if args.dry_run else None,
         quick=args.quick,
+        jobs=max(1, args.jobs),
         note=note,
     )
     counts = dump["counts"]

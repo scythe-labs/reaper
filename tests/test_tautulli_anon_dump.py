@@ -179,16 +179,28 @@ class FakeTautulli:
             ]
         raise AssertionError(f"unexpected command {cmd}")
 
-    def paged(self, cmd: str, *, cap: int | None = None, **params: Any) -> list[dict[str, Any]]:
+    def paged(
+        self,
+        cmd: str,
+        *,
+        cap: int | None = None,
+        page: int = 1000,
+        note: Any = None,
+        **params: Any,
+    ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         start = 0
         while True:
-            data = self(cmd, start=start, length=1000, **params)
-            page = (data or {}).get("data") or []
-            rows.extend(page)
-            if not page:
+            data = self(cmd, start=start, length=page, **params)
+            batch = (data or {}).get("data") or []
+            rows.extend(batch)
+            if not batch:
                 return rows
-            start += len(page)
+            start += len(batch)
+
+    def spread(self, work: Any, over: Any, *, jobs: int) -> list[Any]:
+        """Serial, so a test's ordering is the code's ordering and not the pool's."""
+        return [work(item) for item in over]
 
     def children(self, rating_key: int | str) -> list[dict[str, Any]]:
         if int(rating_key) == 201:
@@ -376,6 +388,29 @@ class TestPaging:
         rows = dump_tool.Tautulli.paged(_Stub(fake), "get_history")
         assert starts == [0, 1500, 3000, 4500]
         assert len(rows) == 4500
+
+    def test_a_slow_page_is_retried_at_half_the_size(self, dump_tool: Any) -> None:
+        # A history page's cost is nearly all fixed per request, so the page size sets the
+        # runtime. A server slower than the one it was measured on has to degrade to a
+        # longer run rather than to no dump at all.
+        asked: list[int] = []
+
+        def fake(cmd: str, **params: Any) -> Any:
+            asked.append(params["length"])
+            if params["length"] > 6250:
+                raise RuntimeError("get_history failed after 3 tries: timed out")
+            return {"data": [{"n": i} for i in range(params["length"] - 1)]}
+
+        rows = dump_tool.Tautulli.paged(_Stub(fake), "get_history", page=25000)
+        assert asked == [25000, 12500, 6250]
+        assert len(rows) == 6249
+
+    def test_a_page_that_will_not_shrink_further_raises(self, dump_tool: Any) -> None:
+        def fake(cmd: str, **params: Any) -> Any:
+            raise RuntimeError("get_history failed after 3 tries: timed out")
+
+        with pytest.raises(RuntimeError, match="timed out"):
+            dump_tool.Tautulli.paged(_Stub(fake), "get_history", page=1000)
 
 
 class _Stub:
