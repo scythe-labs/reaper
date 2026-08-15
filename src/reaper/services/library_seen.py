@@ -18,7 +18,7 @@ The journal keeps exactly one job here: choosing which sentence the operator rea
 **The rule.** A return is a title present now under a Plex rating key Reaper has never
 recorded for it, when every key it HAS recorded is gone from the index, and it was gone for a
 real span of time that Reaper was awake for. Four conditions, and each exists because of a
-measurement rather than a worry (``docs/RETURN_PLAN.md``, ``docs/LEARNINGS.md``):
+measurement rather than a worry (``docs/history/RETURN_PLAN.md``, ``docs/LEARNINGS.md``):
 
 1. A key never recorded before. Rules out the ordinary state of a title that has sat still.
 2. Every recorded key gone from the index. Rules out a title listed twice, where the bind

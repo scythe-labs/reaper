@@ -117,8 +117,8 @@ we genuinely cannot interpret."""
 #:
 #: **A judgment call, and written here as one** so a later measurement can replace it without
 #: archaeology. Nothing reachable has deleted something and had it come back, so there is no
-#: regret data to fit against on this library or any other (``docs/RETURN_PLAN.md``). What the
-#: number expresses is that a regret is worth remembering for longer than the dormancy floor,
+#: regret data to fit against on this library or any other (``docs/history/RETURN_PLAN.md``).
+#: What the number expresses is that a regret is worth remembering longer than the dormancy floor,
 #: which defaults to three years, so the hold is meaningful without being permanent.
 RETURN_HOLD_DAYS = 548
 

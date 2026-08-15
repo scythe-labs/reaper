@@ -113,7 +113,6 @@ auto-memory note to explain the product, move it here.
 | `LEARNINGS.md` | knowledge | **live** — append by topic |
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
 | `I18N_PLAN.md` | state (one feature) | **live** — a proposal; nothing landed, no stage committed to |
-| `RETURN_PLAN.md` | state (one feature) | **live** — #553; the one stage landed, opt-in |
 | `brand/README.md` | reference | stable; nothing here ships |
 | `../manual/` | the operator's manual | **live** — half generated from the app's help content |
 | `../website/` | the manual's site | **live** — Docusaurus; owns no words of its own |
@@ -126,3 +125,4 @@ auto-memory note to explain the product, move it here.
 | `history/SIMPLIFICATION_PLAN.md` | history | frozen — every phase landed in #552; still cited from `src/` and `tests/` |
 | `history/CSS_SPLIT_PLAN.md` | history | frozen — 5 stages landed, 1 refused, the remainder is #779 |
 | `history/REWATCH_PLAN.md` | history | frozen — movie stages landed as #803 and #805; TV validated, unscoped, #554 |
+| `history/RETURN_PLAN.md` | history | frozen — the one stage landed as #812, opt-in; #553 closed |

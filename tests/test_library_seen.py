@@ -2,7 +2,7 @@
 """A title that came back (#553): the ledger, the four conditions, and the hold.
 
 The rule these pin is stated in ``services/library_seen.py`` and argued in
-``docs/RETURN_PLAN.md``. Each condition exists because of a measurement, so each gets a case
+``docs/history/RETURN_PLAN.md``. Each condition exists because of a measurement, so each gets a case
 proving it can still hold a return back on its own, and the population that would have shipped
 without condition 2 -- one external id carrying two \\*arr entries -- gets its own
 (``docs/LEARNINGS.md``, assumption 16).

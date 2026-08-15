@@ -802,7 +802,7 @@ class LibrarySeen(Base):
     last_seen_at: Mapped[UtcTimestamp]
     """When Reaper last saw this id bound to a Plex listing. The clock a return is measured
     against, and it is the last time Reaper *looked*, not the moment the title left, which is
-    why a minimum absence alone cannot settle a return (``docs/RETURN_PLAN.md``)."""
+    why a minimum absence alone cannot settle a return (``docs/history/RETURN_PLAN.md``)."""
 
     returned_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     """When Reaper recorded that this title had come back, or ``NULL`` for the ordinary state
