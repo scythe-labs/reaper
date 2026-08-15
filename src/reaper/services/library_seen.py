@@ -459,34 +459,3 @@ async def record(
                 },
             )
         )
-
-
-async def forget_all(session: AsyncSession) -> int:
-    """Empty the ledger. The repair for any wrong state, including a rebuild that got through.
-
-    It costs the feature its memory and nothing else: every title starts over as one Reaper has
-    seen in one place, so no hold can fire until one genuinely leaves and returns again.
-    """
-    rows = (await session.execute(select(LibrarySeen))).scalars().all()
-    for row in rows:
-        await session.delete(row)
-    return len(rows)
-
-
-__all__ = [
-    "NO_RETURN_RECORD_REASON",
-    "RETURN_POPULATION_CAP",
-    "Seen",
-    "Sighting",
-    "forget_all",
-    "id_key",
-    "is_return",
-    "note_sighting",
-    "observations",
-    "recall_all",
-    "record",
-    "removed_by_reaper",
-    "scan_instants",
-    "scans_inside",
-    "within_cap",
-]

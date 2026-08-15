@@ -502,13 +502,6 @@ class TestTheLedgerRoundTrip:
         await session.flush()
         assert (await library_seen.recall_all(session))[key].rating_keys == frozenset()
 
-    async def test_forgetting_the_ledger_empties_it(self, session: AsyncSession) -> None:
-        await library_seen.record(session, _batch(_sighting(key=7)), returns={}, now=NOW)
-        await session.flush()
-        assert await library_seen.forget_all(session) == 1
-        await session.flush()
-        assert await library_seen.recall_all(session) == {}
-
 
 class TestTheJournalJoin:
     """Which sentence the operator reads, and nothing else."""

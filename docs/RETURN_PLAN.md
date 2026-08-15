@@ -27,6 +27,12 @@
 >
 > Everything else below shipped as written, including both knobs riding the existing
 > `QuantityInput`, the outlined chip, the population cap, and the two sentences.
+>
+> **One thing below is still only a sentence: clearing the ledger.** No route, no job and no
+> command offers it, so "clearing the ledger is the repair" describes a SQL delete today. A
+> `forget_all` was written and then cut, because a helper nothing calls, with a test that
+> passes, reads as a wired repair (rule 38). It ships with the control that offers it, beside
+> the one `watch_evidence.forget_all` already has on the Plex panel.
 
 ## Context
 
