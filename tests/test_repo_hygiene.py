@@ -830,13 +830,14 @@ _BUSY_TIMEOUT_DECLARATIONS = {
 #: column would tie two values that have no reason to move together and read as a proof that
 #: they do. Every figure is read out of the declaration named here, never written here.
 #:
-#: Ten passages over seven files, reconciled by hand against both roots (rule 145): seven quote
-#: ``db/session.py``, two quote backup's own, one quotes retention's own. The count is the part a
-#: set of file names cannot hold, since the walk collects passages and a second copy inside an
-#: already-listed file would hide behind the first (rule 147).
+#: Eleven passages over eight files, reconciled by hand against both roots (rule 145): eight
+#: quote ``db/session.py``, two quote backup's own, one quotes retention's own. The count is the
+#: part a set of file names cannot hold, since the walk collects passages and a second copy
+#: inside an already-listed file would hide behind the first (rule 147).
 _BUSY_TIMEOUT_PROSE: dict[str, dict[str, int]] = {
     "src/reaper/services/backup.py": {"src/reaper/services/backup.py": 2},
     "src/reaper/services/executor.py": {"src/reaper/db/session.py": 1},
+    "src/reaper/services/history_sync.py": {"src/reaper/db/session.py": 1},
     "src/reaper/services/imdb_dataset.py": {"src/reaper/db/session.py": 1},
     "src/reaper/services/retention.py": {
         "src/reaper/db/session.py": 2,
@@ -849,10 +850,10 @@ _BUSY_TIMEOUT_PROSE: dict[str, dict[str, int]] = {
 
 
 def test_every_prose_copy_of_the_busy_timeout_states_the_declared_value() -> None:
-    """Rule 144: one fact in ten passages, and three declarations under them.
+    """Rule 144: one fact in eleven passages, and three declarations under them.
 
     ``PRAGMA busy_timeout=5000`` in ``db.session._configure_sqlite`` is how long every app
-    connection waits for a write lock, and seven passages quote it as the reason something else
+    connection waits for a write lock, and eight passages quote it as the reason something else
     is the way it is. The one on the deletion path is load-bearing: ``executor._commit_journal``
     gives the journal two attempts with no sleep between them *because* the timeout already
     waited inside each. Move the pragma and that reasoning is silently wrong, on the write that
@@ -4676,7 +4677,10 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # +1 for `AppUrl.test.tsx`, exempt for `AppFocus.test.tsx`'s reason: it mounts the shell to ask
 # which section a URL lands on. Three of the five it drives to are stubs; the two that are real,
 # the queue and the settings rail, are audited in their own files.
-_EXPECTED_RENDERING_TEST_FILES = 59
+# +1 for `JobsSweepSchedule.test.tsx`, which mounts the Jobs panel to read the history sweep's
+# every-3-days schedule back in words, and opens its editor. It audits the editor open over the
+# panel, the state no other Jobs file drives.
+_EXPECTED_RENDERING_TEST_FILES = 60
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5753,7 +5757,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 217
+_EXPECTED_FRONTEND_MODULES = 218
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")

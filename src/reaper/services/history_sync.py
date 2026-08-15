@@ -18,9 +18,12 @@ Two facts about Tautulli's API shape this, both verified live and neither obviou
   by date (``after``), not by a stable row cursor.
 * **Date-filtering can miss a backfilled old event.** If Tautulli imports history, or
   Plex reports a play with an old timestamp, that row lands with an *old* date and an
-  ``after=<recent>`` sync skips it. So a **nightly full sweep** (``full=True``, run by
-  the scheduler) re-walks everything and catches any backfill. Per-scan syncs stay fast;
-  correctness is restored within a day.
+  ``after=<recent>`` sync skips it. So a **periodic full sweep** (``full=True``, run by
+  the scheduler every three days, and by the Jobs page's Run now) re-walks everything and
+  catches any backfill. Per-scan syncs stay fast. Only a row backdated FURTHER than
+  ``INCREMENTAL_OVERLAP`` waits for the sweep at all; inside those two days the next scan
+  picks it up on its own, which is what the cadence is chosen against
+  (``scheduler.DEFAULT_MAINTENANCE_CRONS``).
 
 Rows are written with ``INSERT OR REPLACE`` keyed on the stable ``row_id``, so re-fetching
 the overlap window (or a whole full sweep) is idempotent and never duplicates.
@@ -126,7 +129,7 @@ MIN_PAGE_SIZE = 1_000
 #: slow one against the deepest history. At 1,000 pages the old figure covered 25M rows at
 #: the old 25k page and would cover 1M at the floor, which is one to ten times a mature
 #: install rather than far past it. Tripping the cap logs and stops with the sweep still
-#: reporting success, and the mirror shortfall guard cannot catch that on a nightly sweep
+#: reporting success, and the mirror shortfall guard cannot catch that on a repeat sweep
 #: (the mirror is already complete from earlier syncs, so there is no shortfall to see), so
 #: a cap reached quietly is the #780 loss again at the oldest tail. 5,000 pages holds 5M rows
 #: at the floor and 125M at PAGE_SIZE, and still stops a source that is not advancing.
@@ -278,7 +281,7 @@ _WATCH_EVENT_COLUMNS = (
 
 
 #: Serializes the rebuild across every concurrent caller in the process: the scan, the
-#: fairness route, the nightly sync. What it prevents is at ``ensure_schema``'s write path.
+#: fairness route, the sweep. What it prevents is at ``ensure_schema``'s write path.
 _rebuild_lock = per_loop_lock()
 
 
@@ -347,9 +350,9 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     # INSIDE it, deciding from THAT, never from the pre-lock read above. The LOCK is the
     # mutual exclusion here, not any database write lock: pysqlite runs the PRAGMA and the
     # DROP/CREATE in autocommit with no BEGIN IMMEDIATE, so nothing at the SQLite level stops
-    # two concurrent callers (the scan, the fairness route, the nightly sync -- all one
+    # two concurrent callers (the scan, the fairness route, the sweep -- all one
     # process) from both seeing "stale" and the second re-DROPping the table the first just
-    # rebuilt (a redundant double rebuild; the nightly full sweep refills either way). Under
+    # rebuilt (a redundant double rebuild; the next full sweep refills either way). Under
     # the lock the re-read is authoritative, and the pre-lock read only decides whether taking
     # the lock and the transaction is worth it at all.
     async with _rebuild_lock(), engine.begin() as conn:
@@ -389,19 +392,62 @@ async def _state(engine: AsyncEngine) -> HistoryState:
     )
 
 
+#: One walk of the history at a time, across every caller in the process. Two of them
+#: exist and they are on independent schedules: the scan's incremental sync
+#: (``scan_runner.run_scan``) and the full sweep (``scheduler.full_history_sweep``, plus
+#: its Run now button). Nothing stopped them overlapping, and both write ``watch_event``.
+#:
+#: **Measured, because the page size moved it**: one page's INSERT OR REPLACE holds the
+#: cache write lock 129ms at 5,000 rows and 1,876ms at 25,000, against the 5s
+#: ``busy_timeout`` in ``db/session.py``. So the margin is 2.7x rather than 39x, and a
+#: data directory that refuses WAL (a NAS bind mount, named at ``db.session.journal_mode``)
+#: has readers waiting on that write too. Serializing is what takes the collision off the
+#: table rather than leaving it to storage speed.
+#:
+#: **The waiter is the scan, and it waits rather than skipping.** A sweep that yields to
+#: whatever else is running is a sweep that stops running, which is #780's actual loss --
+#: and with a scan cron the operator picks, "skip if busy" can silently mean "never again".
+#: A scan reaching a sweep in flight is bounded by the sweep (measured at 237s), shows
+#: "syncing watch history" while it waits, and gets fresher evidence for having waited.
+#:
+#: Ordering with ``_rebuild_lock`` is one-way: this is taken first and ``ensure_schema``
+#: takes the other inside it. Nothing takes them the other way round.
+_sync_lock = per_loop_lock()
+
+
 async def sync(
     engine: AsyncEngine,
     client: TautulliClient,
     *,
     full: bool = False,
 ) -> HistoryState:
-    """Pull history into the local mirror.
+    """Pull history into the local mirror, one walk at a time process-wide.
 
     Incremental by default -- fetches only rows since our newest, via Tautulli's
-    ``after`` filter, which is fast. Pass ``full=True`` for the nightly sweep that
+    ``after`` filter, which is fast. Pass ``full=True`` for the periodic sweep that
     re-walks everything and catches any backfilled old events (see the module docstring).
     A fresh, empty mirror always does a full walk regardless of ``full``.
+
+    The lock is here rather than at the two call sites so a third caller cannot miss it,
+    and it covers ``_check_regression`` too: that reads the previous total and records the
+    new one, which two concurrent syncs could otherwise interleave.
     """
+    lock = _sync_lock()
+    if lock.locked():
+        # Otherwise a scan sits on "syncing watch history" for minutes with nothing saying
+        # why. The wait is the sweep's remaining runtime.
+        log.info("history.sync_waiting", full=full)
+    async with lock:
+        return await _sync(engine, client, full=full)
+
+
+async def _sync(
+    engine: AsyncEngine,
+    client: TautulliClient,
+    *,
+    full: bool,
+) -> HistoryState:
+    """One walk, holding :data:`_sync_lock`. See :func:`sync`."""
     await ensure_schema(engine)
 
     before = await _state(engine)

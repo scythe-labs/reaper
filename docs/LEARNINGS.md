@@ -3987,6 +3987,42 @@ retire it.
 section on that instance is 3,430 rows at 0.2s, where the history table is six figures. Its
 1,000-row page costs 4 requests, so `library_index._SPINE_PAGE_SIZE` is left alone.
 
+## A faster page made an overlap worse, not better (2026-08-15)
+
+`history_sync.sync` has two callers on independent schedules, the scan's incremental sync and
+the full sweep, and nothing serialized them. The page-size change above is what made that
+matter: one page's `INSERT OR REPLACE` holds the cache write lock **129ms at 5,000 rows and
+1,876ms at 25,000**, against the 5s `busy_timeout` every app connection carries. The margin went
+from 39x to 2.7x on an SSD, and a data directory that refuses WAL has readers waiting on that
+write too. A change measured as 3x faster moved a second number 14x the wrong way, and only
+looking for it found it.
+
+**The fix is a lock, and the alternative was worse in a way that is easy to miss.** Skipping the
+sweep while a scan runs is the obvious shape, and one maintenance job already does it. But the
+sweep is the thing that catches a backdated play, the scan cron belongs to the operator, and a
+job that yields whenever another is running can silently yield forever. That is #780's loss
+reached from the other side. So the second caller waits instead, bounded by a sweep that is now
+237s rather than 704s: the perf change is what makes waiting cheap enough to choose.
+
+**Cadence: every three days, not nightly.** A backdated row needs someone to import or edit
+history inside Tautulli, which is not something that happens on a schedule, and the incremental
+sync already re-asks the last two days, so only a row backdated FURTHER than that ever waits for
+a sweep. Run now covers the operator who did just import something.
+
+**Deriving a label is not free, and the count of things depending on it is the cost.** Moving one
+default cron off "daily" broke a preset labeled `Every day` that took its value from that same
+constant, so the option would have said one thing and done another (rule 144). Describing the
+label from the cron fixes it for every job at once, and immediately creates a second hazard the
+written label never had: a described label can now equal one of the fixed presets beside it, two
+identical options sharing a React key (rule 19). No shipped default collides, and the filter is
+there so the next one cannot.
+
+**A concurrency test that never proves its own pump proves nothing.** "The second sync had not
+reached Tautulli" only means the lock held it if it would otherwise have arrived, and every await
+before that first request is an executor hop, so a loop yielding only to itself leaves the waiter
+parked either way. This test passed with the lock deleted until it ran the same pump once with
+nothing in flight and asserted arrival first (rule 119).
+
 **`get_history` groups consecutive plays unless told not to, and the default is what a
 caller that says nothing gets.** Asking without `grouping=0` returned 309,013 rows on an
 instance holding 425,983: a quarter of the history folded away, with the run reporting

@@ -76,10 +76,25 @@ SCAN_JOB_ID = "scheduled_scan"
 #: read-only (refresh/sweep), staggered off peak hours, and now operator-editable: a
 #: stored override (see ``app_settings.get_maintenance_schedules``) wins over these, and
 #: an owner may turn any of them off entirely. Absence of a stored value falls back here.
+#:
+#: **The history sweep is the one that is not daily**, and its two numbers are separate
+#: decisions. *Every three days*: it exists to catch a play Tautulli recorded with an old
+#: timestamp, which needs someone to import or edit history on the Tautulli side, and that
+#: is not a thing that happens on a schedule. Every scan's incremental sync already re-asks
+#: the last two days (``history_sync.INCREMENTAL_OVERLAP``), so only a row backdated FURTHER
+#: than that waits for a sweep at all. An operator who does import history has Run now
+#: (``POST /api/settings/jobs/{id}/run``) and does not have to wait for any of this.
+#: *05:00*: clear of both scan presets (02:00 and 03:00 in ``JobsPanel``) and of the upkeep
+#: block above it, so the two do not routinely land together. Which is belt and braces, not
+#: the safeguard: the operator picks the scan cron, so no default can promise they miss each
+#: other, and ``history_sync._sync_lock`` is what actually makes an overlap safe.
+#:
+#: ``*/3`` on day-of-month restarts at the 1st, so a 31-day month gives one 1-day gap
+#: instead of 3. That is the direction that sweeps more often, never less.
 DEFAULT_MAINTENANCE_CRONS: dict[str, str] = {
     "refresh_ratings": "30 3 * * *",
     "refresh_curated_lists": "45 3 * * *",
-    "full_history_sweep": "0 4 * * *",
+    "full_history_sweep": "0 5 */3 * *",
     "check_for_updates": "15 4 * * *",
 }
 
@@ -370,14 +385,19 @@ async def full_history_sweep(
     cache_engine: AsyncEngine,
     secret_box: SecretBox,
 ) -> None:
-    """A nightly FULL re-walk of Tautulli's history, to catch backfilled old events.
+    """A FULL re-walk of Tautulli's history, to catch backfilled old events.
 
     Per-scan syncs are incremental (fast, date-filtered) and therefore blind to a row
     Tautulli backfills with an *old* timestamp -- a manual history import, or a delayed
-    play. This full sweep re-reads everything and reconciles, so any such row is picked
-    up within a day. It also re-runs the regression check against Tautulli's real total.
+    play. This full sweep re-reads everything and reconciles. It also re-runs the
+    regression check against Tautulli's real total.
 
-    Read-only. If no Tautulli is configured, there is nothing to sweep.
+    Every three days rather than nightly, for the reason on ``DEFAULT_MAINTENANCE_CRONS``,
+    and only rows backdated past ``history_sync.INCREMENTAL_OVERLAP`` wait for it.
+
+    Read-only. If no Tautulli is configured, there is nothing to sweep. It does not check
+    whether a scan is running: ``history_sync.sync`` serializes the two, so an overlap
+    costs a wait rather than a skipped sweep.
     """
     try:
         async with session_factory() as session:
@@ -796,13 +816,13 @@ def build_scheduler(
     timezone: tzinfo,
     reap_running: Callable[[], bool],
 ) -> AsyncIOScheduler:
-    """Wire the nightly jobs. The caller starts it and holds it on app state.
+    """Wire the upkeep jobs. The caller starts it and holds it on app state.
 
     Times are staggered and run in ``timezone`` -- the server zone from
     ``app_settings.get_timezone`` -- so 03:30 means 03:30 there, the same clock the scan
     uses. IMDb publishes the dataset once a day; there is no value in hammering it, and 03:30
-    keeps the heavy download off peak viewing hours. The history sweep runs a little later
-    still, since it is a full re-walk of Tautulli.
+    keeps the heavy download off peak viewing hours. The history sweep sits last and is the
+    one that does not run daily; ``DEFAULT_MAINTENANCE_CRONS`` carries both reasons.
     """
     scheduler = AsyncIOScheduler(
         timezone=timezone,
