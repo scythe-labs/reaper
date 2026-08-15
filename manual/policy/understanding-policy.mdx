@@ -141,31 +141,33 @@ Your lists protect through **keep rules**, below: each list on Settings, Lists a
 
 ### Titles most likely to be rewatched {#rewatch-keep}
 
-Some titles get watched again and again. A favorite movie, a show someone replays every winter. This rule spots that habit and lowers the score by up to 20 points, so a title people actually come back to is less likely to be flagged.
+Some titles just get watched over and over. The comfort movie, the show someone binges every winter. This rule picks up on that and lowers the score by up to 20 points, making it harder for a genuine favorite to get flagged.
 
-For a movie, that means: watched at least 10 times by anyone on the server, at least once in the last 2 years. Getting halfway through counts as a play, and plays within a week of each other count as one watch, so playing a movie three times in one weekend counts once.
+For a movie, that means at least 10 plays by anyone on the server, with at least one in the last 2 years. Getting halfway through counts as a play, and plays within a week of each other collapse into one, so watching something three times over a weekend only registers once.
 
-For a show, that means watching it through again: at least 2 separate returns to episodes already seen. A new season watched as it airs is a first watch.
+For a show, it means going back to episodes already seen, at least twice. Watching a new season as it airs is a first watch, so it does not count toward a rewatch.
 
-Turn the second switch on and Reaper keeps anything that still has a good chance of being watched again, even if its score is high. To work out that chance, Reaper checks how long a title has gone unwatched, then looks at what happened to other titles in your library that went unwatched for about as long. The share of them that got watched again within a year is the chance. If the chance is at or above your percentage, the title is kept.
+Turn the second switch on and Reaper will protect anything that still has a real shot at being watched again, even if the score is high. It figures out that shot by looking at how long a title has gone unwatched, then checking what happened to other titles in your library that sat idle for about the same amount of time. The percentage of those that got watched again within a year is the likelihood. If it meets or beats your threshold, the title stays.
 
-Say a movie has not been watched in 2 years. Reaper finds 100 titles in your history that also sat for 2 years, and 30 of them got watched again within a year. The chance is 30%. With your percentage at 25, the movie is kept. At 40, the score decides instead.
+Example: a movie hasn't been watched in 2 years. Reaper finds 100 other titles that also sat for 2 years, and 30 of them got watched again within a year. That's a 30% chance. If your threshold is set to 25, the movie is kept. At 40, the score decides.
 
-Shows are measured as a whole, so playing any episode counts, and a kept show keeps all of its seasons. Say nobody has played an episode of a show for a year. Out of 60 shows that also sat for a year, 20 got watched again. The chance is 33%, so at 25 the show is kept.
+Shows are measured as a whole, so any episode counts as activity, and keeping a show means keeping all its seasons. Say nobody has touched a show for a year. Out of 60 other shows that sat for a year, 20 came back. That's 33%, so at a threshold of 25, it's kept.
 
-Where do those numbers come from? At each scan, Reaper pretends today is one year ago and sorts every title by how long it had been sitting at that point: under a year, one to two years, and so on. Because it rewound a year, the year that followed is already in your history, so it can simply count how many titles in each group got played again. Those counts are the table on the card, one row per group. A chance only counts when its group held at least 30 titles.
+Where do those numbers come from? Every scan, Reaper pretends today is a year ago and sorts every title by how long it had been sitting at that point: under a year, one to two years, and so on. Because it rewound the clock, the following year is already in your history, so it can just count how many in each group got played again. Those counts fill the table on the card, one row per group. A group needs at least 30 titles before its number is used.
 
-It is the same way you would guess whether a kid will ride the old bike in the garage: don't study the bike, look at what happened to every other bike that sat in the garage that long.
+Think of it like guessing whether a kid is going to ride the old bike in the garage. You don't study the bike. You think about what happened to every other bike that sat in the garage that long.
 
 ### A title that came back {#came-back}
 
-If a title leaves your library and someone fetches it again, that is the clearest sign removing it was wrong. Turn this on and Reaper keeps it for a while afterwards, so the same title is not flagged again next month.
+Turn this on and Reaper will hold onto a title that was removed and added back for as long as you set, so the same title doesn't get flagged again until that time is up. The default is 1.5 years.
 
-Reaper watches for this through Plex. A file that leaves and comes back is a new entry to Plex, even though it is the same film, and that is what Reaper notices. It counts only when the title was gone for a real stretch: a file swapped for a better copy is back within hours, and that is not a title anyone missed. Reaper also has to have run a scan or two while it was away, so a long gap between scans cannot look like a long absence.
+Reaper picks up on this through Plex. A file that leaves and comes back shows up as a new entry in Plex even though it's the same film. It only counts when the title was actually gone for longer than your "counts as gone after" setting, which starts at 7 days. A file swapped out for a better copy comes back within hours, and that is ignored.
 
-The card says which happened. If Reaper removed it, it says so, and that is worth reading: it means your settings removed something you wanted. If it left some other way, the card says that instead. Either way the queue shows how long is left on the hold, so a title is never kept for a reason you cannot see the end of.
+Reaper also needs at least two scans that ran while the title was missing to account for its absence, so a long gap between scans will not mark titles as coming back.
 
-This one starts empty and stays quiet for a while. Reaper can only spot a title coming back if it saw the title before it left, so a new install has nothing to compare against yet. It improves on its own as Reaper watches your library.
+The card tells you which titles it saw come back, with a countdown protecting each one based on your configured policy. Reaper does not have to be the one that removed the title. It tracks them through Plex either way.
+
+Reaper can only spot a returning title if it saw it before it left, so a fresh install has nothing to compare against yet. It builds the picture up over time as it watches your library.
 
 ### Pace and limits {#pace}
 
