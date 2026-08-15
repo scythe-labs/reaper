@@ -1277,6 +1277,36 @@ describe("the collection screen", () => {
     expect(screen.queryByRole("heading", { name: "Example Franchise" })).not.toBeInTheDocument();
   });
 
+  // The exit takes the lane tabs' own slot, so it reads as a control rather than as the tabs
+  // having gone missing. Pinned by what it is NOT: a `.link-btn` is the lighter treatment this
+  // replaced, and the tabs must be gone from the row it now occupies.
+  it("puts a real control where the lane tabs were, not a lighter link", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    const back = await screen.findByRole("button", { name: /Review queue/ });
+    expect(back).toHaveClass("back-to-lane");
+    expect(back).not.toHaveClass("link-btn");
+    expect(screen.queryByRole("button", { name: "Condemned" })).not.toBeInTheDocument();
+  });
+
+  // A swap nothing focuses and nothing says is invisible to a keyboard or screen reader
+  // operator: the rows just become different rows. Neither half shows up in a rendered diff,
+  // so both are pinned here.
+  it("moves focus to the collection's heading and says the list changed", async () => {
+    mockMixedFates();
+    renderWithProviders(
+      <>
+        <Announcer />
+        {openOnCollection("Example Franchise")}
+      </>,
+    );
+    const heading = await screen.findByRole("heading", { name: "Example Franchise" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(
+      await screen.findByText("Showing the Example Franchise collection."),
+    ).toBeInTheDocument();
+  });
+
   // Rule 17/36: `isPending` alone clears on an ERROR exactly as it does on a success, so a fate
   // lane that exhausted its retries must not read as loaded with its count defaulted to 0 --
   // that undercounts "N in the last scan" and silently states a false zero for the failed lane.

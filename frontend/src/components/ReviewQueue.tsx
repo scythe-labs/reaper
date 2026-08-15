@@ -1481,6 +1481,27 @@ export function ReviewQueue({
   useEffect(() => {
     if (activeCollection !== null) setSelectMode(false);
   }, [activeCollection]);
+  // Entering and leaving a collection swaps the whole list under the operator. On screen that
+  // now reads from the exit sitting in the lane tabs' slot, but a swap nothing FOCUSES and
+  // nothing SAYS is invisible to a keyboard or screen reader operator: the rows simply become
+  // different rows. So focus lands on the new heading and the change is spoken, the same
+  // `announce` every other state change in this app uses.
+  const collHeadingRef = useRef<HTMLHeadingElement>(null);
+  // Seeded null, not from `activeCollection`: arriving with one already open (the why panel's
+  // chip routes through a jump, so the queue can mount straight into a collection) is a swap
+  // from the operator's side too. Mounting on a plain lane still says nothing, because both
+  // sides are null there.
+  const announcedCollection = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeCollection === announcedCollection.current) return;
+    announcedCollection.current = activeCollection;
+    if (activeCollection === null) {
+      announce("Back in the review queue.");
+      return;
+    }
+    collHeadingRef.current?.focus();
+    announce(`Showing the ${activeCollection} collection.`);
+  }, [activeCollection]);
   // How many of the last bulk override's requests failed, so the operator learns that a bulk
   // action was partial rather than seeing it silently succeed. 0 means nothing to report.
   const [bulkFailures, setBulkFailures] = useState(0);
@@ -2294,12 +2315,18 @@ export function ReviewQueue({
           <>
             <button
               type="button"
-              className="link-btn back-to-lane"
+              className="back-to-lane"
               onClick={() => setActiveCollection(null)}
             >
-              <span aria-hidden="true">◂</span> Review queue
+              <span className="back-arrow" aria-hidden="true">
+                ←
+              </span>{" "}
+              Review queue
             </button>
-            <h2>{activeCollection}</h2>
+            {/* `tabIndex={-1}` so the swap can put focus here without adding a tab stop. */}
+            <h2 ref={collHeadingRef} tabIndex={-1}>
+              {activeCollection}
+            </h2>
             {/* Only the gap is worth a line. "Every title in this collection, whatever Reaper
                 decided about it" is what the fate chips below already show, and repeating the
                 scanned count restates the "N items" line under the search box. What neither of

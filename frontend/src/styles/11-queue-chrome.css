@@ -18,13 +18,22 @@
   margin: 0 0 var(--space-md);
 }
 
-/* The collection screen (#816 phase 5): one back link in place of the lane tabs. Same shape as
-   the why-panel's `.back-to-show` (rule 18), sized for sitting above the collection's own <h2>
-   rather than above a panel's title. */
+/* The collection screen (#816 phase 5): the way back out, in the slot the lane tabs vacate.
+   It takes `.tabs`' own top margin so it lands where the eye already looks to change what it
+   is looking at, and it stays a control rather than dropping to a link: the tabs are the
+   widest thing on the page, and replacing them with lighter text made "you have left the
+   queue" a change you had to notice was MISSING. A bare `button` already carries the control
+   standard (04-buttons.css), so nothing is redeclared here beyond the row it sits in. */
 .back-to-lane {
-  display: inline-block;
-  margin: 0 0 var(--space-sm);
-  font-size: var(--text-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-3xl) 0 var(--space-lg);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+.back-to-lane .back-arrow {
+  color: var(--muted);
 }
 
 /* The collection screen's fate summary: how many of its scanned members landed in each lane,
