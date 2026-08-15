@@ -3752,7 +3752,14 @@ _QUERY_FAILURE_HANDLES = {
     # UNKNOWN, and the page says so rather than staying silent, because silence there reads as
     # "nothing is missing" over a run the server is about to refuse.
     "frontend/src/components/ReapPlan.tsx": 4,
-    "frontend/src/components/ReviewQueue.tsx": 3,
+    # 3 -> 6: the collection screen's three fate-lane reads (condemned/protected/abstained) each
+    # gained a branch on their OWN failure. `isPending` alone reads true on an error exactly as
+    # it does on a success, so a lane that exhausted its retries used to render as loaded with
+    # its count defaulted to 0 -- a false zero and an undercounted "N in the last scan" (rule
+    # 17/36). Undivided like the safety reads above: a failed lane withholds the whole summary
+    # rather than mixing two real counts beside a false one, in the same `.error` text the
+    # queue's own never-loaded branch already uses.
+    "frontend/src/components/ReviewQueue.tsx": 6,
     # 4 render branches, plus 2 in the save handler (#204). Those two are neither of the
     # questions the docstring below names: they ask "may I PRUNE against this list", where a
     # failed read means the list is merely out of date and pruning would delete a stored

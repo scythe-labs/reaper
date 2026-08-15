@@ -11,10 +11,30 @@
 // stay absolutely positioned inside their anchor, which is what keeps them glued to their control
 // as the page scrolls. This slides them back into view on top of that. The account menu solves
 // the same problem in CSS alone -- `.user-dropdown` is `right: 0`, growing leftward from a corner
-// it never leaves -- and the spare-length menu (`OverrideControls.toggleMenu`) clamps its own
-// `position: fixed` coordinates; neither needs this, and both are left alone.
+// it never leaves, and needs none of this.
+//
+// `useFixedMenu` below is the OTHER answer, for a popover that cannot be anchor-relative at all:
+// the Spare length menu and the collection picker each sit inside a card whose `overflow: hidden`
+// (backdrop art) would clip an absolutely positioned child, so both take `position: fixed`
+// coordinates instead, clamped and flipped the same way this file's `popoverShift` slides its own
+// popovers -- just measured once, on open, rather than resliding on every render.
 
-import { useLayoutEffect, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type RefObject,
+} from "react";
+import { useBackGuard } from "../backnav";
+
+/** Where a `position: fixed` popover sits: always `left`, plus exactly one vertical anchor --
+ *  `top` when it opens below its trigger, `bottom` when it flips above (so the popover stays
+ *  snug to the trigger whatever its real rendered height is, rather than a `top` computed from a
+ *  guessed one). */
+export type MenuPos = { left: number; top?: number; bottom?: number };
 
 /** How far LEFT an anchor-aligned popover must slide to sit fully on screen, in pixels.
  *
@@ -73,4 +93,115 @@ export function usePopoverShift(ref: RefObject<HTMLElement | null>, anchorClass:
   });
 
   return shift;
+}
+
+/** Where a `position: fixed` popover belongs, anchored to a trigger's bounding rect: right-
+ *  aligned to it and clamped to the viewport horizontally, flipped above the trigger when it
+ *  would otherwise run off the bottom.
+ *
+ *  `height` is only ever an upper bound for that flip decision, never a drawn coordinate: below,
+ *  the popover's TOP is pinned to the anchor's bottom edge; above, its BOTTOM is pinned just over
+ *  the anchor, so it stays snug to the trigger whatever its real rendered height turns out to be
+ *  -- a `top` computed from a guessed height would float the popover off the button once the
+ *  real content came in shorter than the guess. */
+export function fixedMenuPos(
+  anchor: { left: number; right: number; top: number; bottom: number },
+  width: number,
+  height: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  gutter = 8,
+): MenuPos {
+  const left = Math.max(gutter, Math.min(anchor.right - width, viewportWidth - width - gutter));
+  const below = anchor.bottom + height <= viewportHeight;
+  return below
+    ? { left, top: anchor.bottom + 4 }
+    : { left, bottom: viewportHeight - anchor.top + 4 };
+}
+
+/** A `position: fixed` popover anchored to a trigger element (the Spare length menu's caret, the
+ *  collection picker's caret): open/closed state, the clamped position, and every way to dismiss
+ *  it, in one hook -- `OverrideControls.toggleMenu` and `CollectionChip.toggleOpen` each
+ *  reimplemented this shape until #816 (rule 138, rule 72).
+ *
+ *  `anchorRef` is the trigger the popover measures itself against on open, and treats as part of
+ *  itself for the outside-click check (a click on the caret that opened the menu must toggle it,
+ *  never close-then-reopen). `width`/`height` feed `fixedMenuPos`. `ignoreScrollRef`, when
+ *  supplied, lets the caller suppress a scroll-close while it reads true -- the Spare menu's
+ *  Custom-length box sets this while it is open, so a phone's virtual keyboard opening (which
+ *  scrolls the viewport to reveal the focused field) cannot dismiss the menu before a digit is
+ *  typed.
+ *
+ *  Returns `menuRef` for the caller to attach to the portaled popover root -- it doubles as the
+ *  outside-click boundary and the `useDialogFocus`/`trapTab` target -- plus `pos` (null while
+ *  closed), `toggle` for the trigger's `onClick`, and `close`. */
+export function useFixedMenu<T extends HTMLElement = HTMLDivElement>(
+  anchorRef: RefObject<HTMLElement | null>,
+  {
+    width,
+    height,
+    ignoreScrollRef,
+  }: { width: number; height: number; ignoreScrollRef?: RefObject<boolean> },
+): {
+  pos: MenuPos | null;
+  menuRef: RefObject<T | null>;
+  toggle: (e: ReactMouseEvent) => void;
+  close: () => void;
+} {
+  const [pos, setPos] = useState<MenuPos | null>(null);
+  const menuRef = useRef<T>(null);
+
+  const close = useCallback(() => setPos(null), []);
+  useBackGuard(pos !== null, close);
+
+  const toggle = (e: ReactMouseEvent) => {
+    e.stopPropagation();
+    if (pos) {
+      close();
+      return;
+    }
+    const btn = anchorRef.current;
+    if (!btn) return;
+    setPos(
+      fixedMenuPos(
+        btn.getBoundingClientRect(),
+        width,
+        height,
+        window.innerWidth,
+        window.innerHeight,
+      ),
+    );
+  };
+
+  // Read fresh inside the listeners without re-subscribing them on every render (rule 19).
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    if (!pos) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!menuRef.current?.contains(t) && !anchorRef.current?.contains(t)) closeRef.current();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // The newest layer consumes Escape, so it never also closes a panel underneath (rule 72:
+      // the filter popovers in ReviewQueue stop the same key for the same reason).
+      e.stopPropagation();
+      closeRef.current();
+    };
+    const onScroll = () => {
+      if (ignoreScrollRef?.current) return;
+      closeRef.current();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [pos, anchorRef, ignoreScrollRef]);
+
+  return { pos, menuRef, toggle, close };
 }

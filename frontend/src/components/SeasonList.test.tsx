@@ -8,7 +8,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Chip, Group, GroupSeasonMark, ShowStatus, Verdict } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
+import {
+  DEFAULT_GENERAL,
+  DEFAULT_PROFILE,
+  DEFAULT_SNAPSHOT,
+  seedSettings,
+} from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { ReviewQueue } from "./ReviewQueue";
@@ -29,6 +34,8 @@ beforeEach(() => {
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
+  // Every card's collection picker reads this unconditionally now (#816 phase 4/5).
+  apiMock.latestSnapshot.mockResolvedValue(DEFAULT_SNAPSHOT);
 });
 
 function season(

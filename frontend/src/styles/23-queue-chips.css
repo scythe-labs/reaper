@@ -215,6 +215,8 @@
 .coll-pop-item {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xl);
   width: 100%;
   text-align: left;
   border: none;
@@ -234,6 +236,14 @@
 }
 .coll-pop-name {
   overflow-wrap: anywhere;
+}
+/* Plex's own member count, right of the name (the approved mockup). Absent rather than "0" for
+   a collection the picker's `sizes` map never reported -- see `CollectionChip`'s doc on why. */
+.coll-pop-n {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The three chips holding text from outside the app: a portal handle, the name the operator

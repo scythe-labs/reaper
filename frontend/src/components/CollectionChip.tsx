@@ -22,63 +22,57 @@
 // plain clickable element, not a keydown row, so a click anywhere inside it bubbles up unless
 // stopped here).
 
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-  type RefObject,
-} from "react";
+import { useId, useRef, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { useBackGuard } from "../backnav";
 import { useDialogFocus } from "../focus";
 import { trapTab } from "./ModalShell";
-import type { MenuPos } from "./OverrideControls";
+import { useFixedMenu, type MenuPos } from "./popoverFit";
 import { CaretDownGlyph, CollectionIcon } from "./queueIcons";
 
 export function CollectionChip({
   collections,
+  matched = null,
+  sizes = null,
   onOpen,
 }: {
   /** This item's collection names, already sorted smallest-first by the scan. Null or empty
    *  renders nothing -- a failed Plex read must never degrade into an empty chip. */
   collections: string[] | null | undefined;
+  /** The collection a collection-name search matched (`search_rank === 2`), if this row is one.
+   *  When set, the chip's own name is THIS one rather than `collections[0]` -- everywhere else
+   *  the smallest collection wins the name, but here that would put an unrelated one on a row
+   *  the operator could not otherwise explain (#816 phase 3b's one exception to smallest-first;
+   *  the backend end of this comment is `CandidateOut.matched_collection`). Still a member of
+   *  `collections`, so the picker's full list is unaffected. */
+  matched?: string | null;
+  /** Each known collection's Plex member count, from the snapshot (`Snapshot.collection_sizes`).
+   *  A collection this map omits has no KNOWN size (Plex never reported one), which is a
+   *  different fact from a size of zero, so the picker renders no number for it rather than a
+   *  false "0". */
+  sizes?: Record<string, number> | null;
   /** Open the collection screen on the given collection name. Called by the chip's own name
    *  and by every row of its picker. */
   onOpen: (name: string) => void;
 }) {
   const popId = useId();
   const caretRef = useRef<HTMLButtonElement>(null);
-  const [popAt, setPopAt] = useState<MenuPos | null>(null);
-  useBackGuard(popAt !== null, () => setPopAt(null));
+  // Fixed, clamped to the viewport (rule 138, #816 phase 4 fence): `.card` sets `overflow:
+  // hidden` for its backdrop art, so an absolutely positioned popover would be clipped to the
+  // card and most of the list unreachable. HEIGHT is a rough upper bound for the flip decision
+  // only, never a coordinate -- the portal below measures its own rendered height for nothing.
+  const {
+    pos: popAt,
+    menuRef,
+    toggle: toggleOpen,
+    close: closePicker,
+  } = useFixedMenu<HTMLUListElement>(caretRef, {
+    width: 224,
+    height: 40 + Math.min(collections?.length ?? 1, 8) * 30,
+  });
 
   if (!collections || collections.length === 0) return null;
-  const [name] = collections;
+  const name = matched ?? collections[0];
   const rest = collections.length - 1;
-
-  // Fixed, clamped to the viewport, the way `OverrideControls.toggleMenu` places the Spare
-  // length menu: `.card` sets `overflow: hidden` for its backdrop art, so an absolutely
-  // positioned popover would be clipped to the card and most of the list unreachable (rule 138,
-  // #816 phase 4 fence). HEIGHT is a rough upper bound for the flip decision only, never a
-  // coordinate -- the portal below measures its own rendered height for nothing.
-  const toggleOpen = (e: ReactMouseEvent) => {
-    e.stopPropagation();
-    if (popAt) {
-      setPopAt(null);
-      return;
-    }
-    const btn = caretRef.current;
-    if (!btn) return;
-    const r = btn.getBoundingClientRect();
-    const WIDTH = 224;
-    const HEIGHT = 40 + Math.min(collections.length, 8) * 30;
-    const left = Math.max(8, Math.min(r.right - WIDTH, window.innerWidth - WIDTH - 8));
-    const below = r.bottom + HEIGHT <= window.innerHeight;
-    setPopAt(
-      below ? { left, top: r.bottom + 4 } : { left, bottom: window.innerHeight - r.top + 4 },
-    );
-  };
 
   return (
     <span className="coll-chip">
@@ -114,9 +108,10 @@ export function CollectionChip({
           at={popAt}
           popId={popId}
           names={collections}
-          triggerRef={caretRef}
+          sizes={sizes}
+          menuRef={menuRef}
           onOpen={onOpen}
-          onClose={() => setPopAt(null)}
+          onClose={closePicker}
         />
       )}
     </span>
@@ -126,12 +121,17 @@ export function CollectionChip({
 /** The rest of this item's collections, opened by the caret. Portaled to `<body>` and rendered
  *  `position: fixed` at `at`, same reason and same technique as `OverrideControls`' `SpareMenu`:
  *  the card clips its overflow AND stacks its own children, either of which a fixed child alone
- *  cannot escape. */
+ *  cannot escape.
+ *
+ *  Its open/close state, its clamped position, and the outside-click/Escape/scroll dismissal all
+ *  live in `useFixedMenu` (`components/popoverFit.ts`), called by `CollectionChip` above --
+ *  `menuRef` is that hook's, threaded down so this component only has to draw. */
 function CollectionPicker({
   at,
   popId,
   names,
-  triggerRef,
+  sizes,
+  menuRef,
   onOpen,
   onClose,
 }: {
@@ -143,49 +143,24 @@ function CollectionPicker({
    *  already shown as the chip's own name, so picking it back is one row rather than a dead
    *  end. */
   names: string[];
-  triggerRef: RefObject<HTMLButtonElement | null>;
+  /** Each known collection's Plex member count. A name this map omits renders no number (its
+   *  size was never reported), never a false "0" -- see `CollectionChip`'s own doc on `sizes`. */
+  sizes: Record<string, number> | null;
+  menuRef: RefObject<HTMLUListElement | null>;
   onOpen: (name: string) => void;
   onClose: () => void;
 }) {
-  const ref = useRef<HTMLUListElement>(null);
   const firstItem = useRef<HTMLButtonElement>(null);
-  useDialogFocus(ref, true, firstItem);
-
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-
-  useEffect(() => {
-    const close = () => closeRef.current();
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (!ref.current?.contains(t) && !triggerRef.current?.contains(t)) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // The newest layer consumes Escape, so it never also closes the why-panel this chip
-      // sits inside (the same reason SpareMenu stops it, rule 72's sibling).
-      e.stopPropagation();
-      close();
-    };
-    const onScroll = () => close();
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [triggerRef]);
+  useDialogFocus(menuRef, true, firstItem);
 
   return createPortal(
     <ul
-      ref={ref}
+      ref={menuRef}
       id={popId}
       className="coll-pop"
       aria-label="Collections"
       tabIndex={-1}
-      onKeyDown={(e) => trapTab(e, ref.current)}
+      onKeyDown={(e) => trapTab(e, menuRef.current)}
       style={{
         position: "fixed",
         left: at.left,
@@ -193,21 +168,25 @@ function CollectionPicker({
       }}
       onClick={(e) => e.stopPropagation()}
     >
-      {names.map((name, i) => (
-        <li key={name}>
-          <button
-            type="button"
-            className="coll-pop-item"
-            ref={i === 0 ? firstItem : undefined}
-            onClick={() => {
-              onOpen(name);
-              onClose();
-            }}
-          >
-            <span className="coll-pop-name">{name}</span>
-          </button>
-        </li>
-      ))}
+      {names.map((name, i) => {
+        const size = sizes?.[name];
+        return (
+          <li key={name}>
+            <button
+              type="button"
+              className="coll-pop-item"
+              ref={i === 0 ? firstItem : undefined}
+              onClick={() => {
+                onOpen(name);
+                onClose();
+              }}
+            >
+              <span className="coll-pop-name">{name}</span>
+              {size !== undefined && <span className="coll-pop-n">{size}</span>}
+            </button>
+          </li>
+        );
+      })}
     </ul>,
     document.body,
   );

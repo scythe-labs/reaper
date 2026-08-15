@@ -376,6 +376,10 @@ type Group = {
   /** The show's Plex collection names, shared by every season the same way `library` is (a TV
    *  collection lists the show, not its seasons). Null renders no chip. */
   collections: string[] | null;
+  /** The first season's `matched_collection` (#816 phase 3b) -- set only when this show landed
+   *  under the collection-name search block, in which case the chip renders THIS name rather
+   *  than `collections[0]`. Null outside that block, same as the field it is taken from. */
+  matchedCollection: string | null;
   /** The show's whole-snapshot rollup, sent once per show beside the rows. Null for a movie,
    *  and for a show whose rollup did not arrive -- never a page-shaped substitute, since
    *  every figure on it sits beside a destructive control. */
@@ -426,6 +430,7 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
           dormantFor: item.dormant_for,
           library: item.library,
           collections: item.collections ?? null,
+          matchedCollection: item.matched_collection ?? null,
           rollup: rollups.get(item.group_key) ?? null,
           items: [],
           isShow: true,
@@ -445,6 +450,7 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
         dormantFor: item.dormant_for,
         library: item.library,
         collections: item.collections ?? null,
+        matchedCollection: item.matched_collection ?? null,
         rollup: null,
         items: [item],
         isShow: false,
@@ -986,6 +992,7 @@ const MovieCard = memo(function MovieCard({
   select,
   onOpen,
   onOpenCollection,
+  collectionSizes,
   onSet,
   onClear,
   pending,
@@ -1001,6 +1008,8 @@ const MovieCard = memo(function MovieCard({
   onOpen: (id: number) => void;
   /** Open the collection screen on the chip's collection (#816 phase 5). */
   onOpenCollection: (name: string) => void;
+  /** Each known collection's Plex member count, for the picker's rows (#816 phase 4/5). */
+  collectionSizes: Record<string, number> | null;
   onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
   pending: boolean;
@@ -1057,7 +1066,12 @@ const MovieCard = memo(function MovieCard({
         <div className="card-meta">
           <span className="chip chip-movie">Movie</span>
           <LibraryChip library={item.library} />
-          <CollectionChip collections={item.collections} onOpen={onOpenCollection} />
+          <CollectionChip
+            collections={item.collections}
+            matched={item.matched_collection ?? null}
+            sizes={collectionSizes}
+            onOpen={onOpenCollection}
+          />
           <span>{itemBytes(item.size_bytes)}</span>
           <ResolutionBadge value={item.video_resolution} />
           <RequestedChip who={item.requested_by} />
@@ -1105,6 +1119,7 @@ const ShowCard = memo(function ShowCard({
   onOpen,
   onOpenGroup,
   onOpenCollection,
+  collectionSizes,
   onSet,
   onClear,
   pending,
@@ -1123,6 +1138,8 @@ const ShowCard = memo(function ShowCard({
   onOpenGroup: (key: string) => void;
   /** Open the collection screen on the chip's collection (#816 phase 5). */
   onOpenCollection: (name: string) => void;
+  /** Each known collection's Plex member count, for the picker's rows (#816 phase 4/5). */
+  collectionSizes: Record<string, number> | null;
   onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
   pending: boolean;
@@ -1279,7 +1296,12 @@ const ShowCard = memo(function ShowCard({
           <div className="card-meta">
             <span className="chip chip-tv">TV</span>
             <LibraryChip library={group.library} />
-            <CollectionChip collections={group.collections} onOpen={onOpenCollection} />
+            <CollectionChip
+              collections={group.collections}
+              matched={group.matchedCollection}
+              sizes={collectionSizes}
+              onOpen={onOpenCollection}
+            />
             <SeasonExpander
               count={totalSeasons}
               open={open}
@@ -2095,16 +2117,26 @@ export function ReviewQueue({
     queryFn: () => api.candidates("abstain", { collection: activeCollection! }, 1, 0),
     enabled: collEnabled,
   });
-  // Plex's own member count, from the snapshot the scan already recorded it on -- shares the
-  // ["snapshot"] cache with the shell's own poll (App.tsx), so this costs nothing extra there.
+  // Plex's own member count for every collection, from the snapshot the scan already recorded
+  // it on -- shares the ["snapshot"] cache with the shell's own poll (App.tsx), so this costs
+  // nothing extra there. Always enabled, not just on the collection screen: every card's picker
+  // reads `collectionSizes` below too (#816 phase 4/5).
   const { data: snapshot } = useQuery({
     queryKey: ["snapshot"],
     queryFn: api.latestSnapshot,
     retry: false,
-    enabled: collEnabled,
   });
+  const collectionSizes = snapshot?.collection_sizes ?? null;
+  // `isPending` alone reads true the moment a query settles, on an ERROR exactly as on a
+  // success -- so a lane that exhausted its retries would read as "loaded" with a `total` of
+  // `?? 0`, and the header would state a false zero and an undercounted total rather than say
+  // it could not read them (rule 17/36). `collLoaded` therefore also requires no error.
+  const collFateError = condemnedFate.isError || protectedFate.isError || abstainedFate.isError;
   const collLoaded =
-    !condemnedFate.isPending && !protectedFate.isPending && !abstainedFate.isPending;
+    !condemnedFate.isPending &&
+    !protectedFate.isPending &&
+    !abstainedFate.isPending &&
+    !collFateError;
   const collCondemned = condemnedFate.data?.total ?? 0;
   const collProtected = protectedFate.data?.total ?? 0;
   const collAbstained = abstainedFate.data?.total ?? 0;
@@ -2269,6 +2301,9 @@ export function ReviewQueue({
                     : ""
                 }${count(collScanned)} in the last scan.`}
             </p>
+            {collFateError && (
+              <p className="error">Couldn't read the counts for this collection.</p>
+            )}
             {collLoaded && collScanned > 0 && (
               <div className="coll-fates">
                 {collCondemned > 0 && (
@@ -2677,6 +2712,7 @@ export function ReviewQueue({
                       onOpen={onSelect}
                       onOpenGroup={onSelectGroup}
                       onOpenCollection={setActiveCollection}
+                      collectionSizes={collectionSizes}
                       onSet={onSet}
                       onClear={onClear}
                       pending={pendingFor(groupKeyOf(group))}
@@ -2694,6 +2730,7 @@ export function ReviewQueue({
                       select={cardSelect}
                       onOpen={onSelect}
                       onOpenCollection={setActiveCollection}
+                      collectionSizes={collectionSizes}
                       onSet={onSet}
                       onClear={onClear}
                       pending={pendingFor(group.items[0]!.media_key)}
