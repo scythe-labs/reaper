@@ -204,6 +204,135 @@ class TestGenreFilter:
         assert page["total"] == 0
 
 
+class TestCollectionFilter:
+    """``collection`` is genre's sibling (rule 72): same predicate, over
+    ``collections_json`` instead of ``genres_json``. Collections are navigation, never
+    protection -- this filter only narrows the frozen snapshot, same as every other one
+    on this route (#816 phase 3)."""
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            snap = Snapshot(
+                created_at=now, policy_hash="e" * 64, horizon_at=now, item_count=2, degraded=False
+            )
+            session.add(snap)
+            session.flush()
+            session.add_all(
+                [
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:50",
+                        title="Example India",
+                        collections_json='["Alpha Trilogy", "Best Of", "Zeta Anthology"]',
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:51",
+                        title="Example Juliet",
+                        # Malformed on purpose: the collection filter must skip it, never
+                        # 500 -- the same defense the genre filter already has.
+                        collections_json="not json",
+                    ),
+                ]
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def test_a_title_in_three_collections_is_returned_under_all_three(
+        self, client: TestClient
+    ) -> None:
+        for name in ("Alpha Trilogy", "Best Of", "Zeta Anthology"):
+            rows = client.get(
+                "/api/candidates", params={"verdict": "condemn", "collection": name}
+            ).json()["items"]
+            assert _titles(rows) == {"Example India"}, name
+
+    def test_a_malformed_collection_row_is_skipped_not_an_error(self, client: TestClient) -> None:
+        response = client.get(
+            "/api/candidates", params={"verdict": "condemn", "collection": "Alpha Trilogy"}
+        )
+        assert response.status_code == 200
+        assert _titles(response.json()["items"]) == {"Example India"}
+
+    def test_an_unseen_collection_matches_nothing(self, client: TestClient) -> None:
+        page = client.get(
+            "/api/candidates", params={"verdict": "condemn", "collection": "Nonexistent"}
+        ).json()
+        assert page["items"] == []
+        assert page["total"] == 0
+
+    def test_vocabulary_values_lists_the_collection_names(self, client: TestClient) -> None:
+        # The same fixture, through /api/vocabulary/values: proves _VALUE_COLUMNS' new
+        # "collection" entry, keyed off the column, decodes the JSON array and skips the
+        # malformed row rather than raising.
+        body = client.get("/api/vocabulary/values", params={"field": "collection"}).json()
+        assert body["field"] == "collection"
+        assert set(body["values"]) == {"Alpha Trilogy", "Best Of", "Zeta Anthology"}
+
+
+class TestVerdictAny:
+    """``verdict=any`` is every stored lane at once, unfiltered -- what the collection
+    screen needs so a title's siblings show up whatever fate each one got (#816 phase 3).
+    No hand-override lane-shift step runs for it: nothing is excluded from one named lane,
+    so there is nothing to move in or out of."""
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            snap = Snapshot(
+                created_at=now, policy_hash="f" * 64, horizon_at=now, item_count=3, degraded=False
+            )
+            session.add(snap)
+            session.flush()
+            session.add_all(
+                [
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:60",
+                        title="Example Foxtrot",
+                        verdict="condemn",
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:61",
+                        title="Example Golf",
+                        verdict="protect",
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:62",
+                        title="Example Hotel",
+                        verdict="abstain",
+                    ),
+                ]
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def test_any_mixes_every_stored_fate(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=any").json()["items"]
+        assert _titles(rows) == {"Example Foxtrot", "Example Golf", "Example Hotel"}
+
+    def test_a_named_lane_still_narrows_to_just_that_lane(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=condemn").json()["items"]
+        assert _titles(rows) == {"Example Foxtrot"}
+
+
 class TestLibraryFilter:
     def test_the_library_rides_along_on_every_row(self, client: TestClient) -> None:
         rows = client.get("/api/candidates?verdict=condemn").json()["items"]

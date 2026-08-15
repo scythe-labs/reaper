@@ -276,6 +276,30 @@ def _like_literal(text_: str) -> str:
     return text_.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _json_array_term(column: str, term: str) -> ColumnElement[bool]:
+    """EXISTS test for ``term`` inside a stored JSON-array column, tolerating NULL or a
+    malformed document. ``json_each`` raises mid-query on invalid JSON, so a NULL or
+    unparseable row is swapped for an empty array inside the expression itself and simply
+    never matches.
+
+    Shared by every equality filter over one of these columns (``genres_json``,
+    ``collections_json``) so a second copy can't drift from this one (rule 72): ``column``
+    is never operator input, always one of the two literal names below.
+    """
+    # `column` is never operator input, only the two literal names above; nothing
+    # untrusted reaches this string.
+    return cast(
+        "ColumnElement[bool]",
+        text(
+            f"EXISTS (SELECT 1 FROM json_each("  # noqa: S608
+            f"CASE WHEN candidate.{column} IS NOT NULL "
+            f"AND json_valid(candidate.{column}) "
+            f"THEN candidate.{column} ELSE '[]' END"
+            f") WHERE json_each.value = :term)"
+        ).bindparams(term=term),
+    )
+
+
 @router.get("/candidates", tags=[api_tags.REVIEW])
 async def list_candidates(
     request: Request,
@@ -284,6 +308,7 @@ async def list_candidates(
     media_type: str | None = None,
     requested: str = "any",
     genre: str | None = None,
+    collection: str | None = None,
     library: str | None = None,
     override: str = "any",
     sort: str = "score",
@@ -306,6 +331,12 @@ async def list_candidates(
     ``order`` (asc / desc) let the owner re-rank; a score tiebreak keeps the order stable
     within equal keys, so a show's seasons never scatter across a page boundary.
 
+    ``verdict`` selects the lane -- ``condemn`` / ``protect`` / ``abstain`` -- or ``any`` for
+    every stored lane at once, which is what makes the collection screen cross-lane (#816): a
+    title's siblings show up whatever fate each one got. Hand overrides can only shift an item
+    INTO or OUT OF one named lane, so ``any`` skips that step outright; nothing is being
+    excluded from a lane, so there is nothing to move.
+
     Filters **stack** (they are ANDed), and each only narrows the frozen snapshot, never
     re-decides it: ``search`` matches the title or the show name, and understands a release
     year on the end of either ("Example Alpha 1979", or with parentheses) -- the queue prints
@@ -315,9 +346,10 @@ async def list_candidates(
     year outright, is never lost to the reading of the number. ``media_type`` keeps
     movies or seasons, ``requested`` keeps only what someone asked for through Seerr
     (``yes``), only what nobody asked for (``no``), or everything (``any``), ``genre``
-    keeps rows whose stored genre list contains the given term exactly, ``library`` keeps
-    rows in the named Plex library (section), and ``override`` keeps rows by their
-    hand-override state (``spare`` / ``reap`` / ``none`` / ``any``).
+    keeps rows whose stored genre list contains the given term exactly, ``collection`` does
+    the same over the stored Plex collection list -- navigation only, it never re-decides a
+    verdict -- ``library`` keeps rows in the named Plex library (section), and ``override``
+    keeps rows by their hand-override state (``spare`` / ``reap`` / ``none`` / ``any``).
     """
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
@@ -336,20 +368,23 @@ async def list_candidates(
         # totals describe exactly the set the rows are drawn from.
         decisions = await whitelist.overrides(session)
         conditions = [Candidate.snapshot_id == snapshot.id]
-        # Tab membership is the EFFECTIVE lane, not the raw verdict: a hand override moves an item
-        # to the lane of what will actually happen -- a spared condemnation shows under Kept, a
-        # honored hand reap under Condemned -- while its stored verdict stays pure policy. Only
-        # overridden rows move, so raw verdict==lane stays the indexed path and the few moves are
-        # spliced on; condemned.effective_verdict is the one classifier the scan summary shares.
-        shifts = await overridden_lane_shifts(session, snapshot.id, decisions)
-        moved_out = [c.media_key for c, from_lane, _to in shifts if from_lane == verdict]
-        moved_in = [c.media_key for c, _from, to_lane in shifts if to_lane == verdict]
-        lane = Candidate.verdict == verdict
-        if moved_out:
-            lane = and_(lane, Candidate.media_key.not_in(moved_out))
-        if moved_in:
-            lane = or_(lane, Candidate.media_key.in_(moved_in))
-        conditions.append(lane)
+        if verdict != "any":
+            # Tab membership is the EFFECTIVE lane, not the raw verdict: a hand override moves
+            # an item to the lane of what will actually happen -- a spared condemnation shows
+            # under Kept, a honored hand reap under Condemned -- while its stored verdict stays
+            # pure policy. Only overridden rows move, so raw verdict==lane stays the indexed
+            # path and the few moves are spliced on; condemned.effective_verdict is the one
+            # classifier the scan summary shares. ``any`` (the collection screen, #816) wants
+            # every lane, so this whole step is skipped: nothing is excluded, so nothing moves.
+            shifts = await overridden_lane_shifts(session, snapshot.id, decisions)
+            moved_out = [c.media_key for c, from_lane, _to in shifts if from_lane == verdict]
+            moved_in = [c.media_key for c, _from, to_lane in shifts if to_lane == verdict]
+            lane = Candidate.verdict == verdict
+            if moved_out:
+                lane = and_(lane, Candidate.media_key.not_in(moved_out))
+            if moved_in:
+                lane = or_(lane, Candidate.media_key.in_(moved_in))
+            conditions.append(lane)
         if search and search.strip():
             term = search.strip()
 
@@ -386,19 +421,12 @@ async def list_candidates(
         elif requested == "no":
             conditions.append(Candidate.requested_by.is_(None))
         if genre and genre.strip():
-            # Exact term match inside the stored JSON genre array. json_each raises
-            # mid-query on a malformed document, so invalid or missing rows are swapped
-            # for an empty array inside the expression itself and simply never match.
-            # Raw SQL (the season scan's precedent for json/table-valued reads), cast to
-            # the boolean element type the conditions list carries.
-            genre_predicate = text(
-                "EXISTS (SELECT 1 FROM json_each("
-                "CASE WHEN candidate.genres_json IS NOT NULL "
-                "AND json_valid(candidate.genres_json) "
-                "THEN candidate.genres_json ELSE '[]' END"
-                ") WHERE json_each.value = :genre)"
-            ).bindparams(genre=genre.strip())
-            conditions.append(cast("ColumnElement[bool]", genre_predicate))
+            # Exact term match inside the stored JSON genre array.
+            conditions.append(_json_array_term("genres_json", genre.strip()))
+        if collection and collection.strip():
+            # Exact name match inside the stored JSON collection array -- the same
+            # predicate as genre above, over collections_json instead (rule 72).
+            conditions.append(_json_array_term("collections_json", collection.strip()))
         if override in {"spare", "reap", "none"}:
             # Hand overrides resolve in Python: whitelist.effective_override is the one
             # decision function (an item's own key beats its show's), and re-stating that
@@ -1272,6 +1300,7 @@ def _candidate_out(
         chip=_chip(explanation, r.verdict, r.score, r.media_type),
         season_number=_season_number(r.media_key),
         show_status=r.show_status,
+        collections=_collections(r.collections_json),
     )
 
 
@@ -1364,6 +1393,26 @@ def _genres(genres_json: str | None) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(g) for g in raw if g]
+
+
+def _collections(collections_json: str | None) -> list[str] | None:
+    """The stored collection list, defensively -- and unlike ``_genres``, ``None`` survives
+    rather than collapsing to an empty list.
+
+    ``None`` means "not recorded for this scan" (no Plex configured, a section read that
+    failed, a row from before this shipped), which the UI must render differently from "in
+    no collection": collections are navigation, never protection, so nothing here degrades
+    or re-decides -- a read failure just costs the chip. Anything unparseable reads the same
+    as absent, the same conservative default ``_genres`` uses."""
+    if not collections_json:
+        return None
+    try:
+        raw = json.loads(collections_json)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(raw, list):
+        return None
+    return [str(c) for c in raw if c]
 
 
 @router.get("/candidates/{candidate_id}", tags=[api_tags.REVIEW])
@@ -1492,5 +1541,9 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             # same scan. Skipping the rows that carry nothing keeps a snapshot taken
             # before this field existed from blanking a group whose other rows have it.
             show_status=next((c.show_status for c in seasons if c.show_status), None),
+            # Same pattern: a TV collection lists the SHOW, not its seasons, so every
+            # season row already carries the show's own list and the first one that has
+            # it answers for the whole group (#816).
+            collections=next((c.collections for c in seasons if c.collections), None),
             seasons=seasons,
         )

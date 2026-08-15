@@ -154,6 +154,13 @@ export interface Candidate {
   /** Whether the show has finished. Null for a movie, where the question doesn't apply,
    *  and on a row stored before this field existed -- both render nothing at all. */
   show_status: ShowStatus | null;
+  /** This item's Plex collection names (a season's are its SHOW's), sorted smallest
+   *  collection first -- the chip takes element 0. Navigation only, never a verdict
+   *  input. Null means "not recorded for this scan" (no Plex configured, a failed
+   *  section read, a row from before this shipped), NOT "in no collection": render no
+   *  chip for null rather than an empty one. Optional: no component reads it yet and
+   *  the test fixtures are not made to carry it (#816 phase 3; the chip is phase 4). */
+  collections?: string[] | null;
 }
 
 /** Whether a show has finished, as three states rather than a bool, so "the server never
@@ -193,6 +200,11 @@ export interface Group {
    *  reading of the series is stamped onto every season in the same scan, so they cannot
    *  disagree. Null only when no row carries it (a snapshot from before this field). */
   show_status: ShowStatus | null;
+  /** The show's Plex collection names, taken the same way as `show_status`: a TV
+   *  collection lists the show, not its seasons, so every season carries the same list.
+   *  Null means "not recorded for this scan," never "in no collection". Optional, same
+   *  reason as `Candidate.collections`. */
+  collections?: string[] | null;
   /** Every season, sorted by season number (unnumbered rows last). */
   seasons: Candidate[];
 }

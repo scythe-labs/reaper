@@ -297,6 +297,13 @@ class CandidateOut(BaseModel):
     server did not say" can never be drawn as a definite answer -- ``"unknown"`` renders
     in the "we could not check" treatment. ``"continuing"`` is labeled "Still going",
     because that arm also covers a show that has not started airing yet."""
+    collections: list[str] | None = None
+    """This item's Plex collection names (a season's are its SHOW's), sorted smallest
+    collection first by the scan that wrote them -- the chip takes element 0. Navigation
+    only: nothing reads this to decide a verdict (#816's fence). ``None`` means "not
+    recorded for this scan" (no Plex configured, a section read that failed, a row from
+    before this shipped), which is NOT the same as "in no collection" -- the UI must not
+    draw an empty chip for it."""
 
 
 class CandidateDetail(CandidateOut):
@@ -412,6 +419,12 @@ class GroupOut(BaseModel):
     fact: one observation of the series is stamped onto every season of it in the same
     scan, so the rows of one group cannot disagree. None only if the group somehow holds
     no row carrying it (a pre-rescan snapshot), and the card then shows nothing."""
+    collections: list[str] | None = None
+    """The show's Plex collection names, taken from its season rows the same way
+    ``show_status`` is: a TV collection lists shows, not seasons, so every season carries
+    its show's own list and the first row that has one answers for the whole group. None
+    means "not recorded for this scan," never "in no collection" -- see
+    ``CandidateOut.collections``."""
     seasons: list[CandidateOut] = Field(default_factory=list)
     """Every season, sorted by season number (unnumbered rows last)."""
 
