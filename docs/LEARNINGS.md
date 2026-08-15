@@ -3949,12 +3949,43 @@ and one of 50,000 took 20.7s. Nearly all of that is fixed per request. At 1,000 
 NOT the cause, which was the obvious guess and was measured too: offset 400,000 cost 14.5s
 against 12.3s at offset 0.
 
-**That does not mean `history_sync.PAGE_SIZE` should be raised, and the difference is the
-read budget, not the row count.** The sweep sits at 5,000 with a 30s client budget, where a
-25k page spent 60-80% of it and a slower instance timed out (#780, and the entry above on
-pages versus rows). The dump tool allows 120s per request, which is what lets it afford
-25,000. Raise one number without the other and the timeout comes back. Both shrink by half
-on a timeout, which is the part that actually makes either safe.
+**That does not mean `history_sync.PAGE_SIZE` should be raised on its own, and the difference
+is the read budget, not the row count.** The sweep sat at 5,000 with a 30s client budget,
+where a 25k page spent 60-80% of it and a slower instance timed out (#780, and the entry above
+on pages versus rows). The dump tool allows 120s per request, which is what let it afford
+25,000. Raise one number without the other and the timeout comes back. Both shrink by half on
+a timeout, which is the part that actually makes either safe.
+
+## The sweep's read budget, bought per call rather than per client (2026-08-14)
+
+The paragraph above was the whole of what was known, and the missing half was that the budget
+did not have to be a property of the client. `BaseClient` built one `httpx2.Timeout` at
+construction and every method shared it, so the sweep's minute-long page and the artwork proxy's
+answer to a browser were bound to one number. That is why #780 could only be fixed from the page
+side. `_request` now takes an optional `read_timeout` that widens the read leg for one call, the
+sweep passes 60s, and `PAGE_SIZE` is back at 25,000.
+
+**Re-measured through Reaper's own client against a live instance at 426,018 rows**, which is
+the same instance the dump tool measured through stdlib `urllib` and roughly the same shape:
+1,000 rows 4.4s, 5,000 6.5s, 25,000 8.4s, 50,000 12.9s. Deep offsets cost nothing extra here
+either: 25,000 rows at offset 401,017 took 8.6s against 8.4s at offset 0.
+
+**Driven end to end rather than extrapolated**, a real `sync(full=True)` into a throwaway mirror,
+the two page sizes run back to back against the same instance: **704s at 5,000 and 237s at
+25,000**, 86 requests against 18, both landing the same 426,021 rows with no shrink. Worth
+measuring rather than adding up per-request costs, which the ingest of 426k rows sits underneath
+and which put the estimate out by a third in both directions.
+
+**The 60-80%-of-30s figure from #780 did not reproduce, and the number was not raised on that
+basis.** A 25k page measures at 28% of a 30s budget on this instance today. Something differed
+then, most likely load, and the incident is not in doubt: it is the reason the budget is now 7x
+the measured cost instead of 3.5x. A measurement that contradicts a recorded incident does not
+retire it.
+
+**The library sweep is not the same question, measured rather than assumed** (rule 72).
+`get_library_media_info` returns a whole section in one page well under a second: the largest
+section on that instance is 3,430 rows at 0.2s, where the history table is six figures. Its
+1,000-row page costs 4 requests, so `library_index._SPINE_PAGE_SIZE` is left alone.
 
 **`get_history` groups consecutive plays unless told not to, and the default is what a
 caller that says nothing gets.** Asking without `grouping=0` returned 309,013 rows on an

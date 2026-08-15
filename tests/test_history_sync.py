@@ -272,6 +272,31 @@ class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
         assert fake.lengths == [8, 4, 2]
 
 
+class TestTheSweepCarriesItsOwnReadBudget:
+    """A page of the sweep asks for tens of thousands of rows and the calls beside it on the
+    same client answer a browser, so the budget cannot be a property of the client. #780 is
+    what happens when it is: the page size was cut to 5,000 because that was the only place
+    the margin could be bought, and it cost 68 extra requests a sweep on a six-figure history.
+    """
+
+    async def test_every_page_asks_with_the_sweeps_budget_and_the_probe_does_not(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The value is patched away from the shipped one, so a hardcoded number or an
+        omitted argument fails here rather than reading the same either way (rule 141)."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 4)
+        monkeypatch.setattr(history_sync, "PAGE_READ_TIMEOUT", 7.5)
+        fake = PagingTautulli([_row(n, days_ago=n) for n in range(1, 10)])
+
+        await sync(engine, fake, full=True)
+
+        # First call is the regression check's one-row probe, which keeps the client's
+        # shared budget. Every page after it carries the sweep's.
+        assert fake.read_timeouts[0] is None
+        assert set(fake.read_timeouts[1:]) == {7.5}
+        assert len(fake.read_timeouts) > 2  # it really did page
+
+
 class TestRegressionDetection:
     async def test_the_first_sync_sets_a_baseline_and_does_not_raise(
         self, engine: AsyncEngine

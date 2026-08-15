@@ -78,30 +78,43 @@ INCREMENTAL_OVERLAP = timedelta(days=2)
 
 log = structlog.get_logger(__name__)
 
-#: Rows per page of the history walk. The number that matters about it is not the request
-#: count, it is how much of the client's read budget one page spends
-#: (``clients.base.DEFAULT_TIMEOUT``, 30s read), because a page that does not finish inside
-#: that budget aborts the whole sweep.
+#: Rows per page of the history walk. What a page costs is almost entirely FIXED per request,
+#: so the page size sets the whole runtime. Measured through this client against a live
+#: instance holding 426,018 rows: 1,000 rows took 4.4s, 5,000 took 6.5s, 25,000 took 8.4s and
+#: 50,000 took 12.9s. A deep offset is not what costs, which was the obvious guess and was
+#: measured too: 25,000 rows at offset 401,017 took 8.6s against 8.4s at offset 0.
 #:
-#: This was 25,000, on the claim that Tautulli serves a 25k page in about the time it serves
-#: a 1k page. It does not. On a six-figure history each 25k page landed at 60-80% of the 30s
-#: budget, so the same instance answering roughly 1.8x slower timed out on the first page and
-#: the sweep aborted, three days from its next slot (#780). A smaller page cannot cost more
-#: than a larger one, so the margin is bought here rather than by widening a timeout every
-#: other Tautulli call would inherit. ``TautulliClient`` passes no timeout of its own, so one
-#: budget covers all of them: the executor re-asks ``get_history`` once per item mid-reap
-#: (``executor._watched_since_approval``), and the artwork proxy answers a browser
-#: (``api.poster._artwork_client``).
+#: So 5,000 spends 86 requests on that history where 25,000 spends 18, and the whole sweep
+#: measured end to end, the two run back to back against the same instance, went from 704s to
+#: 237s. The curve keeps improving past 25,000 and is not taken further, because a page that
+#: times out is retried at half the size and the reach that matters is the SMALLEST page the
+#: walk can end up choosing on a slower server than this one.
 #:
-#: The extra round trips are cheap beside a sweep that stops running: the sweep is the only
-#: thing that catches a row Tautulli backfills with an old timestamp, and while it is failing
-#: a title someone watched keeps reading as never watched.
-PAGE_SIZE = 5_000
+#: **The page size is only safe alongside its own read budget, and 25,000 was tried without
+#: one.** It spent 60-80% of the client's shared 30s read budget, so the same instance
+#: answering roughly 1.8x slower timed out on the first page and the sweep aborted, three days
+#: from its next slot (#780). The margin was bought by dropping to 5,000, because the client
+#: had one budget for every Tautulli call and widening it would have handed the same minute to
+#: the artwork proxy answering a browser (``api.poster._artwork_client``) and to the executor's
+#: per-item re-ask mid-reap (``executor._watched_since_approval``). Now the sweep carries a
+#: budget of its own (:data:`PAGE_READ_TIMEOUT`) and those two keep the shared one.
+PAGE_SIZE = 25_000
+
+#: The read budget one page of the sweep gets, in place of the client's shared 30s.
+#:
+#: Seven times the 8.4s a 25,000-row page measured above, so the sweep survives an instance
+#: several times slower than the one it was measured on. Past that the shrink ladder takes
+#: over and the run degrades to a longer sweep rather than to none. Held to a number a stuck
+#: source cannot hide behind: ``transient_retry`` re-sends each page twice more before the
+#: shrink, so every doubling here doubles what a genuinely dead source costs before the walk
+#: reaches the floor and raises.
+PAGE_READ_TIMEOUT = 60.0
 
 #: The floor the walk shrinks to on a read timeout, and the page size the library sweep
 #: already uses against this same source (``library_index._SPINE_PAGE_SIZE``). A source that
-#: cannot finish a page this small inside the read budget is not merely slow, so the walk
-#: raises there instead of shrinking further.
+#: cannot finish a page this small inside the read budget is not merely slow -- 1,000 rows
+#: measured at 4.4s against a 60s budget -- so the walk raises there instead of shrinking
+#: further.
 MIN_PAGE_SIZE = 1_000
 
 #: Hard stop on the history paging loop, for a source that serves page after page without
@@ -116,7 +129,7 @@ MIN_PAGE_SIZE = 1_000
 #: reporting success, and the mirror shortfall guard cannot catch that on a nightly sweep
 #: (the mirror is already complete from earlier syncs, so there is no shortfall to see), so
 #: a cap reached quietly is the #780 loss again at the oldest tail. 5,000 pages holds 5M rows
-#: at the floor and 25M at PAGE_SIZE, and still stops a source that is not advancing.
+#: at the floor and 125M at PAGE_SIZE, and still stops a source that is not advancing.
 MAX_HISTORY_PAGES = 5_000
 
 
@@ -415,7 +428,9 @@ async def sync(
     length = PAGE_SIZE
     while True:
         try:
-            page = await client.history(length=length, start=start, after=after)
+            page = await client.history(
+                length=length, start=start, after=after, read_timeout=PAGE_READ_TIMEOUT
+            )
         except IntegrationError as exc:
             # A read timeout says the source took the request and could not finish the body
             # in time, which is a fact about how much was asked for. Halve and keep paging.
