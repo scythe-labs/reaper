@@ -212,8 +212,9 @@ complexity.** They disagree by design: the first will ask for a guard the second
 speculative. The orchestrator resolves that, and on this feature the tiebreak is the fence
 above. A guard that keeps a file is worth its lines. A guard on a chip is not.
 
-The runnable form is `.claude/workflows/collections.js`. Twelve agents at most, which is inside
-the session's workflow guideline.
+The build ran from a throwaway workflow script held outside the repository, one run per lane.
+Twelve agents at most. The script is scaffolding for this feature and is not committed: it would
+outlive the plan it reads and name a path that moves to `docs/history/` when this lands.
 
 ## What is not decided
 
