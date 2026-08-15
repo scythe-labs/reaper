@@ -485,9 +485,11 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
     The single paging loop every listing read runs on, so none of them can drift (rule 72):
     the four section sweeps (``library_guid_index``, ``library_season_index``,
     ``labeled_in_section``, ``section_rating_keys``) through :func:`_iter_section_pages`, and
-    the two shelf reads (``find_collection``, ``collection_children``) directly. ``query`` is
-    the listing's own query string BEFORE the container-window params (``"?includeGuids=1"``,
-    ``"?type=3&label=..."``, or ``""``); this appends the start/size.
+    the two shelf reads (``list_collections``, ``collection_children``) directly --
+    ``find_collection`` searches ``list_collections``'s result rather than reading this a
+    second time. ``query`` is the listing's own query string BEFORE the container-window
+    params (``"?includeGuids=1"``, ``"?type=3&label=..."``, or ``""``); this appends the
+    start/size.
 
     Pages and terminates on the RAW child count, never a filtered one: advancing or ending a
     listing on the count of children that survived a ``ratingKey`` filter would let one dropped
@@ -1209,11 +1211,11 @@ class PlexClient:
     async def list_collections(self, section_key: int) -> list[PlexCollectionRow]:
         """Every collection in one section: its rating key, title and Plex's own child count.
 
-        Paged through the one hardened ``_iter_pages`` loop, the same
-        ``/library/sections/{key}/collections`` listing :meth:`find_collection` already
-        reads a name out of -- a second paging loop over that path would be the rule 72
-        violation this docstring exists to head off. Complete-or-raise like every other
-        listing (rule 56): a truncated page is never read as the whole shelf.
+        Paged through the one hardened ``_iter_pages`` loop over
+        ``/library/sections/{key}/collections``. :meth:`find_collection` searches this
+        method's result rather than running its own second loop over the same path (rule
+        72). Complete-or-raise like every other listing (rule 56): a truncated page is
+        never read as the whole shelf.
 
         Collections are navigation, never protection (the fence in
         ``docs/COLLECTIONS_PLAN.md``), so this method does not degrade anything itself --
@@ -1246,32 +1248,21 @@ class PlexClient:
     async def find_collection(self, section_key: int, name: str) -> int | None:
         """The rating key of the collection called ``name`` in one section, or ``None``.
 
-        Matched casefolded, because Plex title-cases tags and titles on the way in. A
-        read, paged through the one hardened ``_iter_pages`` loop like every other
-        listing (rule 72). Windowed by the server and read unpaged, a shelf sitting past
-        the first window reads as absent, and the caller then CREATES a second "Leaving
-        Soon" collection: the reconcile splits across two shelves and neither is right.
+        Searches :meth:`list_collections`'s result rather than paging
+        ``/library/sections/{key}/collections`` a second time (rule 72), so it inherits
+        that method's paging and completeness guarantees. Matched casefolded, because
+        Plex title-cases tags and titles on the way in.
+
+        A row ``list_collections`` cannot assign a rating key to now raises instead of
+        being silently skipped as it once was: returning ``None`` here reads to the
+        caller as "no such collection," and the caller then CREATES a second "Leaving
+        Soon" collection, splitting the shelf. Raising degrades honestly instead.
         """
-        server = await self._connect()
         wanted = normalize_label(name)
-
-        def read() -> int | None:
-            for raw in _iter_pages(
-                server,
-                f"/library/sections/{section_key}/collections",
-                "",
-                what=f"collection list of section {section_key}",
-            ):
-                for el in raw:
-                    title = str(el.get("title") or "")
-                    key = el.get("ratingKey")
-                    if key and normalize_label(title) == wanted:
-                        return int(key)
-            return None
-
-        return await self._call(
-            read, what=f"look for the {name!r} collection in section {section_key}"
-        )
+        for row in await self.list_collections(section_key):
+            if normalize_label(row.title) == wanted:
+                return row.rating_key
+        return None
 
     async def collection_children(self, collection_key: int) -> set[int]:
         """The rating keys currently on one collection. A read.

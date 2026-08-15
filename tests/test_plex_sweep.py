@@ -389,6 +389,21 @@ class TestTheShelfReadsPageToo:
 
         assert await _client_with(server).find_collection(1, "leaving soon") == 11
 
+    async def test_a_row_with_no_rating_key_raises_instead_of_being_skipped(self) -> None:
+        """The old ``find_collection`` skipped a falsy ``ratingKey`` and returned ``None``,
+        which the caller reads as "no such collection" and then CREATES a second "Leaving
+        Soon" shelf. Now it raises instead of degrading honestly."""
+        listing = (
+            '<MediaContainer size="1" totalSize="1">'
+            '<Directory ratingKey="" title="Leaving Soon"/>'
+            "</MediaContainer>"
+        )
+        server = _FakeServer(
+            [_FakeSection(1, "movie")], {"/library/sections/1/collections": listing}
+        )
+        with pytest.raises(PlexError):
+            await _client_with(server).find_collection(1, "leaving soon")
+
     async def test_a_truncated_member_list_is_never_read_as_the_whole_shelf(self) -> None:
         """The reconcile detaches ``current - wanted``, so a short read leaves titles marked
         "Leaving Soon" long after they were reprieved."""

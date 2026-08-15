@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from reaper.aio import gather_reaped, reap
 from reaper.clients.arr import RadarrClient
 from reaper.clients.base import IntegrationError
-from reaper.clients.plex import PlexClient, PlexError
+from reaper.clients.plex import PlexClient, PlexCollectionRow, PlexError
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db import KEY_CHUNK
@@ -662,6 +662,13 @@ def _size_bucket(source: str | None) -> str:
     return str(source) if source else _UNMEASURED
 
 
+#: Bounds concurrent `collection_children` reads within one snapshot's collection pass.
+#: A section can hold dozens of collections, so an unbounded fan-out would open that many
+#: sockets against one Plex instance at once; separate from leaving_soon.SHELF_CONCURRENCY,
+#: which bounds a different fan-out (whole libraries, not collections within one).
+_COLLECTION_CHILDREN_CONCURRENCY = 8
+
+
 async def _collection_membership(
     plex: PlexClient | None, *, allowed_sections: set[int] | None
 ) -> tuple[dict[int, list[str]], dict[str, int]]:
@@ -673,9 +680,26 @@ async def _collection_membership(
     into the scan or degrading it. Rule 28 binds *evidence* sources, and a collection is not
     evidence, so the compensating cost of a failed read is a missing chip, nothing else.
 
-    Each item's list is sorted smallest collection first (Plex's own child count), ties
-    broken alphabetically -- the plan's tie-break, so the chip renders the same collection
-    scan to scan instead of flipping with dict-iteration order.
+    The collection NAME is the identity. Reaper's own Leaving Soon shelf creates a
+    same-named collection in every section, so an operator with two libraries hits that
+    case by default, and one "Leaving Soon" chip covering both is what they mean.
+    Same-named collections in different sections merge into one membership entry, and
+    their known sizes are summed rather than the later section overwriting the earlier
+    one's count (rule 6).
+
+    A collection whose child count Plex never reported is a different fact from one Plex
+    reported as empty, so it is left out of the returned size map rather than folded to
+    0 -- the sort below would otherwise read it as the smallest collection and hand it the
+    chip's element-0 slot ahead of a genuinely small one. Each item's list is sorted
+    smallest known collection first (Plex's own child count), a collection with no known
+    size sorting last, ties broken alphabetically -- the plan's tie-break, so the chip
+    renders the same collection scan to scan instead of flipping with dict-iteration
+    order.
+
+    Each section's ``collection_children`` reads run concurrently, bounded by
+    ``_COLLECTION_CHILDREN_CONCURRENCY``; one collection's failure is caught inside its
+    own task and logged rather than raised into the fan-out, so it can never cancel a
+    sibling read or degrade the snapshot.
     """
     if plex is None:
         return {}, {}
@@ -687,6 +711,20 @@ async def _collection_membership(
 
     membership: dict[int, list[str]] = {}
     sizes: dict[str, int] = {}
+    bound = asyncio.Semaphore(_COLLECTION_CHILDREN_CONCURRENCY)
+
+    async def _children(row: PlexCollectionRow) -> tuple[str, set[int] | None]:
+        try:
+            async with bound:
+                return row.title, await plex.collection_children(row.rating_key)
+        except PlexError as exc:
+            log.warning(
+                "snapshot.collection_children_unreadable",
+                collection=row.rating_key,
+                error=str(exc),
+            )
+            return row.title, None
+
     for section in sections:
         if allowed_sections is not None and section.key not in allowed_sections:
             continue
@@ -695,24 +733,24 @@ async def _collection_membership(
         except PlexError as exc:
             log.warning("snapshot.collections_unreadable", section=section.key, error=str(exc))
             continue
+
         for row in rows:
-            sizes[row.title] = row.child_count or 0
-            try:
-                children = await plex.collection_children(row.rating_key)
-            except PlexError as exc:
-                log.warning(
-                    "snapshot.collection_children_unreadable",
-                    collection=row.rating_key,
-                    error=str(exc),
-                )
+            if row.child_count is not None:
+                sizes[row.title] = sizes.get(row.title, 0) + row.child_count
+
+        # Argument order, not completion order (reaper.aio.gather_reaped), so the merge
+        # below is deterministic run to run even though the reads race.
+        for title, children in await gather_reaped(*(_children(row) for row in rows)):
+            if children is None:
                 continue
             for key in children:
-                membership.setdefault(key, []).append(row.title)
+                membership.setdefault(key, []).append(title)
 
-    sorted_membership = {
-        key: sorted(names, key=lambda name: (sizes.get(name, 0), name))
-        for key, names in membership.items()
-    }
+    def _size_key(name: str) -> tuple[int, int, str]:
+        size = sizes.get(name)
+        return (0, size, name) if size is not None else (1, 0, name)
+
+    sorted_membership = {key: sorted(names, key=_size_key) for key, names in membership.items()}
     return sorted_membership, sizes
 
 

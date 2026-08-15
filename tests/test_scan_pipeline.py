@@ -14,6 +14,7 @@ still produces the snapshot a sequential gather would have:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -856,6 +857,111 @@ class TestCollectionsRideTheSnapshot:
             # And the one field that DID have something to lose recorded nothing, since the
             # only section that carries collections failed to read.
             assert now_.collections_json is None
+
+
+class TestCollectionSizesAreIdentifiedByName:
+    """#816 review: two sections each holding a same-named collection used to
+    silently last-write-wins the later section's count into ``sizes[title]`` (rule 6).
+    The collection NAME is the identity: Reaper's own Leaving Soon shelf creates a
+    same-named collection in every section, so an operator with two libraries hits this
+    case by default, and one merged chip covering both is what they mean."""
+
+    async def test_same_named_collections_in_two_sections_merge_and_sum(self) -> None:
+        plex = _FakeCollectionsPlex(
+            sections=[
+                PlexSection(key=1, title="Movies", kind="movie"),
+                PlexSection(key=2, title="4K Movies", kind="movie"),
+            ],
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Leaving Soon", child_count=2)],
+                2: [PlexCollectionRow(rating_key=502, title="Leaving Soon", child_count=3)],
+            },
+            children={501: {11}, 502: {22}},
+        )
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        # One chip's worth of size, not the second section's 3 silently replacing the
+        # first section's 2.
+        assert sizes == {"Leaving Soon": 5}
+        # Each item still carries its own single membership entry.
+        assert membership == {11: ["Leaving Soon"], 22: ["Leaving Soon"]}
+
+
+class TestAnUnknownCollectionSizeIsNotZero:
+    """A collection Plex never reported a childCount for is a different fact from one
+    Plex reported as empty. Folding the unknown to 0 handed it the sort's element-0
+    slot -- the exact slot the chip renders -- ahead of a collection that is genuinely
+    small."""
+
+    async def test_an_unknown_size_sorts_last_and_is_absent_from_sizes(self) -> None:
+        plex = _FakeCollectionsPlex(
+            sections=[PlexSection(key=1, title="Movies", kind="movie")],
+            collections={
+                1: [
+                    PlexCollectionRow(rating_key=501, title="Unsized", child_count=None),
+                    PlexCollectionRow(rating_key=502, title="Genuinely Small", child_count=1),
+                ]
+            },
+            children={501: {11}, 502: {11}},
+        )
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        # The known-small collection wins element 0, not the unsized one.
+        assert membership[11] == ["Genuinely Small", "Unsized"]
+        # An unknown size never carries a fabricated 0 into the stored map.
+        assert sizes == {"Genuinely Small": 1}
+        assert "Unsized" not in sizes
+
+
+class _ConcurrencyTrackingPlex(PlexClient):
+    """A one-section Plex stand-in that counts overlapping ``collection_children`` reads,
+    to prove the fan-out is bounded rather than either fully sequential or unbounded.
+    Never calls ``super().__init__`` (``_FakeCollectionsPlex``'s convention)."""
+
+    def __init__(self, *, rows: list[PlexCollectionRow], bound: int) -> None:
+        self._rows = rows
+        self._bound = bound
+        self._in_flight = 0
+        self.peak_in_flight = 0
+
+    async def video_sections(self) -> list[PlexSection]:
+        return [PlexSection(key=1, title="Movies", kind="movie")]
+
+    async def list_collections(self, section_key: int) -> list[PlexCollectionRow]:
+        return self._rows
+
+    async def collection_children(self, collection_key: int) -> set[int]:
+        self._in_flight += 1
+        self.peak_in_flight = max(self.peak_in_flight, self._in_flight)
+        assert self._in_flight <= self._bound, "the fan-out exceeded its declared bound"
+        await asyncio.sleep(0)  # yield, so a wider-than-bound fan-out would overlap here
+        self._in_flight -= 1
+        return {collection_key}
+
+
+class TestTheChildrenFanOutIsBounded:
+    """#816 review: N collections in one section each ran their ``collection_children``
+    read sequentially. Bounded concurrency now runs them in waves, the same pattern
+    ``leaving_soon.sync_shelves`` already uses for its own fan-out."""
+
+    async def test_more_collections_than_the_bound_still_peaks_at_the_bound(self) -> None:
+        bound = snapshot_service._COLLECTION_CHILDREN_CONCURRENCY
+        rows = [
+            PlexCollectionRow(rating_key=n, title=f"Collection {n}", child_count=1)
+            for n in range(bound * 3)
+        ]
+        plex = _ConcurrencyTrackingPlex(rows=rows, bound=bound)
+
+        _membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert plex.peak_in_flight == bound
+        assert len(sizes) == len(rows)
 
 
 class TestAStoredSizeSaysWhereItCameFrom:
