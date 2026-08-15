@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from reaper.aio import gather_reaped, reap
 from reaper.clients.arr import RadarrClient
 from reaper.clients.base import IntegrationError
-from reaper.clients.plex import PlexClient
+from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db import KEY_CHUNK
@@ -662,6 +662,60 @@ def _size_bucket(source: str | None) -> str:
     return str(source) if source else _UNMEASURED
 
 
+async def _collection_membership(
+    plex: PlexClient | None, *, allowed_sections: set[int] | None
+) -> tuple[dict[int, list[str]], dict[str, int]]:
+    """Every Plex item's collection names, and every collection's Plex-reported size.
+
+    Collections are navigation, never protection (the fence in docs/COLLECTIONS_PLAN.md):
+    a read failure here -- no Plex configured, a section listing that raises, one bad
+    collection -- returns whatever was gathered so far and never more, rather than raising
+    into the scan or degrading it. Rule 28 binds *evidence* sources, and a collection is not
+    evidence, so the compensating cost of a failed read is a missing chip, nothing else.
+
+    Each item's list is sorted smallest collection first (Plex's own child count), ties
+    broken alphabetically -- the plan's tie-break, so the chip renders the same collection
+    scan to scan instead of flipping with dict-iteration order.
+    """
+    if plex is None:
+        return {}, {}
+    try:
+        sections = await plex.video_sections()
+    except PlexError as exc:
+        log.warning("snapshot.collections_unreadable", error=str(exc))
+        return {}, {}
+
+    membership: dict[int, list[str]] = {}
+    sizes: dict[str, int] = {}
+    for section in sections:
+        if allowed_sections is not None and section.key not in allowed_sections:
+            continue
+        try:
+            rows = await plex.list_collections(section.key)
+        except PlexError as exc:
+            log.warning("snapshot.collections_unreadable", section=section.key, error=str(exc))
+            continue
+        for row in rows:
+            sizes[row.title] = row.child_count or 0
+            try:
+                children = await plex.collection_children(row.rating_key)
+            except PlexError as exc:
+                log.warning(
+                    "snapshot.collection_children_unreadable",
+                    collection=row.rating_key,
+                    error=str(exc),
+                )
+                continue
+            for key in children:
+                membership.setdefault(key, []).append(row.title)
+
+    sorted_membership = {
+        key: sorted(names, key=lambda name: (sizes.get(name, 0), name))
+        for key, names in membership.items()
+    }
+    return sorted_membership, sizes
+
+
 async def scan(
     engine: AsyncEngine,
     session: AsyncSession,
@@ -937,6 +991,12 @@ async def scan(
         ),
         name="plex_index",
     )
+    # A read-only extension of the same gather (#816 phase 2). Never raises -- see the
+    # function's own docstring -- so it needs no place in the except below: there is
+    # nothing for it to leave half-done that a reap would need to clean up.
+    collections_task = _spawn(
+        _collection_membership(plex, allowed_sections=allowed_sections), name="collections"
+    )
     movie_tasks = [_spawn(_movies_from(source), name="radarr") for source in radarrs]
     roots_tasks = [_spawn(_roots_from(source)) for source in radarrs]
 
@@ -946,6 +1006,7 @@ async def scan(
         # Awaited in the sequential code's order, so the first failure to surface is the
         # same one it would have raised then; the except below reaps every other task.
         plex_index = await index_task
+        collection_membership, collection_sizes = await collections_task
         for source, movie_task, roots_task in zip(radarrs, movie_tasks, roots_tasks, strict=True):
             movies = await movie_task
             roots = await roots_task
@@ -1079,6 +1140,11 @@ async def scan(
         # A space, not "; ": `degrade` terminates every reason, so these are whole sentences
         # now and a semicolon between them would read "...this scan.; radarr 'x' unreachable".
         degraded_reason=" ".join(context.degraded_reasons) or None,
+        # Every collection this scan saw, name to Plex's own member count (#816 phase 2).
+        # NULL when none were read, whether none exist or the read failed -- the two are
+        # indistinguishable on purpose (docs/COLLECTIONS_PLAN.md's fence): this is
+        # navigation, never protection, so it never degrades the snapshot either way.
+        collection_sizes_json=(json.dumps(collection_sizes) if collection_sizes else None),
     )
     session.add(snapshot)
     await session.flush()
@@ -1311,6 +1377,13 @@ async def scan(
             # existed, and for an item that had no reading to judge at all.
             watch_blind=blind_reason is not None if reading is not None else None,
             rewatch_block=rewatch_block,
+            # A movie's own rating key is what a movie-library collection lists (#816
+            # phase 2). None when unmatched -- an unresolved item was never looked up.
+            collections=(
+                collection_membership.get(item.plex_rating_key)
+                if item.plex_rating_key is not None
+                else None
+            ),
         )
         if verdict == "condemn":
             condemned_keys.append(item.media_key)
@@ -1419,6 +1492,13 @@ async def scan(
             # `judgment.facts.rewatch_cohort_n`/`rewatch_cohort_k` -- the movie call above
             # passes its own the same way, for the same reason (`_rewatch_odds_context`).
             rewatch_block=judgment.rewatch_block,
+            # A TV collection lists SHOWS, not seasons (#816 phase 2) -- the same key the
+            # poster uses, never `plex_rating_key`, which is the season's own.
+            collections=(
+                collection_membership.get(judgment.poster_rating_key)
+                if judgment.poster_rating_key is not None
+                else None
+            ),
         )
         if verdict == "condemn":
             condemned_keys.append(judgment.media_key)
@@ -1742,6 +1822,7 @@ def _judge_item(
     override: str | None = None,
     watch_blind: bool | None = None,
     rewatch_block: RewatchBlock | None = None,
+    collections: list[str] | None = None,
 ) -> str:
     """Evaluate one item's gates and signals, store its candidate, return its EFFECTIVE fate.
 
@@ -1809,6 +1890,10 @@ def _judge_item(
                 if isinstance(facts.genres, Known)
                 else None
             ),
+            # This item's Plex collections (#816 phase 2), already sorted smallest-first by
+            # the caller (_collection_membership). Navigation only, never a verdict input --
+            # nothing above this line reads `collections`.
+            collections_json=(json.dumps(collections) if collections else None),
             quality=(facts.quality.value if isinstance(facts.quality, Known) else None),
             group_key=display.group_key,
             group_title=display.group_title,
