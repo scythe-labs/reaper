@@ -1218,7 +1218,7 @@ class PlexClient:
         never read as the whole shelf.
 
         Collections are navigation, never protection (the fence in
-        ``docs/COLLECTIONS_PLAN.md``), so this method does not degrade anything itself --
+        ``docs/history/COLLECTIONS_PLAN.md``), so this method does not degrade anything itself --
         it either reports the section honestly or raises. A caller that wants "missing
         chip" rather than "broken scan" out of a Plex hiccup catches the raise itself.
         """

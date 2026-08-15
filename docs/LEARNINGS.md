@@ -4085,6 +4085,23 @@ therefore derives its tokens from a saved salt rather than drawing one per run, 
 every timestamp by one stored whole-day offset so intervals survive while the wall clock
 does not.
 
+## A card's own `overflow: hidden` clips a popover before position is the problem (2026-08-15)
+
+`.card` sets `overflow: hidden` to crop its backdrop art. A `position: absolute` popover
+anchored inside a card is clipped to the card's own box, not the viewport: past two or three
+collections, most of the collection picker's list rendered unreachable. Caught in the mockup,
+on the first render, before any code shipped.
+
+**The fix is the one `OverrideControls`' Spare length menu already used, and it generalizes.**
+Portal the popover to `<body>` and render it `position: fixed`, at coordinates clamped to the
+viewport and measured before it draws (rule 138). `CollectionChip`'s picker and the Spare menu
+now share that math in one hook, `useFixedMenu` (`popoverFit.ts`), instead of each carrying its
+own copy.
+
+⇒ A card-shaped ancestor's `overflow: hidden` is a standing hazard for any `position: absolute`
+menu anchored inside it, independent of what the menu holds. Reach for the portaled, clamped
+`position: fixed` pattern from the first render, not after a clip gets reported.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

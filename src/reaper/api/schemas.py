@@ -467,7 +467,7 @@ class SnapshotOut(BaseModel):
     """Every collection this scan saw, name to Plex's own member count -- the collection
     screen's header reads it for "N titles in this collection" beside the scan's own count
     (#816 phase 5). ``None`` when none were read, whether none exist or the read failed;
-    the two are indistinguishable on purpose (docs/COLLECTIONS_PLAN.md's fence), and the
+    the two are indistinguishable on purpose (docs/history/COLLECTIONS_PLAN.md's fence), and the
     header omits that clause rather than guessing. Navigation only, never a verdict input."""
 
 

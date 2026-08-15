@@ -1,5 +1,18 @@
 # Collections plan (#816)
 
+> **FROZEN 2026-08-15. Do not update this file; it is history, not state.**
+>
+> All six phases landed on `dev` as #816: the Plex collections read, the snapshot write, the
+> API filter and `verdict=any`, search reaching collection names, the chip and its picker on
+> all four surfaces, and the collection screen. Anything below that reads as outstanding work
+> describes the moment it was written.
+>
+> **Two measurements the plan called for were not taken.** "How many collections a real
+> library has per title" (phase 2) and the partial-match search query's cost (phase 3b) both
+> need a real Plex library, and this build ran without one. Both open questions under *What is
+> not decided* below are still open; the first scan that runs this code against a real library
+> should take them, into `docs/LEARNINGS.md`.
+
 Live. Nothing landed. The design is approved and mocked up; this file is how it gets built.
 
 An operator deciding on one entry in a series wants the same decision, or the opposite one, on

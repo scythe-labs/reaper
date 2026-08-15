@@ -719,7 +719,7 @@ class TestScanPipelineEndToEnd:
 class TestCollectionsRideTheSnapshot:
     """#816 phase 2: the Plex collections read lands on the Candidate and Snapshot rows,
     and a failed read costs a missing chip alone -- never a degraded scan
-    (docs/COLLECTIONS_PLAN.md's fence: collections are navigation, never protection)."""
+    (docs/history/COLLECTIONS_PLAN.md's fence: collections are navigation, never protection)."""
 
     async def test_a_candidates_collections_are_sorted_smallest_first_then_alphabetical(
         self, session: AsyncSession, cache_engine: AsyncEngine

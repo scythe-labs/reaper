@@ -674,7 +674,7 @@ async def _collection_membership(
 ) -> tuple[dict[int, list[str]], dict[str, int]]:
     """Every Plex item's collection names, and every collection's Plex-reported size.
 
-    Collections are navigation, never protection (the fence in docs/COLLECTIONS_PLAN.md):
+    Collections are navigation, never protection (the fence in docs/history/COLLECTIONS_PLAN.md):
     a read failure here -- no Plex configured, a section listing that raises, one bad
     collection -- returns whatever was gathered so far and never more, rather than raising
     into the scan or degrading it. Rule 28 binds *evidence* sources, and a collection is not
@@ -1180,7 +1180,7 @@ async def scan(
         degraded_reason=" ".join(context.degraded_reasons) or None,
         # Every collection this scan saw, name to Plex's own member count (#816 phase 2).
         # NULL when none were read, whether none exist or the read failed -- the two are
-        # indistinguishable on purpose (docs/COLLECTIONS_PLAN.md's fence): this is
+        # indistinguishable on purpose (docs/history/COLLECTIONS_PLAN.md's fence): this is
         # navigation, never protection, so it never degrades the snapshot either way.
         collection_sizes_json=(json.dumps(collection_sizes) if collection_sizes else None),
     )
