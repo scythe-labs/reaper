@@ -1300,6 +1300,25 @@ describe("the collection chip", () => {
     expect(chip.closest(".why-meta")?.textContent).not.toMatch(/118 min/);
     expect(screen.getByRole("button", { name: "Show the other 1 collection" })).toBeInTheDocument();
   });
+
+  // One component, four call sites, so a picker fix lands on all of them (rule 18). The cards'
+  // pickers show each collection's size, so this one does too -- and a size the scan never
+  // recorded renders nothing rather than a "0", which would assert an empty shelf.
+  it("shows a known size in the picker and no number at all for an unrecorded one", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <WhyPanel
+        item={detail(WORKED_ROWS, { collections: ["Example Franchise", "Director Spotlight"] })}
+        onClose={() => {}}
+        collectionSizes={{ "Example Franchise": 4 }}
+      />,
+      { client: seedSettings(testQueryClient()) },
+    );
+    await user.click(screen.getByRole("button", { name: "Show the other 1 collection" }));
+    const pop = screen.getByRole("list", { name: "Collections" });
+    const rows = [...pop.querySelectorAll(".coll-pop-item")].map((r) => r.textContent);
+    expect(rows).toEqual(["Example Franchise4", "Director Spotlight"]);
+  });
 });
 
 // The per-title escape from a hold nothing else on this screen can lift (#275). Reaper keeps the

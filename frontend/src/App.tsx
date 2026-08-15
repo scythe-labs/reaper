@@ -592,6 +592,7 @@ function Dashboard({ user }: { user: AuthUser }) {
                     // `select`, so the panel stays open on the same item behind the swapped
                     // list (#816 phase 5).
                     onOpenCollection={(name) => goTo({ view: "review", collection: name })}
+                    collectionSizes={snapshot?.collection_sizes ?? null}
                   />
                 ) : (
                   <WhyPanelFallback error={detailError} onClose={() => setSelected(null)} />

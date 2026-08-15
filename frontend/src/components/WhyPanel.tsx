@@ -165,14 +165,20 @@ function MetaLine({ item }: { item: CandidateDetail }) {
 function CollectionMetaLine({
   item,
   onOpenCollection,
+  collectionSizes,
 }: {
   item: CandidateDetail;
   onOpenCollection: (name: string) => void;
+  collectionSizes: Record<string, number> | null;
 }) {
   if (!item.collections || item.collections.length === 0) return null;
   return (
     <p className="why-meta">
-      <CollectionChip collections={item.collections} onOpen={onOpenCollection} />
+      <CollectionChip
+        collections={item.collections}
+        onOpen={onOpenCollection}
+        sizes={collectionSizes}
+      />
     </p>
   );
 }
@@ -1337,6 +1343,7 @@ export function WhyPanel({
   onClose,
   onShowGroup,
   onOpenCollection = () => {},
+  collectionSizes = null,
 }: {
   item: CandidateDetail;
   onClose: () => void;
@@ -1345,6 +1352,10 @@ export function WhyPanel({
    *  Optional so a caller with nowhere to send the jump (a test, an embedding with no queue
    *  behind it) still renders a chip that simply does nothing when pressed, never a crash. */
   onOpenCollection?: (name: string) => void;
+  /** Each known collection's member count, for the chip's picker. The cards' pickers show
+   *  these, so this one does too: one component, four call sites, and a picker fix lands on
+   *  all of them (rule 18). A name absent from the map renders no number, never a "0". */
+  collectionSizes?: Record<string, number> | null;
 }) {
   const { explanation } = item;
 
@@ -1420,7 +1431,11 @@ export function WhyPanel({
       />
 
       <MetaLine item={item} />
-      <CollectionMetaLine item={item} onOpenCollection={onOpenCollection} />
+      <CollectionMetaLine
+        item={item}
+        onOpenCollection={onOpenCollection}
+        collectionSizes={collectionSizes}
+      />
       <RatingsRow ratings={item.ratings} links={item.links} />
 
       {item.summary && <Synopsis text={item.summary} />}
