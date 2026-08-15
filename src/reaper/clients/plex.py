@@ -461,6 +461,19 @@ class PlexSeasonRow:
     added_at: str | None
 
 
+@dataclass(frozen=True)
+class PlexCollectionRow:
+    """One collection as the section-level listing sees it: its rating key, title and
+    Plex's own member count. Membership -- which items actually sit inside it -- is a
+    separate read, :meth:`PlexClient.collection_children`, which already exists (rule 72):
+    this row is the shelf's identity, not its contents.
+    """
+
+    rating_key: int
+    title: str
+    child_count: int | None
+
+
 #: Plex's numeric metadata types, for listing and collection creation. Only the two the
 #: shelf works on: movies in movie sections, seasons in show sections.
 _PLEX_TYPE_CODES = {"movie": 1, "season": 3}
@@ -1192,6 +1205,43 @@ class PlexClient:
 
         async with self._sweep_lock:
             return await self._call(read, what="sweep Plex seasons")
+
+    async def list_collections(self, section_key: int) -> list[PlexCollectionRow]:
+        """Every collection in one section: its rating key, title and Plex's own child count.
+
+        Paged through the one hardened ``_iter_pages`` loop, the same
+        ``/library/sections/{key}/collections`` listing :meth:`find_collection` already
+        reads a name out of -- a second paging loop over that path would be the rule 72
+        violation this docstring exists to head off. Complete-or-raise like every other
+        listing (rule 56): a truncated page is never read as the whole shelf.
+
+        Collections are navigation, never protection (the fence in
+        ``docs/COLLECTIONS_PLAN.md``), so this method does not degrade anything itself --
+        it either reports the section honestly or raises. A caller that wants "missing
+        chip" rather than "broken scan" out of a Plex hiccup catches the raise itself.
+        """
+        server = await self._connect()
+
+        def read() -> list[PlexCollectionRow]:
+            rows: list[PlexCollectionRow] = []
+            for raw in _iter_pages(
+                server,
+                f"/library/sections/{section_key}/collections",
+                "",
+                what=f"collection list of section {section_key}",
+            ):
+                for el in raw:
+                    raw_count = el.get("childCount")
+                    rows.append(
+                        PlexCollectionRow(
+                            rating_key=int(el.get("ratingKey")),
+                            title=str(el.get("title") or ""),
+                            child_count=int(raw_count) if raw_count is not None else None,
+                        )
+                    )
+            return rows
+
+        return await self._call(read, what=f"list collections in section {section_key}")
 
     async def find_collection(self, section_key: int, name: str) -> int | None:
         """The rating key of the collection called ``name`` in one section, or ``None``.

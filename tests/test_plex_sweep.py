@@ -16,7 +16,13 @@ from xml.etree.ElementTree import fromstring as _unsafe_fromstring
 
 import pytest
 
-from reaper.clients.plex import SWEEP_PAGE_SIZE, PlexClient, PlexError, _parse_sweep_element
+from reaper.clients.plex import (
+    SWEEP_PAGE_SIZE,
+    PlexClient,
+    PlexCollectionRow,
+    PlexError,
+    _parse_sweep_element,
+)
 from reaper.config import RuntimeSafety
 from reaper.ratings import RatingSource
 
@@ -409,6 +415,55 @@ class TestTheShelfReadsPageToo:
 
         with pytest.raises(PlexError):
             await _client_with(server).collection_children(9)
+
+
+class TestListCollections:
+    """#816 phase 1: ``list_collections`` is the third read over the shelf's
+    ``/collections`` listing, alongside ``find_collection`` and ``collection_children`` --
+    same path, same ``_iter_pages`` loop (rule 72)."""
+
+    async def test_a_paged_listing_returns_every_row_and_an_empty_section_returns_none(
+        self,
+    ) -> None:
+        page0 = (
+            '<MediaContainer size="1" totalSize="2">'
+            '<Directory ratingKey="10" title="Other" childCount="3"/>'
+            "</MediaContainer>"
+        )
+        page1 = (
+            '<MediaContainer size="1" totalSize="2">'
+            '<Directory ratingKey="11" title="Leaving Soon"/>'  # no childCount attribute
+            "</MediaContainer>"
+        )
+        server = _FakeServer(
+            [_FakeSection(1, "movie"), _FakeSection(2, "show")],
+            {
+                "/library/sections/1/collections?X-Plex-Container-Start=0": page0,
+                "/library/sections/1/collections?X-Plex-Container-Start=1": page1,
+                "/library/sections/2/collections": '<MediaContainer size="0" totalSize="0"/>',
+            },
+        )
+        client = _client_with(server)
+
+        rows = await client.list_collections(1)
+        assert rows == [
+            PlexCollectionRow(rating_key=10, title="Other", child_count=3),
+            PlexCollectionRow(rating_key=11, title="Leaving Soon", child_count=None),
+        ]
+
+        # The section with none: an empty listing is a clean empty list, never an error.
+        assert await client.list_collections(2) == []
+
+    async def test_an_unbounded_full_page_raises_rather_than_truncating(self) -> None:
+        """Complete-or-raise like every other listing (rule 56): a truncated page is
+        never read as the whole shelf."""
+        rows = "".join(f'<Directory ratingKey="{i}" title="C{i}"/>' for i in range(SWEEP_PAGE_SIZE))
+        server = _FakeServer(
+            [_FakeSection(1, "movie")],
+            {"/library/sections/1/collections": f"<MediaContainer>{rows}</MediaContainer>"},
+        )
+        with pytest.raises(PlexError):
+            await _client_with(server).list_collections(1)
 
 
 class _NeverAdvancing(_FakeServer):
