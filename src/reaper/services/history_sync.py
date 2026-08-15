@@ -18,9 +18,12 @@ Two facts about Tautulli's API shape this, both verified live and neither obviou
   by date (``after``), not by a stable row cursor.
 * **Date-filtering can miss a backfilled old event.** If Tautulli imports history, or
   Plex reports a play with an old timestamp, that row lands with an *old* date and an
-  ``after=<recent>`` sync skips it. So a **nightly full sweep** (``full=True``, run by
-  the scheduler) re-walks everything and catches any backfill. Per-scan syncs stay fast;
-  correctness is restored within a day.
+  ``after=<recent>`` sync skips it. So a **periodic full sweep** (``full=True``, run by
+  the scheduler every three days, and by the Jobs page's Run now) re-walks everything and
+  catches any backfill. Per-scan syncs stay fast. Only a row backdated FURTHER than
+  ``INCREMENTAL_OVERLAP`` waits for the sweep at all; inside those two days the next scan
+  picks it up on its own, which is what the cadence is chosen against
+  (``scheduler.DEFAULT_MAINTENANCE_CRONS``).
 
 Rows are written with ``INSERT OR REPLACE`` keyed on the stable ``row_id``, so re-fetching
 the overlap window (or a whole full sweep) is idempotent and never duplicates.
@@ -78,30 +81,43 @@ INCREMENTAL_OVERLAP = timedelta(days=2)
 
 log = structlog.get_logger(__name__)
 
-#: Rows per page of the history walk. The number that matters about it is not the request
-#: count, it is how much of the client's read budget one page spends
-#: (``clients.base.DEFAULT_TIMEOUT``, 30s read), because a page that does not finish inside
-#: that budget aborts the whole sweep.
+#: Rows per page of the history walk. What a page costs is almost entirely FIXED per request,
+#: so the page size sets the whole runtime. Measured through this client against a live
+#: instance holding 426,018 rows: 1,000 rows took 4.4s, 5,000 took 6.5s, 25,000 took 8.4s and
+#: 50,000 took 12.9s. A deep offset is not what costs, which was the obvious guess and was
+#: measured too: 25,000 rows at offset 401,017 took 8.6s against 8.4s at offset 0.
 #:
-#: This was 25,000, on the claim that Tautulli serves a 25k page in about the time it serves
-#: a 1k page. It does not. On a six-figure history each 25k page landed at 60-80% of the 30s
-#: budget, so the same instance answering roughly 1.8x slower timed out on the first page and
-#: the sweep aborted, three days from its next slot (#780). A smaller page cannot cost more
-#: than a larger one, so the margin is bought here rather than by widening a timeout every
-#: other Tautulli call would inherit. ``TautulliClient`` passes no timeout of its own, so one
-#: budget covers all of them: the executor re-asks ``get_history`` once per item mid-reap
-#: (``executor._watched_since_approval``), and the artwork proxy answers a browser
-#: (``api.poster._artwork_client``).
+#: So 5,000 spends 86 requests on that history where 25,000 spends 18, and the whole sweep
+#: measured end to end, the two run back to back against the same instance, went from 704s to
+#: 237s. The curve keeps improving past 25,000 and is not taken further, because a page that
+#: times out is retried at half the size and the reach that matters is the SMALLEST page the
+#: walk can end up choosing on a slower server than this one.
 #:
-#: The extra round trips are cheap beside a sweep that stops running: the sweep is the only
-#: thing that catches a row Tautulli backfills with an old timestamp, and while it is failing
-#: a title someone watched keeps reading as never watched.
-PAGE_SIZE = 5_000
+#: **The page size is only safe alongside its own read budget, and 25,000 was tried without
+#: one.** It spent 60-80% of the client's shared 30s read budget, so the same instance
+#: answering roughly 1.8x slower timed out on the first page and the sweep aborted, three days
+#: from its next slot (#780). The margin was bought by dropping to 5,000, because the client
+#: had one budget for every Tautulli call and widening it would have handed the same minute to
+#: the artwork proxy answering a browser (``api.poster._artwork_client``) and to the executor's
+#: per-item re-ask mid-reap (``executor._watched_since_approval``). Now the sweep carries a
+#: budget of its own (:data:`PAGE_READ_TIMEOUT`) and those two keep the shared one.
+PAGE_SIZE = 25_000
+
+#: The read budget one page of the sweep gets, in place of the client's shared 30s.
+#:
+#: Seven times the 8.4s a 25,000-row page measured above, so the sweep survives an instance
+#: several times slower than the one it was measured on. Past that the shrink ladder takes
+#: over and the run degrades to a longer sweep rather than to none. Held to a number a stuck
+#: source cannot hide behind: ``transient_retry`` re-sends each page twice more before the
+#: shrink, so every doubling here doubles what a genuinely dead source costs before the walk
+#: reaches the floor and raises.
+PAGE_READ_TIMEOUT = 60.0
 
 #: The floor the walk shrinks to on a read timeout, and the page size the library sweep
 #: already uses against this same source (``library_index._SPINE_PAGE_SIZE``). A source that
-#: cannot finish a page this small inside the read budget is not merely slow, so the walk
-#: raises there instead of shrinking further.
+#: cannot finish a page this small inside the read budget is not merely slow -- 1,000 rows
+#: measured at 4.4s against a 60s budget -- so the walk raises there instead of shrinking
+#: further.
 MIN_PAGE_SIZE = 1_000
 
 #: Hard stop on the history paging loop, for a source that serves page after page without
@@ -113,10 +129,10 @@ MIN_PAGE_SIZE = 1_000
 #: slow one against the deepest history. At 1,000 pages the old figure covered 25M rows at
 #: the old 25k page and would cover 1M at the floor, which is one to ten times a mature
 #: install rather than far past it. Tripping the cap logs and stops with the sweep still
-#: reporting success, and the mirror shortfall guard cannot catch that on a nightly sweep
+#: reporting success, and the mirror shortfall guard cannot catch that on a repeat sweep
 #: (the mirror is already complete from earlier syncs, so there is no shortfall to see), so
 #: a cap reached quietly is the #780 loss again at the oldest tail. 5,000 pages holds 5M rows
-#: at the floor and 25M at PAGE_SIZE, and still stops a source that is not advancing.
+#: at the floor and 125M at PAGE_SIZE, and still stops a source that is not advancing.
 MAX_HISTORY_PAGES = 5_000
 
 
@@ -265,7 +281,7 @@ _WATCH_EVENT_COLUMNS = (
 
 
 #: Serializes the rebuild across every concurrent caller in the process: the scan, the
-#: fairness route, the nightly sync. What it prevents is at ``ensure_schema``'s write path.
+#: fairness route, the sweep. What it prevents is at ``ensure_schema``'s write path.
 _rebuild_lock = per_loop_lock()
 
 
@@ -334,9 +350,9 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     # INSIDE it, deciding from THAT, never from the pre-lock read above. The LOCK is the
     # mutual exclusion here, not any database write lock: pysqlite runs the PRAGMA and the
     # DROP/CREATE in autocommit with no BEGIN IMMEDIATE, so nothing at the SQLite level stops
-    # two concurrent callers (the scan, the fairness route, the nightly sync -- all one
+    # two concurrent callers (the scan, the fairness route, the sweep -- all one
     # process) from both seeing "stale" and the second re-DROPping the table the first just
-    # rebuilt (a redundant double rebuild; the nightly full sweep refills either way). Under
+    # rebuilt (a redundant double rebuild; the next full sweep refills either way). Under
     # the lock the re-read is authoritative, and the pre-lock read only decides whether taking
     # the lock and the transaction is worth it at all.
     async with _rebuild_lock(), engine.begin() as conn:
@@ -376,19 +392,62 @@ async def _state(engine: AsyncEngine) -> HistoryState:
     )
 
 
+#: One walk of the history at a time, across every caller in the process. Two of them
+#: exist and they are on independent schedules: the scan's incremental sync
+#: (``scan_runner.run_scan``) and the full sweep (``scheduler.full_history_sweep``, plus
+#: its Run now button). Nothing stopped them overlapping, and both write ``watch_event``.
+#:
+#: **Measured, because the page size moved it**: one page's INSERT OR REPLACE holds the
+#: cache write lock 129ms at 5,000 rows and 1,876ms at 25,000, against the 5s
+#: ``busy_timeout`` in ``db/session.py``. So the margin is 2.7x rather than 39x, and a
+#: data directory that refuses WAL (a NAS bind mount, named at ``db.session.journal_mode``)
+#: has readers waiting on that write too. Serializing is what takes the collision off the
+#: table rather than leaving it to storage speed.
+#:
+#: **The waiter is the scan, and it waits rather than skipping.** A sweep that yields to
+#: whatever else is running is a sweep that stops running, which is #780's actual loss --
+#: and with a scan cron the operator picks, "skip if busy" can silently mean "never again".
+#: A scan reaching a sweep in flight is bounded by the sweep (measured at 237s), shows
+#: "syncing watch history" while it waits, and gets fresher evidence for having waited.
+#:
+#: Ordering with ``_rebuild_lock`` is one-way: this is taken first and ``ensure_schema``
+#: takes the other inside it. Nothing takes them the other way round.
+_sync_lock = per_loop_lock()
+
+
 async def sync(
     engine: AsyncEngine,
     client: TautulliClient,
     *,
     full: bool = False,
 ) -> HistoryState:
-    """Pull history into the local mirror.
+    """Pull history into the local mirror, one walk at a time process-wide.
 
     Incremental by default -- fetches only rows since our newest, via Tautulli's
-    ``after`` filter, which is fast. Pass ``full=True`` for the nightly sweep that
+    ``after`` filter, which is fast. Pass ``full=True`` for the periodic sweep that
     re-walks everything and catches any backfilled old events (see the module docstring).
     A fresh, empty mirror always does a full walk regardless of ``full``.
+
+    The lock is here rather than at the two call sites so a third caller cannot miss it,
+    and it covers ``_check_regression`` too: that reads the previous total and records the
+    new one, which two concurrent syncs could otherwise interleave.
     """
+    lock = _sync_lock()
+    if lock.locked():
+        # Otherwise a scan sits on "syncing watch history" for minutes with nothing saying
+        # why. The wait is the sweep's remaining runtime.
+        log.info("history.sync_waiting", full=full)
+    async with lock:
+        return await _sync(engine, client, full=full)
+
+
+async def _sync(
+    engine: AsyncEngine,
+    client: TautulliClient,
+    *,
+    full: bool,
+) -> HistoryState:
+    """One walk, holding :data:`_sync_lock`. See :func:`sync`."""
     await ensure_schema(engine)
 
     before = await _state(engine)
@@ -415,7 +474,9 @@ async def sync(
     length = PAGE_SIZE
     while True:
         try:
-            page = await client.history(length=length, start=start, after=after)
+            page = await client.history(
+                length=length, start=start, after=after, read_timeout=PAGE_READ_TIMEOUT
+            )
         except IntegrationError as exc:
             # A read timeout says the source took the request and could not finish the body
             # in time, which is a fact about how much was asked for. Halve and keep paging.

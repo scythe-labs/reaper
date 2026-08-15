@@ -462,6 +462,7 @@ class BaseClient:
         params: Mapping[str, Any] | None = None,
         json: Any = None,
         headers: Mapping[str, str] | None = None,
+        read_timeout: float | None = None,
     ) -> httpx2.Response:
         """Issue one request and let raw httpx2 transport errors escape, so tenacity retries.
 
@@ -470,8 +471,23 @@ class BaseClient:
         ``IntegrationError`` inside the retried body, the predicate never matched, and the
         exponential backoff was dead code -- every momentary blip aborted the whole scan on
         the first attempt with zero retries.
+
+        ``read_timeout`` widens the read budget for ONE call. A client's timeout is shared by
+        every method on it, so a bulk read that legitimately takes a minute cannot buy its
+        margin from the client without handing the same minute to a call answering a browser.
+        Only the read leg moves: connect, write and pool say nothing about how much was asked
+        for. Passing ``timeout=None`` to httpx2 means no timeout at all rather than the
+        client's, so the untouched case sends the sentinel instead.
         """
-        return await self._client.request(method, path, params=params, json=json, headers=headers)
+        budget: Any = httpx2.USE_CLIENT_DEFAULT
+        if read_timeout is not None:
+            shared = self._client.timeout
+            budget = httpx2.Timeout(
+                connect=shared.connect, read=read_timeout, write=shared.write, pool=shared.pool
+            )
+        return await self._client.request(
+            method, path, params=params, json=json, headers=headers, timeout=budget
+        )
 
     def _trace(
         self, method: str, path: str, status: int | None, started: float, *, mutation: bool = False
@@ -487,6 +503,7 @@ class BaseClient:
         params: Mapping[str, Any] | None = None,
         json: Any = None,
         headers: Mapping[str, str] | None = None,
+        read_timeout: float | None = None,
     ) -> httpx2.Response:
         """Issue a read -- retried on transient transport errors -- and map failures.
 
@@ -503,7 +520,8 @@ class BaseClient:
         in :meth:`_mutate`.
 
         ``headers`` are per-request extras (e.g. plex.tv's ``X-Plex-Token``, which differs
-        per call and so cannot live on the client's default headers).
+        per call and so cannot live on the client's default headers). ``read_timeout`` is a
+        per-request read budget for one bulk read, described on :meth:`_request`.
         """
         started = time.monotonic()
         status: int | None = None
@@ -513,7 +531,12 @@ class BaseClient:
             for _ in range(4):  # the request itself, plus at most three same-origin redirects
                 try:
                     response = await self._request(
-                        method, target, params=send_params, json=json, headers=headers
+                        method,
+                        target,
+                        params=send_params,
+                        json=json,
+                        headers=headers,
+                        read_timeout=read_timeout,
                     )
                 except httpx2.TransportError as exc:
                     raise transport_failure(self.service, exc) from exc
@@ -551,8 +574,11 @@ class BaseClient:
         *,
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
+        read_timeout: float | None = None,
     ) -> Any:
-        response = await self._send("GET", path, params=params, headers=headers)
+        response = await self._send(
+            "GET", path, params=params, headers=headers, read_timeout=read_timeout
+        )
         try:
             return response.json()
         except ValueError as exc:

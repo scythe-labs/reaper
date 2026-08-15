@@ -24,7 +24,12 @@ import respx
 
 from reaper import logbuffer
 from reaper.clients.arr import RadarrClient, SonarrClient
-from reaper.clients.base import BaseClient, IntegrationError, SafetyViolationError
+from reaper.clients.base import (
+    DEFAULT_TIMEOUT,
+    BaseClient,
+    IntegrationError,
+    SafetyViolationError,
+)
 from reaper.clients.plex import GuardedSession
 from reaper.clients.plextv import PlexTvClient
 from reaper.clients.public import PublicClient
@@ -478,6 +483,67 @@ class TestTimeoutMessageNamesTheKind:
                 await client.system_status()
 
         assert exc.value.read_timed_out is False
+
+
+class TestOneBulkReadCanWidenItsOwnReadBudget:
+    """A client's timeout is shared by every method on it, so the history sweep's minute-long
+    page and the artwork proxy's answer to a browser were bound to one number, and the sweep
+    paid for that with 5x the requests (#780). ``read_timeout`` moves the budget per call.
+
+    httpx resolves the effective timeout onto the outgoing request's ``extensions``, so what
+    reached the wire is readable rather than inferred from the argument.
+    """
+
+    @staticmethod
+    def _budget(route: respx.Route) -> dict[str, float | None]:
+        extensions: dict[str, Any] = route.calls.last.request.extensions
+        return dict(extensions["timeout"])
+
+    async def test_a_call_that_asks_for_nothing_keeps_the_clients_budget(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            return_value=httpx.Response(200, json={"response": {"result": "success", "data": {}}})
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            await client.history(length=1)
+
+        assert self._budget(route) == {
+            "connect": DEFAULT_TIMEOUT.connect,
+            "read": DEFAULT_TIMEOUT.read,
+            "write": DEFAULT_TIMEOUT.write,
+            "pool": DEFAULT_TIMEOUT.pool,
+        }
+
+    async def test_only_the_read_leg_moves(self, httpx2_mock: respx.Router) -> None:
+        """Connect, write and pool say nothing about how much was asked for, so widening
+        them would buy a bulk read nothing and cost every failure mode its speed."""
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            return_value=httpx.Response(200, json={"response": {"result": "success", "data": {}}})
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            await client.history(length=25_000, read_timeout=61.0)
+
+        assert self._budget(route) == {
+            "connect": DEFAULT_TIMEOUT.connect,
+            "read": 61.0,
+            "write": DEFAULT_TIMEOUT.write,
+            "pool": DEFAULT_TIMEOUT.pool,
+        }
+
+    async def test_the_wider_budget_does_not_stick_to_the_client(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The next call on the same client is back to the shared budget. A widening that
+        leaked would hand a browser-facing read the sweep's minute."""
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            return_value=httpx.Response(200, json={"response": {"result": "success", "data": {}}})
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            await client.history(length=25_000, read_timeout=61.0)
+            await client.history(length=1)
+
+        assert self._budget(route)["read"] == DEFAULT_TIMEOUT.read
 
 
 class TestPlexTvErrorsAreMapped:

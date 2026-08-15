@@ -15,6 +15,7 @@ can assert the `after` filter was used rather than a full walk.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -24,6 +25,7 @@ import httpx2
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
+from structlog.testing import capture_logs
 
 from reaper.clients.base import IntegrationError, transport_failure
 from reaper.clock import utcnow
@@ -270,6 +272,131 @@ class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
             await sync(engine, fake, full=True)
 
         assert fake.lengths == [8, 4, 2]
+
+
+class TestTheSweepCarriesItsOwnReadBudget:
+    """A page of the sweep asks for tens of thousands of rows and the calls beside it on the
+    same client answer a browser, so the budget cannot be a property of the client. #780 is
+    what happens when it is: the page size was cut to 5,000 because that was the only place
+    the margin could be bought, and it cost 68 extra requests a sweep on a six-figure history.
+    """
+
+    async def test_every_page_asks_with_the_sweeps_budget_and_the_probe_does_not(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The value is patched away from the shipped one, so a hardcoded number or an
+        omitted argument fails here rather than reading the same either way (rule 141)."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 4)
+        monkeypatch.setattr(history_sync, "PAGE_READ_TIMEOUT", 7.5)
+        fake = PagingTautulli([_row(n, days_ago=n) for n in range(1, 10)])
+
+        await sync(engine, fake, full=True)
+
+        # First call is the regression check's one-row probe, which keeps the client's
+        # shared budget. Every page after it carries the sweep's.
+        assert fake.read_timeouts[0] is None
+        assert set(fake.read_timeouts[1:]) == {7.5}
+        assert len(fake.read_timeouts) > 2  # it really did page
+
+
+class TestOnlyOneWalkOfTheHistoryRunsAtATime:
+    """The scan's incremental sync and the full sweep are on independent schedules and both
+    write ``watch_event``. Overlapping, they doubled the load on Tautulli and met on the cache
+    write lock, which one page now holds 1,876ms at 25,000 rows against a 5s busy timeout.
+
+    The sweep is never the one that yields: a sweep that skips whenever something else is
+    running is a sweep that stops running (#780), and the scan cron is the operator's, so
+    "skip if busy" can quietly mean "never again". So the second caller waits.
+    """
+
+    async def test_a_second_sync_cannot_start_while_one_is_in_flight(
+        self, engine: AsyncEngine
+    ) -> None:
+        """**The control half is the whole test.** "The scan had not reached Tautulli" only
+        means the lock held it if the scan would otherwise have got there, and every await
+        inside ``_sync`` before its first request goes out to a thread. So the same pump is
+        run first with nothing in flight, where it must arrive. Without that, this passed
+        with the lock deleted -- it was reading its own scheduling (rule 119)."""
+        gate = asyncio.Event()
+        holding = asyncio.Event()
+        reached: list[str] = []
+
+        class _Gated(PagingTautulli):
+            def __init__(self, rows: list[dict[str, Any]], name: str, *, blocks: bool) -> None:
+                super().__init__(rows)
+                self.name = name
+                self.blocks = blocks
+
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                reached.append(self.name)
+                if self.blocks:
+                    holding.set()
+                    await gate.wait()
+                return await super().history(**kwargs)
+
+        async def pump() -> None:
+            # Real database round trips, not bare `sleep(0)`: the awaits a sync makes before
+            # its first request are executor hops, which a loop yielding only to itself does
+            # not advance.
+            for _ in range(20):
+                await _count(engine)
+
+        # The pump reads `watch_event`, so the table has to exist before it runs: otherwise
+        # the pump races the first sync's own `ensure_schema` and the test fails on its own
+        # harness rather than on the lock.
+        await history_sync.ensure_schema(engine)
+        rows = [_row(n, days_ago=n) for n in range(1, 6)]
+
+        uncontended = asyncio.create_task(sync(engine, _Gated(rows, "control", blocks=False)))
+        await pump()
+        assert "control" in reached, "the pump is too short to prove anything about the lock"
+        await uncontended
+        reached.clear()
+
+        sweep = asyncio.create_task(sync(engine, _Gated(rows, "sweep", blocks=True), full=True))
+        await holding.wait()  # the sweep is inside the lock and parked on its first request
+        scan = asyncio.create_task(sync(engine, _Gated(rows, "scan", blocks=False)))
+        await pump()
+
+        # Same pump, and this time the scan has not reached Tautulli at all -- not even the
+        # regression check's probe, which is inside the lock because it reads the stored
+        # total and writes it back.
+        assert set(reached) == {"sweep"}
+        assert not scan.done()
+
+        gate.set()
+        await sweep
+        await scan
+        # Every one of the sweep's calls precedes every one of the scan's: the two walks did
+        # not interleave, which is the property the cache write lock needs.
+        assert reached == ["sweep"] * reached.count("sweep") + ["scan"] * reached.count("scan")
+
+    async def test_the_waiting_caller_says_so(self, engine: AsyncEngine) -> None:
+        """A scan that sits on "syncing watch history" for minutes needs a reason in the log,
+        or the wait reads as a hang."""
+        gate = asyncio.Event()
+        entered = asyncio.Event()
+
+        class _Blocking(PagingTautulli):
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                entered.set()
+                await gate.wait()
+                return await super().history(**kwargs)
+
+        rows = [_row(n, days_ago=n) for n in range(1, 4)]
+        sweep = asyncio.create_task(sync(engine, _Blocking(rows), full=True))
+        await entered.wait()
+        with capture_logs() as events:
+            scan = asyncio.create_task(sync(engine, PagingTautulli(rows)))
+            for _ in range(50):
+                await asyncio.sleep(0)
+            waited = [e for e in events if e["event"] == "history.sync_waiting"]
+
+        gate.set()
+        await sweep
+        await scan
+        # The waiter is the scan, and it says which kind of sync is waiting.
+        assert [e["full"] for e in waited] == [False]
 
 
 class TestRegressionDetection:

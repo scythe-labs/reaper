@@ -87,15 +87,26 @@ const SCAN_PRESETS: { label: string; cron: string | null }[] = [
   { label: "First of the month, 3 AM", cron: "0 3 1 * *" },
 ];
 
-/** The upkeep presets. "Every day" carries the job's own default time (staggered off peak),
- *  so choosing it keeps the natural setting exactly what it was. */
+/** The upkeep presets. The first is the job's own default, staggered off peak, so choosing it
+ *  keeps the natural setting exactly what it was.
+ *
+ *  Its label is DESCRIBED from that cron rather than written here. It read "Every day" for
+ *  every job, which was true of all four until the history sweep moved to every three days,
+ *  and a hardcoded label beside a value it does not own is wrong the moment the value moves
+ *  (rule 144). Describing it means the option cannot disagree with what picking it does. */
 function maintenancePresets(defaultCron: string): { label: string; cron: string | null }[] {
   return [
     { label: "Off (don't run)", cron: null },
-    { label: "Every day", cron: defaultCron },
-    { label: "Every 12 hours", cron: "0 */12 * * *" },
-    { label: "Every 6 hours", cron: "0 */6 * * *" },
-    { label: "Every hour", cron: "0 * * * *" },
+    { label: describeCron(defaultCron), cron: defaultCron },
+    // Dropped when the default already IS one of these. A described label can equal a written
+    // one, where the old fixed "Every day" never could, and the pair would render as two
+    // identical options sharing a React key (rule 19). No shipped default collides today;
+    // this is here so the next one cannot.
+    ...[
+      { label: "Every 12 hours", cron: "0 */12 * * *" },
+      { label: "Every 6 hours", cron: "0 */6 * * *" },
+      { label: "Every hour", cron: "0 * * * *" },
+    ].filter((p) => p.cron !== defaultCron),
   ];
 }
 
@@ -145,6 +156,8 @@ function describeCron(cron: string): string {
 
   const at = clockLabel(Number(h), Number(m));
   if (everyDay) return `Every day at ${at}`;
+  const dayStep = /^\*\/(\d+)$/.exec(dom);
+  if (dayStep && mon === "*" && dow === "*") return `Every ${dayStep[1]} days at ${at}`;
   if (dom === "*" && mon === "*" && numeric(dow)) {
     return `Every ${WEEKDAYS[Number(dow) % 7]} at ${at}`;
   }
