@@ -146,6 +146,14 @@ const TABS: { verdict: Verdict; label: string; blurb: string; empty: string }[] 
   },
 ];
 
+/** Each lane's name, keyed by verdict. The collection screen's fate summary reads these rather
+ *  than spelling the three names a second time: it is the one surface showing all three lanes
+ *  at once, so a name that drifts from the tab above it reads as a different set. */
+const LANE_LABEL = Object.fromEntries(TABS.map((t) => [t.verdict, t.label])) as Record<
+  Verdict,
+  string
+>;
+
 // --- remembered filters --------------------------------------------------------------------
 // Each queue tab keeps its own filters and sort, on this device, until changed or cleared.
 
@@ -2292,33 +2300,40 @@ export function ReviewQueue({
               <span aria-hidden="true">◂</span> Review queue
             </button>
             <h2>{activeCollection}</h2>
-            <p className="blurb">
-              Every title in this collection, whatever Reaper decided about it.
-              {collLoaded &&
-                ` ${
-                  collPlexCount !== null
-                    ? `${count(collPlexCount)} ${collPlexCount === 1 ? "title" : "titles"} in the collection, `
-                    : ""
-                }${count(collScanned)} in the last scan.`}
-            </p>
+            {/* Only the gap is worth a line. "Every title in this collection, whatever Reaper
+                decided about it" is what the fate chips below already show, and repeating the
+                scanned count restates the "N items" line under the search box. What neither of
+                those can say is that Plex holds titles this scan never saw, because they sit in
+                an unscanned library or Plex never matched them -- so that sentence appears only
+                when the two numbers actually disagree, and showing the scanned count alone would
+                be the lie by omission. */}
+            {collLoaded && collPlexCount !== null && collPlexCount !== collScanned && (
+              <p className="blurb">
+                {count(collPlexCount)} in the collection, {count(collScanned)} in the last scan.
+              </p>
+            )}
             {collFateError && (
               <p className="error">Couldn't read the counts for this collection.</p>
             )}
             {collLoaded && collScanned > 0 && (
               <div className="coll-fates">
+                {/* Named for the lanes the operator just came from, and derived from the one
+                    place those names are declared: this screen is the only one that shows all
+                    three fates at once, so describing them differently here ("on the block",
+                    "kept by a protection") made the same set read as a fourth vocabulary. */}
                 {collCondemned > 0 && (
                   <span className="coll-fate coll-fate-condemn">
-                    <b>{count(collCondemned)}</b> on the block
+                    <b>{count(collCondemned)}</b> {LANE_LABEL.condemn.toLowerCase()}
                   </span>
                 )}
                 {collProtected > 0 && (
                   <span className="coll-fate coll-fate-protect">
-                    <b>{count(collProtected)}</b> kept by a protection
+                    <b>{count(collProtected)}</b> in {LANE_LABEL.protect}
                   </span>
                 )}
                 {collAbstained > 0 && (
                   <span className="coll-fate coll-fate-abstain">
-                    <b>{count(collAbstained)}</b> left for you
+                    <b>{count(collAbstained)}</b> in {LANE_LABEL.abstain}
                   </span>
                 )}
               </div>

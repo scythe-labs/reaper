@@ -1284,20 +1284,23 @@ describe("the collection chip", () => {
     expect(screen.queryByTitle(/^In the collection/)).not.toBeInTheDocument();
   });
 
-  it("names the smallest collection on its own line, beside the cert/runtime/genre one", () => {
+  it("names the smallest collection beside the library chip, the order the cards use", () => {
     show(
       detail(WORKED_ROWS, {
         content_rating: "PG",
         runtime_minutes: 118,
         genres: ["Drama"],
+        library: "Movies",
         collections: ["Example Franchise", "Director Spotlight"],
       }),
     );
     const chip = screen.getByRole("button", { name: "Example Franchise" });
-    expect(chip.closest(".why-meta")).not.toBeNull();
-    // Its own paragraph, not the cert/runtime/genre one: the two can't share a `<p>` once one
-    // of them holds a real control rather than joined text.
-    expect(chip.closest(".why-meta")?.textContent).not.toMatch(/118 min/);
+    // The head's chip row, with the library, not the plain cert/runtime/genre text below it:
+    // both chips answer "where does this file live in Plex", so they read as one group.
+    const head = chip.closest(".why-sub");
+    expect(head).not.toBeNull();
+    expect(head?.textContent).toMatch(/Movies/);
+    expect(head?.textContent).not.toMatch(/118 min/);
     expect(screen.getByRole("button", { name: "Show the other 1 collection" })).toBeInTheDocument();
   });
 

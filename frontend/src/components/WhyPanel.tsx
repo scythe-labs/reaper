@@ -159,30 +159,6 @@ function MetaLine({ item }: { item: CandidateDetail }) {
   );
 }
 
-/** The collection chip's own line, beside the cert/runtime/genre one -- its own paragraph
- *  because that one is plain joined text and a chip cannot join into it. Renders nothing
- *  without a collection, same as `MetaLine` above. */
-function CollectionMetaLine({
-  item,
-  onOpenCollection,
-  collectionSizes,
-}: {
-  item: CandidateDetail;
-  onOpenCollection: (name: string) => void;
-  collectionSizes: Record<string, number> | null;
-}) {
-  if (!item.collections || item.collections.length === 0) return null;
-  return (
-    <p className="why-meta">
-      <CollectionChip
-        collections={item.collections}
-        onOpen={onOpenCollection}
-        sizes={collectionSizes}
-      />
-    </p>
-  );
-}
-
 /** One ratings chip. With a site link it opens the number's source in a new tab;
  *  without one it stays a plain chip -- never a dead link. */
 function RatingChip({
@@ -1420,6 +1396,13 @@ export function WhyPanel({
             {/* The Plex library the file lives in -- same quiet chip as the cards, so movies
                 and seasons read the same. */}
             <LibraryChip library={item.library} />
+            {/* Beside the library chip, the same order the cards use, because both answer
+                "where does this file live in Plex". Renders nothing without a collection. */}
+            <CollectionChip
+              collections={item.collections}
+              sizes={collectionSizes}
+              onOpen={onOpenCollection}
+            />
             {/* Next to the library, because both answer "where does this file live in Plex".
                 Silent on the ordinary single-listing bind. */}
             <MergedListingChip match={explanation.match} />
@@ -1431,11 +1414,6 @@ export function WhyPanel({
       />
 
       <MetaLine item={item} />
-      <CollectionMetaLine
-        item={item}
-        onOpenCollection={onOpenCollection}
-        collectionSizes={collectionSizes}
-      />
       <RatingsRow ratings={item.ratings} links={item.links} />
 
       {item.summary && <Synopsis text={item.summary} />}

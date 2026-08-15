@@ -1202,7 +1202,7 @@ describe("the collection screen", () => {
     };
   }
 
-  function mockMixedFates() {
+  function mockMixedFates({ plexCount = 8 }: { plexCount?: number } = {}) {
     const { condemned, protected: protectedItems, abstained } = mixedFateFixture();
     apiMock.candidates.mockImplementation((verdict: string) => {
       if (verdict === "any")
@@ -1214,7 +1214,7 @@ describe("the collection screen", () => {
     });
     apiMock.latestSnapshot.mockResolvedValue({
       ...baseSnapshot,
-      collection_sizes: { "Example Franchise": 8 },
+      collection_sizes: { "Example Franchise": plexCount },
     });
   }
 
@@ -1242,19 +1242,29 @@ describe("the collection screen", () => {
     // Each fate's count sits in its own <b>, split from the sibling text -- scoped by class the
     // way `pickedCount` above scopes the bulk bar's own split count, rather than a text query
     // that can't see across the element boundary.
+    // The lane names, not a fourth vocabulary for the same three sets: this is the only screen
+    // showing all three at once, so it reads them off the tabs' own declaration.
     await waitFor(() =>
-      expect(container.querySelector(".coll-fate-condemn")).toHaveTextContent("2 on the block"),
+      expect(container.querySelector(".coll-fate-condemn")).toHaveTextContent("2 condemned"),
     );
-    expect(container.querySelector(".coll-fate-protect")).toHaveTextContent(
-      "1 kept by a protection",
-    );
-    expect(container.querySelector(".coll-fate-abstain")).toHaveTextContent("1 left for you");
+    expect(container.querySelector(".coll-fate-protect")).toHaveTextContent("1 in Sanctuary");
+    expect(container.querySelector(".coll-fate-abstain")).toHaveTextContent("1 in Limbo");
   });
 
   it("says how many the last scan found beside how many Plex reports", async () => {
     mockMixedFates();
     renderWithProviders(openOnCollection("Example Franchise"));
-    await screen.findByText(/8 titles in the collection, 4 in the last scan\./);
+    await screen.findByText(/8 in the collection, 4 in the last scan\./);
+  });
+
+  // The sentence exists for the GAP: Plex can hold titles this scan never saw, in an unscanned
+  // library or unmatched. With nothing missing it restates the "N items" line under the search
+  // box, so it does not render at all.
+  it("says nothing about counts when the scan saw the whole collection", async () => {
+    mockMixedFates({ plexCount: 4 });
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText("Example Movie 1");
+    expect(screen.queryByText(/in the last scan\./)).not.toBeInTheDocument();
   });
 
   it("the back link returns to a plain lane view", async () => {
@@ -1291,8 +1301,8 @@ describe("the collection screen", () => {
     // Not "2 in the last scan" (an undercount of the real 3), and not one fate's real count
     // sitting beside the failed lane's missing one -- the whole summary is withheld together.
     expect(screen.queryByText(/in the last scan\./)).not.toBeInTheDocument();
-    expect(screen.queryByText(/on the block/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/left for you/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/condemned/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/in Limbo/)).not.toBeInTheDocument();
   });
 });
 
