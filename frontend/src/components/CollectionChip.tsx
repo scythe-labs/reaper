@@ -16,9 +16,11 @@
 // `OverrideControls`' Spare button splits off its length menu (`.ov-split` / `.split-main` /
 // `.split-caret`) -- the same anatomy, sized to the quiet chip family instead of a button.
 //
-// Picking a collection to open is phase 5's job (`NavIntent`'s review variant gains a
-// collection). For now the name and the picker's rows are plain buttons: focusable, and the
-// caret really does open and close the list, but nothing here navigates yet.
+// The name and every picker row navigate: `onOpen` opens the collection screen on that name
+// (#816 phase 5). Both `stopPropagation`, the same reason the caret already does -- the chip
+// sits inside a card whose own click opens the why-panel (rule 60's sibling: the card is a
+// plain clickable element, not a keydown row, so a click anywhere inside it bubbles up unless
+// stopped here).
 
 import {
   useEffect,
@@ -37,10 +39,14 @@ import { CaretDownGlyph, CollectionIcon } from "./queueIcons";
 
 export function CollectionChip({
   collections,
+  onOpen,
 }: {
   /** This item's collection names, already sorted smallest-first by the scan. Null or empty
    *  renders nothing -- a failed Plex read must never degrade into an empty chip. */
   collections: string[] | null | undefined;
+  /** Open the collection screen on the given collection name. Called by the chip's own name
+   *  and by every row of its picker. */
+  onOpen: (name: string) => void;
 }) {
   const popId = useId();
   const caretRef = useRef<HTMLButtonElement>(null);
@@ -80,6 +86,12 @@ export function CollectionChip({
         type="button"
         className={`coll-chip-main ${rest === 0 ? "coll-chip-only" : ""}`}
         title={`In the collection "${name}"`}
+        onClick={(e) => {
+          e.stopPropagation();
+          // Non-null: the guard above already refused an empty array, so element 0 exists --
+          // TS just can't carry that through a plain array's destructure.
+          onOpen(name!);
+        }}
       >
         <CollectionIcon />
         {name}
@@ -103,6 +115,7 @@ export function CollectionChip({
           popId={popId}
           names={collections}
           triggerRef={caretRef}
+          onOpen={onOpen}
           onClose={() => setPopAt(null)}
         />
       )}
@@ -119,6 +132,7 @@ function CollectionPicker({
   popId,
   names,
   triggerRef,
+  onOpen,
   onClose,
 }: {
   at: MenuPos;
@@ -130,6 +144,7 @@ function CollectionPicker({
    *  end. */
   names: string[];
   triggerRef: RefObject<HTMLButtonElement | null>;
+  onOpen: (name: string) => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLUListElement>(null);
@@ -180,7 +195,15 @@ function CollectionPicker({
     >
       {names.map((name, i) => (
         <li key={name}>
-          <button type="button" className="coll-pop-item" ref={i === 0 ? firstItem : undefined}>
+          <button
+            type="button"
+            className="coll-pop-item"
+            ref={i === 0 ? firstItem : undefined}
+            onClick={() => {
+              onOpen(name);
+              onClose();
+            }}
+          >
             <span className="coll-pop-name">{name}</span>
           </button>
         </li>

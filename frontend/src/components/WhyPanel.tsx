@@ -162,11 +162,17 @@ function MetaLine({ item }: { item: CandidateDetail }) {
 /** The collection chip's own line, beside the cert/runtime/genre one -- its own paragraph
  *  because that one is plain joined text and a chip cannot join into it. Renders nothing
  *  without a collection, same as `MetaLine` above. */
-function CollectionMetaLine({ item }: { item: CandidateDetail }) {
+function CollectionMetaLine({
+  item,
+  onOpenCollection,
+}: {
+  item: CandidateDetail;
+  onOpenCollection: (name: string) => void;
+}) {
   if (!item.collections || item.collections.length === 0) return null;
   return (
     <p className="why-meta">
-      <CollectionChip collections={item.collections} />
+      <CollectionChip collections={item.collections} onOpen={onOpenCollection} />
     </p>
   );
 }
@@ -1330,10 +1336,15 @@ export function WhyPanel({
   item,
   onClose,
   onShowGroup,
+  onOpenCollection = () => {},
 }: {
   item: CandidateDetail;
   onClose: () => void;
   onShowGroup?: (key: string) => void;
+  /** Open the collection screen behind this panel on the named collection (#816 phase 5).
+   *  Optional so a caller with nowhere to send the jump (a test, an embedding with no queue
+   *  behind it) still renders a chip that simply does nothing when pressed, never a crash. */
+  onOpenCollection?: (name: string) => void;
 }) {
   const { explanation } = item;
 
@@ -1409,7 +1420,7 @@ export function WhyPanel({
       />
 
       <MetaLine item={item} />
-      <CollectionMetaLine item={item} />
+      <CollectionMetaLine item={item} onOpenCollection={onOpenCollection} />
       <RatingsRow ratings={item.ratings} links={item.links} />
 
       {item.summary && <Synopsis text={item.summary} />}

@@ -278,6 +278,40 @@ class TestCollectionFilter:
         assert set(body["values"]) == {"Alpha Trilogy", "Best Of", "Zeta Anthology"}
 
 
+class TestCollectionSizesOnTheSnapshot:
+    """``collection_sizes_json`` rides the snapshot route as ``collection_sizes`` -- the
+    collection screen's header reads it for Plex's own member count (#816 phase 5)."""
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            session.add(
+                Snapshot(
+                    created_at=now,
+                    policy_hash="f" * 64,
+                    horizon_at=now,
+                    item_count=0,
+                    degraded=False,
+                    collection_sizes_json='{"Alpha Trilogy": 8, "not-an-int": "nope"}',
+                )
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def test_the_map_rides_the_snapshot_route(self, client: TestClient) -> None:
+        body = client.get("/api/snapshots/latest").json()
+        # The non-int value is dropped rather than guessed at: it was never a size Plex
+        # reported, so a wrong number is worse than a missing one.
+        assert body["collection_sizes"] == {"Alpha Trilogy": 8}
+
+
 class TestSearchReachesCollectionNames:
     """``search`` gains collection names, matched partially -- typing a franchise finds its
     members (#816 phase 3b). A row lands in one of three blocks (0 exact title, 1 partial

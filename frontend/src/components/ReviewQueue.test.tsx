@@ -19,6 +19,7 @@ import {
   type CandidatePage,
   type GroupRollup,
   type GroupSeasonMark,
+  type Snapshot,
   type Verdict,
 } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -1060,6 +1061,128 @@ describe("the collection chip", () => {
     // No `container` argument: the picker is portaled to <body>, outside the render's own
     // container, so the default (document.body) is the only scope that sees it.
     await expectNoA11yViolations();
+  });
+
+  it("opens the collection screen when the chip's name is pressed", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: ["Example Franchise"] })]));
+    apiMock.latestSnapshot.mockResolvedValue(baseSnapshot);
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Example Franchise" }));
+    expect(await screen.findByRole("heading", { name: "Example Franchise" })).toBeInTheDocument();
+  });
+});
+
+/** A snapshot carrying no collection sizes -- the fate-summary describe block below points
+ *  most tests at one that does; this is the default any OTHER test's `apiMock.latestSnapshot`
+ *  falls back to if it never opens a collection (the query is `enabled: false` then, so it is
+ *  never actually read -- this exists only for the one test above that opens one without
+ *  caring what the Plex count says). */
+const baseSnapshot: Snapshot = {
+  id: 1,
+  created_at: "2026-01-01T00:00:00+00:00",
+  policy_hash: "p",
+  horizon_at: "2025-01-01T00:00:00+00:00",
+  item_count: 4,
+  degraded: false,
+  degraded_reason: null,
+  condemned: 0,
+  protected: 0,
+  abstained: 0,
+  reclaimable_bytes: 0,
+  unknown_size_items: 0,
+};
+
+// The collection screen (#816 phase 5): a jump names a collection, the queue drops the lane
+// tabs for a back link and a fate summary, and the bulk bar -- a selection spanning three
+// fates is not one decision (rule 48) -- never renders there at all.
+describe("the collection screen", () => {
+  const openOnCollection = (name: string) => (
+    <ReviewQueue
+      verdict="condemn"
+      onVerdictChange={() => {}}
+      selectedId={null}
+      selectedGroupKey={null}
+      onSelect={() => {}}
+      onSelectGroup={() => {}}
+      focus={{ search: "", collection: name, nonce: 1 }}
+    />
+  );
+
+  /** Every scanned member of "Example Franchise", split across all three fates -- what makes
+   *  a collection screen mixed rather than the single-lane shape every other queue test drives. */
+  function mixedFateFixture() {
+    return {
+      condemned: [movie(1), movie(2)],
+      protected: [movie(3, { verdict: "protect" })],
+      abstained: [movie(4, { verdict: "abstain" })],
+    };
+  }
+
+  function mockMixedFates() {
+    const { condemned, protected: protectedItems, abstained } = mixedFateFixture();
+    apiMock.candidates.mockImplementation((verdict: string) => {
+      if (verdict === "any")
+        return Promise.resolve(page([...condemned, ...protectedItems, ...abstained]));
+      if (verdict === "condemn") return Promise.resolve(page(condemned));
+      if (verdict === "protect") return Promise.resolve(page(protectedItems));
+      if (verdict === "abstain") return Promise.resolve(page(abstained));
+      return Promise.resolve(page([]));
+    });
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...baseSnapshot,
+      collection_sizes: { "Example Franchise": 8 },
+    });
+  }
+
+  it("never renders the bulk bar, even with rows on screen", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText("Example Movie 1");
+    expect(screen.queryByRole("region", { name: "Bulk actions" })).not.toBeInTheDocument();
+    // The toggle that would open it is gone too, not merely a bar with nothing to press.
+    expect(screen.queryByRole("button", { name: "Select" })).not.toBeInTheDocument();
+  });
+
+  it("drops the lane tabs for a back link naming the collection", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText("Example Movie 1");
+    expect(screen.getByRole("heading", { name: "Example Franchise" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Condemned" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Review queue/ })).toBeInTheDocument();
+  });
+
+  it("summarizes the mixed fates once every lane has answered", async () => {
+    mockMixedFates();
+    const { container } = renderWithProviders(openOnCollection("Example Franchise"));
+    // Each fate's count sits in its own <b>, split from the sibling text -- scoped by class the
+    // way `pickedCount` above scopes the bulk bar's own split count, rather than a text query
+    // that can't see across the element boundary.
+    await waitFor(() =>
+      expect(container.querySelector(".coll-fate-condemn")).toHaveTextContent("2 on the block"),
+    );
+    expect(container.querySelector(".coll-fate-protect")).toHaveTextContent(
+      "1 kept by a protection",
+    );
+    expect(container.querySelector(".coll-fate-abstain")).toHaveTextContent("1 left for you");
+  });
+
+  it("says how many the last scan found beside how many Plex reports", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText(/8 titles in the collection, 4 in the last scan\./);
+  });
+
+  it("the back link returns to a plain lane view", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText("Example Movie 1");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Review queue/ }));
+    expect(await screen.findByRole("button", { name: "Condemned" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Example Franchise" })).not.toBeInTheDocument();
   });
 });
 

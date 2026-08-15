@@ -1060,6 +1060,11 @@ class TestSnapshot:
         assert body["abstained"] == 2
         assert body["reclaimable_bytes"] == 5_900_000_000  # condemned only
 
+    def test_collection_sizes_is_none_when_nothing_was_recorded(self, client: TestClient) -> None:
+        # The fixture snapshot carries no ``collection_sizes_json`` -- unrecorded, not empty
+        # (test_candidate_filters.TestCollectionSizesOnTheSnapshot pins the populated case).
+        assert client.get("/api/snapshots/latest").json()["collection_sizes"] is None
+
     def test_the_horizon_is_exposed(self, client: TestClient) -> None:
         """Media older than this has no watch evidence either way. The owner needs to
         see it -- a fresh Tautulli install would make the whole library look abandoned."""

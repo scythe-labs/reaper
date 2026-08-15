@@ -200,6 +200,7 @@ async def _snapshot_out(session: AsyncSession, snapshot: Snapshot) -> SnapshotOu
         abstained=int(counts.get("abstain", 0)),
         reclaimable_bytes=int(reclaimable),
         unknown_size_items=int(unknown_size),
+        collection_sizes=_collection_sizes(snapshot.collection_sizes_json),
     )
 
 
@@ -1523,6 +1524,22 @@ def _genres(genres_json: str | None) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(g) for g in raw if g]
+
+
+def _collection_sizes(collection_sizes_json: str | None) -> dict[str, int] | None:
+    """The stored collection-size map, decoded the same defensive way ``_collections`` reads
+    the per-item list: unparseable or absent both read as ``None`` (not recorded), and a
+    non-integer count is dropped rather than guessed at, so the header omits a number sooner
+    than states a wrong one."""
+    if not collection_sizes_json:
+        return None
+    try:
+        raw = json.loads(collection_sizes_json)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return {str(k): v for k, v in raw.items() if isinstance(v, int)}
 
 
 def _collections(collections_json: str | None) -> list[str] | None:

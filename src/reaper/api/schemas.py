@@ -463,6 +463,13 @@ class SnapshotOut(BaseModel):
     unmeasured item in it is quietly low, whereas a total plus a count is honest. Hidden
     at zero, so a healthy library shows nothing new."""
 
+    collection_sizes: dict[str, int] | None = None
+    """Every collection this scan saw, name to Plex's own member count -- the collection
+    screen's header reads it for "N titles in this collection" beside the scan's own count
+    (#816 phase 5). ``None`` when none were read, whether none exist or the read failed;
+    the two are indistinguishable on purpose (docs/COLLECTIONS_PLAN.md's fence), and the
+    header omits that clause rather than guessing. Navigation only, never a verdict input."""
+
 
 class ProfileSettingsIO(BaseModel):
     """The caps, whether they are enforced, grace, and the unknown-size allowance -- how

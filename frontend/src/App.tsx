@@ -304,8 +304,16 @@ function Dashboard({ user }: { user: AuthUser }) {
     if (intent.view === "review") {
       setVerdict(lane);
       if (intent.select !== undefined) setSelected(intent.select);
-      if (intent.search !== undefined)
-        setFocus({ view: "review", search: intent.search, nonce: Date.now() });
+      // A collection jump fires its own Focus even with no search: it is what reaches the
+      // queue from WhyPanel, a sibling component, the same one-shot channel a cross-section
+      // jump's search text already rides.
+      if (intent.search !== undefined || intent.collection !== undefined)
+        setFocus({
+          view: "review",
+          search: intent.search ?? "",
+          collection: intent.collection,
+          nonce: Date.now(),
+        });
     } else if (intent.view === "policy") {
       if (intent.section !== undefined) {
         setPolicySection(intent.section);
@@ -578,6 +586,12 @@ function Dashboard({ user }: { user: AuthUser }) {
                     // and the season this panel is open on is on the current one, so its show
                     // is already in the list behind.
                     onShowGroup={(key) => setSelected({ kind: "group", key })}
+                    // The panel is a sibling of the queue (both mount here in App), so opening
+                    // a collection from its chip has to cross that boundary the same way any
+                    // other cross-component jump does: through goTo, which never touches
+                    // `select`, so the panel stays open on the same item behind the swapped
+                    // list (#816 phase 5).
+                    onOpenCollection={(name) => goTo({ view: "review", collection: name })}
                   />
                 ) : (
                   <WhyPanelFallback error={detailError} onClose={() => setSelected(null)} />

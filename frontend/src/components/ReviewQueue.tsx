@@ -14,6 +14,7 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Fragment,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -984,6 +985,7 @@ const MovieCard = memo(function MovieCard({
   isSelected,
   select,
   onOpen,
+  onOpenCollection,
   onSet,
   onClear,
   pending,
@@ -997,6 +999,8 @@ const MovieCard = memo(function MovieCard({
   isSelected: boolean;
   select: CardSelect;
   onOpen: (id: number) => void;
+  /** Open the collection screen on the chip's collection (#816 phase 5). */
+  onOpenCollection: (name: string) => void;
   onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
   pending: boolean;
@@ -1053,7 +1057,7 @@ const MovieCard = memo(function MovieCard({
         <div className="card-meta">
           <span className="chip chip-movie">Movie</span>
           <LibraryChip library={item.library} />
-          <CollectionChip collections={item.collections} />
+          <CollectionChip collections={item.collections} onOpen={onOpenCollection} />
           <span>{itemBytes(item.size_bytes)}</span>
           <ResolutionBadge value={item.video_resolution} />
           <RequestedChip who={item.requested_by} />
@@ -1100,6 +1104,7 @@ const ShowCard = memo(function ShowCard({
   select,
   onOpen,
   onOpenGroup,
+  onOpenCollection,
   onSet,
   onClear,
   pending,
@@ -1116,6 +1121,8 @@ const ShowCard = memo(function ShowCard({
   select: CardSelect;
   onOpen: (id: number) => void;
   onOpenGroup: (key: string) => void;
+  /** Open the collection screen on the chip's collection (#816 phase 5). */
+  onOpenCollection: (name: string) => void;
   onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
   pending: boolean;
@@ -1272,7 +1279,7 @@ const ShowCard = memo(function ShowCard({
           <div className="card-meta">
             <span className="chip chip-tv">TV</span>
             <LibraryChip library={group.library} />
-            <CollectionChip collections={group.collections} />
+            <CollectionChip collections={group.collections} onOpen={onOpenCollection} />
             <SeasonExpander
               count={totalSeasons}
               open={open}
@@ -1361,8 +1368,10 @@ export function ReviewQueue({
   onVerdictChange: (verdict: Verdict) => void;
   /** What a jump into this queue aimed it at (navIntent.ts): the search box's contents, so the
    *  list behind an opened panel is the title that was opened rather than the whole lane.
-   *  Acted on once per `nonce`, so returning to Review later does not re-seed the box. */
-  focus?: { search: string; nonce: number } | null;
+   *  Acted on once per `nonce`, so returning to Review later does not re-seed the box.
+   *  `collection` opens the collection screen on that name (#816 phase 5); undefined leaves
+   *  whichever one is already open (or not) alone -- there is no jump that closes one. */
+  focus?: { search: string; collection?: string | undefined; nonce: number } | null;
   selectedId: number | null;
   selectedGroupKey: string | null;
   onSelect: (id: number) => void;
@@ -1402,6 +1411,19 @@ export function ReviewQueue({
   // The last jump this queue has already acted on. Seeded with the one it mounted under, so the
   // effect below only ever handles a jump that arrives while it is already on screen.
   const handledFocus = useRef<number | null>(focus?.nonce ?? null);
+  // The collection screen (#816 phase 5): a place INSIDE Review, not a lane, so it lives here
+  // rather than in `App` alongside `verdict` -- the lane the operator left is untouched underneath
+  // it, filters included, and closing is a plain local `setActiveCollection(null)`, never a jump.
+  // Seeded from a jump the same way `search` is seeded from `focus` above; there is no URL
+  // fallback, unlike `search`'s `linked.search` -- a reload lands on the plain lane rather than
+  // restoring an open collection, the one gap the plan itself leaves open (#816's "not decided").
+  const [activeCollection, setActiveCollection] = useState<string | null>(
+    focus?.collection ?? null,
+  );
+  // One browser Back step closes the collection screen, the same layer model every other overlay
+  // in this file uses (the filter menu, the reap-confirm sheet). Closing any other way (the back
+  // link) auto-removes the layer through this hook's own effect.
+  useBackGuard(activeCollection !== null, () => setActiveCollection(null));
   const [filters, setFilters] = useState<QueueFilters>(linked.filters);
   // Each tab remembers its own filters, and the new tab's set is adopted DURING the render
   // that brings the new verdict in -- React's supported "adjust state when a prop changes"
@@ -1422,6 +1444,13 @@ export function ReviewQueue({
   const [visible, setVisible] = useState(PAGE);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
+  // The collection chip's own click still fires while Select mode is on (it stops the card's
+  // click before that mode's toggle sees it, same as the caret does), so opening a collection
+  // this way could otherwise land the operator on a screen with select styling and no bulk bar
+  // to act on it -- the one control this screen keeps off (rule 48).
+  useEffect(() => {
+    if (activeCollection !== null) setSelectMode(false);
+  }, [activeCollection]);
   // How many of the last bulk override's requests failed, so the operator learns that a bulk
   // action was partial rather than seeing it silently succeed. 0 means nothing to report.
   const [bulkFailures, setBulkFailures] = useState(0);
@@ -1485,6 +1514,9 @@ export function ReviewQueue({
     handledFocus.current = focus.nonce;
     setSearchInput(focus.search);
     setSearch(focus.search.trim());
+    // Undefined means the jump said nothing about a collection (an ordinary search or lane
+    // jump) and leaves whichever one is already open alone; only WhyPanel's chip sends one.
+    if (focus.collection !== undefined) setActiveCollection(focus.collection);
   }, [focus]);
 
   // Close an open filter menu on an outside click or Escape. Each menu lives inside a
@@ -1540,16 +1572,21 @@ export function ReviewQueue({
     writeUrl(reviewUrl(verdict, filtersToQuery(search, filters)));
   }, [verdict, search, filters]);
 
-  // Start over from the top whenever the list itself changes (a new tab, filter or sort), and
-  // drop any selection -- a key picked on one tab is not visible on another.
-  useEffect(() => setVisible(PAGE), [verdict, search, filters]);
+  // Start over from the top whenever the list itself changes (a new tab, filter, sort, or
+  // opening/closing a collection), and drop any selection -- a key picked on one list is not
+  // visible on another.
+  useEffect(() => setVisible(PAGE), [verdict, activeCollection, search, filters]);
   // The failure notice promises the failed items are still picked, so it has to die with the
   // selection it refers to -- otherwise it keeps offering a retry over an empty set.
   useEffect(() => {
     setSelected(new Set());
     setBulkFailures(0);
-  }, [verdict, search, filters]);
+  }, [verdict, activeCollection, search, filters]);
 
+  // "any" is every stored lane at once -- what makes the collection screen cross-lane, mixing
+  // fates on one page instead of the tab's single lane. The lane the operator left is untouched
+  // underneath: `verdict` itself never changes for this, only which value the query sends.
+  const queryVerdict: Verdict | "any" = activeCollection ? "any" : verdict;
   const {
     data: pages,
     isPending,
@@ -1558,15 +1595,16 @@ export function ReviewQueue({
     isFetchingNextPage,
     fetchNextPage,
   } = useInfiniteQuery({
-    queryKey: ["candidates", verdict, search, filters],
+    queryKey: ["candidates", queryVerdict, activeCollection, search, filters],
     queryFn: ({ pageParam }) =>
       api.candidates(
-        verdict,
+        queryVerdict,
         {
           search,
           media_type: filters.mediaType,
           requested: filters.requested,
           genre: filters.genre,
+          collection: activeCollection ?? undefined,
           library: filters.library,
           override: filters.override,
           sort: filters.sort,
@@ -2029,12 +2067,64 @@ export function ReviewQueue({
   // How many items the filters are hiding, for the filtered-empty state. Only asked for
   // when that state is actually on screen: one row, headers only.
   const { data: unfilteredPage } = useQuery({
-    queryKey: ["candidates-unfiltered", verdict],
-    queryFn: () => api.candidates(verdict, {}, 1, 0),
+    queryKey: ["candidates-unfiltered", queryVerdict, activeCollection],
+    queryFn: () =>
+      api.candidates(queryVerdict, { collection: activeCollection ?? undefined }, 1, 0),
     enabled: filtering && !isPending && !error && (data?.length ?? 0) === 0,
   });
+  // The collection header's fate summary: three lightweight, single-verdict reads over the
+  // SAME endpoint the ordinary tabs already trust for their own headline totals, rather than a
+  // new server aggregate -- each `total`/`total_bytes` is the server's own EFFECTIVE-lane count
+  // (a hand override already moves a row before this reads it), and every row lands in exactly
+  // one of the three, so summing all three total_bytes is the collection's whole known size, no
+  // less honest than a bespoke query would be. Independent of the toolbar's own search/filters:
+  // this is the collection's shape, not the current view of it (`queue-total` below is that).
+  const collEnabled = activeCollection !== null;
+  const condemnedFate = useQuery({
+    queryKey: ["candidates-fate", "condemn", activeCollection],
+    queryFn: () => api.candidates("condemn", { collection: activeCollection! }, 1, 0),
+    enabled: collEnabled,
+  });
+  const protectedFate = useQuery({
+    queryKey: ["candidates-fate", "protect", activeCollection],
+    queryFn: () => api.candidates("protect", { collection: activeCollection! }, 1, 0),
+    enabled: collEnabled,
+  });
+  const abstainedFate = useQuery({
+    queryKey: ["candidates-fate", "abstain", activeCollection],
+    queryFn: () => api.candidates("abstain", { collection: activeCollection! }, 1, 0),
+    enabled: collEnabled,
+  });
+  // Plex's own member count, from the snapshot the scan already recorded it on -- shares the
+  // ["snapshot"] cache with the shell's own poll (App.tsx), so this costs nothing extra there.
+  const { data: snapshot } = useQuery({
+    queryKey: ["snapshot"],
+    queryFn: api.latestSnapshot,
+    retry: false,
+    enabled: collEnabled,
+  });
+  const collLoaded =
+    !condemnedFate.isPending && !protectedFate.isPending && !abstainedFate.isPending;
+  const collCondemned = condemnedFate.data?.total ?? 0;
+  const collProtected = protectedFate.data?.total ?? 0;
+  const collAbstained = abstainedFate.data?.total ?? 0;
+  // The scan's own total (the blurb's "N in the last scan"), independent of the toolbar's
+  // search/filters -- `queue-total` below states the byte size, already filtered the operator's
+  // way, off the SAME infinite query every lane's `queue-total` already reads.
+  const collScanned = collCondemned + collProtected + collAbstained;
+  const collPlexCount = activeCollection
+    ? (snapshot?.collection_sizes?.[activeCollection] ?? null)
+    : null;
+
   // The override key each shown card acts on: a show's group key, or a movie's media key.
   const shownGroups = useMemo(() => groups.slice(0, visible), [groups, visible]);
+  // Where the collection-name search block (2) starts, for the labeled divider above it (#816
+  // phase 3b/5). The server sorts block 0/1/2 ahead of the operator's own order, so once block 2
+  // starts every later group is in it too -- the first hit is the only index this needs. -1 with
+  // no search at all, since `search_rank` is null outside one and every group would "match".
+  const collectionBlockAt = search
+    ? shownGroups.findIndex((g) => g.items[0]!.search_rank === 2)
+    : -1;
   const shownKeys = useMemo(() => shownGroups.map(groupKeyOf), [shownGroups]);
   const shownItems = useMemo(
     () => shownGroups.reduce((n, g) => n + g.items.length, 0),
@@ -2155,29 +2245,77 @@ export function ReviewQueue({
     // (P-7, see QueueSettingsContext).
     <QueueSettingsContext.Provider value={queueSettings}>
       <section className="queue">
-        {/* A view-level heading, for parity with Policy/Fairness/Settings so heading navigation
-          can land on "Review queue" the way it lands on those views. */}
-        <h2>Review queue</h2>
-        <nav className="tabs" aria-label="Queue lists">
-          {TABS.map((t) => (
+        {/* The collection screen (#816 phase 5): one back link in place of the lane tabs, since
+          the lane is exactly what this screen is ignoring -- leaving the tabs up would invite a
+          click that throws the collection away. Fate moves onto each row instead (rule 48's
+          `hideReap` already reads the ROW's own verdict, never the tab's, so the cards need no
+          change to be correct here). */}
+        {activeCollection ? (
+          <>
             <button
-              key={t.verdict}
-              className={t.verdict === verdict ? "tab active" : "tab"}
-              // Reserve the bold (active) width so switching lists never shifts the tab row.
-              data-label={t.label}
-              // The list you are on is stated, not just colored, the same as the masthead
-              // and the settings rail. Plain buttons, not the tabs pattern: these switch a
-              // whole list rather than swapping panels, and none of that pattern's keyboard
-              // contract (arrow keys, a tabpanel to point at) exists here.
-              aria-current={t.verdict === verdict ? "page" : undefined}
-              onClick={() => onVerdictChange(t.verdict)}
+              type="button"
+              className="link-btn back-to-lane"
+              onClick={() => setActiveCollection(null)}
             >
-              {t.label}
+              <span aria-hidden="true">◂</span> Review queue
             </button>
-          ))}
-        </nav>
+            <h2>{activeCollection}</h2>
+            <p className="blurb">
+              Every title in this collection, whatever Reaper decided about it.
+              {collLoaded &&
+                ` ${
+                  collPlexCount !== null
+                    ? `${count(collPlexCount)} ${collPlexCount === 1 ? "title" : "titles"} in the collection, `
+                    : ""
+                }${count(collScanned)} in the last scan.`}
+            </p>
+            {collLoaded && collScanned > 0 && (
+              <div className="coll-fates">
+                {collCondemned > 0 && (
+                  <span className="coll-fate coll-fate-condemn">
+                    <b>{count(collCondemned)}</b> on the block
+                  </span>
+                )}
+                {collProtected > 0 && (
+                  <span className="coll-fate coll-fate-protect">
+                    <b>{count(collProtected)}</b> kept by a protection
+                  </span>
+                )}
+                {collAbstained > 0 && (
+                  <span className="coll-fate coll-fate-abstain">
+                    <b>{count(collAbstained)}</b> left for you
+                  </span>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* A view-level heading, for parity with Policy/Fairness/Settings so heading
+              navigation can land on "Review queue" the way it lands on those views. */}
+            <h2>Review queue</h2>
+            <nav className="tabs" aria-label="Queue lists">
+              {TABS.map((t) => (
+                <button
+                  key={t.verdict}
+                  className={t.verdict === verdict ? "tab active" : "tab"}
+                  // Reserve the bold (active) width so switching lists never shifts the tab row.
+                  data-label={t.label}
+                  // The list you are on is stated, not just colored, the same as the masthead
+                  // and the settings rail. Plain buttons, not the tabs pattern: these switch a
+                  // whole list rather than swapping panels, and none of that pattern's keyboard
+                  // contract (arrow keys, a tabpanel to point at) exists here.
+                  aria-current={t.verdict === verdict ? "page" : undefined}
+                  onClick={() => onVerdictChange(t.verdict)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </nav>
 
-        <p className="blurb">{tab.blurb}</p>
+            <p className="blurb">{tab.blurb}</p>
+          </>
+        )}
 
         {/* A scan finished under an open review. Sticky, so it stays in reach however far the
           reviewer has scrolled; derived from the list being behind, so it clears itself the
@@ -2354,21 +2492,25 @@ export function ReviewQueue({
           </div>
 
           {/* Turn the whole list into a selectable surface: tap a card to pick it, or press and
-            drag across a run. Turning it off clears the picks. */}
-          <button
-            type="button"
-            className={`select-toggle ${selectMode ? "active" : ""}`}
-            onClick={toggleSelectMode}
-            aria-pressed={selectMode}
-            title={
-              selectMode
-                ? "Done selecting. Clears your picks"
-                : "Select several at once to spare or reap"
-            }
-          >
-            <CheckSquareIcon />
-            {selectMode ? "Done" : "Select"}
-          </button>
+            drag across a run. Turning it off clears the picks. Off on the collection screen: a
+            selection spanning three fates is not one decision, and bulk stays on the lanes,
+            where every row shares one (rule 48). */}
+          {!activeCollection && (
+            <button
+              type="button"
+              className={`select-toggle ${selectMode ? "active" : ""}`}
+              onClick={toggleSelectMode}
+              aria-pressed={selectMode}
+              title={
+                selectMode
+                  ? "Done selecting. Clears your picks"
+                  : "Select several at once to spare or reap"
+              }
+            >
+              <CheckSquareIcon />
+              {selectMode ? "Done" : "Select"}
+            </button>
+          )}
         </div>
 
         {/* Every active filter as a chip: the search term (cleared with one tap) and each added
@@ -2470,11 +2612,18 @@ export function ReviewQueue({
         {error && data && <StaleReadNotice what="the queue" />}
         {isPending && <p className="muted">Loading…</p>}
 
-        {data && data.length === 0 && !filtering && <p className="empty">{tab.empty}</p>}
+        {data && data.length === 0 && !filtering && (
+          <p className="empty">
+            {activeCollection ? "Nothing in this collection was in the last scan." : tab.empty}
+          </p>
+        )}
         {data && data.length === 0 && filtering && (
           <div className="empty-filtered">
             <p className="empty-headline">Nothing here matches your filters.</p>
-            {hiddenCount > 0 && (
+            {/* The "N hidden" line names a LANE ("condemned item", "in Limbo"), which has no
+              meaning on a screen mixing all three, so it is left out there rather than guessing
+              a lane the operator never chose. */}
+            {!activeCollection && hiddenCount > 0 && (
               <p className="muted">
                 {hiddenLine}
                 {requestedExplainer}
@@ -2495,7 +2644,9 @@ export function ReviewQueue({
               <strong>{count(totalItems)}</strong> {totalItems === 1 ? "item" : "items"}
               {", "}
               <strong>{bytes(totalSize)}</strong>
-              {verdict === "condemn" && " would be freed"}
+              {/* Off in collection mode even on a Condemned-tab return trip: this list mixes
+                every fate (queryVerdict is "any"), so most of it would not be freed. */}
+              {!activeCollection && verdict === "condemn" && " would be freed"}
               {totalUnknownSize > 0 && (
                 <>
                   {", "}
@@ -2506,47 +2657,55 @@ export function ReviewQueue({
               )}
             </p>
             <div className={`card-list ${selectMode ? "card-list-selecting has-bulk-bar" : ""}`}>
-              {shownGroups.map((group) => {
-                const key = groupKeyOf(group);
-                return group.isShow ? (
-                  <ShowCard
-                    key={group.key}
-                    group={group}
-                    defaultOpen={expandSeasonsByDefault}
-                    selectedId={selectedId}
-                    selectedGroupKey={selectedGroupKey}
-                    isSelected={selected.has(key)}
-                    select={cardSelect}
-                    onOpen={onSelect}
-                    onOpenGroup={onSelectGroup}
-                    onSet={onSet}
-                    onClear={onClear}
-                    pending={pendingFor(key)}
-                    // The season rows write their OWN keys, which this card's key can never
-                    // equal, so `pending` alone left them undimmed and pressable throughout
-                    // their own round trip. A scalar, not `pendingFor` itself: a fresh function
-                    // every render would defeat the memo on every card in the list.
-                    busyKey={busyKey}
-                  />
-                ) : (
-                  <MovieCard
-                    key={group.key}
-                    item={group.items[0]!}
-                    selected={group.items[0]!.id === selectedId}
-                    isSelected={selected.has(key)}
-                    select={cardSelect}
-                    onOpen={onSelect}
-                    onSet={onSet}
-                    onClear={onClear}
-                    pending={pendingFor(group.items[0]!.media_key)}
-                    // The ITEM's own verdict, through the one shared test -- never the tab's.
-                    // Lane membership is the effective verdict, so a movie sits on Condemned
-                    // with a stored abstain and an honored hand reap: Reap must stay, and a
-                    // spared condemnation must stay flippable (rule 48).
-                    hideReap={reapIsNoop(group.items[0]!)}
-                  />
-                );
-              })}
+              {shownGroups.map((group, i) => (
+                <Fragment key={group.key}>
+                  {/* Titles first, collections after: the operator's search filters and their
+                    chosen sort orders within a block, but "which block" is a second ordering
+                    that cannot also be sorted, so the server hands back the rank and this is the
+                    labeled seam between block 1 (titles) and block 2 (collection names only). */}
+                  {i === collectionBlockAt && (
+                    <p className="search-divider">Collections named &ldquo;{search}&rdquo;</p>
+                  )}
+                  {group.isShow ? (
+                    <ShowCard
+                      group={group}
+                      defaultOpen={expandSeasonsByDefault}
+                      selectedId={selectedId}
+                      selectedGroupKey={selectedGroupKey}
+                      isSelected={selected.has(groupKeyOf(group))}
+                      select={cardSelect}
+                      onOpen={onSelect}
+                      onOpenGroup={onSelectGroup}
+                      onOpenCollection={setActiveCollection}
+                      onSet={onSet}
+                      onClear={onClear}
+                      pending={pendingFor(groupKeyOf(group))}
+                      // The season rows write their OWN keys, which this card's key can never
+                      // equal, so `pending` alone left them undimmed and pressable throughout
+                      // their own round trip. A scalar, not `pendingFor` itself: a fresh function
+                      // every render would defeat the memo on every card in the list.
+                      busyKey={busyKey}
+                    />
+                  ) : (
+                    <MovieCard
+                      item={group.items[0]!}
+                      selected={group.items[0]!.id === selectedId}
+                      isSelected={selected.has(groupKeyOf(group))}
+                      select={cardSelect}
+                      onOpen={onSelect}
+                      onOpenCollection={setActiveCollection}
+                      onSet={onSet}
+                      onClear={onClear}
+                      pending={pendingFor(group.items[0]!.media_key)}
+                      // The ITEM's own verdict, through the one shared test -- never the tab's.
+                      // Lane membership is the effective verdict, so a movie sits on Condemned
+                      // with a stored abstain and an honored hand reap: Reap must stay, and a
+                      // spared condemnation must stay flippable (rule 48).
+                      hideReap={reapIsNoop(group.items[0]!)}
+                    />
+                  )}
+                </Fragment>
+              ))}
             </div>
             {(visible < groups.length || hasNextPage) && (
               <div ref={sentinel} className="load-more muted">
@@ -2558,7 +2717,11 @@ export function ReviewQueue({
           </>
         )}
 
-        {selectMode && (
+        {/* Never on the collection screen (rule 48): the select-toggle above is already hidden
+          there, and this re-states the same guard rather than trusting that alone, since the
+          chip's own click can land `activeCollection` and a stale `selectMode` in the same
+          render (the effect that clears it runs a commit later). */}
+        {!activeCollection && selectMode && (
           <div className="bulk-bar" role="region" aria-label="Bulk actions">
             <span className="bulk-count">
               {selected.size === 0 ? (

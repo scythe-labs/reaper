@@ -36,6 +36,12 @@ export interface Snapshot {
   /** How many condemned items have no size, and so sit outside the total above rather
    *  than inside it as zeros. Zero for a healthy library, and hidden at zero. */
   unknown_size_items: number;
+  /** Every collection this scan saw, name to Plex's own member count -- the collection
+   *  screen's header reads it for "N titles in this collection" beside the scan's own
+   *  count. Null when none were read, whether none exist or the read failed; the UI
+   *  omits that clause rather than guessing. Optional: most fixtures are not made to
+   *  carry it (#816 phase 5). */
+  collection_sizes?: Record<string, number> | null;
 }
 
 /** The one short status chip a card wears, display-ready from the server. `kept`
@@ -268,6 +274,11 @@ export interface CandidateQuery {
   media_type?: string;
   requested?: RequestedFilter;
   genre?: string;
+  /** Exact name match against a row's stored collection list -- genre's sibling, over
+   *  `collections_json` instead. Navigation only; never re-decides a verdict.
+   *  Spelled `| undefined`: a caller forwards `activeCollection ?? undefined` straight
+   *  through, and `exactOptionalPropertyTypes` counts an explicit `undefined` as a value. */
+  collection?: string | undefined;
   library?: string;
   override?: OverrideFilter;
   sort?: SortKey;
@@ -1808,7 +1819,9 @@ export const api = {
    *  count and byte total without loading them all. Paged because a library runs to
    *  thousands of protected titles. */
   candidates: async (
-    verdict: Verdict,
+    // "any" is every stored lane at once -- what makes the collection screen cross-lane
+    // (#816 phase 5): a title's siblings show up whatever fate each one got.
+    verdict: Verdict | "any",
     q: CandidateQuery = {},
     limit = 100,
     offset = 0,
@@ -1818,6 +1831,7 @@ export const api = {
     if (q.media_type) params.set("media_type", q.media_type);
     if (q.requested && q.requested !== "any") params.set("requested", q.requested);
     if (q.genre) params.set("genre", q.genre);
+    if (q.collection) params.set("collection", q.collection);
     if (q.library) params.set("library", q.library);
     if (q.override && q.override !== "any") params.set("override", q.override);
     if (q.sort) params.set("sort", q.sort);
