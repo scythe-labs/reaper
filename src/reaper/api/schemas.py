@@ -304,6 +304,17 @@ class CandidateOut(BaseModel):
     recorded for this scan" (no Plex configured, a section read that failed, a row from
     before this shipped), which is NOT the same as "in no collection" -- the UI must not
     draw an empty chip for it."""
+    search_rank: int | None = None
+    """Which of the three search blocks this row matched: 0 exact title, 1 partial title or
+    show name, 2 collection-name only. ``None`` outside a search -- there is no relevance
+    order to carry when nothing was typed. The client sorts within a block by the operator's
+    chosen ``sort``, never across blocks; a divider marks where block 2 starts (#816 phase
+    3b)."""
+    matched_collection: str | None = None
+    """For a ``search_rank == 2`` row, the collection name that actually matched the typed
+    term -- NOT ``collections[0]``, which would show the operator's smallest collection
+    instead of the one their search found, on a row they could not otherwise explain.
+    ``None`` for a row that matched by title, and outside a search (#816 phase 3b)."""
 
 
 class CandidateDetail(CandidateOut):

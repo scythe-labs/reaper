@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
-from sqlalchemy import and_, asc, desc, func, or_, select, text
+from sqlalchemy import and_, asc, case, desc, func, null, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
@@ -276,27 +276,70 @@ def _like_literal(text_: str) -> str:
     return text_.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _safe_json_array(column: str) -> str:
+    """SQL for the stored JSON-array column, guarded to a literal ``'[]'`` for a NULL or
+    invalid document -- ``json_each`` raises mid-query on either, so every predicate that
+    walks ``genres_json`` or ``collections_json`` shares this one guard rather than each
+    copying it and risking one that doesn't (rule 72). ``column`` is never operator input,
+    only the two literal names those predicates pass; nothing untrusted reaches this string.
+    """
+    return (
+        f"CASE WHEN candidate.{column} IS NOT NULL "
+        f"AND json_valid(candidate.{column}) "
+        f"THEN candidate.{column} ELSE '[]' END"
+    )
+
+
 def _json_array_term(column: str, term: str) -> ColumnElement[bool]:
-    """EXISTS test for ``term`` inside a stored JSON-array column, tolerating NULL or a
-    malformed document. ``json_each`` raises mid-query on invalid JSON, so a NULL or
-    unparseable row is swapped for an empty array inside the expression itself and simply
-    never matches.
+    """EXISTS test for ``term`` inside a stored JSON-array column, exactly.
 
     Shared by every equality filter over one of these columns (``genres_json``,
-    ``collections_json``) so a second copy can't drift from this one (rule 72): ``column``
-    is never operator input, always one of the two literal names below.
+    ``collections_json``) so a second copy can't drift from this one (rule 72).
     """
-    # `column` is never operator input, only the two literal names above; nothing
-    # untrusted reaches this string.
     return cast(
         "ColumnElement[bool]",
         text(
-            f"EXISTS (SELECT 1 FROM json_each("  # noqa: S608
-            f"CASE WHEN candidate.{column} IS NOT NULL "
-            f"AND json_valid(candidate.{column}) "
-            f"THEN candidate.{column} ELSE '[]' END"
-            f") WHERE json_each.value = :term)"
+            f"EXISTS (SELECT 1 FROM json_each({_safe_json_array(column)}) "  # noqa: S608
+            f"WHERE json_each.value = :term)"
         ).bindparams(term=term),
+    )
+
+
+def _json_array_like(column: str, pattern: str) -> ColumnElement[bool]:
+    """EXISTS test for a **partial** match (SQL ``LIKE``) inside a stored JSON-array column.
+
+    The partial sibling of ``_json_array_term`` above, sharing its NULL/malformed guard
+    (rule 72) so the two can't drift on that. Used only for the collection-name block of
+    search (#816 phase 3b) -- genre stays an exact filter, nothing else needs a substring
+    test over a JSON array. ``pattern`` is caller-escaped with ``_like_literal`` the same
+    way the title search wraps it, so a typed ``%`` or ``_`` means itself.
+    """
+    return cast(
+        "ColumnElement[bool]",
+        text(
+            f"EXISTS (SELECT 1 FROM json_each({_safe_json_array(column)}) "  # noqa: S608
+            f"WHERE json_each.value LIKE :pattern ESCAPE '\\')"
+        ).bindparams(pattern=pattern),
+    )
+
+
+def _json_array_first_like(column: str, pattern: str) -> ColumnElement[str]:
+    """The first stored value in a JSON-array column matching ``pattern`` (``LIKE``), in the
+    array's own stored order -- the same order ``collections_json`` is written smallest-first
+    (rule 72's NULL/malformed guard, shared again). NULL when nothing matches.
+
+    Says WHICH collection answered a block-2 search row, since the chip's usual element-0
+    would show the operator's smallest collection rather than the one that matched -- an
+    unrelated name on a row they cannot otherwise explain (#816 phase 3b, the one exception
+    to "the chip takes element 0").
+    """
+    return cast(
+        "ColumnElement[str]",
+        text(
+            f"(SELECT json_each.value FROM json_each({_safe_json_array(column)}) "  # noqa: S608
+            f"WHERE json_each.value LIKE :pattern ESCAPE '\\' "
+            f"ORDER BY json_each.key LIMIT 1)"
+        ).bindparams(pattern=pattern),
     )
 
 
@@ -343,7 +386,14 @@ async def list_candidates(
     the year beside the title, so it is part of what the operator reads and types back. A
     year on its own ("1979") asks for everything released that year. Either way the term is
     still tried as plain text too, so a title whose NAME ends in a year it predates, or is a
-    year outright, is never lost to the reading of the number. ``media_type`` keeps
+    year outright, is never lost to the reading of the number. ``search`` also matches a Plex
+    collection name partially, so typing a franchise finds its members (#816 phase 3b) --
+    navigation only, same as ``collection`` below, never a re-decision. Each row's response
+    carries a ``search_rank`` (0 exact title, 1 partial title/show, 2 collection-name) so the
+    client can show titles before collections without imposing a relevance order on either
+    one; a block-2 row also carries ``matched_collection``, the name that actually matched,
+    since the chip's usual smallest-first choice would otherwise show an unrelated name.
+    ``media_type`` keeps
     movies or seasons, ``requested`` keeps only what someone asked for through Seerr
     (``yes``), only what nobody asked for (``no``), or everything (``any``), ``genre``
     keeps rows whose stored genre list contains the given term exactly, ``collection`` does
@@ -385,6 +435,8 @@ async def list_candidates(
             if moved_in:
                 lane = or_(lane, Candidate.media_key.in_(moved_in))
             conditions.append(lane)
+        search_rank: ColumnElement[int] | None = None
+        matched_collection: ColumnElement[str] | None = None
         if search and search.strip():
             term = search.strip()
 
@@ -396,21 +448,71 @@ async def list_candidates(
                     Candidate.group_title.ilike(pattern, escape="\\"),
                 )
 
+            def exact(text_: str) -> ColumnElement[bool]:
+                # Whole-string equality, not a LIKE: block 0 is "typed the exact title",
+                # where `matches` above already covers "typed something inside it" (block 1).
+                return or_(
+                    func.lower(Candidate.title) == text_.lower(),
+                    func.lower(Candidate.group_title) == text_.lower(),
+                )
+
+            def collection_pattern(text_: str) -> str:
+                return f"%{_like_literal(text_)}%"
+
             stem, year = _split_search_year(term)
             if year is None:
-                conditions.append(matches(term))
+                title_hit = matches(term)
+                exact_hit = exact(term)
+                collection_terms = [term]
             elif stem:
                 # Either reading of the number, never one or the other: "Blade Runner 2049" is a
                 # title that ends in a year it was not released in, and "Freaky Tales 2025" is a
                 # title beside its year. Trying the whole string first keeps the first kind
                 # findable, and the stem-plus-year arm makes the second kind work at all.
-                conditions.append(or_(matches(term), and_(Candidate.year == year, matches(stem))))
+                title_hit = or_(matches(term), and_(Candidate.year == year, matches(stem)))
+                exact_hit = or_(exact(term), and_(Candidate.year == year, exact(stem)))
+                collection_terms = [term, stem]
             else:
                 # A year on its own is the operator asking what came out that year. It is also
                 # still a string, so a title *named* after a year ("1917", "2012") comes back
                 # too -- both readings, the same as the arm above. Every other search is text
-                # that happens to allow a year; this is the one the year is the whole of.
-                conditions.append(or_(matches(term), Candidate.year == year))
+                # that happens to allow a year; this is the one the year is the whole of. A
+                # bare year is never an "exact title" match on its own.
+                title_hit = or_(matches(term), Candidate.year == year)
+                exact_hit = exact(term)
+                collection_terms = [term]
+
+            # A collection name matched partially -- typing a franchise finds its members
+            # (#816 phase 3b). It joins the same OR the title reading uses, so a title-only
+            # match and a collection-only match land on the same page; collections stay
+            # navigation, nothing here re-decides a verdict.
+            collection_hit = or_(
+                *(
+                    _json_array_like("collections_json", collection_pattern(t))
+                    for t in collection_terms
+                )
+            )
+            conditions.append(or_(title_hit, collection_hit))
+
+            # The queue has no relevance order of its own: search filters, and the operator's
+            # chosen sort orders within what's left. "Titles first, collections after" is a
+            # SECOND ordering laid on top of that one, and two orderings can't both hold -- so
+            # the server hands back which of three blocks a row landed in (0 exact title, 1
+            # partial title/show, 2 collection-name) and the client sorts *within* each block
+            # in the operator's own order, with a labeled divider marking where block 2 starts.
+            search_rank = case((exact_hit, 0), (title_hit, 1), else_=2)
+            # Which collection matched, for a block-2 row -- NOT the chip's usual smallest-
+            # first element 0, which would put an unrelated name on a row the operator cannot
+            # otherwise explain. NULL for a row that matched by title.
+            # `coalesce` needs 2+ args in SQLite; the trailing NULL is a no-op when there
+            # are already two terms and the only way to call it at all when there's one.
+            matched_collection = func.coalesce(
+                *(
+                    _json_array_first_like("collections_json", collection_pattern(t))
+                    for t in collection_terms
+                ),
+                null(),
+            )
         if media_type:
             conditions.append(Candidate.media_type == media_type)
         if library and library.strip():
@@ -488,19 +590,36 @@ async def list_candidates(
         # renders the same way. Only when size is the chosen key: on a title or year sort
         # the owner asked for alphabetical or chronological, not for a size grouping.
         sort_keys = [primary] if sort != "size" else [Candidate.size_bytes.is_(None), primary]
+        # A search's block order (0/1/2) sorts ABOVE the operator's chosen key, never mixed
+        # into it: within a block, the owner's sort still holds. Absent a search, there is no
+        # block and this prefix is empty.
+        rank_prefix = [search_rank] if search_rank is not None else []
         # A score/size tiebreak after the chosen key keeps ordering deterministic -- so a
         # show's seasons stay adjacent and paging never splits or shuffles the list.
         stmt = (
-            select(Candidate)
+            select(
+                Candidate,
+                search_rank if search_rank is not None else null(),
+                matched_collection if matched_collection is not None else null(),
+            )
             .where(*conditions)
-            .order_by(*sort_keys, Candidate.score.desc(), Candidate.size_bytes.desc())
+            .order_by(*rank_prefix, *sort_keys, Candidate.score.desc(), Candidate.size_bytes.desc())
             # limit/offset are validated at the boundary (Query ge/le above), so a
             # negative limit -- which SQLite reads as "no limit" -- can never reach here.
             .limit(limit)
             .offset(offset)
         )
 
-        rows = (await session.execute(stmt)).scalars().all()
+        page = (await session.execute(stmt)).all()
+        rows = [p[0] for p in page]
+        # media_key is already relied on as a unique per-snapshot key elsewhere on this page
+        # (the `flagged` map below); block/matched-collection are display-only extras riding
+        # the same query, read back the same way.
+        ranks = {p[0].media_key: p[1] for p in page if p[1] is not None}
+        # Only a block-2 row carries a matched collection: a title match's OWN collections
+        # can independently contain the term too, and that must not leak a name onto a row
+        # that did not need one to be found (#816 phase 3b).
+        matched_names = {p[0].media_key: p[2] for p in page if p[2] is not None and p[1] == 2}
 
         flagged = {
             f.media_key: f.first_flagged_at
@@ -522,7 +641,14 @@ async def list_candidates(
 
         return CandidatePageOut(
             items=[
-                _candidate_out(r, flagged.get(r.media_key), decisions, expiries=expiries)
+                _candidate_out(
+                    r,
+                    flagged.get(r.media_key),
+                    decisions,
+                    expiries=expiries,
+                    search_rank=ranks.get(r.media_key),
+                    matched_collection=matched_names.get(r.media_key),
+                )
                 for r in rows
             ],
             # One entry per show on the page, in place of the same four values stamped onto
@@ -1233,6 +1359,8 @@ def _candidate_out(
     decisions: dict[str, str] | None = None,
     *,
     expiries: dict[str, datetime | None] | None = None,
+    search_rank: int | None = None,
+    matched_collection: str | None = None,
 ) -> CandidateOut:
     # Three views of the one whitelist: the decision in EFFECT (own, or inherited from the
     # show) colors the row; the item's OWN decision is what a control on this row can toggle;
@@ -1301,6 +1429,8 @@ def _candidate_out(
         season_number=_season_number(r.media_key),
         show_status=r.show_status,
         collections=_collections(r.collections_json),
+        search_rank=search_rank,
+        matched_collection=matched_collection,
     )
 
 

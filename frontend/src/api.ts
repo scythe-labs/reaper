@@ -161,6 +161,15 @@ export interface Candidate {
    *  chip for null rather than an empty one. Optional: no component reads it yet and
    *  the test fixtures are not made to carry it (#816 phase 3; the chip is phase 4). */
   collections?: string[] | null;
+  /** Which of three search blocks this row matched: 0 exact title, 1 partial title/show,
+   *  2 collection-name only. Null outside a search. Optional: no component reads it yet
+   *  (#816 phase 3b; the divider that reads it is phase 5). */
+  search_rank?: number | null;
+  /** For a `search_rank === 2` row, the collection name that matched -- not
+   *  `collections[0]`, which would show the smallest collection instead of the one the
+   *  search found. Null for a title match, and outside a search. Optional, same reason as
+   *  `search_rank`. */
+  matched_collection?: string | null;
 }
 
 /** Whether a show has finished, as three states rather than a bool, so "the server never
