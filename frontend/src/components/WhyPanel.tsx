@@ -39,6 +39,7 @@ import { useSuccessorFocus } from "../focus";
 import { coverage, itemBytes, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useArtFallback } from "./artFallback";
+import { CollectionChip } from "./CollectionChip";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { ExternalMark } from "./queueIcons";
 import { useHoldsBackUnmeasured } from "./queueSettings";
@@ -154,6 +155,18 @@ function MetaLine({ item }: { item: CandidateDetail }) {
     <p className="why-meta">
       {item.content_rating && <span className="cert">{item.content_rating}</span>}
       {parts.join(", ")}
+    </p>
+  );
+}
+
+/** The collection chip's own line, beside the cert/runtime/genre one -- its own paragraph
+ *  because that one is plain joined text and a chip cannot join into it. Renders nothing
+ *  without a collection, same as `MetaLine` above. */
+function CollectionMetaLine({ item }: { item: CandidateDetail }) {
+  if (!item.collections || item.collections.length === 0) return null;
+  return (
+    <p className="why-meta">
+      <CollectionChip collections={item.collections} />
     </p>
   );
 }
@@ -1396,6 +1409,7 @@ export function WhyPanel({
       />
 
       <MetaLine item={item} />
+      <CollectionMetaLine item={item} />
       <RatingsRow ratings={item.ratings} links={item.links} />
 
       {item.summary && <Synopsis text={item.summary} />}

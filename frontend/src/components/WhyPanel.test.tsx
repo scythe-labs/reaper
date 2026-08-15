@@ -1274,6 +1274,34 @@ describe("the merged-listing count", () => {
   });
 });
 
+// The collection chip's own line (#816 phase 4): its own paragraph beside cert/runtime/genres,
+// since that one is plain joined text a chip cannot join into. Navigation only, so these tests
+// are about the line showing up (or not) and staying reachable, never about fate.
+describe("the collection chip", () => {
+  it("renders no line when the scan recorded no collections", () => {
+    show(detail(WORKED_ROWS, { collections: null }));
+    expect(screen.queryByRole("button", { name: /Show the other/ })).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/^In the collection/)).not.toBeInTheDocument();
+  });
+
+  it("names the smallest collection on its own line, beside the cert/runtime/genre one", () => {
+    show(
+      detail(WORKED_ROWS, {
+        content_rating: "PG",
+        runtime_minutes: 118,
+        genres: ["Drama"],
+        collections: ["Example Franchise", "Director Spotlight"],
+      }),
+    );
+    const chip = screen.getByRole("button", { name: "Example Franchise" });
+    expect(chip.closest(".why-meta")).not.toBeNull();
+    // Its own paragraph, not the cert/runtime/genre one: the two can't share a `<p>` once one
+    // of them holds a real control rather than joined text.
+    expect(chip.closest(".why-meta")?.textContent).not.toMatch(/118 min/);
+    expect(screen.getByRole("button", { name: "Show the other 1 collection" })).toBeInTheDocument();
+  });
+});
+
 // The per-title escape from a hold nothing else on this screen can lift (#275). Reaper keeps the
 // most watch evidence it has ever measured for a title, so plays that stop being readable hold it
 // back on every scan -- and until this the only way out was Settings' whole-library Forget, which

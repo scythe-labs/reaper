@@ -53,6 +53,7 @@ import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
 import { useArtFallback } from "./artFallback";
 import { CardOpen } from "./CardOpen";
+import { CollectionChip } from "./CollectionChip";
 import { FilterMenu } from "./FilterMenu";
 import { PosterFallback } from "./PosterFallback";
 import { ReapConfirm } from "./ReapConfirm";
@@ -371,6 +372,9 @@ type Group = {
   /** The Plex library the item lives in -- a show's is shared by all its seasons, so the
    *  first season sets it for the whole card. Null when unknown; the chip is hidden. */
   library: string | null;
+  /** The show's Plex collection names, shared by every season the same way `library` is (a TV
+   *  collection lists the show, not its seasons). Null renders no chip. */
+  collections: string[] | null;
   /** The show's whole-snapshot rollup, sent once per show beside the rows. Null for a movie,
    *  and for a show whose rollup did not arrive -- never a page-shaped substitute, since
    *  every figure on it sits beside a destructive control. */
@@ -420,6 +424,7 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
           requestedBy: item.requested_by,
           dormantFor: item.dormant_for,
           library: item.library,
+          collections: item.collections ?? null,
           rollup: rollups.get(item.group_key) ?? null,
           items: [],
           isShow: true,
@@ -438,6 +443,7 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
         requestedBy: item.requested_by,
         dormantFor: item.dormant_for,
         library: item.library,
+        collections: item.collections ?? null,
         rollup: null,
         items: [item],
         isShow: false,
@@ -1047,6 +1053,7 @@ const MovieCard = memo(function MovieCard({
         <div className="card-meta">
           <span className="chip chip-movie">Movie</span>
           <LibraryChip library={item.library} />
+          <CollectionChip collections={item.collections} />
           <span>{itemBytes(item.size_bytes)}</span>
           <ResolutionBadge value={item.video_resolution} />
           <RequestedChip who={item.requested_by} />
@@ -1265,6 +1272,7 @@ const ShowCard = memo(function ShowCard({
           <div className="card-meta">
             <span className="chip chip-tv">TV</span>
             <LibraryChip library={group.library} />
+            <CollectionChip collections={group.collections} />
             <SeasonExpander
               count={totalSeasons}
               open={open}

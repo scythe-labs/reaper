@@ -985,6 +985,84 @@ describe("the dormancy span", () => {
   });
 });
 
+// The collection chip (#816 phase 4): navigation only, never a verdict input, so these tests
+// are about reachability and honesty, not fate. The screen the picker will eventually open is
+// phase 5's; here the caret only has to open, list every collection, and stay accessible.
+describe("the collection chip", () => {
+  it("renders no chip when the scan recorded no collections", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: null })]));
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    expect(screen.queryByTitle(/^In the collection/)).not.toBeInTheDocument();
+  });
+
+  it("wears one plain chip, no caret, when the item is in exactly one collection", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: ["Example Franchise"] })]));
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    expect(screen.getByRole("button", { name: "Example Franchise" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show the other/ })).not.toBeInTheDocument();
+  });
+
+  it("opens the picker on the caret, listing every collection reachably", async () => {
+    const names = ["Example Franchise", "Director Spotlight", "4K"];
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: names })]));
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const caret = screen.getByRole("button", { name: "Show the other 2 collections" });
+    const user = userEvent.setup();
+    await user.click(caret);
+    expect(caret).toHaveAttribute("aria-expanded", "true");
+    // Scoped to the picker: the smallest collection's name is on the card's own chip too, and
+    // the picker lists the full array including it (rule 138's sibling clamp, not this test's
+    // concern), so an unscoped query would match both.
+    const picker = screen.getByRole("list", { name: "Collections" });
+    for (const name of names) {
+      expect(within(picker).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("closes on Escape and hands focus back to the caret", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([movie(1, { collections: ["Example Franchise", "Director Spotlight"] })]),
+    );
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const caret = screen.getByRole("button", { name: "Show the other 1 collection" });
+    const user = userEvent.setup();
+    await user.click(caret);
+    expect(screen.getByRole("list", { name: "Collections" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("list", { name: "Collections" })).not.toBeInTheDocument();
+    expect(caret).toHaveFocus();
+  });
+
+  it("carries the show's collections onto every season, like the library chip", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([
+        season(1, "condemn", { collections: ["Example Show Universe", "Studio Vault"] }),
+        season(2, "condemn", { collections: ["Example Show Universe", "Studio Vault"] }),
+      ]),
+    );
+    renderQueue();
+    await screen.findByText("Example Show");
+    expect(screen.getByRole("button", { name: "Example Show Universe" })).toBeInTheDocument();
+  });
+
+  it("has no accessibility violations with the picker open", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([movie(1, { collections: ["Example Franchise", "Director Spotlight"] })]),
+    );
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Show the other 1 collection" }));
+    // No `container` argument: the picker is portaled to <body>, outside the render's own
+    // container, so the default (document.body) is the only scope that sees it.
+    await expectNoA11yViolations();
+  });
+});
+
 // The note that keeps a season's Spare/Reap honest when a WHOLE-SHOW decision is what really
 // governs it: the control toggles the season's own decision, and this note says what the show
 // is doing so the operator never fights a toggle that cannot reach the show-level choice. Its

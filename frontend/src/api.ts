@@ -155,11 +155,11 @@ export interface Candidate {
    *  and on a row stored before this field existed -- both render nothing at all. */
   show_status: ShowStatus | null;
   /** This item's Plex collection names (a season's are its SHOW's), sorted smallest
-   *  collection first -- the chip takes element 0. Navigation only, never a verdict
+   *  collection first -- `CollectionChip` takes element 0. Navigation only, never a verdict
    *  input. Null means "not recorded for this scan" (no Plex configured, a failed
    *  section read, a row from before this shipped), NOT "in no collection": render no
-   *  chip for null rather than an empty one. Optional: no component reads it yet and
-   *  the test fixtures are not made to carry it (#816 phase 3; the chip is phase 4). */
+   *  chip for null rather than an empty one. Optional: the test fixtures are not made to
+   *  carry it (#816 phase 3). */
   collections?: string[] | null;
   /** Which of three search blocks this row matched: 0 exact title, 1 partial title/show,
    *  2 collection-name only. Null outside a search. Optional: no component reads it yet
@@ -212,7 +212,8 @@ export interface Group {
   /** The show's Plex collection names, taken the same way as `show_status`: a TV
    *  collection lists the show, not its seasons, so every season carries the same list.
    *  Null means "not recorded for this scan," never "in no collection". Optional, same
-   *  reason as `Candidate.collections`. */
+   *  reason as `Candidate.collections` -- `toGroups` (ReviewQueue.tsx) reads it off the
+   *  first season into the local `Group.collections` `CollectionChip` renders. */
   collections?: string[] | null;
   /** Every season, sorted by season number (unnumbered rows last). */
   seasons: Candidate[];
