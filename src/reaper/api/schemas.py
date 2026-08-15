@@ -145,9 +145,14 @@ class ChipOut(BaseModel):
     that fired, a Limbo card's names what stopped Reaper short. Condemned cards carry no
     chip here -- their amber dormancy pill is built from ``dormant_for``."""
 
-    tone: Literal["kept", "quiet", "look"]
+    tone: Literal["kept", "quiet", "look", "held"]
     """``kept`` renders green (a protection fired), ``quiet`` gray (nothing to act on),
-    ``look`` amber-outlined (deliberately left for the owner to decide)."""
+    ``look`` amber-outlined (deliberately left for the owner to decide), ``held``
+    green-outlined (a protection that EXPIRES, with how long is left).
+
+    ``held`` is outlined for the same reason every chip is: filled means the owner decided,
+    outlined means Reaper did. It is green rather than amber because the file is kept, and
+    amber means only "left for you to decide"."""
 
     text: str
 

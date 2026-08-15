@@ -73,8 +73,15 @@ SCHEMA_VERSION = 3
 off the RATING_FLOOR gate row into ``keep_rating_rules``
 (see ``policy_migrations.recover_rating_rules``, which backfills a body written before it)."""
 
-SCORER_VERSION = 4
+SCORER_VERSION = 5
 """Bumped when the SCORER changes meaning, not when the schema gains a field.
+
+5 marks the build where a title that came back takes a hold (#553). Both lanes start freezing
+``Facts.returned_days_ago`` and ``returned_by_reaper`` where they froze nothing, and a new gate
+reads them. A stored body hashes exactly as it did without this -- the gate row is appended
+disabled and no existing field moved -- so without the bump a plan approved before the upgrade
+would execute against evidence gathered after it, which is the "adding evidence" case two
+paragraphs down.
 
 4 marks the build where the rewatch keep goes live on the TV lane (#554): ``keep_configs``
 stops gating it on ``media_type``, and season facts start carrying the show's replay
@@ -104,6 +111,25 @@ caller that reads them (``services.profiles.active_policy``) has no fallback -- 
 bump would take out the scan path and the policy editor together, including the page an
 operator would use to fix it. Bodies from a NEWER Reaper are still refused, below: those
 we genuinely cannot interpret."""
+
+
+#: How long a title that came back resists condemning, in days. A year and a half.
+#:
+#: **A judgment call, and written here as one** so a later measurement can replace it without
+#: archaeology. Nothing reachable has deleted something and had it come back, so there is no
+#: regret data to fit against on this library or any other (``docs/history/RETURN_PLAN.md``).
+#: What the number expresses is that a regret is worth remembering longer than the dormancy floor,
+#: which defaults to three years, so the hold is meaningful without being permanent.
+RETURN_HOLD_DAYS = 548
+
+#: How long a title has to be missing before its return counts, in days.
+#:
+#: Set by measurement, unlike the hold above. Every rating-key change observed on a real
+#: library completed within 2.5 to 30 hours, and that figure is an upper bound on the true
+#: absence, so seven days clears the measured ceiling more than five times over
+#: (``docs/LEARNINGS.md``, "The Plex rating key is stable enough to detect a return"). Three
+#: days would already have rejected all of it.
+RETURN_ABSENCE_DAYS = 7
 
 
 class Frozen(BaseModel):
@@ -161,6 +187,11 @@ class GateSetting(Frozen):
             raise ValueError(
                 "Keeping anything watched by 0 people would protect your whole library. "
                 "Set it to at least 1, or switch this protection off instead."
+            )
+        if self.gate is GateId.RETURNED and self.threshold < 1:
+            raise ValueError(
+                "A title that came back has to be kept for at least a day. To stop keeping "
+                "them at all, switch this protection off with its toggle."
             )
         if self.gate is GateId.MIN_DORMANCY and self.threshold < 5:
             raise ValueError(
@@ -495,6 +526,42 @@ class PolicyBody(Frozen):
             )
         return self
 
+    @model_validator(mode="after")
+    def _returned_row(self) -> Self:
+        """Every body carries the came-back row, appended on load when missing (#553).
+
+        The row above's twin, for the same reason and on the same terms: rows render from the
+        body's own gate list, so a body stored before this protection existed would never show
+        its switch. Appended DISABLED at the shipped lengths, so it changes no verdict until
+        the operator turns it on -- not a repair and no degrade, because nothing was protecting
+        and nothing was withdrawn.
+
+        Off in the shipped defaults too, so the same sentence is true of every install and
+        the operator documentation has one answer rather than two (``DEFAULT_MOVIE_POLICY``
+        carries why).
+
+        Moves ``policy_hash`` for every stored body lacking the row (rule 113 voids
+        pre-upgrade approvals) and ``scoring_hash``. It does NOT move ``evidence_hash``,
+        unlike an enabled row would: ``returned_absence_days`` reads this gate's window only
+        while the gate is on, so a disabled row falls back to the shipped default and gathers
+        exactly what the tree gathered before it.
+        """
+        if all(g.gate is not GateId.RETURNED for g in self.gates):
+            object.__setattr__(
+                self,
+                "gates",
+                (
+                    *self.gates,
+                    GateSetting(
+                        gate=GateId.RETURNED,
+                        enabled=False,
+                        threshold=RETURN_HOLD_DAYS,
+                        window_days=RETURN_ABSENCE_DAYS,
+                    ),
+                ),
+            )
+        return self
+
     media_type: Literal["movie", "tv"] = "movie"
 
     condemn_at: int = Field(ge=1, le=100)
@@ -731,6 +798,30 @@ class PolicyBody(Frozen):
             365,
         )
 
+    def returned_absence_days(self) -> int:
+        """How long a title must be missing before its return counts, in days.
+
+        ``popularity_window_days``' twin, and read the same way: the RETURNED gate's window
+        only while that gate is enabled, so a disabled gate's leftover number cannot steer what
+        the scan writes into the ledger. Falls back to the shipped default otherwise, and every
+        reader comes here, so the default lives in one place.
+
+        A gathering value, not a judging one: it decides what the scan RECORDS as a return, and
+        the gate reads the recorded answer. That is why it belongs in ``_gathering_evidence``
+        and the hold's length does not.
+
+        **It is a gathering value whether the gate is on or off**, because the ledger is
+        written on every scan either way (``services.library_seen``). That is what makes the
+        protection useful the day it is switched on rather than months later: Reaper can only
+        notice a title coming back if it saw the title before it left. So the number is always
+        in the hash, and switching the gate off means gathering under the shipped default
+        rather than gathering nothing.
+        """
+        return next(
+            (g.window_days for g in self.gates if g.gate is GateId.RETURNED and g.enabled),
+            RETURN_ABSENCE_DAYS,
+        )
+
     def rating_rules(self) -> tuple[RatingRule, ...]:
         """Translate the per-source keep bars into engine rating rules for the gate.
 
@@ -958,13 +1049,24 @@ class PolicyBody(Frozen):
     def _gathering_evidence(self) -> dict[str, object]:
         """What ``gates`` tells a scan before it freezes anything.
 
-        One number, and it already carries the enabled flag it depends on: a disabled
-        popularity gate falls back to the 365-day default, so switching that gate off counts
-        the same watchers over the same span and the replay stays exact. Switching it ON at
-        any other window moves this number, which is the whole point -- the frozen count was
-        taken over a span the edited policy no longer asks for.
+        Two numbers, and each already carries the enabled flag it depends on: a disabled gate
+        falls back to its shipped default, so switching one off gathers exactly what it
+        gathered before and the replay stays exact. Switching one ON at any other value moves
+        this, which is the whole point -- the frozen evidence was taken under a span the edited
+        policy no longer asks for.
+
+        The second is #553's minimum absence. It has to be here rather than in the judging half
+        because it decides what the SCAN writes into the ledger, and the gate then reads that
+        stored answer: replayed against frozen facts it would report an edited policy's verdict
+        computed under the old number, which is the confident wrong preview
+        ``_GATHERING_GATE_FIELDS`` exists to prevent. Adding it changed this formula, so no
+        snapshot from an earlier build matches and every simulator tier refuses until the next
+        scan -- the same one-scan cost ``evidence_hash`` documents below.
         """
-        return {"popularity_window_days": self.popularity_window_days()}
+        return {
+            "popularity_window_days": self.popularity_window_days(),
+            "returned_absence_days": self.returned_absence_days(),
+        }
 
     def evidence_hash(self) -> str:
         """Identifies what a scan under this policy would GATHER and FREEZE per item.
@@ -1186,6 +1288,19 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         # means something once the operator has read their own fitted ladder
         # (docs/history/REWATCH_PLAN.md, stage 2). 25 is the shipped starting percentage.
         GateSetting(gate=GateId.REWATCH_ODDS, enabled=False, threshold=25),
+        # A title that left the library and came back is held for a year and a half (#553).
+        # Off by default, the same shape as the row above and for a related reason: the hold's
+        # LENGTH is a judgment call rather than a fit, since nothing reachable has deleted
+        # something and had it come back, so there is no regret data to set it from. The
+        # detector's precision is measured; how long a regret is worth remembering is not.
+        # Off here and off when appended to a stored body, so one sentence is true of every
+        # install and an upgrade changes nobody's policy under them.
+        GateSetting(
+            gate=GateId.RETURNED,
+            enabled=False,
+            threshold=RETURN_HOLD_DAYS,
+            window_days=RETURN_ABSENCE_DAYS,
+        ),
     ),
     signals=(
         # Dormancy dominates, and the numbers come from the measured rewatch curve

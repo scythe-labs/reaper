@@ -526,6 +526,9 @@ def _facts(**over: Any) -> Any:
         "season": _season(3, size=8 * GB),
         "rank": 2,
         "plex_rating_key": 700,
+        # No ledger row: the ordinary state of a season Reaper has not bound before, and
+        # what every case here that is not about #553 wants.
+        "seen": None,
         "season_added_at": utcnow() - timedelta(days=4000),
         "horizon": utcnow() - timedelta(days=4000),
         # Sampled once per scan on ``snapshot.ScanContext``, so the builder is handed it
@@ -1274,6 +1277,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -1338,6 +1344,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -1394,6 +1403,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -1442,6 +1454,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         assert sonarr.episodes_called == []  # the fan-out was skipped
         assert "sonarr:1:42:3" in {j.media_key for j in off}  # seasons still resolve
@@ -1465,6 +1480,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         assert sonarr_on.episodes_called == [42]
 
@@ -1549,6 +1567,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         pruned = next(j for j in judgments if j.media_key == "sonarr:1:56:3")
@@ -1623,6 +1644,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         pruned = next(j for j in judgments if j.media_key == "sonarr:1:55:3")
@@ -1702,6 +1726,9 @@ class TestGatherEndToEnd:
             degrade=degrade,
             membership_index=index,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         assert judgments, "the show's seasons must still be gathered"
@@ -1788,6 +1815,9 @@ class TestGatherEndToEnd:
             degrade=degrade,
             membership_index=index,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         assert judgments, "the show's seasons must still be gathered"
@@ -1829,6 +1859,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         pruned = next(j for j in judgments if j.media_key == "sonarr:1:7:3")
         assert pruned.plex_rating_key is None
@@ -1866,6 +1899,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         # Both content-bearing seasons appear, each protected by a guard (never condemned).
         assert {j.media_key for j in judgments} == {"sonarr:1:9:1", "sonarr:1:9:2"}
@@ -1901,6 +1937,9 @@ class TestGatherEndToEnd:
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
         decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
         assert len(decisions) == 1
@@ -1945,6 +1984,9 @@ class TestGatherEndToEnd:
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
         decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
         assert len(decisions) == 1
@@ -2030,6 +2072,9 @@ class TestGatherEndToEnd:
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
 
         deep = await _run(400)
@@ -2148,6 +2193,9 @@ class TestGatherEndToEnd:
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
             assert not _reasons, f"the scan degraded, so no verdict here means anything: {_reasons}"
             return {j.media_key: j for j in judgments}
@@ -2241,6 +2289,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -2292,6 +2343,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         by_key = {j.media_key: j for j in judgments}
         assert by_key["sonarr:1:77:2"].plex_rating_key is None
@@ -2340,6 +2394,9 @@ class TestGatherEndToEnd:
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
         decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
         assert len(decisions) == 1
@@ -2373,6 +2430,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         assert judgments == []
         assert any("sonarr" in r and "unreachable" in r for r in reasons)
@@ -2438,6 +2498,9 @@ class TestShowLevelRewatchFacts:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -2499,6 +2562,9 @@ class TestShowLevelRewatchFacts:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         judgment = next(j for j in judgments if j.media_key == "sonarr:1:2:1")
@@ -2542,6 +2608,9 @@ class TestShowLevelRewatchFacts:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         facts = next(j for j in judgments if j.media_key == "sonarr:1:3:1").facts
@@ -2627,6 +2696,9 @@ class TestTheTVCohortFit:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -2731,6 +2803,9 @@ class TestTheTVCohortFit:
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         facts = next(j for j in judgments if j.media_key == "sonarr:1:20:1").facts

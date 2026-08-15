@@ -2392,6 +2392,12 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
         # is kept by the bar while it is on, and judged on its score once it is off.
         assert on.scoring_hash() != off.scoring_hash()
 
+        # A warm-up under the SAME policy, because one piece of frozen evidence is stateful
+        # across scans: the came-back ledger (#553) has no row for a title the first scan
+        # ever sees, so that scan freezes `Unknown` where every later one freezes `Absent`.
+        # That is the ledger filling in, not the policy moving, and comparing scan one
+        # against scan two would read it as the latter.
+        await self._scan_under(session, cache_engine, on)
         with_gate = await self._scan_under(session, cache_engine, on)
         without_gate = await self._scan_under(session, cache_engine, off)
 
@@ -2430,6 +2436,9 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
 
         low, high = _at(30), _at(100_000)
 
+        # The warm-up its sibling above explains: both compared scans read a settled
+        # came-back ledger, so the only thing that moves is the floor.
+        await self._scan_under(session, cache_engine, low)
         lenient = await self._scan_under(session, cache_engine, low)
         strict = await self._scan_under(session, cache_engine, high)
 

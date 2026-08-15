@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Re-measure the four numbers #553's design rests on, against any real ``reaper.db``.
 
-``docs/RETURN_PLAN.md`` picks a cooling-off default from measurements taken on one library,
+``docs/history/RETURN_PLAN.md`` picks a cooling-off default from measurements taken on one library,
 and ``docs/LEARNINGS.md`` records them. Both say the measurement re-runs anywhere with
 snapshot history. This is what makes that true, and rule 68 is why it is committed rather
 than pasted into a transcript.

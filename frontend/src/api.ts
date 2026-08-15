@@ -40,9 +40,12 @@ export interface Snapshot {
 
 /** The one short status chip a card wears, display-ready from the server. `kept`
  *  renders green (a protection fired), `quiet` gray (nothing to act on), `look`
- *  amber-outlined (deliberately left for the owner to decide). */
+ *  amber-outlined (deliberately left for the owner to decide), `held` green-outlined
+ *  (a protection that EXPIRES, saying how long is left). Outlined is Reaper's decision
+ *  and filled is the owner's; `held` is green rather than amber because the file is
+ *  kept, and amber means only "left for you to decide". */
 export interface Chip {
-  tone: "kept" | "quiet" | "look";
+  tone: "kept" | "quiet" | "look" | "held";
   text: string;
   /** The same fact as `text`, worded as a lowercase clause that can follow "Reap
    *  requested, kept for now:" -- or null when this chip names no reason a reap would

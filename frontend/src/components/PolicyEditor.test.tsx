@@ -903,6 +903,65 @@ describe("a protection this build has no copy for", () => {
   });
 });
 
+describe("the hold on a title that came back (#553)", () => {
+  const returnedBody = {
+    ...body(),
+    gates: [{ gate: "returned" as const, enabled: true, threshold: 548, window_days: 7 }],
+  };
+
+  it("offers both durations, each on the shared picker", async () => {
+    // Rule 40: a number with a changeable unit is `QuantityInput`, never a bare number box
+    // beside loose unit text. Both knobs are durations, so both take it and neither is new
+    // control code.
+    renderEditor({ body: returnedBody });
+
+    const hold = await screen.findByLabelText("Keep a title that came back threshold");
+    const absence = screen.getByLabelText("How long an absence counts");
+    // The picker draws each number in the largest unit that divides it cleanly and hands the
+    // parent days either way: 548 reads "1.5 years", 7 reads "1 week". Both assertions are on
+    // the DRAWN value, which is what an operator sees.
+    expect(hold).toHaveValue(1.5);
+    expect(absence).toHaveValue(1);
+    const holdUnit = screen.getByLabelText("Keep a title that came back threshold unit");
+    const absenceUnit = screen.getByLabelText("How long an absence counts unit");
+    expect(holdUnit).toHaveValue("years");
+    expect(absenceUnit).toHaveValue("weeks");
+  });
+
+  it("says keep it FOR, not at least", async () => {
+    // The hold is exactly this long, not a minimum of it. "at least 1.5 years" is the wrong
+    // sentence and it is the one every other days-unit row wants.
+    renderEditor({ body: returnedBody });
+
+    await screen.findByLabelText("Keep a title that came back threshold");
+    expect(screen.getByText("keep it for")).toBeInTheDocument();
+    expect(screen.queryByText("at least")).not.toBeInTheDocument();
+  });
+
+  it("binds the absence help to the control it explains, not to the row", async () => {
+    // Rule 45: help text binds to exactly one control, directly beneath it. The row's own
+    // help is about the hold; the absence needs its own or the operator reads one paragraph
+    // covering two numbers.
+    renderEditor({ body: returnedBody });
+
+    await screen.findByLabelText("How long an absence counts");
+    expect(screen.getByText(/left your library and was fetched again/)).toBeInTheDocument();
+    expect(screen.getByText(/A file swapped for a better copy is back within hours/)).toBeVisible();
+  });
+
+  it("hides both durations while the protection is off", async () => {
+    // Rule 41: a settings-bearing group's sub-controls render only while its toggle is on,
+    // hidden rather than disabled.
+    renderEditor({
+      body: { ...returnedBody, gates: [{ ...returnedBody.gates[0]!, enabled: false }] },
+    });
+
+    await screen.findByText("Keep a title that came back");
+    expect(screen.queryByLabelText("Keep a title that came back threshold")).toBeNull();
+    expect(screen.queryByLabelText("How long an absence counts")).toBeNull();
+  });
+});
+
 describe("the gate that counts recent watchers", () => {
   it("offers the window its own warning tells the operator to change", async () => {
     // The server warns on gates.server_popularity.window_days and advises a year; until

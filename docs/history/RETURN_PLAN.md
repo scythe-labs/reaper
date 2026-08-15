@@ -1,9 +1,39 @@
 # A title that came back (#553): the plan
 
-> **Live.** Nothing has landed. Written 2026-08-14, after a design pass that replaced the
-> issue's proposed mechanism with a different one, and a read-only measurement pass against a
-> real library. Update this file as stages land; freeze it into `docs/history/` when #553
-> closes.
+> **FROZEN 2026-08-14. Do not update this file; it is history, not state.**
+>
+> The one stage landed on `dev` as #812, opt-in and off by default, and #553 closed with it.
+> Anything below that reads as outstanding work describes the moment it was written. The plan
+> was written the same day, after a design pass that replaced the issue's proposed mechanism
+> and a read-only measurement pass against a real library.
+>
+> **Four things the build changed, each recorded where the plan states what it replaces.**
+>
+> 1. **The ledger stores `returned_at`.** The table sketch below carries none, and the hold
+>    cannot work without one: a return is visible for exactly ONE scan, because the moment its
+>    new key is recorded it stops looking new, and the hold runs for months. So the row carries
+>    `returned_at` and `returned_by_reaper`, written by the scan that detects the return and
+>    read back by every scan after it. The hold therefore starts on the scan AFTER the
+>    detection, which costs nothing an operator can reach: a returned title carries a fresh
+>    Plex `added_at`, so its dormancy is near zero and the dormancy floor is already keeping it.
+> 2. **`Facts.returned_at` is `returned_days_ago`, a float.** The frozen evidence is canonical
+>    JSON (`facts_codec`), and a `datetime` does not survive it. Days-since is what every other
+>    span on `Facts` already is, measured against the scan's own instant exactly as dormancy is.
+> 3. **The id key carries the media kind.** `movie:tmdb:12345`, not `tmdb:12345`: movie and TV
+>    tmdb ids share one integer space, so a bare id can name two different titles (rule 52).
+> 4. **It ships OFF.** The plan does not say either way. The detector's precision is measured;
+>    how long a regret is worth remembering is not, so the length is a judgment call and the
+>    switch is the operator's. That cost was measured rather than argued and it is zero:
+>    `docs/LEARNINGS.md`, "The shipped default that changed nothing".
+>
+> **One thing below is still only a sentence: clearing the ledger.** No route, job or command
+> offers it, so "clearing the ledger is the repair" describes a SQL delete. A `forget_all` was
+> written and cut, because a helper nothing calls, with a test that passes, reads as a wired
+> repair (rule 38). It ships with the control that offers it, beside the one
+> `watch_evidence.forget_all` already has on the Plex panel.
+>
+> Everything else shipped as written, including both knobs riding the existing `QuantityInput`,
+> the outlined chip, the population cap, and the two sentences.
 
 ## Context
 

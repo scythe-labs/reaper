@@ -575,6 +575,7 @@ def _season_facts(*, blind: str | None) -> Facts:
         ),
         rank=2,
         plex_rating_key=700,
+        seen=None,
         season_added_at=JUST_ADDED,
         horizon=NOW - timedelta(days=4000),
         reach_days=4000,

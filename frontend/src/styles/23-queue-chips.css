@@ -209,6 +209,18 @@
   color: var(--unknown);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--unknown) 55%, transparent);
 }
+/* A protection Reaper is holding the file under, with how long is left. Outlined for the
+   family's own reason: filled is the owner's decision, outlined is Reaper's. Green rather
+   than the amber above, because the file IS kept and amber means only "left for you to
+   decide". Outlined in the same channel `.status-look` uses -- an inset ring, not a border --
+   so the chip's height and padding stay the family's 1.35rem rhythm.
+
+   Only a protection with an EXPIRY wears it (`api.review._came_back_chip`, which says why).
+   A protection re-decided next scan has nothing to count down. */
+.status-held {
+  color: var(--protect);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--protect) 55%, transparent);
+}
 /* Filled amber, where `.status-look` is outlined. Outlined means "left for you to decide";
    this one states a condition that is simply wrong and wants attention -- Settings, Lists
    wears it for a protection whose last check is too old to trust. */

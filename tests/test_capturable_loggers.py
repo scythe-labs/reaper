@@ -82,7 +82,7 @@ class TestALoggerFrozenByAnEarlierTestIsStillCapturable:
 
 class TestTheGuardReachesEveryLoggerInTheTree:
     """A guard that SCANS is proven against the population it claims to cover, not against
-    one member of it (rule 145). The count is reconciled by hand: 51 files under
+    one member of it (rule 145). The count is reconciled by hand: 52 files under
     ``src/reaper`` declare a module-level logger, and ``grep -rl`` over the tree agrees.
 
     It was 47 before ``services/list_config.py`` (the operator's own protection lists) landed
@@ -97,7 +97,9 @@ class TestTheGuardReachesEveryLoggerInTheTree:
     ``api/auth.py`` to ``api/deps.py``: the logging function moved with it and ``api/auth.py``
     still logs three other things, so this is the one shape that only ever adds. Then 51, when
     ``config.py`` gained one to say which seed variable a half-configured instance is missing
-    (#658); it had none because nothing in it used to have anything to tell the operator."""
+    (#658); it had none because nothing in it used to have anything to tell the operator. Then
+    52 with ``services/library_seen.py`` (#553), which logs an unreadable stored key set and
+    the scan whose crop of returns the population cap refused."""
 
     @staticmethod
     def _modules_declaring_a_logger() -> set[str]:
@@ -114,8 +116,8 @@ class TestTheGuardReachesEveryLoggerInTheTree:
 
     def test_the_count_is_the_one_reconciled_by_hand(self) -> None:
         declared = self._modules_declaring_a_logger()
-        assert len(declared) == 51, (
-            f"expected 51 modules declaring a logger, found {len(declared)}. Bump the number "
+        assert len(declared) == 52, (
+            f"expected 52 modules declaring a logger, found {len(declared)}. Bump the number "
             "here AND in the two prose copies of it, which nothing else asserts (rule 144): "
             "this class's docstring above, and docs/history/SIMPLIFICATION_PLAN.md's S7 paragraph, "
             "which names this file and restates the figure. Leave the *Landed* rows in that "
