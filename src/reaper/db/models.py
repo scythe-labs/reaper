@@ -421,6 +421,15 @@ class Snapshot(Base):
 
     degraded_reason: Mapped[str | None] = mapped_column(Text, default=None)
 
+    degraded_doc: Mapped[str | None] = mapped_column(Text, default=None)
+    """The in-app help page that explains what to do about the reason above, by its
+    ``frontend/src/docs/registry.ts`` id. ``NULL`` for a degradation with no page, which is most
+    of them: an unreachable Radarr needs no guide.
+
+    Stored rather than worked out when the notice renders, because the notice renders from a
+    stored scan and the reason is prose by then. Reading the cause back out of that string would
+    be rule 92's coupling, on operator copy that will be reworded."""
+
     watch_blind_items: Mapped[int | None] = mapped_column(Integer, default=None)
     """How many items this scan found had watch history it could no longer read
     (``services.watch_evidence``). Counted at scan time and stored, rather than derived

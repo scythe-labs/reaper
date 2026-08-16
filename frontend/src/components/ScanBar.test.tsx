@@ -49,6 +49,9 @@ const DEGRADED: Snapshot = {
   item_count: 10,
   degraded: true,
   degraded_reason: "Sonarr didn't answer.",
+  // The ordinary degradation: a source that did not answer has no page to send anyone to.
+  // `offers the help page the scan named` below is the other half.
+  degraded_doc: null,
   condemned: 2,
   protected: 3,
   abstained: 5,
@@ -150,6 +153,30 @@ describe("starting a library scan", () => {
 
     expect(await screen.findByText(/came back incomplete/i)).toBeInTheDocument();
     expect(screen.getByText(/sonarr didn't answer/i)).toBeInTheDocument();
+    // The control case for the pair below: this degradation named no page, so there is no
+    // button. Without it, a link that renders unconditionally would still pass that test.
+    expect(screen.queryByRole("button", { name: /rebuilding a plex library/i })).toBeNull();
+  });
+
+  it("offers the help page when the scan named one", async () => {
+    apiMock.scanStatus.mockResolvedValue(IDLE);
+    renderRow({ ...DEGRADED, degraded_doc: "plex-rebuild" });
+
+    // The label is the page's own title, read from the docs registry rather than written here,
+    // so this fails if the doc is renamed out from under the id the backend stores.
+    expect(
+      await screen.findByRole("button", { name: /rebuilding a plex library/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers nothing for a page this build does not have", async () => {
+    // A snapshot outlives the version that wrote it, so an id from a newer Reaper can arrive
+    // here. A button opening an empty modal is worse than no button.
+    apiMock.scanStatus.mockResolvedValue(IDLE);
+    renderRow({ ...DEGRADED, degraded_doc: "a-page-from-a-later-release" });
+
+    expect(await screen.findByText(/came back incomplete/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /a-page-from-a-later-release/i })).toBeNull();
   });
 
   it("keeps holding it between the finish and the fresh snapshot, then speaks for that one", async () => {

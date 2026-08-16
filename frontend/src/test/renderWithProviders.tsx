@@ -37,6 +37,7 @@ import {
   type RenderResult,
 } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
+import { DocsProvider } from "../docs/DocsContext";
 import { testQueryClient } from "./queryClient";
 
 /** Pass `client` when the test built one it needs a handle on before the first paint -- one it
@@ -46,7 +47,14 @@ type ProviderOptions = { client?: QueryClient };
 
 function providerWrapper(client: QueryClient) {
   return function Providers({ children }: { children: ReactNode }) {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    // `DocsProvider` for the same reason as the query client: `App` wraps everything in it, so a
+    // component holding a help link renders in the app and throws in a test. It fetches nothing
+    // and mounts nothing while closed, so it costs the tests that hold no link nothing at all.
+    return (
+      <QueryClientProvider client={client}>
+        <DocsProvider>{children}</DocsProvider>
+      </QueryClientProvider>
+    );
   };
 }
 

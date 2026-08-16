@@ -55,14 +55,14 @@ describe("the manual's generated pages", () => {
   // it; if you did not, a page dropped out of the walk.
   it("finds exactly one generated page per doc", () => {
     expect(generatedPages()).toHaveLength(DOCS.length);
-    expect(DOCS).toHaveLength(5);
+    expect(DOCS).toHaveLength(6);
   });
 
   // Rule 147: the marker is a source-text matcher, so pin the population it scans as well as the
   // population it selects. These two numbers moving together is the normal case; only one moving
   // means a hand-written page grew a banner, or a generated one lost it.
   it("counts the hand-written pages that sit beside them", () => {
-    expect(allPages()).toHaveLength(20);
+    expect(allPages()).toHaveLength(21);
     expect(allPages().length - generatedPages().length).toBe(15);
   });
 

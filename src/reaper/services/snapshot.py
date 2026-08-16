@@ -80,6 +80,7 @@ from reaper.engine.verdict import decide_verdict
 from reaper.ratings import Rating, RatingSource, from_radarr, merge_by_source
 from reaper.services import (
     history_sync,
+    identity_churn,
     library_index,
     library_seen,
     list_config,
@@ -1587,6 +1588,28 @@ async def scan(
         )
         if verdict == "condemn":
             condemned_keys.append(judgment.media_key)
+
+    # A library-wide identity event, which is the Plex-side twin of the Tautulli regression
+    # check (#809). Both lanes have bound by here, so this is the first point the share can be
+    # measured, and it reads evidence already in hand rather than asking anything.
+    #
+    # Above the grace clocks deliberately: rule 116 gates them on `context.degraded`, so a
+    # degradation found after them would leave a countdown running on a scan that just declared
+    # itself untrustworthy.
+    if (identity_moved := identity_churn.wholesale_change(seen_marks, seen_keys)) is not None:
+        context.degrade(identity_moved)
+        # The row took these two off the same context before either lane ran (search
+        # `degraded=context.degraded`), and this is the one degradation that cannot be known by
+        # then. Restated rather than shared because that one is an argument inside the
+        # constructor call; the join is a space for the reason written there.
+        snapshot.degraded = context.degraded
+        snapshot.degraded_reason = " ".join(context.degraded_reasons) or None
+        # The page the notice offers. Set here rather than returned with the sentence because
+        # it belongs to this cause alone: a scan that degraded for an unreachable Radarr as
+        # well still points at the rebuild guide, which is the one thing the operator can act
+        # on, and a later cause with a page of its own would be overwriting a link nobody can
+        # follow twice.
+        snapshot.degraded_doc = identity_churn.HELP_DOC
 
     # Grace clocks for everything condemned this run, in one batched pass -- the
     # _apply_first_flag decision per key, without a database round trip per item.

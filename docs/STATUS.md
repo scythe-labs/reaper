@@ -58,9 +58,9 @@ Last verified against the code: 2026-08-02.
    cap, the theme blocks, the iOS zoom floor, and rule 40's control standard at all ten of its
    boxes. Left: `.notice` still lives in the simulator section, and a dead-CSS pass that must
    stay manual, because 96 sites compute their class name.
-4. **The manual is one source, two renderers** (`frontend/src/docs/toMdx.ts`). Five pages are
-   generated into `manual/` from the app's typed blocks, eight hand-written beside them, all
-   thirteen served by `website/` on Docusaurus. `manual.gen.test.ts` fails on drift. Pages
+4. **The manual is one source, two renderers** (`frontend/src/docs/toMdx.ts`). Six pages are
+   generated into `manual/` from the app's typed blocks, fifteen hand-written beside them, all
+   twenty-one served by `website/` on Docusaurus. `manual.gen.test.ts` fails on drift. Pages
    publishes from `dev`; revisit at the first release, probably as Docusaurus versioning.
 
 ## Decisions locked
@@ -77,6 +77,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | What a hand reap may overrule | **Everything except a structural stop** † |
 | Watch-history reach | **Every reader that goes through `Facts`** † |
 | Watch history that vanished | **A high-water mark that cannot fall**, never a remapped key † |
+| A rebuilt source | **Tautulli's total aborts the scan, Plex's reissued keys degrade it** |
 | Why-panel scope | **Renders for keeps as well as deletes** † |
 | Delete mode | **A notice window, not a gate** † |
 | Autonomy | An **earned grant keyed to `policy_hash`** — any edit reverts to approval-required |

@@ -19,6 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api, type Run, type RunReport } from "../api";
+import { DegradedDocLink } from "../docs/DocLink";
 import { bytes, count, date, souls } from "../format";
 import { reapBlockers } from "../reapReadiness";
 import { usePlexTrash, trashWarning } from "../usePlexTrash";
@@ -304,10 +305,15 @@ export function ReapPlan({
         // route in is `useScanSettled` invalidating that key off the shell's 15s poll, which a
         // scheduled scan reaches with nothing pressed. `ScanBar` says the same thing about the
         // same field and moves with it (rule 72).
-        <Notice tone="warn" standing>
-          <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You can
-          still look at it, but Reaper won't act on it, so a plan can't be built. Fix the source and
-          scan again.
+        <Notice tone="warn" standing as="div" className="notice-doc">
+          <span>
+            <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You
+            can still look at it, but Reaper won't act on it, so a plan can't be built. Fix the
+            source and scan again.
+          </span>
+          {/* Nothing renders for a degradation with no page, which is most of them. `ScanBar`
+              carries the same pair (rule 72). */}
+          <DegradedDocLink doc={latestSnapshot?.degraded_doc ?? null} />
         </Notice>
       )}
 

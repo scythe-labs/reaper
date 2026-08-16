@@ -453,6 +453,10 @@ class SnapshotOut(BaseModel):
 
     degraded_reason: str | None = None
 
+    degraded_doc: str | None = None
+    """The in-app help page for that reason, by its docs id, or ``None`` where no page fits.
+    The notice renders a link to it only when this is set (``Snapshot.degraded_doc``)."""
+
     condemned: int = 0
     protected: int = 0
     abstained: int = 0

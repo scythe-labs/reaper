@@ -29,6 +29,9 @@ export interface Snapshot {
   item_count: number;
   degraded: boolean;
   degraded_reason: string | null;
+  /** The in-app help page for that reason, by its `docs/registry.ts` id, or null where no page
+   *  fits. Most degradations have none: an unreachable Radarr needs no guide. */
+  degraded_doc: string | null;
   condemned: number;
   protected: number;
   abstained: number;

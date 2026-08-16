@@ -195,6 +195,7 @@ async def _snapshot_out(session: AsyncSession, snapshot: Snapshot) -> SnapshotOu
         item_count=snapshot.item_count,
         degraded=snapshot.degraded,
         degraded_reason=snapshot.degraded_reason,
+        degraded_doc=snapshot.degraded_doc,
         condemned=int(counts.get("condemn", 0)),
         protected=int(counts.get("protect", 0)),
         abstained=int(counts.get("abstain", 0)),

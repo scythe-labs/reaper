@@ -1169,6 +1169,7 @@ const baseSnapshot: Snapshot = {
   item_count: 4,
   degraded: false,
   degraded_reason: null,
+  degraded_doc: null,
   condemned: 0,
   protected: 0,
   abstained: 0,
