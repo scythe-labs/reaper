@@ -95,6 +95,18 @@ SWEEP_MAX_PAGES = 1_000
 #: to ``PlexError`` (the snapshot then degrades), which is safe but not free.
 METADATA_BATCH_SIZE = 400
 
+#: What :meth:`PlexClient.collection_tags` asks Plex to leave out of its metadata batch: it
+#: reads one child element and the response carries every other one, which roughly halved the
+#: batch where it was measured (docs/LEARNINGS.md). ``Collection`` is deliberately absent from
+#: the exclusion. A server ignoring these params answers as before, and one that answered them
+#: by dropping Collection children would leave every collection short of its ``childCount``,
+#: which already sends the caller to the per-collection read.
+_TAGS_ONLY = (
+    "?excludeElements=Media,Genre,Country,Director,Writer,Producer,Role,Similar,Chapter,"
+    "Marker,Extras,Related,Rating,Review,Image,UltraBlurColors,Guid"
+    "&excludeFields=summary,tagline,titleSort"
+)
+
 
 def _parse_rating_children(el: Element) -> list[Rating]:
     """Per-provider scores from full-metadata ``Rating`` children.
@@ -467,6 +479,9 @@ class PlexCollectionRow:
     Plex's own member count. Membership -- which items actually sit inside it -- is a
     separate read, :meth:`PlexClient.collection_children`, which already exists (rule 72):
     this row is the shelf's identity, not its contents.
+
+    ``child_count`` is also what tells a caller that :meth:`PlexClient.collection_tags`
+    did not see all of this collection, since Plex counts members it stores no tag for.
     """
 
     rating_key: int
@@ -474,9 +489,10 @@ class PlexCollectionRow:
     child_count: int | None
 
 
-#: Plex's numeric metadata types, for listing and collection creation. Only the two the
-#: shelf works on: movies in movie sections, seasons in show sections.
-_PLEX_TYPE_CODES = {"movie": 1, "season": 3}
+#: Plex's numeric metadata types. The two the shelf works on -- movies in movie sections,
+#: seasons in show sections -- plus the show itself, which is the level a TV collection
+#: lists and therefore the level ``collection_tags`` reads a show library at.
+_PLEX_TYPE_CODES = {"movie": 1, "show": 2, "season": 3}
 
 
 def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[list[Any]]:
@@ -1286,6 +1302,75 @@ class PlexClient:
             return keys
 
         return await self._call(read, what=f"read collection {collection_key}")
+
+    async def collection_tags(self, section_key: int, *, kind: str) -> dict[int, tuple[str, ...]]:
+        """Every item's collection names in one section, keyed by rating key.
+
+        One request per 400 items, where asking each collection for its children costs one
+        per COLLECTION. A Plex read costs about the same whatever it returns, so a library
+        holding hundreds of collections spends the difference on per-request overhead alone
+        (measured in docs/LEARNINGS.md).
+
+        A "dumb" collection's membership IS each member's ``collection`` tag, which is what
+        :meth:`remove_collection_members` already writes through, and the full metadata read
+        carries those tags. **The section LISTING does not**, which is why this pays for a
+        second read rather than parsing the sweep's pages: it reports some of an item's tags
+        and drops the rest. Never a wrong tag, only a missing one, which would have shipped
+        as titles quietly losing their chip.
+
+        A collection Plex reports MORE members for than this returns is one whose membership
+        is not tags: a smart collection is a saved filter, and a collection of seasons or
+        episodes holds objects this section-level listing never lists. The caller compares
+        against ``child_count`` and reads those the per-collection way
+        (``services.snapshot._collection_membership``); this method reports what the tags say
+        and nothing more.
+
+        Collections are navigation, never protection (the fence in
+        ``docs/history/COLLECTIONS_PLAN.md``), so a short metadata chunk is logged and the
+        rest is returned rather than raised on -- the cost is a missing chip, and rule 28
+        binds evidence sources. The key LISTING is still complete-or-raise through
+        ``_iter_section_pages``, so a truncated page can never quietly shrink the section.
+        """
+        code = _PLEX_TYPE_CODES["movie" if kind == "movie" else "show"]
+        server = await self._connect()
+
+        def read() -> dict[int, tuple[str, ...]]:
+            keys = [
+                int(el.get("ratingKey") or 0)
+                for raw in _iter_section_pages(
+                    server, section_key, f"?type={code}", what="collection tag listing"
+                )
+                for el in raw
+            ]
+            out: dict[int, tuple[str, ...]] = {}
+            for start in range(0, len(keys), METADATA_BATCH_SIZE):
+                chunk = keys[start : start + METADATA_BATCH_SIZE]
+                batch = list(
+                    server.query(  # type: ignore[no-untyped-call]
+                        "/library/metadata/" + ",".join(str(k) for k in chunk) + _TAGS_ONLY
+                    )
+                )
+                if len(batch) < len(chunk):
+                    log.warning(
+                        "plex.collection_tags_short",
+                        section=section_key,
+                        requested=len(chunk),
+                        returned=len(batch),
+                    )
+                for el in batch:
+                    rk = el.get("ratingKey")
+                    names = tuple(
+                        str(c.get("tag") or "") for c in el.findall("Collection") if c.get("tag")
+                    )
+                    if rk is not None and names:
+                        out[int(rk)] = names
+            return out
+
+        # Deliberately NOT under ``_sweep_lock``, which the two GUID sweeps take: this is one
+        # request at a time where the fan-out it replaces was eight, so it adds a single
+        # reader beside them, and serializing it would add its whole cost to the index phase
+        # rather than overlapping it.
+        return await self._call(read, what=f"read collection tags in section {section_key}")
 
     # -- writing -----------------------------------------------------------
     #

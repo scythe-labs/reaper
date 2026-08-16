@@ -662,10 +662,11 @@ def _size_bucket(source: str | None) -> str:
     return str(source) if source else _UNMEASURED
 
 
-#: Bounds concurrent `collection_children` reads within one snapshot's collection pass.
-#: A section can hold dozens of collections, so an unbounded fan-out would open that many
-#: sockets against one Plex instance at once; separate from leaving_soon.SHELF_CONCURRENCY,
-#: which bounds a different fan-out (whole libraries, not collections within one).
+#: Bounds concurrent `collection_children` reads within one snapshot's collection pass --
+#: now only the collections the item tags could not account for, which is usually a handful.
+#: Kept bounded anyway: nothing caps how many collections a library keeps its membership
+#: elsewhere for. Separate from leaving_soon.SHELF_CONCURRENCY, which bounds a different
+#: fan-out (whole libraries, not collections within one).
 _COLLECTION_CHILDREN_CONCURRENCY = 8
 
 
@@ -696,10 +697,27 @@ async def _collection_membership(
     renders the same collection scan to scan instead of flipping with dict-iteration
     order.
 
-    Each section's ``collection_children`` reads run concurrently, bounded by
-    ``_COLLECTION_CHILDREN_CONCURRENCY``; one collection's failure is caught inside its
-    own task and logged rather than raised into the fan-out, so it can never cancel a
-    sibling read or degrade the snapshot.
+    **Membership comes from the items, not from the collections** (``plex.collection_tags``,
+    one read per ~400 items). Asking each collection for its children cost one read per
+    collection, which on a library holding hundreds of them was most of what a scan asked
+    Plex for, and it starved the GUID sweep running beside it.
+
+    A collection Plex reports more members for than the tags showed is read the old way,
+    per collection. That covers the two kinds whose membership is not a tag: a smart
+    collection is a saved filter, and a collection of seasons or episodes holds objects the
+    section-level listing never lists. Comparing against ``child_count`` finds both without
+    asking Plex which kind it is, where the ``smart`` flag cannot: it is absent from the
+    listing on a server that has none, so a pass keyed on it could not be shown to work.
+
+    A tag naming no collection in the section's own listing is dropped, since Plex leaves
+    one behind when a collection is deleted and a chip for a shelf nobody can open is worse
+    than no chip. Tags are matched to the listing casefolded and the LISTING's spelling is
+    stored (rule 88), so a chip's name is the name the size map is keyed by.
+
+    The fallback reads run concurrently, bounded by ``_COLLECTION_CHILDREN_CONCURRENCY``;
+    one collection's failure is caught inside its own task and logged rather than raised
+    into the fan-out, so it can never cancel a sibling read or degrade the snapshot. A
+    collection read both ways lands on one chip, since the per-item names are a set.
     """
     if plex is None:
         return {}, {}
@@ -709,7 +727,9 @@ async def _collection_membership(
         log.warning("snapshot.collections_unreadable", error=str(exc))
         return {}, {}
 
-    membership: dict[int, list[str]] = {}
+    # A SET per item: a collection the tags covered AND the fallback read returns arrives
+    # twice, and the sort below is a total order, so nothing depends on insertion order.
+    membership: dict[int, set[str]] = {}
     sizes: dict[str, int] = {}
     bound = asyncio.Semaphore(_COLLECTION_CHILDREN_CONCURRENCY)
 
@@ -738,13 +758,40 @@ async def _collection_membership(
             if row.child_count is not None:
                 sizes[row.title] = sizes.get(row.title, 0) + row.child_count
 
+        try:
+            tags = await plex.collection_tags(section.key, kind=section.kind)
+        except PlexError as exc:
+            # The section's own listing already succeeded, so its sizes stand and every
+            # collection in it falls to the per-collection read below (rule 28 does not
+            # bind here: a collection is not evidence).
+            log.warning("snapshot.collection_tags_unreadable", section=section.key, error=str(exc))
+            tags = {}
+
+        by_fold = {fold(row.title): row.title for row in rows}
+        seen: Counter[str] = Counter()
+        for key, names in tags.items():
+            for name in names:
+                stored = by_fold.get(fold(name))
+                if stored is None:
+                    continue
+                seen[stored] += 1
+                membership.setdefault(key, set()).add(stored)
+
+        unexplained = [row for row in rows if row.child_count and seen[row.title] < row.child_count]
+        if unexplained:
+            log.info(
+                "snapshot.collection_children_fallback",
+                section=section.key,
+                collections=len(unexplained),
+                of=len(rows),
+            )
         # Argument order, not completion order (reaper.aio.gather_reaped), so the merge
         # below is deterministic run to run even though the reads race.
-        for title, children in await gather_reaped(*(_children(row) for row in rows)):
+        for title, children in await gather_reaped(*(_children(row) for row in unexplained)):
             if children is None:
                 continue
             for key in children:
-                membership.setdefault(key, []).append(title)
+                membership.setdefault(key, set()).add(title)
 
     def _size_key(name: str) -> tuple[int, int, str]:
         size = sizes.get(name)

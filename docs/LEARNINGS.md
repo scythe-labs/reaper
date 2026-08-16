@@ -4135,6 +4135,42 @@ a Plex collection like any other. That is left as-is: it is a real shelf, and on
 every library's leaving-soon titles is arguably useful. Whether a shelf Reaper itself maintains
 should be offered as navigation is still open.
 
+## A Plex read costs a request, not a payload (2026-08-15)
+
+The collections pass asked each collection for its children. On one live library that was 397
+requests, 667 seconds of Plex time and 93% of everything the scan asked Plex for, running 8 at a
+time beside the GUID sweep, which is why a 126 ms read was taking 7 seconds mid-scan.
+
+| Read | Cost |
+|---|---|
+| `/library/collections/{key}/children`, 20 of them holding 41 members between them | 1,013 ms each |
+| the same 20 with `excludeElements` stripping the payload | 960 ms each |
+| `/library/metadata/<400 ids>` | 4,546 ms |
+| the same 400 ids with `excludeElements` | 2,648 ms |
+
+**A near-empty response costs about what a full one does, so the cure for N requests is never a
+smaller N-th response.** Stripping a children read saved 5%; asking a different question saved
+99%. Membership lives on each member as a `collection` tag, so one batched metadata read per 400
+items answers a whole library: 10 requests against 395. Payload trimming is worth something only
+where the request count is already floored, which is where the 42% above lands.
+
+**The section listing carries the same tags and drops most of them.** `/library/sections/{k}/all`
+reported 8 of the 105 tags the metadata read returned for the same 400 items, and 96 tagged rows
+of 3,461 against a true 1,012 memberships. Never a wrong tag, only a missing one, so a sweep that
+parsed the listing for free would have shipped as "some titles lost their chip" and read as a
+Plex quirk rather than as a read that cannot answer this.
+
+**What the tags cannot see, `childCount` gives away.** Item tags accounted for 1,020 of 1,029
+declared memberships. The gap was one collection holding objects the section listing never lists;
+a smart collection is a saved filter and leaves no tag either. Comparing each collection's tag
+count against Plex's own `childCount` finds both without asking which it is, and 2 collections of
+397 fell back to their own read. The `smart` attribute could not have done it: it is absent from
+the listing on a server with no smart collection, so a pass keyed on it could not be shown to
+work at all.
+
+⇒ Before optimizing a read, measure whether its cost tracks what it returns. Where it does not,
+the only lever is asking fewer times.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

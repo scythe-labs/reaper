@@ -214,6 +214,87 @@ class TestLibraryGuidIndex:
         assert len(server.queries) == 2  # one listing page + one metadata batch
 
 
+class TestCollectionTags:
+    """#820: the section's whole membership in one read per ~400 items, off each item's own
+    ``collection`` tags, where asking each collection for its children cost one read per
+    collection."""
+
+    @staticmethod
+    def _server(listing: str, batch: str, *, section: int = 1, kind: str = "movie") -> _FakeServer:
+        return _FakeServer(
+            [_FakeSection(section, kind)],
+            {
+                f"/library/sections/{section}/all": listing,
+                "/library/metadata/": batch,
+            },
+        )
+
+    async def test_a_sections_membership_arrives_in_two_requests(self) -> None:
+        listing = (
+            '<MediaContainer size="3" totalSize="3">'
+            '<Video ratingKey="41"/><Video ratingKey="42"/><Video ratingKey="43"/>'
+            "</MediaContainer>"
+        )
+        batch = (
+            '<MediaContainer size="3">'
+            '<Video ratingKey="41"><Collection tag="Cult Classics"/></Video>'
+            '<Video ratingKey="42">'
+            '<Collection tag="Cult Classics"/><Collection tag="Heist"/>'
+            "</Video>"
+            '<Video ratingKey="43"/>'
+            "</MediaContainer>"
+        )
+        server = self._server(listing, batch)
+
+        tags = await _client_with(server).collection_tags(1, kind="movie")
+
+        assert tags == {41: ("Cult Classics",), 42: ("Cult Classics", "Heist")}
+        # An item in nothing is absent, never an empty tuple: the caller stores "no
+        # membership" as nothing at all, and a key present with () would read as one.
+        assert 43 not in tags
+        # THE point: three items, TWO requests -- one listing page plus one metadata batch.
+        assert len(server.queries) == 2
+
+    async def test_a_show_library_is_read_at_the_show_level(self) -> None:
+        """A TV collection lists SHOWS, and the chip is looked up by the show's own key.
+        Reading a show section at ``type=3`` would return seasons, whose keys match no
+        chip -- every TV collection would silently come back empty."""
+        listing = (
+            '<MediaContainer size="1" totalSize="1"><Directory ratingKey="90"/></MediaContainer>'
+        )
+        batch = (
+            '<MediaContainer size="1">'
+            '<Directory ratingKey="90"><Collection tag="Comfort Shows"/></Directory>'
+            "</MediaContainer>"
+        )
+        server = self._server(listing, batch, section=2, kind="show")
+
+        tags = await _client_with(server).collection_tags(2, kind="show")
+
+        assert tags == {90: ("Comfort Shows",)}
+        assert "type=2" in server.queries[0]
+
+    async def test_a_short_metadata_batch_keeps_what_it_read(self) -> None:
+        """Rule 28 binds evidence sources and a collection is not one, so a server that
+        windows the multi-id response costs a chip, never the scan (the GUID sweep's own
+        batch degrades on this, which is the contrast: it carries the ratings)."""
+        listing = (
+            '<MediaContainer size="2" totalSize="2">'
+            '<Video ratingKey="41"/><Video ratingKey="42"/>'
+            "</MediaContainer>"
+        )
+        batch = (
+            '<MediaContainer size="1">'
+            '<Video ratingKey="41"><Collection tag="Cult Classics"/></Video>'
+            "</MediaContainer>"
+        )
+        server = self._server(listing, batch)
+
+        tags = await _client_with(server).collection_tags(1, kind="movie")
+
+        assert tags == {41: ("Cult Classics",)}
+
+
 SEASON_LISTING = """
 <MediaContainer size="4" totalSize="4">
   <Directory ratingKey="901" parentRatingKey="900" index="1" addedAt="1000000" title="Season 1"/>
