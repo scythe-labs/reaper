@@ -2445,16 +2445,14 @@ _MYPY_INVOCATION = re.compile(r"uv run mypy ((?:[\w./\[\]*-]+ ?)+?)(?=\s*(?:#|`|
 #: `.github/workflows/ci.yml`, `CONTRIBUTING.md`, `.claude/skills/reaper-review/SKILL.md`, and
 #: `tests/_fakes.py`'s own docstring -- which is the copy most likely to go stale, since it is
 #: the file arguing for its place on the gate. `docs/history/**` is frozen and records what the
-#: gate was at the time, so it is skipped rather than counted; `docs/I18N_PLAN.md` proposes a
-#: gate for a plan nothing has started, and `docs/history/SIMPLIFICATION_PLAN.md` records
-#: the command as
-#: it stood when a change landed and moves to `docs/history/` when it retires.
+#: gate was at the time, so it is skipped rather than counted, and `docs/I18N_PLAN.md` proposes
+#: a gate for a plan nothing has started.
 _EXPECTED_MYPY_SITES = 4
 
 #: Files that quote the command as a record rather than as the instruction to follow. A record
 #: is pinned to its moment, so holding it to today's gate would ask a finished plan to be edited
 #: every time the gate moves.
-_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md", "docs/history/SIMPLIFICATION_PLAN.md")
+_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md")
 
 
 def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
@@ -3259,13 +3257,10 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
 
     #: A dotted name ending in one of these is a filename, not a symbol: `api.types.gen.ts`.
     suffixes = (".ts", ".tsx", ".py", ".md", ".mdx", ".json", ".css", ".html", ".yml", ".yaml")
-    #: `docs/history/SIMPLIFICATION_PLAN.md` is exempt, and it is the one document that has
-    #: to be. Its
-    #: finding bodies quote the tree as it stood *before* each change, with `> Corrected:` and
-    #: `Landed` blocks layered on top rather than edited in — so a citation that no longer
-    #: resolves is often the record working, not rot. Re-pathing them against today's tree would
-    #: destroy the history the plan exists to keep (its own preamble says so of `refuted.md`).
-    exempt = {REPO / "docs" / "SIMPLIFICATION_PLAN.md"}
+    #: The archive never reaches this walk, and has to not: its finding bodies quote the tree as
+    #: it stood *before* each change, with `> Corrected:` and `Landed` blocks layered on top
+    #: rather than edited in, so a citation that no longer resolves is often the record working,
+    #: not rot. `_live_docs()` is what keeps `docs/history/` out, so nothing here exempts it.
     #: This file names the retired module to DECLARE it, in `retired_modules` and in the prose
     #: explaining why the tombstone exists, so the tombstone check skips its own declaration.
     #: Scoped to that check alone -- the dotted check below still reads this file.
@@ -3298,7 +3293,7 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
     assert modules, "the module walk found nothing, so every check below passes vacuously"
 
     dangling: list[str] = []
-    for path in [p for p in (*_code_files(), *_live_docs()) if p not in exempt]:
+    for path in _code_and_live_docs():
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if path != declares_the_tombstone:
                 for m in cites.finditer(line):
@@ -5393,13 +5388,7 @@ def test_the_four_packages_import_only_downward() -> None:
     modules = _layered_modules()
     assert len(modules) == _EXPECTED_LAYERED_MODULES, (
         f"expected {_EXPECTED_LAYERED_MODULES} modules under {'/, '.join(_LAYERS)}/, walked "
-        f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number -- AND the two prose\n"
-        "copies of it, which nothing else asserts (rule 144):\n"
-        "docs/history/SIMPLIFICATION_PLAN.md's S7\n"
-        "paragraph names this constant and restates the figure, and its C3 checkpoint row does\n"
-        "too. Both were already stale by two when this message was written. Leave the *Landed*\n"
-        "rows alone -- their figures are historical deltas, and editing one makes a correct\n"
-        "record false.\n"
+        f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number here.\n"
         "`_EXPECTED_SOURCE_MODULES` moves with the same module, counting all of src/reaper\n"
         "rather than these four, and it fails separately rather than telling you about this.\n"
         "If you did not add or delete one, the walk lost part of the tree -- and every\n"
@@ -5455,10 +5444,7 @@ def test_every_deferred_cross_package_import_is_named() -> None:
         f"  gone: {sorted(_DEFERRED_CROSS_PACKAGE_IMPORTS - deferred) or 'none'}\n\n"
         "The set is empty, so anything here at all is NEW, and a new one needs a\n"
         "reason written down: it is a cross-package dependency that no import graph will show,\n"
-        "so if it is here to break a cycle, name the cycle.\n"
-        "docs/history/SIMPLIFICATION_PLAN.md's S7 paragraph restates this set's size in\n"
-        "prose, and\n"
-        "nothing asserts that copy (rule 144)."
+        "so if it is here to break a cycle, name the cycle."
     )
 
 
@@ -6650,8 +6636,7 @@ def test_every_arr_client_is_built_with_the_same_arguments() -> None:
     assert len(sites) == _EXPECTED_ARR_CONSTRUCTIONS, (
         f"expected {_EXPECTED_ARR_CONSTRUCTIONS} *arr client constructions under src/, walked "
         f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass "
-        f"{sorted(_ARR_CONSTRUCTION_ARGS)}; bump the number here AND in "
-        "docs/history/SIMPLIFICATION_PLAN.md's wave 3 row, which states the population in prose."
+        f"{sorted(_ARR_CONSTRUCTION_ARGS)}; bump the number here."
     )
     missing = {
         site: sorted(_ARR_CONSTRUCTION_ARGS - args)
@@ -6784,9 +6769,7 @@ def test_every_client_carries_the_operators_own_tls_setting() -> None:
     assert len(sites) == _EXPECTED_TLS_CONSTRUCTIONS, (
         f"expected {_EXPECTED_TLS_CONSTRUCTIONS} client constructions under src/ for "
         f"{sorted(_TLS_CLIENTS)}, walked {len(sites)}: {sorted(sites)}. A new one is fine and "
-        f"must pass {sorted(_TLS_CLIENT_ARGS)}; bump the number here AND in "
-        "docs/history/SIMPLIFICATION_PLAN.md's W3b-8 kill block, which states it in prose "
-        "(rule 144). "
+        f"must pass {sorted(_TLS_CLIENT_ARGS)}; bump the number here. "
         "A new client CLASS built against a stored address belongs in _TLS_CLIENTS, or the "
         "walk cannot see any of its sites and this count cannot tell you."
     )
@@ -7035,9 +7018,7 @@ def test_a_judged_item_is_never_handed_the_other_lanes_policy() -> None:
     assert len(sites) == _EXPECTED_JUDGE_ITEM_CALLS, (
         f"expected {_EXPECTED_JUDGE_ITEM_CALLS} `_judge_item` calls under src/, walked "
         f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass every argument in "
-        f"{sorted(_LANE_ARGUMENTS)} off one lane's locals; bump the number here AND in "
-        "docs/history/SIMPLIFICATION_PLAN.md's wave 3 parameter-object paragraph, which states the "
-        "population in prose."
+        f"{sorted(_LANE_ARGUMENTS)} off one lane's locals; bump the number here."
     )
     lanes: dict[str, str] = {}
     for site, args in sorted(sites.items()):
