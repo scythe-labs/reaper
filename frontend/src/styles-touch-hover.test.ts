@@ -66,4 +66,16 @@ describe("the collection chip's hover", () => {
     expect(code).toContain(expanded);
     expect(guarded).not.toContain(expanded);
   });
+
+  // The half this file was written without, and it left the chip with NO feedback on a tap:
+  // hover is pointer-only above, and `:focus-visible` never matches a tap at all, since Safari
+  // reserves it for keyboard focus. Press is the state a touch device actually has, so it must
+  // exist and must never move inside the hover guard.
+  it("lights on press, on every device, so a tap is never silent", () => {
+    const guarded = hoverGuardedRegions().join("\n");
+    for (const rule of [".coll-chip-main:active", ".coll-chip-caret:active"]) {
+      expect(code).toContain(rule);
+      expect(guarded).not.toContain(rule);
+    }
+  });
 });

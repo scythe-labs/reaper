@@ -196,10 +196,33 @@
     border-color: var(--accent);
   }
 }
+/* PRESS is the state a touch device actually has, and it is the one that has to paint. Hover
+   above is pointer-only and `:focus-visible` below never matches a tap at all (Safari reserves
+   it for keyboard focus), so between them a tapped chip had nothing: the whole chip lights on
+   `:active`, from either half, on every device. */
+.coll-chip-main:active,
+.coll-chip-caret:active {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.coll-chip:has(.coll-chip-main:active),
+.coll-chip:has(.coll-chip-caret:active) {
+  border-color: var(--accent);
+}
+/* The ring wraps the WHOLE chip, from either half. Drawn on the inner button it landed inside
+   the chip's own 1px border (`outline-offset: -2px`), so it read as a second edge crowded into
+   the first, and on a split chip it ringed the name and left the caret outside the selection
+   it belongs to. The chip is one control with two targets, so the selection is the chip. */
+.coll-chip:has(.coll-chip-main:focus-visible),
+.coll-chip:has(.coll-chip-caret:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The inner ring stands down for the one above rather than drawing a second. `:focus-visible`
+   still lands on a real button, so this removes a duplicate indicator, never the only one. */
 .coll-chip-main:focus-visible,
 .coll-chip-caret:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  outline: none;
 }
 .coll-chip:has(.coll-chip-caret[aria-expanded="true"]) {
   border-color: var(--accent);
