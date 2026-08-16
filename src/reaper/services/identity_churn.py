@@ -84,8 +84,20 @@ def wholesale_change(recorded: Mapping[str, Seen], bound: Mapping[str, set[int]]
         log.info("scan.identity_churn", changed=changed, known=known)
         return None
     log.warning("scan.identity_churn_wholesale", changed=changed, known=known)
+    # The repair, in the order an operator has to do it. Tautulli keeps every play filed under
+    # the id the file had when it was watched, so a rebuild leaves its history pointing at
+    # copies that are gone, and that is fixed at the source. Reaper's own mirror is corrected
+    # by the full sweep, which replaces each row by its id rather than only adding new ones
+    # (`scheduler.full_history_sweep`), and the name here is the job's own title in
+    # `JobsPanel.tsx` (rule 144).
+    #
+    # Deliberately NOT the Forget button on Settings, Plex. That one discards the record that
+    # tells "the plays went unreadable" from "nobody ever watched it", which withdraws three
+    # protections from every title at once. It is where an operator lands when the source
+    # cannot be repaired, and a notice that offers it first turns the fallback into the
+    # instruction.
     return (
         f"Plex is listing {changed:,} of the {known:,} titles Reaper knows as brand new, "
-        "which usually means a library was rebuilt or moved. If that was you, clear the "
-        "recorded watch history in Settings → Plex, then scan again"
+        "which usually means a library was rebuilt or moved. Repair the watch history in "
+        "Tautulli, then run a full watch-history update on Settings → Jobs"
     )

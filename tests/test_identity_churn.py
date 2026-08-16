@@ -51,10 +51,12 @@ class TestWhatCountsAsChanged:
     def test_a_rebuilt_library_is_named_for_the_operator(self) -> None:
         said = identity_churn.wholesale_change(_ledger(LIBRARY), _bound(LIBRARY, changed=LIBRARY))
         assert said is not None
-        # The counts, and the one control that repairs the damage a rebuild does to the watch
-        # record (`api/plex.reset_watch_evidence`, "Recorded watch history" in `PlexPanel`).
+        # The counts, and the repair in the order it has to happen: Tautulli holds the plays
+        # under the ids the files used to have, and the full sweep is what pulls the corrected
+        # ids into Reaper's mirror (`scheduler.full_history_sweep`).
         assert "300 of the 300" in said
-        assert "Settings → Plex" in said
+        assert "Tautulli" in said
+        assert "Settings → Jobs" in said
 
     def test_ordinary_key_churn_is_not_an_event(self) -> None:
         """About one entry in a thousand moves on a healthy library (docs/LEARNINGS.md)."""
