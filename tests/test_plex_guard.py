@@ -501,13 +501,9 @@ class TestEveryRefusalIsOnTheRecord:
 
 
 class TestTheConnectionCarriesReapersOwnTimeout:
-    """plexapi's default read budget is 30 seconds, which is a budget for an idle server.
-    A busy library answers a section sweep in tens of seconds, so the default fired on a
-    server that was working and cost the scan a protection source.
-
-    ``PlexServer.query`` reads the timeout off the server object and passes it explicitly
-    on every call, so a default set on the session alone would be overridden. This pins
-    that the value reaches the constructor."""
+    """``query`` reads the timeout off the server object and passes it explicitly on every
+    call, so a default set on the session alone would be overridden and the widening would
+    read as applied while doing nothing."""
 
     async def test_the_server_is_built_with_the_wider_budget(
         self, monkeypatch: pytest.MonkeyPatch
@@ -527,7 +523,5 @@ class TestTheConnectionCarriesReapersOwnTimeout:
         await PlexClient("http://plex.test", "t", safety=READ_ONLY).connect()
 
         assert captured["timeout"] == PLEX_READ_TIMEOUT
-        # The claim is that it is WIDER than what plexapi would have used. Asserting the
-        # constant alone would still pass if it were lowered to plexapi's own default
-        # (rule 141).
+        # Wider than plexapi's own, which the constant alone cannot prove (rule 141).
         assert PLEX_READ_TIMEOUT > plexapi.TIMEOUT

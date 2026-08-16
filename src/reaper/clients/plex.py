@@ -107,19 +107,14 @@ _TAGS_ONLY = (
     "&excludeFields=summary,tagline,titleSort"
 )
 
-#: Seconds Reaper waits for one Plex response, against plexapi's own default of 30.
+#: Seconds Reaper waits for one Plex response, over plexapi's default of 30, which is a
+#: budget for an idle server. A busy library can take longer than that to answer a section
+#: sweep, and the read that times out is a protection source the scan then does without.
+#: Still a bound: nothing here waits forever.
+#:
 #: ``PlexServer.query`` passes it on every call, so it covers the sweeps, the shelf reads and
-#: the writes alike.
-#:
-#: Raised because 30 is a budget for an idle server. A library serving several clients answers
-#: a section sweep in tens of seconds, and a read measured at 126 ms idle took 7 seconds with
-#: a scan's own reads running beside it. So the timeout fired on a server that was working,
-#: and the scan lost a protection source because the library was busy. Nothing waits forever
-#: either way: this is a bound, just one set for a real server rather than a quiet one.
-#:
-#: This is the PMS connection. The watchlist reads plex.tv through ``myPlexAccount()``, which
-#: plexapi builds with no timeout of its own, so that one call keeps the library's 30 -- a
-#: different server, where a slow answer means the internet rather than a busy library.
+#: the writes alike. The watchlist reads plex.tv through ``myPlexAccount()``, which plexapi
+#: builds with no timeout, so that one call keeps the 30.
 PLEX_READ_TIMEOUT = 60
 
 
@@ -663,9 +658,8 @@ class PlexClient:
 
             # The guarded session, not plexapi's default. Every write plexapi makes
             # goes through it, so Plex is held to the same rule as everything else.
-            # The timeout rides the server object because that is where plexapi reads it
-            # from on every query; a default on the session alone would be overridden,
-            # since query passes its own value explicitly.
+            # The timeout rides the server object, not the session: query passes its own
+            # value explicitly, so a session default would be overridden.
             return _PlexServer(  # type: ignore[no-untyped-call]
                 self._base_url,
                 self._token,
