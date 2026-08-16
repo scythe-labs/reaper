@@ -194,7 +194,7 @@ class _FakeCollectionsPlex(PlexClient):
         self._fail_tags_section = fail_tags_section
         self._movie_spine = movie_spine if movie_spine is not None else _movie_spine()
         #: Every ``collection_children`` call this fake answered, in order. The point of the
-        #: tag read is that this stays empty for an ordinary library (#821).
+        #: tag read is that this stays empty for an ordinary library (#820).
         self.children_reads: list[int] = []
 
     async def library_guid_index(
@@ -955,8 +955,8 @@ class TestAnUnknownCollectionSizeIsNotZero:
 
 
 class TestMembershipIsReadFromTheItems:
-    """#821: a scan asked every collection for its children -- 397 reads and 667 seconds of
-    Plex time on a live library, which also starved the GUID sweep running beside it. The
+    """#820: a scan asked every collection for its children, one read each, which on a
+    library holding hundreds of them starved the GUID sweep running beside it. The
     membership is on the items instead, one read per ~400 of them, and only a collection
     Plex counts more members for than the tags showed is still read its own way."""
 

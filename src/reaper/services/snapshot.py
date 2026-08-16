@@ -663,10 +663,9 @@ def _size_bucket(source: str | None) -> str:
 
 
 #: Bounds concurrent `collection_children` reads within one snapshot's collection pass --
-#: now only the collections the item tags could not account for, which on a live server was
-#: 1 of 397. Kept bounded anyway: what makes a collection need this read is that Plex holds
-#: its membership somewhere other than the members' tags, and nothing caps how many of those
-#: a library has. Separate from leaving_soon.SHELF_CONCURRENCY, which bounds a different
+#: now only the collections the item tags could not account for, which is usually a handful.
+#: Kept bounded anyway: nothing caps how many collections a library keeps its membership
+#: elsewhere for. Separate from leaving_soon.SHELF_CONCURRENCY, which bounds a different
 #: fan-out (whole libraries, not collections within one).
 _COLLECTION_CHILDREN_CONCURRENCY = 8
 
@@ -698,28 +697,22 @@ async def _collection_membership(
     renders the same collection scan to scan instead of flipping with dict-iteration
     order.
 
-    **Membership comes from the items, not from the collections.** One read per ~400 items
-    (``plex.collection_tags``) carries every member's collection names, where asking each
-    collection for its children costs one read per collection. Measured across a live
-    server's libraries: the whole pass ran in 37 seconds and about 50 requests, where it had
-    been 397 requests and 667 seconds of Plex time -- 93% of everything that scan asked Plex
-    for -- and it stopped saturating the server the GUID sweep reads beside it, where a
-    126 ms read had been taking 7 seconds.
+    **Membership comes from the items, not from the collections** (``plex.collection_tags``,
+    one read per ~400 items). Asking each collection for its children cost one read per
+    collection, which on a library holding hundreds of them was most of what a scan asked
+    Plex for, and it starved the GUID sweep running beside it.
 
     A collection Plex reports more members for than the tags showed is read the old way,
-    per collection. That is what covers the two kinds of collection whose membership is not
-    a tag: a smart collection is a saved filter, and a collection of seasons or episodes
-    holds objects the section-level listing never lists. Comparing against ``child_count``
-    finds both without asking Plex which kind it is -- the ``smart`` flag is absent from the
-    listing on a server with no smart collection, so a pass keyed on it could not be shown
-    to work. On that server this fell back for 1 collection of 397, and the membership it
-    returned held every one of the 1,029 memberships Plex declared.
+    per collection. That covers the two kinds whose membership is not a tag: a smart
+    collection is a saved filter, and a collection of seasons or episodes holds objects the
+    section-level listing never lists. Comparing against ``child_count`` finds both without
+    asking Plex which kind it is, where the ``smart`` flag cannot: it is absent from the
+    listing on a server that has none, so a pass keyed on it could not be shown to work.
 
-    A tag naming no collection in the section's own listing is dropped: Plex leaves a
-    ``collection`` tag behind on items whose collection is gone (3 such names on the live
-    library), and a chip for a shelf the operator can no longer open is worse than no chip.
-    Tags are matched to the listing casefolded and the LISTING's spelling is what is stored
-    (rule 88), so the name a chip shows is the name the size map is keyed by.
+    A tag naming no collection in the section's own listing is dropped, since Plex leaves
+    one behind when a collection is deleted and a chip for a shelf nobody can open is worse
+    than no chip. Tags are matched to the listing casefolded and the LISTING's spelling is
+    stored (rule 88), so a chip's name is the name the size map is keyed by.
 
     The fallback reads run concurrently, bounded by ``_COLLECTION_CHILDREN_CONCURRENCY``;
     one collection's failure is caught inside its own task and logged rather than raised

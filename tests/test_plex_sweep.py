@@ -215,9 +215,9 @@ class TestLibraryGuidIndex:
 
 
 class TestCollectionTags:
-    """#821: the section's whole membership in one read per ~400 items, off each item's
-    own ``collection`` tags -- where asking each collection for its children cost one read
-    per collection (397 of them, and 667 seconds of Plex time, on a live library)."""
+    """#820: the section's whole membership in one read per ~400 items, off each item's own
+    ``collection`` tags, where asking each collection for its children cost one read per
+    collection."""
 
     @staticmethod
     def _server(listing: str, batch: str, *, section: int = 1, kind: str = "movie") -> _FakeServer:

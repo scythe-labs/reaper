@@ -95,14 +95,12 @@ SWEEP_MAX_PAGES = 1_000
 #: to ``PlexError`` (the snapshot then degrades), which is safe but not free.
 METADATA_BATCH_SIZE = 400
 
-#: What :meth:`PlexClient.collection_tags` asks Plex to leave out of its metadata batch. It
-#: reads one child element and the response carries every other one, so a 400-item batch took
-#: 4,546 ms and 2,648 ms with this appended -- measured twice each on a live server
-#: (2026-08-15), returning tag for tag the same membership. ``Collection`` is deliberately
-#: absent from the exclusion. A server that ignores these params answers exactly as before;
-#: one that answered them by dropping Collection children too would leave every collection
-#: short of its own ``childCount``, which is the condition that already sends the caller to
-#: the per-collection read, so this cannot quietly empty a chip.
+#: What :meth:`PlexClient.collection_tags` asks Plex to leave out of its metadata batch: it
+#: reads one child element and the response carries every other one, which roughly halved the
+#: batch where it was measured (docs/LEARNINGS.md). ``Collection`` is deliberately absent from
+#: the exclusion. A server ignoring these params answers as before, and one that answered them
+#: by dropping Collection children would leave every collection short of its ``childCount``,
+#: which already sends the caller to the per-collection read.
 _TAGS_ONLY = (
     "?excludeElements=Media,Genre,Country,Director,Writer,Producer,Role,Similar,Chapter,"
     "Marker,Extras,Related,Rating,Review,Image,UltraBlurColors,Guid"
@@ -1308,22 +1306,17 @@ class PlexClient:
     async def collection_tags(self, section_key: int, *, kind: str) -> dict[int, tuple[str, ...]]:
         """Every item's collection names in one section, keyed by rating key.
 
-        The whole section's membership in about one request per 400 items, where asking each
-        collection for its children costs one request per COLLECTION. Measured on a live
-        server (2026-08-15): a 3,461-item movie library holding 395 collections answered this
-        in 10 requests against 395, and returned the same membership. What makes that a
-        saving is that a children read costs about a second whatever it returns: 20 of them
-        holding 41 members between them took 1,013 ms each, and slimming the response changed
-        nothing. So the old pass spent 667 seconds of Plex time on per-request overhead, and
-        spent it 8 reads at a time against the server the GUID sweep was reading beside it.
+        One request per 400 items, where asking each collection for its children costs one
+        per COLLECTION. A Plex read costs about the same whatever it returns, so a library
+        holding hundreds of collections spends the difference on per-request overhead alone
+        (measured in docs/LEARNINGS.md).
 
         A "dumb" collection's membership IS each member's ``collection`` tag, which is what
         :meth:`remove_collection_members` already writes through, and the full metadata read
         carries those tags. **The section LISTING does not**, which is why this pays for a
-        second read rather than parsing the sweep's pages: on that same library the listing
-        reported 8 of the 105 tags the metadata read returned for the same 400 items. It was
-        never wrong, only short, which is the shape that would have shipped as "some titles
-        lost their chip" and read as a Plex quirk.
+        second read rather than parsing the sweep's pages: it reports some of an item's tags
+        and drops the rest. Never a wrong tag, only a missing one, which would have shipped
+        as titles quietly losing their chip.
 
         A collection Plex reports MORE members for than this returns is one whose membership
         is not tags: a smart collection is a saved filter, and a collection of seasons or
@@ -1373,11 +1366,10 @@ class PlexClient:
                         out[int(rk)] = names
             return out
 
-        # Deliberately NOT under ``_sweep_lock``, which the two GUID sweeps take. This is one
-        # request at a time where the pass it replaces was eight, so it adds a single reader
-        # beside them -- fewer than the ``collection_children`` fan-out already ran -- and
-        # serializing it behind the sweeps would add its ~50 seconds to the index phase
-        # instead of hiding them under the season pass that owns the gather's wall.
+        # Deliberately NOT under ``_sweep_lock``, which the two GUID sweeps take: this is one
+        # request at a time where the fan-out it replaces was eight, so it adds a single
+        # reader beside them, and serializing it would add its whole cost to the index phase
+        # rather than overlapping it.
         return await self._call(read, what=f"read collection tags in section {section_key}")
 
     # -- writing -----------------------------------------------------------
