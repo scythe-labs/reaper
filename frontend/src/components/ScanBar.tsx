@@ -14,6 +14,7 @@ import { useIsFetching, useMutation, useQueryClient } from "@tanstack/react-quer
 import { useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type ScheduledJob, type Snapshot } from "../api";
+import { DegradedDocLink } from "../docs/DocLink";
 import { bytes, count, totalBytes } from "../format";
 import { useScanStatus } from "../useScanStatus";
 import { JobStatus, useJobFlash } from "./JobStatus";
@@ -312,14 +313,20 @@ export function ScanRow({
             `ScanFreshness.tsx`'s freshness line is the age of the queue rendered below it, both still true
             for as long as that snapshot is the one on hand. */}
         {snapshot?.degraded && !supersededSnapshot && (
-          <Notice tone="warn" standing>
+          <Notice tone="warn" standing as="div" className="notice-doc">
             {/* What it means before why it happened. The consequence clause was dropped from
                 here and from the Review page's line, leaving `ReapPlan` the only one of the
                 three still saying it, and whether the operator saw it at all then depended on
                 which source had failed: only `library_index`'s reasons carry "Nothing may be
                 deleted from this scan" in their own text (rules 21, 72, 144). */}
-            <strong>This scan came back incomplete.</strong> Reaper won&apos;t act on it.{" "}
-            {snapshot.degraded_reason}
+            <span>
+              <strong>This scan came back incomplete.</strong> Reaper won&apos;t act on it.{" "}
+              {snapshot.degraded_reason}
+            </span>
+            {/* Nothing renders for a degradation with no page, which is most of them, so this
+                notice looks exactly as it did unless the scan named one. `ReapPlan` carries the
+                same pair (rule 72). */}
+            <DegradedDocLink doc={snapshot.degraded_doc} />
           </Notice>
         )}
       </div>

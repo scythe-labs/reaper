@@ -155,6 +155,15 @@ a:hover {
 .notice-inline {
   margin: 0.55rem 0 0;
 }
+/* A notice that offers the help page for what it just said. The column is what puts the button
+   under the sentence rather than in the middle of it, and it is inert on the notice that has no
+   page to offer, which is most of them: one child, so nothing moves. */
+.notice-doc {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+}
 
 .app {
   max-width: 1400px;

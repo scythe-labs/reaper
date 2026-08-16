@@ -55,7 +55,7 @@ describe("the manual's generated pages", () => {
   // it; if you did not, a page dropped out of the walk.
   it("finds exactly one generated page per doc", () => {
     expect(generatedPages()).toHaveLength(DOCS.length);
-    expect(DOCS).toHaveLength(5);
+    expect(DOCS).toHaveLength(6);
   });
 
   // Rule 147: the marker is a source-text matcher, so pin the population it scans as well as the
@@ -63,7 +63,7 @@ describe("the manual's generated pages", () => {
   // means a hand-written page grew a banner, or a generated one lost it.
   it("counts the hand-written pages that sit beside them", () => {
     expect(allPages()).toHaveLength(21);
-    expect(allPages().length - generatedPages().length).toBe(16);
+    expect(allPages().length - generatedPages().length).toBe(15);
   });
 
   it("files each generated doc under its group's directory", () => {

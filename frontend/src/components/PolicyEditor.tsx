@@ -49,7 +49,7 @@ import {
 } from "../api";
 import { announce } from "../announce";
 import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
-import { useDocs } from "../docs/DocsContext";
+import { DocLink, HelpIcon } from "../docs/DocLink";
 import { bytes, count, humanDays } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
 import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
@@ -1096,28 +1096,6 @@ const SECTIONS = [
 export type PolicySectionId = (typeof SECTIONS)[number]["id"];
 type SectionId = PolicySectionId;
 
-/** A button that opens the in-app docs to a page, and optionally a section within it. The
- *  header wears it as "Help"; each section wears it as a "Learn more" that lands on the
- *  matching part of the guide. */
-function DocLink({
-  doc,
-  anchor,
-  className,
-  children,
-}: {
-  doc: string;
-  anchor?: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  const { openDoc } = useDocs();
-  return (
-    <button type="button" className={className} onClick={() => openDoc(doc, anchor)}>
-      {children}
-    </button>
-  );
-}
-
 /** A mount condition one of the anchors below sits under. An anchor claims its fields only
  *  while its guard holds, so on the other branch they fall to the catch-all stack instead of
  *  off the page. Adding a value here does not compile in `PolicyEditor.test.tsx` until the
@@ -1995,21 +1973,7 @@ export function PolicyEditor({
               ]}
             />
             <DocLink doc="understanding-policy" className="doc-help">
-              <svg
-                viewBox="0 0 24 24"
-                width="15"
-                height="15"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="9" />
-                <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4" />
-                <path d="M12 17h.01" />
-              </svg>
+              <HelpIcon />
               Help
             </DocLink>
           </div>

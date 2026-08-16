@@ -1707,6 +1707,7 @@ class TestALibraryWideIdentityChangeDegradesTheSnapshot:
         snapshot = await self._scan(session, cache_engine)
 
         assert snapshot.degraded is False, snapshot.degraded_reason
+        assert snapshot.degraded_doc is None
         assert await self._flagged(session) != set()
 
     async def test_a_whole_library_rebound_to_new_keys_stops_the_scan_being_acted_on(
@@ -1719,6 +1720,9 @@ class TestALibraryWideIdentityChangeDegradesTheSnapshot:
         assert snapshot.degraded is True
         assert snapshot.degraded_reason is not None
         assert "brand new" in snapshot.degraded_reason
+        # The help page the notice offers. Stored beside the reason, because by the time the
+        # notice renders the cause is prose.
+        assert snapshot.degraded_doc == "plex-rebuild"
         # Above the grace clocks, so no countdown started (rule 116).
         assert await self._flagged(session) == set()
 

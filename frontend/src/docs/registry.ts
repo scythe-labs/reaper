@@ -9,13 +9,21 @@ import { arming } from "./content/arming";
 import { cheatSheet } from "./content/cheatSheet";
 import { deletionSafety } from "./content/deletionSafety";
 import { overview } from "./content/overview";
+import { plexRebuild } from "./content/plexRebuild";
 import { understandingPolicy } from "./content/understandingPolicy";
 
-export const DOCS: Doc[] = [overview, understandingPolicy, cheatSheet, deletionSafety, arming];
+export const DOCS: Doc[] = [
+  overview,
+  understandingPolicy,
+  cheatSheet,
+  deletionSafety,
+  arming,
+  plexRebuild,
+];
 
 /** The order groups appear in the index. A group not listed here falls to the end, in the
  *  order its first doc appears in DOCS. */
-export const GROUP_ORDER = ["Getting started", "Policy", "Safety"];
+export const GROUP_ORDER = ["Getting started", "Policy", "Safety", "Operating"];
 
 /** The doc the generic Help affordance opens when no specific one is asked for. */
 export const DEFAULT_DOC = "understanding-policy";

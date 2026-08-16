@@ -1604,6 +1604,12 @@ async def scan(
         # constructor call; the join is a space for the reason written there.
         snapshot.degraded = context.degraded
         snapshot.degraded_reason = " ".join(context.degraded_reasons) or None
+        # The page the notice offers. Set here rather than returned with the sentence because
+        # it belongs to this cause alone: a scan that degraded for an unreachable Radarr as
+        # well still points at the rebuild guide, which is the one thing the operator can act
+        # on, and a later cause with a page of its own would be overwriting a link nobody can
+        # follow twice.
+        snapshot.degraded_doc = identity_churn.HELP_DOC
 
     # Grace clocks for everything condemned this run, in one batched pass -- the
     # _apply_first_flag decision per key, without a database round trip per item.

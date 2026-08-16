@@ -25,6 +25,9 @@ const GROUP_DIR: Record<string, string> = {
   "Getting started": "getting-started",
   Policy: "policy",
   Safety: "safety",
+  // The one group whose directory already held hand-written pages. A generated page sits
+  // beside them, which is what the marker at the top of this file is for.
+  Operating: "operating",
 };
 
 /** Where a doc's page lives, relative to the manual root. Throws on an unmapped group rather

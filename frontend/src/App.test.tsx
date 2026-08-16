@@ -68,6 +68,7 @@ const snapshot: Snapshot = {
   item_count: 12,
   degraded: false,
   degraded_reason: null,
+  degraded_doc: null,
   condemned: 3,
   protected: 4,
   abstained: 5,

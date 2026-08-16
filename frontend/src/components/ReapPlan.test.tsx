@@ -68,6 +68,7 @@ const snapshot: Snapshot = {
   item_count: 10,
   degraded: false,
   degraded_reason: null,
+  degraded_doc: null,
   condemned: 2,
   protected: 3,
   abstained: 5,
@@ -320,6 +321,27 @@ describe("the plan the page is showing", () => {
     );
     expect(await screen.findByText(/came back incomplete/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /build a plan/i })).toBeDisabled();
+    // No page for a source that did not answer, and the pair below is the other branch.
+    expect(screen.queryByRole("button", { name: /rebuilding a plex library/i })).toBeNull();
+  });
+
+  it("offers the help page here too, when the scan named one", async () => {
+    // `ScanBar` renders the same pair off the same field (rule 72). Pinned at both call sites
+    // rather than in the shared component alone: what can go wrong here is this page not
+    // passing the field, which a component test cannot see.
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...snapshot,
+      id: run.snapshot_id,
+      degraded: true,
+      degraded_reason: "Plex is listing 210 of the 240 titles Reaper knows as brand new.",
+      degraded_doc: "plex-rebuild",
+    });
+    renderWithProviders(
+      <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />,
+    );
+    expect(
+      await screen.findByRole("button", { name: /rebuilding a plex library/i }),
+    ).toBeInTheDocument();
   });
 });
 

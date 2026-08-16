@@ -55,6 +55,12 @@ WHOLESALE_SHARE = 0.10
 #: in one scan, against an ordinary rate that predicts 0.2.
 _APPLIES_ABOVE = 200
 
+#: The in-app help page the notice links to, by its id in `frontend/src/docs/registry.ts`. A
+#: backend module naming a frontend declaration needs the guard rule 103 asks for, and it is
+#: ``tests/test_identity_churn.py::TestTheHelpPage``: a renamed doc leaves this link opening
+#: nothing, and nothing else would notice.
+HELP_DOC = "plex-rebuild"
+
 
 def wholesale_change(recorded: Mapping[str, Seen], bound: Mapping[str, set[int]]) -> str | None:
     """What to tell the operator when identity moved wholesale this scan, else ``None``.

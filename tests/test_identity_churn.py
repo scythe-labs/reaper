@@ -9,10 +9,13 @@ what it counts.
 from __future__ import annotations
 
 from datetime import timedelta
+from pathlib import Path
 
 from reaper.clock import utcnow
 from reaper.services import identity_churn
 from reaper.services.library_seen import Seen
+
+REPO = Path(__file__).resolve().parents[1]
 
 NOW = utcnow().replace(microsecond=0)
 
@@ -98,6 +101,29 @@ class TestWhatCannotManufactureAnEvent:
     def test_an_unreadable_plex_records_no_sighting_at_all(self) -> None:
         """No bind, no entry in ``bound``: an outage shrinks the population, never the share."""
         assert identity_churn.wholesale_change(_ledger(5000), _bound(3, changed=3)) is None
+
+
+class TestTheHelpPage:
+    """Rule 103: this module names a frontend declaration, so a rename must fail here.
+
+    ``Snapshot.degraded_doc`` carries this id to the browser, where the notice looks it up in the
+    docs registry and renders nothing if it is not there. That is the right failure for a stored
+    scan written by another version, and the wrong one for a doc renamed in this tree, where it
+    would silently take the link off a notice nobody is watching.
+    """
+
+    def test_the_id_the_notice_carries_is_a_doc_that_exists(self) -> None:
+        content = REPO / "frontend" / "src" / "docs" / "content"
+        declared = {
+            line.split('"')[1]
+            for path in content.glob("*.ts")
+            for line in path.read_text().splitlines()
+            if line.strip().startswith('id: "')
+        }
+        # The population, not just the member (rule 145): one id per content file, so a walk that
+        # stopped reading the tree cannot pass this by finding nothing.
+        assert len(declared) == len(list(content.glob("*.ts")))
+        assert identity_churn.HELP_DOC in declared
 
 
 class TestTheFloor:
