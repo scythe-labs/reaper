@@ -39,10 +39,9 @@ If you are looking for somewhere to start, these carry the weight:
   (`src/reaper/secrets.py`, `src/reaper/logbuffer.py`).
 - **Authentication and sessions.** Cookie sessions, the login flow, and the recovery paths
   that exist so a locked-out operator can get back in (`src/reaper/auth/`).
-- **The API key lane.** A request carrying `X-Api-Key` is judged on the key alone, with no
-  session behind it. The key is fenced to reads outside the backup, the logs, the key
-  itself and the per-person viewing routes, and to writes that scan, plan, or edit the
-  policy (`src/reaper/api/middleware.py`).
+- **API keys.** A request carrying `X-Api-Key` is judged on the key alone. What it can read
+  and write is an allowlist declared in one place (`src/reaper/api/middleware.py`).
+  Everything else that changes state needs the signed-in browser.
 - **Reverse-proxy trust.** `X-Forwarded-For` and `X-Forwarded-Proto` are honored only when
   the direct peer is a proxy the operator listed. They decide the rate-limit key and the
   session cookie's `Secure` flag (`src/reaper/auth/proxy.py`).
