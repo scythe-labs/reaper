@@ -82,7 +82,7 @@ class TestALoggerFrozenByAnEarlierTestIsStillCapturable:
 
 class TestTheGuardReachesEveryLoggerInTheTree:
     """A guard that SCANS is proven against the population it claims to cover, not against
-    one member of it (rule 145). The count is reconciled by hand: 52 files under
+    one member of it (rule 145). The count is reconciled by hand: 53 files under
     ``src/reaper`` declare a module-level logger, and ``grep -rl`` over the tree agrees.
 
     It was 47 before ``services/list_config.py`` (the operator's own protection lists) landed
@@ -99,7 +99,9 @@ class TestTheGuardReachesEveryLoggerInTheTree:
     ``config.py`` gained one to say which seed variable a half-configured instance is missing
     (#658); it had none because nothing in it used to have anything to tell the operator. Then
     52 with ``services/library_seen.py`` (#553), which logs an unreadable stored key set and
-    the scan whose crop of returns the population cap refused."""
+    the scan whose crop of returns the population cap refused. Then 53 with
+    ``services/identity_churn.py`` (#809), which logs every scan's share of the library that
+    changed Plex identity, so the ordinary rate can be read off a second library's logs."""
 
     @staticmethod
     def _modules_declaring_a_logger() -> set[str]:
@@ -116,8 +118,8 @@ class TestTheGuardReachesEveryLoggerInTheTree:
 
     def test_the_count_is_the_one_reconciled_by_hand(self) -> None:
         declared = self._modules_declaring_a_logger()
-        assert len(declared) == 52, (
-            f"expected 52 modules declaring a logger, found {len(declared)}. Bump the number "
+        assert len(declared) == 53, (
+            f"expected 53 modules declaring a logger, found {len(declared)}. Bump the number "
             "here AND in the two prose copies of it, which nothing else asserts (rule 144): "
             "this class's docstring above, and docs/history/SIMPLIFICATION_PLAN.md's S7 paragraph, "
             "which names this file and restates the figure. Leave the *Landed* rows in that "

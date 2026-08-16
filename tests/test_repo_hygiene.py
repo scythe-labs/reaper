@@ -5219,7 +5219,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 86
+_EXPECTED_LAYERED_MODULES = 87
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -5546,8 +5546,8 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: Every `.py` file under `src/reaper`, which is the population the cycle walk parses. Pinned
 #: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
-#: A different population from that constant, which counts the 85 under the four packages only.
-_EXPECTED_SOURCE_MODULES = 118
+#: A different population from that constant, which counts the 87 under the four packages only.
+_EXPECTED_SOURCE_MODULES = 119
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`

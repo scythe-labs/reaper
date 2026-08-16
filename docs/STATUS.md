@@ -77,6 +77,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | What a hand reap may overrule | **Everything except a structural stop** † |
 | Watch-history reach | **Every reader that goes through `Facts`** † |
 | Watch history that vanished | **A high-water mark that cannot fall**, never a remapped key † |
+| A rebuilt source | **Tautulli's total aborts the scan, Plex's reissued keys degrade it** |
 | Why-panel scope | **Renders for keeps as well as deletes** † |
 | Delete mode | **A notice window, not a gate** † |
 | Autonomy | An **earned grant keyed to `policy_hash`** — any edit reverts to approval-required |

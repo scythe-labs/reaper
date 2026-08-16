@@ -38,6 +38,7 @@ from reaper.db.models import (
     FirstFlagged,
     Instance,
     InstanceKind,
+    LibrarySeen,
     SeasonPruneEvidence,
     SizeSource,
     Snapshot,
@@ -1613,6 +1614,132 @@ class TestADegradedSnapshotDoesNotActOnItsOwnCondemnSet:
         assert after is not None
         assert after.first_flagged_at == LONG_AGO
         assert after.last_seen_condemned_at == seen_before
+
+
+class TestALibraryWideIdentityChangeDegradesTheSnapshot:
+    """A slow rebuild: Plex hands the whole library new rating keys while Reaper keeps scanning.
+
+    ``tests/test_identity_churn.py`` pins what the share counts. This drives it through a real
+    scan, which is the half that can go missing: the measurement is only worth anything if the
+    call site degrades the snapshot, and it has to do so ABOVE the grace clocks (rule 116), or a
+    countdown starts on the run that just called itself untrustworthy.
+
+    The two scans differ in one thing, the ledger the fillers are already recorded under.
+    """
+
+    #: Over ``identity_churn._APPLIES_ABOVE`` on purpose, and the smallest population that can
+    #: reach it, since every one of these is judged through the whole pipeline.
+    FILLERS: ClassVar[int] = 210
+
+    def _filler_payloads(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": 1000 + i,
+                "title": f"Filler {i}",
+                "year": 1975,
+                "tmdbId": 5000 + i,
+                "imdbId": f"tt{2_000_000 + i}",
+                "hasFile": True,
+                "sizeOnDisk": 1_000_000_000,
+            }
+            for i in range(self.FILLERS)
+        ]
+
+    def _filler_spine(self) -> list[dict[str, Any]]:
+        """What Plex lists them under NOW, which is a fresh key for every one of them."""
+        return [
+            {
+                "rating_key": 700_000 + i,
+                "title": f"Filler {i}",
+                "year": 1975,
+                "added_at": "1000000",
+            }
+            for i in range(self.FILLERS)
+        ]
+
+    async def _seed_ledger(self, session: AsyncSession) -> None:
+        """What Plex listed them under before: keys sharing nothing with the spine above."""
+        for i in range(self.FILLERS):
+            session.add(
+                LibrarySeen(
+                    id_key=f"movie:tmdb:{5000 + i}",
+                    rating_keys_json=json.dumps([300_000 + i]),
+                    first_seen_at=LONG_AGO,
+                    last_seen_at=LONG_AGO,
+                )
+            )
+        await session.flush()
+
+    async def _scan(
+        self, session: AsyncSession, cache_engine: AsyncEngine, *, seed: bool = True
+    ) -> Any:
+        # The cache rows are the same for both runs of the two-scan case, and both tables
+        # refuse a second insert of the same row.
+        if seed:
+            await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+            await _seed_play(cache_engine, row_id=1, rating_key=99)
+        return await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads() + self._filler_payloads()),
+                    instance_id=1,
+                    name="hd",
+                )
+            ],
+            sonarrs=[],
+            tautulli=scan_library(movies=_movie_spine() + self._filler_spine()),
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+    async def _flagged(self, session: AsyncSession) -> set[str]:
+        rows = (await session.execute(text("SELECT media_key FROM first_flagged"))).all()
+        return {r.media_key for r in rows}
+
+    async def test_the_same_library_with_nothing_recorded_is_an_ordinary_scan(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The control: every key here is new to Reaper, which is a first scan, not an event."""
+        snapshot = await self._scan(session, cache_engine)
+
+        assert snapshot.degraded is False, snapshot.degraded_reason
+        assert await self._flagged(session) != set()
+
+    async def test_a_whole_library_rebound_to_new_keys_stops_the_scan_being_acted_on(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await self._seed_ledger(session)
+
+        snapshot = await self._scan(session, cache_engine)
+
+        assert snapshot.degraded is True
+        assert snapshot.degraded_reason is not None
+        assert "brand new" in snapshot.degraded_reason
+        # Above the grace clocks, so no countdown started (rule 116).
+        assert await self._flagged(session) == set()
+
+    async def test_the_ledger_is_still_written_so_the_next_scan_is_clean(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """Freezing it instead would leave the share at 100% and every later scan un-plannable.
+
+        The keys are unioned onto the row, so what the guard measured against survives beside
+        what Plex lists now (``library_seen.record``).
+        """
+        await self._seed_ledger(session)
+
+        await self._scan(session, cache_engine)
+
+        row = await session.get(LibrarySeen, "movie:tmdb:5000")
+        assert row is not None
+        assert json.loads(row.rating_keys_json) == [300_000, 700_000]
+
+        second = await self._scan(session, cache_engine, seed=False)
+        assert second.degraded is False, second.degraded_reason
 
 
 class TestTheStreamingVetoNeedsAReadableAnswer:
