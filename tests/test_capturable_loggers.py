@@ -120,11 +120,10 @@ class TestTheGuardReachesEveryLoggerInTheTree:
         declared = self._modules_declaring_a_logger()
         assert len(declared) == 53, (
             f"expected 53 modules declaring a logger, found {len(declared)}. Bump the number "
-            "here AND in the two prose copies of it, which nothing else asserts (rule 144): "
-            "this class's docstring above, and docs/history/SIMPLIFICATION_PLAN.md's S7 paragraph, "
-            "which names this file and restates the figure. Leave the *Landed* rows in that "
-            "document alone: their figures are historical deltas, so editing one makes a "
-            "correct record false."
+            "here AND in this class's docstring above, which restates it and which nothing "
+            "else asserts (rule 144). Those are the only two live copies. The archived "
+            "simplification plan restates the figure too, and it is frozen history, so its "
+            "copy stays at the number it measured."
         )
 
     def test_every_declared_logger_is_reachable_from_the_walk(self) -> None:

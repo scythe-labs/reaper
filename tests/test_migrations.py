@@ -1810,28 +1810,33 @@ class TestReleaseMLetsTheRetiredColumnsBeOmitted:
         engine.dispose()
 
 
-#: Every file stating how many revisions call ``op.get_bind()``. The sentence is the reason
-#: ``run_migrations_offline`` was deleted rather than kept, and it is written in four places by
-#: four different authors reading each other -- so it was already off by one the moment this
-#: file added a revision, in all four at once, in the direction that reads as measured
+#: Every LIVE file stating how many revisions call ``op.get_bind()``. The sentence is the reason
+#: ``run_migrations_offline`` was deleted rather than kept, and it is written in three places by
+#: three different authors reading each other -- so it was already off by one the moment this
+#: file added a revision, in all three at once, in the direction that reads as measured
 #: (rule 144). Removing a copy means removing it from this tuple, which is a deliberate edit.
+#: ``docs/history/SIMPLIFICATION_PLAN.md`` carries a fourth copy and is deliberately NOT here
+#: (#813). That file is frozen, so a revision added today would fail this gate against a
+#: sentence nobody may correct, and correcting it anyway makes a measurement at a named commit
+#: false.
 _GET_BIND_CLAIM_SITES = (
     "alembic/env.py",
     "CONTRIBUTING.md",
     "tests/test_migrations.py",
-    "docs/history/SIMPLIFICATION_PLAN.md",
 )
 
-#: Matches the claim in every spelling the four files use, anchored on the words rather than on
+#: Matches the claim in every spelling these files use, anchored on the words rather than on
 #: a delimiter only one spelling puts there (rule 147): one backtick pair in markdown, two in
 #: reStructuredText, and a line break anywhere in the sentence -- which is not hypothetical.
-#: Every one of these files is hard-wrapped, two of them behind a comment or blockquote marker,
-#: so the first version of this matcher read three sites and silently skipped the fourth.
+#: Every one of them is hard-wrapped and one sits behind a comment marker, so the first version
+#: of this matcher read three sites and silently skipped a fourth, the archived copy behind a
+#: blockquote marker. That spelling stays accepted, since a live copy can move into a
+#: blockquote without anyone thinking about this matcher.
 _GET_BIND_CLAIM = re.compile(r"(\d+)[\s>#]+revisions call[\s>#]+`+op\.get_bind\(\)`+")
 
 
 def test_every_statement_of_the_get_bind_count_is_the_count_the_revisions_have() -> None:
-    """One measured fact, four prose copies, none generated from the other.
+    """One measured fact, three live prose copies, none generated from the other.
 
     ``alembic upgrade head --sql`` cannot work because these revisions ask for a connection
     offline mode does not have, and each file states the count as evidence. A revision added
