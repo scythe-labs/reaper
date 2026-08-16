@@ -179,18 +179,28 @@
   border-left: 1px solid var(--border-strong);
   border-radius: 0 5px 5px 0;
 }
-.coll-chip-main:hover,
-.coll-chip-caret:hover {
-  color: var(--accent-text);
-  background: var(--accent-soft);
+/* Behind `(hover: hover)` because a touch screen has no hover to leave: iOS Safari applies
+   `:hover` to the last element TAPPED and holds it there until something else is tapped, so on
+   an iPad this chip kept the accent text and accent border long after the tap that opened the
+   collection, reading as a stuck selection on a card that was merely visited. The rest of the
+   app has the same shape and no guard, which is its own issue, not this one's to sweep. The
+   expanded arm stays outside: it is a real state, not a pointer's. */
+@media (hover: hover) {
+  .coll-chip-main:hover,
+  .coll-chip-caret:hover {
+    color: var(--accent-text);
+    background: var(--accent-soft);
+  }
+  .coll-chip:has(.coll-chip-main:hover),
+  .coll-chip:has(.coll-chip-caret:hover) {
+    border-color: var(--accent);
+  }
 }
 .coll-chip-main:focus-visible,
 .coll-chip-caret:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.coll-chip:has(.coll-chip-main:hover),
-.coll-chip:has(.coll-chip-caret:hover),
 .coll-chip:has(.coll-chip-caret[aria-expanded="true"]) {
   border-color: var(--accent);
 }

@@ -28,12 +28,24 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-sm);
-  margin: var(--space-3xl) 0 var(--space-lg);
+  margin: var(--space-3xl) 0 var(--space-4xl);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
 }
 .back-to-lane .back-arrow {
   color: var(--muted);
+}
+
+/* The header's rhythm carries its grouping, and the default margins did not: the exit, the
+   title and the fate chips sat 0.6rem, 0.25rem and 0.5rem apart, near enough to identical that
+   three separate things read as one clump. The exit is its own thing and takes the widest gap
+   below it; the title and its chips are one unit and stay tight; the search box starts a new
+   section and gets the gap back. */
+.coll-title {
+  margin: 0 0 var(--space-md);
+}
+.coll-head-fates {
+  margin-bottom: var(--space-4xl);
 }
 
 /* The collection screen's fate summary: how many of its scanned members landed in each lane,

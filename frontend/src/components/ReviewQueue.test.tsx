@@ -1277,6 +1277,53 @@ describe("the collection screen", () => {
     expect(screen.queryByRole("heading", { name: "Example Franchise" })).not.toBeInTheDocument();
   });
 
+  // Found on a real library. A card's chip set the collection directly and left the lane's
+  // search applied, so the screen opened on a NARROWED subset under a fate summary that counts
+  // the whole collection, wearing a search chip the operator set for the lane. The why panel's
+  // chip routed through App's jump, which clears the search, so one chip did two things. Both
+  // doors go through `openCollection` now; this drives the one that was wrong.
+  it("drops the lane's search when a card's chip opens a collection, and puts it back", async () => {
+    // Members that actually carry the chip, which is the control this test presses.
+    const members = [
+      movie(1, { collections: ["Example Franchise"] }),
+      movie(2, { collections: ["Example Franchise"] }),
+    ];
+    apiMock.candidates.mockImplementation((verdict: string) =>
+      Promise.resolve(page(verdict === "protect" || verdict === "abstain" ? [] : members)),
+    );
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...baseSnapshot,
+      collection_sizes: { "Example Franchise": 2 },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ReviewQueue
+        verdict="condemn"
+        onVerdictChange={() => {}}
+        selectedId={null}
+        selectedGroupKey={null}
+        onSelect={() => {}}
+        onSelectGroup={() => {}}
+      />,
+    );
+    const box = await screen.findByRole("searchbox", { name: /search titles/i });
+    await user.type(box, "Example");
+    await waitFor(() => expect(box).toHaveValue("Example"));
+
+    // The card's own chip, the door that used to keep the search.
+    await user.click((await screen.findAllByRole("button", { name: "Example Franchise" }))[0]!);
+
+    expect(await screen.findByRole("heading", { name: "Example Franchise" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: /search titles/i })).toHaveValue("");
+    expect(screen.queryByRole("button", { name: /Stop searching for/i })).toBeNull();
+
+    // ...and the lane is handed back exactly as it was left, which is what the exit promises.
+    await user.click(screen.getByRole("button", { name: /Review queue/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("searchbox", { name: /search titles/i })).toHaveValue("Example"),
+    );
+  });
+
   // The exit takes the lane tabs' own slot, so it reads as a control rather than as the tabs
   // having gone missing. Pinned by what it is NOT: a `.link-btn` is the lighter treatment this
   // replaced, and the tabs must be gone from the row it now occupies.

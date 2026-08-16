@@ -1442,8 +1442,10 @@ export function ReviewQueue({
   // effect below only ever handles a jump that arrives while it is already on screen.
   const handledFocus = useRef<number | null>(focus?.nonce ?? null);
   // The collection screen (#816 phase 5): a place INSIDE Review, not a lane, so it lives here
-  // rather than in `App` alongside `verdict` -- the lane the operator left is untouched underneath
-  // it, filters included, and closing is a plain local `setActiveCollection(null)`, never a jump.
+  // rather than in `App` alongside `verdict` -- the lane the operator left is waiting underneath
+  // it, and closing is local, never a jump. The raw setter below has exactly two callers,
+  // `openCollection` and `closeCollection`; everything else goes through those, because what the
+  // lane's search and filters do on the way in and out is the whole of what they carry.
   // Seeded from a jump the same way `search` is seeded from `focus` above; there is no URL
   // fallback, unlike `search`'s `linked.search` -- a reload lands on the plain lane rather than
   // restoring an open collection, the one gap the plan itself leaves open (#816's "not decided").
@@ -1453,7 +1455,7 @@ export function ReviewQueue({
   // One browser Back step closes the collection screen, the same layer model every other overlay
   // in this file uses (the filter menu, the reap-confirm sheet). Closing any other way (the back
   // link) auto-removes the layer through this hook's own effect.
-  useBackGuard(activeCollection !== null, () => setActiveCollection(null));
+  useBackGuard(activeCollection !== null, () => closeCollection());
   const [filters, setFilters] = useState<QueueFilters>(linked.filters);
   // Each tab remembers its own filters, and the new tab's set is adopted DURING the render
   // that brings the new verdict in -- React's supported "adjust state when a prop changes"
@@ -1468,6 +1470,40 @@ export function ReviewQueue({
     setFiltersVerdict(verdict);
     setFilters(loadFilters(verdict));
   }
+  // One door into a collection and one out, because there were two ways in and they disagreed.
+  // A card's chip set `activeCollection` directly and left the lane's search and filters
+  // applied, so the screen opened on a NARROWED subset while the fate summary above it counted
+  // the whole collection, and a search chip the operator set for the lane sat over a screen
+  // they had not typed it on. The why panel's chip went through App's jump instead, which
+  // clears the search, so the same chip did two different things depending on which surface it
+  // was pressed from (rule 72). This screen's job is every member, so entering clears what
+  // narrows and keeps the operator's chosen sort, the same split "Clear all" already makes.
+  // The lane is put back exactly as it was left, which is what the back link promises.
+  const laneBeforeCollection = useRef<{ search: string; filters: QueueFilters } | null>(null);
+  // Memoized because the jump effect below calls it, and an unstable identity there would put
+  // the effect's dependency list in a lie. Re-running it costs nothing: it returns on the first
+  // line for a nonce it has already handled.
+  const openCollection = useCallback(
+    (name: string) => {
+      if (activeCollection === null) {
+        laneBeforeCollection.current = { search: searchInput, filters };
+      }
+      setActiveCollection(name);
+      setSearchInput("");
+      setSearch("");
+      setFilters((f) => ({ ...DEFAULT_FILTERS, sort: f.sort, order: f.order }));
+    },
+    [activeCollection, searchInput, filters],
+  );
+  const closeCollection = () => {
+    setActiveCollection(null);
+    const lane = laneBeforeCollection.current;
+    laneBeforeCollection.current = null;
+    if (lane === null) return;
+    setSearchInput(lane.search);
+    setSearch(lane.search.trim());
+    setFilters(lane.filters);
+  };
   // Which filter popover is open: a dimension id, "add" for the ＋ Filter menu, or null.
   // One at a time, so the list only ever renders one menu.
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -1567,8 +1603,8 @@ export function ReviewQueue({
     setSearch(focus.search.trim());
     // Undefined means the jump said nothing about a collection (an ordinary search or lane
     // jump) and leaves whichever one is already open alone; only WhyPanel's chip sends one.
-    if (focus.collection !== undefined) setActiveCollection(focus.collection);
-  }, [focus]);
+    if (focus.collection !== undefined) openCollection(focus.collection);
+  }, [focus, openCollection]);
 
   // Close an open filter menu on an outside click or Escape. Each menu lives inside a
   // .filter-anchor wrapper (with its chip or button), so a click within any of them counts as
@@ -2313,18 +2349,14 @@ export function ReviewQueue({
           change to be correct here). */}
         {activeCollection ? (
           <>
-            <button
-              type="button"
-              className="back-to-lane"
-              onClick={() => setActiveCollection(null)}
-            >
+            <button type="button" className="back-to-lane" onClick={closeCollection}>
               <span className="back-arrow" aria-hidden="true">
                 ←
               </span>{" "}
               Review queue
             </button>
             {/* `tabIndex={-1}` so the swap can put focus here without adding a tab stop. */}
-            <h2 ref={collHeadingRef} tabIndex={-1}>
+            <h2 className="coll-title" ref={collHeadingRef} tabIndex={-1}>
               {activeCollection}
             </h2>
             {/* Only the gap is worth a line. "Every title in this collection, whatever Reaper
@@ -2343,7 +2375,7 @@ export function ReviewQueue({
               <p className="error">Couldn't read the counts for this collection.</p>
             )}
             {collLoaded && collScanned > 0 && (
-              <div className="coll-fates">
+              <div className="coll-fates coll-head-fates">
                 {/* Named for the lanes the operator just came from, and derived from the one
                     place those names are declared: this screen is the only one that shows all
                     three fates at once, so describing them differently here ("on the block",
@@ -2753,7 +2785,7 @@ export function ReviewQueue({
                       select={cardSelect}
                       onOpen={onSelect}
                       onOpenGroup={onSelectGroup}
-                      onOpenCollection={setActiveCollection}
+                      onOpenCollection={openCollection}
                       collectionSizes={collectionSizes}
                       onSet={onSet}
                       onClear={onClear}
@@ -2771,7 +2803,7 @@ export function ReviewQueue({
                       isSelected={selected.has(groupKeyOf(group))}
                       select={cardSelect}
                       onOpen={onSelect}
-                      onOpenCollection={setActiveCollection}
+                      onOpenCollection={openCollection}
                       collectionSizes={collectionSizes}
                       onSet={onSet}
                       onClear={onClear}
