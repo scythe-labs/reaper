@@ -27,9 +27,8 @@ Credit is given in the release notes unless you would rather it was not.
 
 ## Supported versions
 
-Reaper has not cut a stable release yet. The supported version is the current `dev` image,
-and fixes land there. Running an older tag means running without the fixes that followed
-it.
+The latest release is supported, and so is the current `dev` image. Fixes land on `dev`
+first and ship in the next release.
 
 ## Where the sensitive parts are
 
@@ -40,6 +39,12 @@ If you are looking for somewhere to start, these carry the weight:
   (`src/reaper/secrets.py`, `src/reaper/logbuffer.py`).
 - **Authentication and sessions.** Cookie sessions, the login flow, and the recovery paths
   that exist so a locked-out operator can get back in (`src/reaper/auth/`).
+- **API keys.** A request carrying `X-Api-Key` is judged on the key alone. What it can read
+  and write is an allowlist declared in one place (`src/reaper/api/middleware.py`).
+  Everything else that changes state needs the signed-in browser.
+- **Reverse-proxy trust.** `X-Forwarded-For` and `X-Forwarded-Proto` are honored only when
+  the direct peer is a proxy the operator listed. They decide the rate-limit key and the
+  session cookie's `Secure` flag (`src/reaper/auth/proxy.py`).
 - **The deletion path.** Deletion is armed from the interface behind a password, and the
   one route that deletes requires both the armed host and an exact confirmation phrase that
   is recomputed on the server from the plan's contents.
