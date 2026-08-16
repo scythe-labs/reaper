@@ -294,6 +294,21 @@ def _next_after(anchor: int, on_disk: Collection[int] | None) -> set[int]:
     return {min(later)} if later else set()
 
 
+def _with_lookahead(start: int, lookahead: int, on_disk: Collection[int] | None) -> set[int]:
+    """``start`` plus the next ``lookahead`` seasons the viewer actually reaches.
+
+    The same walk as :func:`_next_after`, repeated: a cushion counts seasons that hold
+    files, never season numbers. ``start + offset`` landed it on numbers nothing holds as
+    soon as a show's numbering had a hole, so a viewer part-way through a season got no
+    cushion at all while the setting read as applied -- and the anchor itself was still
+    held, which hid it. ``None`` keeps the old arithmetic for a caller that does not know
+    what is on disk.
+    """
+    if on_disk is None:
+        return {start + offset for offset in range(lookahead + 1)}
+    return {start, *sorted(n for n in on_disk if n > start)[:lookahead]}
+
+
 def _anchor_positions(
     anchor: int,
     progress: Mapping[int, int | None],
@@ -350,8 +365,9 @@ def sequential_protections(
     mid-binge on the newest season who dips back into an old one would lose the hold on
     the season they are actually working through.
 
-    Each anchor is then resolved by :func:`_anchor_positions` and extended by
-    ``lookahead``. ``include_specials`` adds Season 0 to the anchor candidates, for the
+    Each anchor is then resolved by :func:`_anchor_positions` and extended by ``lookahead``
+    further seasons that hold files (:func:`_with_lookahead`). ``include_specials`` adds
+    Season 0 to the anchor candidates, for the
     one configuration where a special can be pruned at all (``keep_specials`` off);
     otherwise specials are excluded, since a hold on something nothing can remove only
     costs the operator seasons they wanted gone.
@@ -374,8 +390,7 @@ def sequential_protections(
             anchors.add(max(times, key=lambda n: times[n]))
         for anchor in anchors:
             for start in _anchor_positions(anchor, progress, season_final_episode, on_disk):
-                for offset in range(lookahead + 1):
-                    protected.add(start + offset)
+                protected |= _with_lookahead(start, lookahead, on_disk)
     return protected
 
 
