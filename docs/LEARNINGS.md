@@ -4171,6 +4171,48 @@ work at all.
 ⇒ Before optimizing a read, measure whether its cost tracks what it returns. Where it does not,
 the only lever is asking fewer times.
 
+## `watched_status` has five values, and two of them were the whole model (2026-08-16)
+
+Measured on the first foreign library to reach us, a `tautulli_anon_dump.py` dump of 2,633
+titles and 84,235 plays. Tautulli's `watched_status` is a quantized fraction of the operator's
+own watched-percent threshold, so a row arrives as 0, 0.25, 0.5, 0.75 or 1. Cross-tabbed
+against `percent_complete` on 63,103 episode rows, the quantization is what it looks like: 0.75
+sits at 70-90% watched, 0.5 at 40-60%, 0 at 0-20%. **8,997 rows, 14.3%, carried one of the
+three middle values.**
+
+`season_scan.season_watch_stats` modeled two of the five. Its position query bucketed a play as
+completed (`= 1`) or unreported (`IS NULL`), and the middle three raised neither column, so a
+viewer whose finale stopped at 0.75 recorded a confident position one episode short. The
+fail-closed skip that exists for exactly that case reads `max_unfinished > max_ep` and never
+fired, because the row was invisible to both sides of the comparison. 212 of 3,691 positions
+read low on that library, 50 of them viewers who had reached the season's last episode (#825).
+
+**The harm is not a protection that fails to fire, it is one aimed at the wrong season.**
+`sequential_protections` reads "finished season m" as ready-for-m+1 and anything less as
+still-on-m, so an under-read position holds the season the viewer has just finished and
+releases the one they are about to start. The released season is by construction the one with
+old or no plays of its own, which is the one that scores high enough to be reaped. Re-run over
+the same dump the fix holds 4 more seasons and moves no verdict, because keep-last-2 and the
+dormancy floor happened to cover them there.
+
+**The same failure had already been fixed here once, for a different value.** 0c87f28 closed it
+for the unreported rows and its message names the fraction outright, so the values were known
+and the reasoning was traced rather than assumed. What it weighed was precision: reading a
+non-complete status as unknown "would blind the guard on every partially-watched episode." That
+is true, and blinding it means holding the anchor season AND the next one, which is more
+protection rather than less. An understated position is the only reading that holds the wrong
+season, so coarse beats wrong and the middle three moved across. A genuine `0` did not: Tautulli
+saying "they did not watch this" is an answer, and the test pinning it stays green.
+
+**Two readers, two readings, and the tree only had one test.** `rewatch.qualifies` already read
+this column at `>= 0.5`. Nothing in `tests/` wrote a partial value except one `qualifies` case,
+so every season-lane row the suite ever wrote was 1, 0 or NULL, and a column with five values
+was pinned at three.
+
+⇒ A quantized field is not a boolean with a null. Enumerate what the source actually emits
+before writing a `CASE` over it, and where a dump is available, count the values. A prior fix
+that names the other values is not the same as one that covers them.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
