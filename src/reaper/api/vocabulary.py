@@ -60,9 +60,23 @@ async def get_vocabulary(lane: Lane, media_type: MediaType | None = None) -> Voc
 #: read from. Free-text fields only: numbers and booleans need no suggestions.
 _VALUE_COLUMNS = {
     "genre": Candidate.genres_json,
+    "collection": Candidate.collections_json,
     "quality": Candidate.quality,
     "library": Candidate.library_title,
 }
+
+#: How many ranked values a suggestion list carries. One shared ceiling rather than a per-field
+#: table nobody would remember to extend for the next JSON-array field.
+#:
+#: **Measured rather than guessed, and the first guess was too low.** A real library of 5,984
+#: scanned items carries 387 distinct Plex collections against tens of genres (#816, recorded in
+#: `docs/LEARNINGS.md`), so the 200 this shipped with would have dropped roughly half of them
+#: with nothing saying so. The list is ranked by how many titles carry the value, so a truncation
+#: takes the rarest, which on a collection set is the specific shelf the operator went looking
+#: for. Raised rather than making the picker type-to-search, which is frontend work this change
+#: does not otherwise touch; past this a truncation still says nothing, and that is the fix the
+#: next library to outgrow it should get instead of another number here.
+_MAX_VALUES = 2000
 
 
 @router.get("/vocabulary/values", tags=[api_tags.POLICY])
@@ -96,8 +110,10 @@ async def vocabulary_values(request: Request, field: str) -> FieldValuesOut:
     for raw in raws:
         if raw is None:  # filtered in SQL; repeated here for the type-checker
             continue
-        if field == "genre":
-            # genres_json is a JSON array; a row that does not parse contributes nothing.
+        # Both JSON-array columns need the same parse; keyed off the COLUMN, not the field
+        # name, so a third JSON-array field only ever needs a `_VALUE_COLUMNS` entry.
+        if column is Candidate.genres_json or column is Candidate.collections_json:
+            # A row that does not parse contributes nothing.
             try:
                 parsed = json.loads(raw)
             except (ValueError, TypeError):
@@ -107,4 +123,4 @@ async def vocabulary_values(request: Request, field: str) -> FieldValuesOut:
             counts.update([raw])
 
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    return FieldValuesOut(field=field, values=[value for value, _ in ranked[:50]])
+    return FieldValuesOut(field=field, values=[value for value, _ in ranked[:_MAX_VALUES]])

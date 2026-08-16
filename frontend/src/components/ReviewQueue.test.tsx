@@ -19,6 +19,7 @@ import {
   type CandidatePage,
   type GroupRollup,
   type GroupSeasonMark,
+  type Snapshot,
   type Verdict,
 } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -219,6 +220,11 @@ beforeEach(() => {
     will_reap: 0,
     condemned_by: [],
   });
+  // Read unconditionally now, by every card's collection picker as well as the collection
+  // screen's own header (#816 phase 4/5) -- referencing `baseSnapshot`, declared further down,
+  // is safe: this callback only runs once the whole module (including that declaration) has
+  // finished loading.
+  apiMock.latestSnapshot.mockResolvedValue(baseSnapshot);
 });
 
 describe("keeping the list in step with the latest scan", () => {
@@ -982,6 +988,398 @@ describe("the dormancy span", () => {
 
     await screen.findByText(/Not watched in less than a day/);
     expect(screen.queryByText("Held back: size unknown")).not.toBeInTheDocument();
+  });
+});
+
+// The collection chip (#816 phase 4): navigation only, never a verdict input, so these tests
+// are about reachability and honesty, not fate. The screen the picker will eventually open is
+// phase 5's; here the caret only has to open, list every collection, and stay accessible.
+describe("the collection chip", () => {
+  it("renders no chip when the scan recorded no collections", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: null })]));
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    expect(screen.queryByTitle(/^In the collection/)).not.toBeInTheDocument();
+  });
+
+  it("wears one plain chip, no caret, when the item is in exactly one collection", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: ["Example Franchise"] })]));
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    expect(screen.getByRole("button", { name: "Example Franchise" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show the other/ })).not.toBeInTheDocument();
+  });
+
+  it("opens the picker on the caret, listing every collection reachably", async () => {
+    const names = ["Example Franchise", "Director Spotlight", "4K"];
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: names })]));
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const caret = screen.getByRole("button", { name: "Show the other 2 collections" });
+    const user = userEvent.setup();
+    await user.click(caret);
+    expect(caret).toHaveAttribute("aria-expanded", "true");
+    // Scoped to the picker: the smallest collection's name is on the card's own chip too, and
+    // the picker lists the full array including it (rule 138's sibling clamp, not this test's
+    // concern), so an unscoped query would match both.
+    const picker = screen.getByRole("list", { name: "Collections" });
+    for (const name of names) {
+      expect(within(picker).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("closes on Escape and hands focus back to the caret", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([movie(1, { collections: ["Example Franchise", "Director Spotlight"] })]),
+    );
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const caret = screen.getByRole("button", { name: "Show the other 1 collection" });
+    const user = userEvent.setup();
+    await user.click(caret);
+    expect(screen.getByRole("list", { name: "Collections" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("list", { name: "Collections" })).not.toBeInTheDocument();
+    expect(caret).toHaveFocus();
+  });
+
+  it("carries the show's collections onto every season, like the library chip", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([
+        season(1, "condemn", { collections: ["Example Show Universe", "Studio Vault"] }),
+        season(2, "condemn", { collections: ["Example Show Universe", "Studio Vault"] }),
+      ]),
+    );
+    renderQueue();
+    await screen.findByText("Example Show");
+    expect(screen.getByRole("button", { name: "Example Show Universe" })).toBeInTheDocument();
+  });
+
+  it("has no accessibility violations with the picker open", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([movie(1, { collections: ["Example Franchise", "Director Spotlight"] })]),
+    );
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Show the other 1 collection" }));
+    // No `container` argument: the picker is portaled to <body>, outside the render's own
+    // container, so the default (document.body) is the only scope that sees it.
+    await expectNoA11yViolations();
+  });
+
+  it("opens the collection screen when the chip's name is pressed", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: ["Example Franchise"] })]));
+    apiMock.latestSnapshot.mockResolvedValue(baseSnapshot);
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Example Franchise" }));
+    expect(await screen.findByRole("heading", { name: "Example Franchise" })).toBeInTheDocument();
+  });
+
+  // A collection-name search hit (#816 phase 3b, `search_rank === 2`) carries the collection
+  // that actually matched -- an operator who typed "Director" cannot explain a chip reading
+  // "Example Franchise" (the smallest one, unrelated to what they typed). The frontend end of
+  // the comment on `CandidateOut.matched_collection` (`src/reaper/api/schemas.py`).
+  it("renders the collection that matched a search, not the smallest one", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([
+        movie(1, {
+          collections: ["Example Franchise", "Director Spotlight"],
+          search_rank: 2,
+          matched_collection: "Director Spotlight",
+        }),
+      ]),
+    );
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    expect(screen.getByRole("button", { name: "Director Spotlight" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Example Franchise" })).not.toBeInTheDocument();
+  });
+
+  it("still renders the smallest collection for a title match", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([
+        movie(1, {
+          collections: ["Example Franchise", "Director Spotlight"],
+          search_rank: 1,
+          matched_collection: null,
+        }),
+      ]),
+    );
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    expect(screen.getByRole("button", { name: "Example Franchise" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Director Spotlight" })).not.toBeInTheDocument();
+  });
+
+  // The picker's counts (#816 phase 4/5): Plex's own member count, read off the same snapshot
+  // the collection screen's header already trusts. A collection the scan never got a count for
+  // (`_collection_membership` leaves it out of `collection_sizes` rather than folding it to 0,
+  // because unknown and empty are different facts) must render no number, never a false "0".
+  it("shows each collection's known size beside its name in the picker", async () => {
+    const names = ["Example Franchise", "Director Spotlight"];
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: names })]));
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...baseSnapshot,
+      collection_sizes: { "Example Franchise": 3, "Director Spotlight": 14 },
+    });
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Show the other 1 collection" }));
+    const picker = screen.getByRole("list", { name: "Collections" });
+    // Scoped by the name span, not the row's accessible name: the size sits in the same
+    // button, so a role query for "Example Franchise" alone would miss a row whose name now
+    // reads "Example Franchise 3" to a screen reader.
+    expect(within(picker).getByText("Example Franchise").closest("li")).toHaveTextContent("3");
+    expect(within(picker).getByText("Director Spotlight").closest("li")).toHaveTextContent("14");
+  });
+
+  it("renders no number for a collection whose size the scan never reported", async () => {
+    const names = ["Example Franchise", "Director Spotlight"];
+    apiMock.candidates.mockResolvedValue(page([movie(1, { collections: names })]));
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...baseSnapshot,
+      // Only one of the two is known -- the other is genuinely absent, not zero.
+      collection_sizes: { "Example Franchise": 3 },
+    });
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Show the other 1 collection" }));
+    const picker = screen.getByRole("list", { name: "Collections" });
+    const unknownRow = within(picker).getByText("Director Spotlight").closest("li");
+    expect(unknownRow?.querySelector(".coll-pop-n")).toBeNull();
+    expect(unknownRow?.textContent).toBe("Director Spotlight");
+  });
+});
+
+/** An ordinary finished scan, no collection sizes known -- the `beforeEach` above seeds every
+ *  test in this file with it, since every card's collection picker reads `["snapshot"]`
+ *  unconditionally now (#816 phase 4/5), not just a test that opens the collection screen. A
+ *  test about a collection's own size (the fate-summary block below, or the picker's counts
+ *  above) sets its own `collection_sizes` on top of this. */
+const baseSnapshot: Snapshot = {
+  id: 1,
+  created_at: "2026-01-01T00:00:00+00:00",
+  policy_hash: "p",
+  horizon_at: "2025-01-01T00:00:00+00:00",
+  item_count: 4,
+  degraded: false,
+  degraded_reason: null,
+  condemned: 0,
+  protected: 0,
+  abstained: 0,
+  reclaimable_bytes: 0,
+  unknown_size_items: 0,
+};
+
+// The collection screen (#816 phase 5): a jump names a collection, the queue drops the lane
+// tabs for a back link and a fate summary, and the bulk bar -- a selection spanning three
+// fates is not one decision (rule 48) -- never renders there at all.
+describe("the collection screen", () => {
+  const openOnCollection = (name: string) => (
+    <ReviewQueue
+      verdict="condemn"
+      onVerdictChange={() => {}}
+      selectedId={null}
+      selectedGroupKey={null}
+      onSelect={() => {}}
+      onSelectGroup={() => {}}
+      focus={{ search: "", collection: name, nonce: 1 }}
+    />
+  );
+
+  /** Every scanned member of "Example Franchise", split across all three fates -- what makes
+   *  a collection screen mixed rather than the single-lane shape every other queue test drives. */
+  function mixedFateFixture() {
+    return {
+      condemned: [movie(1), movie(2)],
+      protected: [movie(3, { verdict: "protect" })],
+      abstained: [movie(4, { verdict: "abstain" })],
+    };
+  }
+
+  function mockMixedFates({ plexCount = 8 }: { plexCount?: number } = {}) {
+    const { condemned, protected: protectedItems, abstained } = mixedFateFixture();
+    apiMock.candidates.mockImplementation((verdict: string) => {
+      if (verdict === "any")
+        return Promise.resolve(page([...condemned, ...protectedItems, ...abstained]));
+      if (verdict === "condemn") return Promise.resolve(page(condemned));
+      if (verdict === "protect") return Promise.resolve(page(protectedItems));
+      if (verdict === "abstain") return Promise.resolve(page(abstained));
+      return Promise.resolve(page([]));
+    });
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...baseSnapshot,
+      collection_sizes: { "Example Franchise": plexCount },
+    });
+  }
+
+  it("never renders the bulk bar, even with rows on screen", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText("Example Movie 1");
+    expect(screen.queryByRole("region", { name: "Bulk actions" })).not.toBeInTheDocument();
+    // The toggle that would open it is gone too, not merely a bar with nothing to press.
+    expect(screen.queryByRole("button", { name: "Select" })).not.toBeInTheDocument();
+  });
+
+  it("drops the lane tabs for a back link naming the collection", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText("Example Movie 1");
+    expect(screen.getByRole("heading", { name: "Example Franchise" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Condemned" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Review queue/ })).toBeInTheDocument();
+  });
+
+  it("summarizes the mixed fates once every lane has answered", async () => {
+    mockMixedFates();
+    const { container } = renderWithProviders(openOnCollection("Example Franchise"));
+    // Each fate's count sits in its own <b>, split from the sibling text -- scoped by class the
+    // way `pickedCount` above scopes the bulk bar's own split count, rather than a text query
+    // that can't see across the element boundary.
+    // The lane names, not a fourth vocabulary for the same three sets: this is the only screen
+    // showing all three at once, so it reads them off the tabs' own declaration.
+    await waitFor(() =>
+      expect(container.querySelector(".coll-fate-condemn")).toHaveTextContent("2 condemned"),
+    );
+    expect(container.querySelector(".coll-fate-protect")).toHaveTextContent("1 in Sanctuary");
+    expect(container.querySelector(".coll-fate-abstain")).toHaveTextContent("1 in Limbo");
+  });
+
+  it("says how many the last scan found beside how many Plex reports", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText(/8 in the collection, 4 in the last scan\./);
+  });
+
+  // The sentence exists for the GAP: Plex can hold titles this scan never saw, in an unscanned
+  // library or unmatched. With nothing missing it restates the "N items" line under the search
+  // box, so it does not render at all.
+  it("says nothing about counts when the scan saw the whole collection", async () => {
+    mockMixedFates({ plexCount: 4 });
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText("Example Movie 1");
+    expect(screen.queryByText(/in the last scan\./)).not.toBeInTheDocument();
+  });
+
+  it("the back link returns to a plain lane view", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText("Example Movie 1");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Review queue/ }));
+    expect(await screen.findByRole("button", { name: "Condemned" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Example Franchise" })).not.toBeInTheDocument();
+  });
+
+  // Found on a real library. A card's chip set the collection directly and left the lane's
+  // search applied, so the screen opened on a NARROWED subset under a fate summary that counts
+  // the whole collection, wearing a search chip the operator set for the lane. The why panel's
+  // chip routed through App's jump, which clears the search, so one chip did two things. Both
+  // doors go through `openCollection` now; this drives the one that was wrong.
+  it("drops the lane's search when a card's chip opens a collection, and puts it back", async () => {
+    // Members that actually carry the chip, which is the control this test presses.
+    const members = [
+      movie(1, { collections: ["Example Franchise"] }),
+      movie(2, { collections: ["Example Franchise"] }),
+    ];
+    apiMock.candidates.mockImplementation((verdict: string) =>
+      Promise.resolve(page(verdict === "protect" || verdict === "abstain" ? [] : members)),
+    );
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...baseSnapshot,
+      collection_sizes: { "Example Franchise": 2 },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ReviewQueue
+        verdict="condemn"
+        onVerdictChange={() => {}}
+        selectedId={null}
+        selectedGroupKey={null}
+        onSelect={() => {}}
+        onSelectGroup={() => {}}
+      />,
+    );
+    const box = await screen.findByRole("searchbox", { name: /search titles/i });
+    await user.type(box, "Example");
+    await waitFor(() => expect(box).toHaveValue("Example"));
+
+    // The card's own chip, the door that used to keep the search.
+    await user.click((await screen.findAllByRole("button", { name: "Example Franchise" }))[0]!);
+
+    expect(await screen.findByRole("heading", { name: "Example Franchise" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: /search titles/i })).toHaveValue("");
+    expect(screen.queryByRole("button", { name: /Stop searching for/i })).toBeNull();
+
+    // ...and the lane is handed back exactly as it was left, which is what the exit promises.
+    await user.click(screen.getByRole("button", { name: /Review queue/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("searchbox", { name: /search titles/i })).toHaveValue("Example"),
+    );
+  });
+
+  // The exit takes the lane tabs' own slot, so it reads as a control rather than as the tabs
+  // having gone missing. Pinned by what it is NOT: a `.link-btn` is the lighter treatment this
+  // replaced, and the tabs must be gone from the row it now occupies.
+  it("puts a real control where the lane tabs were, not a lighter link", async () => {
+    mockMixedFates();
+    renderWithProviders(openOnCollection("Example Franchise"));
+    const back = await screen.findByRole("button", { name: /Review queue/ });
+    expect(back).toHaveClass("back-to-lane");
+    expect(back).not.toHaveClass("link-btn");
+    expect(screen.queryByRole("button", { name: "Condemned" })).not.toBeInTheDocument();
+  });
+
+  // A swap nothing focuses and nothing says is invisible to a keyboard or screen reader
+  // operator: the rows just become different rows. Neither half shows up in a rendered diff,
+  // so both are pinned here.
+  it("moves focus to the collection's heading and says the list changed", async () => {
+    mockMixedFates();
+    renderWithProviders(
+      <>
+        <Announcer />
+        {openOnCollection("Example Franchise")}
+      </>,
+    );
+    const heading = await screen.findByRole("heading", { name: "Example Franchise" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(
+      await screen.findByText("Showing the Example Franchise collection."),
+    ).toBeInTheDocument();
+  });
+
+  // Rule 17/36: `isPending` alone clears on an ERROR exactly as it does on a success, so a fate
+  // lane that exhausted its retries must not read as loaded with its count defaulted to 0 --
+  // that undercounts "N in the last scan" and silently states a false zero for the failed lane.
+  it("says the counts could not be read, rather than a false zero, when a lane's read fails", async () => {
+    const { condemned, abstained } = mixedFateFixture();
+    apiMock.candidates.mockImplementation((verdict: string) => {
+      if (verdict === "any") return Promise.resolve(page([...condemned, ...abstained]));
+      if (verdict === "condemn") return Promise.resolve(page(condemned));
+      if (verdict === "protect") return Promise.reject(new Error("boom"));
+      if (verdict === "abstain") return Promise.resolve(page(abstained));
+      return Promise.resolve(page([]));
+    });
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...baseSnapshot,
+      collection_sizes: { "Example Franchise": 8 },
+    });
+    renderWithProviders(openOnCollection("Example Franchise"));
+    await screen.findByText("Example Movie 1");
+    expect(
+      await screen.findByText("Couldn't read the counts for this collection."),
+    ).toBeInTheDocument();
+    // Not "2 in the last scan" (an undercount of the real 3), and not one fate's real count
+    // sitting beside the failed lane's missing one -- the whole summary is withheld together.
+    expect(screen.queryByText(/in the last scan\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/condemned/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/in Limbo/)).not.toBeInTheDocument();
   });
 });
 

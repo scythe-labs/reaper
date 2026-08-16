@@ -49,6 +49,11 @@ export type NavIntent =
        *  Spelled `| undefined` because callers forward their own optional straight through, and
        *  `exactOptionalPropertyTypes` counts an explicit `undefined` as a value. */
       search?: string | undefined;
+      /** Open the collection screen on this collection, in place of the lane tabs (#816 phase
+       *  5). Omitted leaves the queue on whatever it was already showing -- a lane, or a
+       *  collection already open. There is no way to CLOSE one through a jump: that is the
+       *  queue's own back link and browser Back, both local to `ReviewQueue`. */
+      collection?: string;
     }
   | { view: "policy"; section?: PolicySectionId }
   | { view: "reap" }
@@ -79,6 +84,6 @@ export type NavIntent =
  *  in this union fires once. The search box seeded by a jump must not refill itself on the way
  *  back, and a policy section is a scroll position on one long page. */
 export type Focus =
-  | { view: "review"; search: string; nonce: number }
+  | { view: "review"; search: string; collection?: string | undefined; nonce: number }
   | { view: "policy"; section: PolicySectionId; nonce: number }
   | { view: "settings"; panel: Panel; nonce: number };

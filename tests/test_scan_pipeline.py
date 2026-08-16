@@ -14,6 +14,7 @@ still produces the snapshot a sequential gather would have:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -28,7 +29,8 @@ from structlog.testing import capture_logs
 from reaper.api import simulate
 from reaper.api.schemas import SimStale, SimulationOut
 from reaper.clients.base import IntegrationError
-from reaper.clock import utcnow
+from reaper.clients.plex import PlexClient, PlexCollectionRow, PlexError, PlexSection
+from reaper.clock import from_epoch, utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import (
@@ -45,6 +47,7 @@ from reaper.db.models import (
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.dormancy import history_reach_days
 from reaper.engine.gates import GateId
+from reaper.engine.identity import PlexItem
 from reaper.engine.observation import Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
 from reaper.engine.policy_migrations import PolicyRepair
@@ -153,6 +156,62 @@ class _StaticList:
 
     async def fetch(self) -> list[lists.ListItem]:
         return self._items
+
+
+class _FakeCollectionsPlex(PlexClient):
+    """A movie-only Plex stand-in for #816 phase 2.
+
+    Inherits the real client rather than duck-typing it (``_fakes.py``'s convention), so a
+    signature drift on any of the four methods scan touches fails the mypy gate instead of
+    passing silently. Never calls ``super().__init__``: every method scan can reach while
+    ``plex`` is set is overridden below, so nothing here can open a socket.
+    """
+
+    def __init__(
+        self,
+        *,
+        sections: list[PlexSection],
+        collections: dict[int, list[PlexCollectionRow]] | None = None,
+        children: dict[int, set[int]] | None = None,
+        fail_section: int | None = None,
+        movie_spine: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._sections = sections
+        self._collections = collections or {}
+        self._children = children or {}
+        self._fail_section = fail_section
+        self._movie_spine = movie_spine if movie_spine is not None else _movie_spine()
+
+    async def library_guid_index(
+        self, *, section_type: str, allowed_sections: set[int] | None = None
+    ) -> dict[int, PlexItem]:
+        # Mirrors the Tautulli spine exactly -- same rating key, title, year, added-at, no
+        # extra enrichment -- so a real (if uninteresting) sweep does not RETIRE the very
+        # rows the spine already lists. `library_index.build_index` drops any spine row a
+        # sweep that answered (`swept=True`) does not also list, so an empty `{}` here would
+        # silently unmatch every movie: a fixture bug, not the behavior this suite tests.
+        if section_type != "movie":
+            return {}
+        return {
+            int(row["rating_key"]): PlexItem(
+                rating_key=int(row["rating_key"]),
+                title=str(row["title"]),
+                year=row.get("year"),
+                added_at=from_epoch(row.get("added_at")),
+            )
+            for row in self._movie_spine
+        }
+
+    async def video_sections(self) -> list[PlexSection]:
+        return self._sections
+
+    async def list_collections(self, section_key: int) -> list[PlexCollectionRow]:
+        if section_key == self._fail_section:
+            raise PlexError("plex hiccuped")
+        return self._collections.get(section_key, [])
+
+    async def collection_children(self, collection_key: int) -> set[int]:
+        return self._children.get(collection_key, set())
 
 
 # ---------------------------------------------------------------------------
@@ -655,6 +714,254 @@ class TestScanPipelineEndToEnd:
         assert "Radarr 'uhd' unreachable" in (snapshot.degraded_reason or "")
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert set(rows) == {"radarr:1:1", "radarr:1:2", "radarr:1:3"}
+
+
+class TestCollectionsRideTheSnapshot:
+    """#816 phase 2: the Plex collections read lands on the Candidate and Snapshot rows,
+    and a failed read costs a missing chip alone -- never a degraded scan
+    (docs/history/COLLECTIONS_PLAN.md's fence: collections are navigation, never protection)."""
+
+    async def test_a_candidates_collections_are_sorted_smallest_first_then_alphabetical(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000002": (5.0, 5000)})
+
+        tautulli = scan_library(movies=_movie_spine())
+        plex = _FakeCollectionsPlex(
+            sections=[PlexSection(key=1, title="Movies", kind="movie")],
+            collections={
+                1: [
+                    PlexCollectionRow(rating_key=501, title="Zeta Collection", child_count=1),
+                    PlexCollectionRow(rating_key=502, title="Alpha Collection", child_count=1),
+                    PlexCollectionRow(rating_key=503, title="Big Collection", child_count=10),
+                ]
+            },
+            # Dust (rating key 11, "radarr:1:1") sits in all three; Beloved (22) in none.
+            children={501: {11}, 502: {11}, 503: {11}},
+        )
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
+            ],
+            tautulli=tautulli,
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+            plex=plex,
+        )
+        await session.commit()
+
+        assert snapshot.degraded is False, snapshot.degraded_reason
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+
+        # Two size-1 collections tie, so the alphabetically-first leads; the size-10
+        # collection sorts last despite "Big" alphabetizing ahead of "Zeta" -- proving size
+        # is the primary key, not the alphabet.
+        assert json.loads(rows["radarr:1:1"].collections_json or "[]") == [
+            "Alpha Collection",
+            "Zeta Collection",
+            "Big Collection",
+        ]
+        # Recorded no membership, not an empty list: Reaper looked and found nothing.
+        assert rows["radarr:1:2"].collections_json is None
+
+        sizes = json.loads(snapshot.collection_sizes_json or "{}")
+        assert sizes == {"Zeta Collection": 1, "Alpha Collection": 1, "Big Collection": 10}
+
+    async def test_a_failed_collection_read_leaves_the_snapshot_intact(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000002": (5.0, 5000)})
+
+        def _radarr() -> RadarrSource:
+            return RadarrSource(
+                client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+            )
+
+        common: dict[str, Any] = {
+            "movie_policy": DEFAULT_MOVIE_POLICY,
+            "movie_gates": build_gates(DEFAULT_MOVIE_POLICY),
+            "tv_policy": DEFAULT_TV_POLICY,
+            "tv_gates": build_gates(DEFAULT_TV_POLICY),
+        }
+        # Every run carries the SAME Plex client shape (id enrichment included), differing
+        # only in whether the one section's collections read raises -- isolating the
+        # comparison to that one read. Diffing against `plex=None` instead would also move
+        # unrelated fields (#553's "seen in Plex" ledger only writes when `plex` is set),
+        # which is not what this test means to prove.
+        sections = [PlexSection(key=1, title="Movies", kind="movie")]
+        succeeding = _FakeCollectionsPlex(
+            sections=sections,
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1)]
+            },
+            children={501: {11}},
+        )
+        # A warm-up scan, discarded, so both compared runs see the SAME "seen in Plex before"
+        # ledger (#553): the very first scan of a session always reads that ledger as unknown
+        # ("never seen before"), which the ledger's own write during that scan then resolves
+        # for every scan after it -- an artifact of running two real scans in one test, not
+        # anything a failed collection read moves.
+        await scan(
+            cache_engine,
+            session,
+            radarrs=[_radarr()],
+            tautulli=scan_library(movies=_movie_spine()),
+            plex=succeeding,
+            **common,
+        )
+        baseline = await scan(
+            cache_engine,
+            session,
+            radarrs=[_radarr()],
+            tautulli=scan_library(movies=_movie_spine()),
+            plex=succeeding,
+            **common,
+        )
+        # The one section this scan has raises on every collections read.
+        failed = await scan(
+            cache_engine,
+            session,
+            radarrs=[_radarr()],
+            tautulli=scan_library(movies=_movie_spine()),
+            plex=_FakeCollectionsPlex(sections=sections, fail_section=1),
+            **common,
+        )
+        await session.commit()
+
+        # The contrast is real: the baseline recorded the collection the failed run lost.
+        assert baseline.collection_sizes_json == '{"Cult Classics": 1}'
+        assert failed.degraded is False, failed.degraded_reason
+        assert failed.collection_sizes_json is None
+
+        before = {c.media_key: c for c in await candidates(session, baseline.id)}
+        after = {c.media_key: c for c in await candidates(session, failed.id)}
+        assert set(before) == set(after)
+        for key, was in before.items():
+            now_ = after[key]
+            # Everything a failed collection read must never touch -- the fence's whole
+            # point, proven field by field rather than by eye.
+            assert now_.verdict == was.verdict
+            assert now_.score == was.score
+            assert now_.coverage_bp == was.coverage_bp
+            assert now_.size_bytes == was.size_bytes
+            assert now_.explanation_json == was.explanation_json
+            assert now_.facts_json == was.facts_json
+            # And the one field that DID have something to lose recorded nothing, since the
+            # only section that carries collections failed to read.
+            assert now_.collections_json is None
+
+
+class TestCollectionSizesAreIdentifiedByName:
+    """#816 review: two sections each holding a same-named collection used to
+    silently last-write-wins the later section's count into ``sizes[title]`` (rule 6).
+    The collection NAME is the identity: Reaper's own Leaving Soon shelf creates a
+    same-named collection in every section, so an operator with two libraries hits this
+    case by default, and one merged chip covering both is what they mean."""
+
+    async def test_same_named_collections_in_two_sections_merge_and_sum(self) -> None:
+        plex = _FakeCollectionsPlex(
+            sections=[
+                PlexSection(key=1, title="Movies", kind="movie"),
+                PlexSection(key=2, title="4K Movies", kind="movie"),
+            ],
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Leaving Soon", child_count=2)],
+                2: [PlexCollectionRow(rating_key=502, title="Leaving Soon", child_count=3)],
+            },
+            children={501: {11}, 502: {22}},
+        )
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        # One chip's worth of size, not the second section's 3 silently replacing the
+        # first section's 2.
+        assert sizes == {"Leaving Soon": 5}
+        # Each item still carries its own single membership entry.
+        assert membership == {11: ["Leaving Soon"], 22: ["Leaving Soon"]}
+
+
+class TestAnUnknownCollectionSizeIsNotZero:
+    """A collection Plex never reported a childCount for is a different fact from one
+    Plex reported as empty. Folding the unknown to 0 handed it the sort's element-0
+    slot -- the exact slot the chip renders -- ahead of a collection that is genuinely
+    small."""
+
+    async def test_an_unknown_size_sorts_last_and_is_absent_from_sizes(self) -> None:
+        plex = _FakeCollectionsPlex(
+            sections=[PlexSection(key=1, title="Movies", kind="movie")],
+            collections={
+                1: [
+                    PlexCollectionRow(rating_key=501, title="Unsized", child_count=None),
+                    PlexCollectionRow(rating_key=502, title="Genuinely Small", child_count=1),
+                ]
+            },
+            children={501: {11}, 502: {11}},
+        )
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        # The known-small collection wins element 0, not the unsized one.
+        assert membership[11] == ["Genuinely Small", "Unsized"]
+        # An unknown size never carries a fabricated 0 into the stored map.
+        assert sizes == {"Genuinely Small": 1}
+        assert "Unsized" not in sizes
+
+
+class _ConcurrencyTrackingPlex(PlexClient):
+    """A one-section Plex stand-in that counts overlapping ``collection_children`` reads,
+    to prove the fan-out is bounded rather than either fully sequential or unbounded.
+    Never calls ``super().__init__`` (``_FakeCollectionsPlex``'s convention)."""
+
+    def __init__(self, *, rows: list[PlexCollectionRow], bound: int) -> None:
+        self._rows = rows
+        self._bound = bound
+        self._in_flight = 0
+        self.peak_in_flight = 0
+
+    async def video_sections(self) -> list[PlexSection]:
+        return [PlexSection(key=1, title="Movies", kind="movie")]
+
+    async def list_collections(self, section_key: int) -> list[PlexCollectionRow]:
+        return self._rows
+
+    async def collection_children(self, collection_key: int) -> set[int]:
+        self._in_flight += 1
+        self.peak_in_flight = max(self.peak_in_flight, self._in_flight)
+        assert self._in_flight <= self._bound, "the fan-out exceeded its declared bound"
+        await asyncio.sleep(0)  # yield, so a wider-than-bound fan-out would overlap here
+        self._in_flight -= 1
+        return {collection_key}
+
+
+class TestTheChildrenFanOutIsBounded:
+    """#816 review: N collections in one section each ran their ``collection_children``
+    read sequentially. Bounded concurrency now runs them in waves, the same pattern
+    ``leaving_soon.sync_shelves`` already uses for its own fan-out."""
+
+    async def test_more_collections_than_the_bound_still_peaks_at_the_bound(self) -> None:
+        bound = snapshot_service._COLLECTION_CHILDREN_CONCURRENCY
+        rows = [
+            PlexCollectionRow(rating_key=n, title=f"Collection {n}", child_count=1)
+            for n in range(bound * 3)
+        ]
+        plex = _ConcurrencyTrackingPlex(rows=rows, bound=bound)
+
+        _membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert plex.peak_in_flight == bound
+        assert len(sizes) == len(rows)
 
 
 class TestAStoredSizeSaysWhereItCameFrom:

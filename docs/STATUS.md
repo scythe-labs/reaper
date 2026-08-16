@@ -40,6 +40,7 @@ Last verified against the code: 2026-08-02.
 | **Operator console** — service config, schedule, safety, review | ✅ done |
 | **First start** — four steps, password forced, restore door, resume from the server | ✅ done |
 | **Packaged installs** — Win/macOS binaries + tray, snap, CalVer, update check | 🟡 no cut yet |
+| **Collections** — chip, picker, collection screen, search reaches names | ✅ done, #816 |
 
 ## Open work
 

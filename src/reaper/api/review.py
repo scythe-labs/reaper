@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
-from sqlalchemy import and_, asc, desc, func, or_, select, text
+from sqlalchemy import and_, asc, case, desc, func, null, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
@@ -200,6 +200,7 @@ async def _snapshot_out(session: AsyncSession, snapshot: Snapshot) -> SnapshotOu
         abstained=int(counts.get("abstain", 0)),
         reclaimable_bytes=int(reclaimable),
         unknown_size_items=int(unknown_size),
+        collection_sizes=_collection_sizes(snapshot.collection_sizes_json),
     )
 
 
@@ -276,6 +277,73 @@ def _like_literal(text_: str) -> str:
     return text_.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _safe_json_array(column: str) -> str:
+    """SQL for the stored JSON-array column, guarded to a literal ``'[]'`` for a NULL or
+    invalid document -- ``json_each`` raises mid-query on either, so every predicate that
+    walks ``genres_json`` or ``collections_json`` shares this one guard rather than each
+    copying it and risking one that doesn't (rule 72). ``column`` is never operator input,
+    only the two literal names those predicates pass; nothing untrusted reaches this string.
+    """
+    return (
+        f"CASE WHEN candidate.{column} IS NOT NULL "
+        f"AND json_valid(candidate.{column}) "
+        f"THEN candidate.{column} ELSE '[]' END"
+    )
+
+
+def _json_array_term(column: str, term: str) -> ColumnElement[bool]:
+    """EXISTS test for ``term`` inside a stored JSON-array column, exactly.
+
+    Shared by every equality filter over one of these columns (``genres_json``,
+    ``collections_json``) so a second copy can't drift from this one (rule 72).
+    """
+    return cast(
+        "ColumnElement[bool]",
+        text(
+            f"EXISTS (SELECT 1 FROM json_each({_safe_json_array(column)}) "  # noqa: S608
+            f"WHERE json_each.value = :term)"
+        ).bindparams(term=term),
+    )
+
+
+def _json_array_like(column: str, pattern: str) -> ColumnElement[bool]:
+    """EXISTS test for a **partial** match (SQL ``LIKE``) inside a stored JSON-array column.
+
+    The partial sibling of ``_json_array_term`` above, sharing its NULL/malformed guard
+    (rule 72) so the two can't drift on that. Used only for the collection-name block of
+    search (#816 phase 3b) -- genre stays an exact filter, nothing else needs a substring
+    test over a JSON array. ``pattern`` is caller-escaped with ``_like_literal`` the same
+    way the title search wraps it, so a typed ``%`` or ``_`` means itself.
+    """
+    return cast(
+        "ColumnElement[bool]",
+        text(
+            f"EXISTS (SELECT 1 FROM json_each({_safe_json_array(column)}) "  # noqa: S608
+            f"WHERE json_each.value LIKE :pattern ESCAPE '\\')"
+        ).bindparams(pattern=pattern),
+    )
+
+
+def _json_array_first_like(column: str, pattern: str) -> ColumnElement[str]:
+    """The first stored value in a JSON-array column matching ``pattern`` (``LIKE``), in the
+    array's own stored order -- the same order ``collections_json`` is written smallest-first
+    (rule 72's NULL/malformed guard, shared again). NULL when nothing matches.
+
+    Says WHICH collection answered a block-2 search row, since the chip's usual element-0
+    would show the operator's smallest collection rather than the one that matched -- an
+    unrelated name on a row they cannot otherwise explain (#816 phase 3b, the one exception
+    to "the chip takes element 0").
+    """
+    return cast(
+        "ColumnElement[str]",
+        text(
+            f"(SELECT json_each.value FROM json_each({_safe_json_array(column)}) "  # noqa: S608
+            f"WHERE json_each.value LIKE :pattern ESCAPE '\\' "
+            f"ORDER BY json_each.key LIMIT 1)"
+        ).bindparams(pattern=pattern),
+    )
+
+
 @router.get("/candidates", tags=[api_tags.REVIEW])
 async def list_candidates(
     request: Request,
@@ -284,6 +352,7 @@ async def list_candidates(
     media_type: str | None = None,
     requested: str = "any",
     genre: str | None = None,
+    collection: str | None = None,
     library: str | None = None,
     override: str = "any",
     sort: str = "score",
@@ -306,18 +375,32 @@ async def list_candidates(
     ``order`` (asc / desc) let the owner re-rank; a score tiebreak keeps the order stable
     within equal keys, so a show's seasons never scatter across a page boundary.
 
+    ``verdict`` selects the lane -- ``condemn`` / ``protect`` / ``abstain`` -- or ``any`` for
+    every stored lane at once, which is what makes the collection screen cross-lane (#816): a
+    title's siblings show up whatever fate each one got. Hand overrides can only shift an item
+    INTO or OUT OF one named lane, so ``any`` skips that step outright; nothing is being
+    excluded from a lane, so there is nothing to move.
+
     Filters **stack** (they are ANDed), and each only narrows the frozen snapshot, never
     re-decides it: ``search`` matches the title or the show name, and understands a release
     year on the end of either ("Example Alpha 1979", or with parentheses) -- the queue prints
     the year beside the title, so it is part of what the operator reads and types back. A
     year on its own ("1979") asks for everything released that year. Either way the term is
     still tried as plain text too, so a title whose NAME ends in a year it predates, or is a
-    year outright, is never lost to the reading of the number. ``media_type`` keeps
+    year outright, is never lost to the reading of the number. ``search`` also matches a Plex
+    collection name partially, so typing a franchise finds its members (#816 phase 3b) --
+    navigation only, same as ``collection`` below, never a re-decision. Each row's response
+    carries a ``search_rank`` (0 exact title, 1 partial title/show, 2 collection-name) so the
+    client can show titles before collections without imposing a relevance order on either
+    one; a block-2 row also carries ``matched_collection``, the name that actually matched,
+    since the chip's usual smallest-first choice would otherwise show an unrelated name.
+    ``media_type`` keeps
     movies or seasons, ``requested`` keeps only what someone asked for through Seerr
     (``yes``), only what nobody asked for (``no``), or everything (``any``), ``genre``
-    keeps rows whose stored genre list contains the given term exactly, ``library`` keeps
-    rows in the named Plex library (section), and ``override`` keeps rows by their
-    hand-override state (``spare`` / ``reap`` / ``none`` / ``any``).
+    keeps rows whose stored genre list contains the given term exactly, ``collection`` does
+    the same over the stored Plex collection list -- navigation only, it never re-decides a
+    verdict -- ``library`` keeps rows in the named Plex library (section), and ``override``
+    keeps rows by their hand-override state (``spare`` / ``reap`` / ``none`` / ``any``).
     """
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
@@ -336,20 +419,25 @@ async def list_candidates(
         # totals describe exactly the set the rows are drawn from.
         decisions = await whitelist.overrides(session)
         conditions = [Candidate.snapshot_id == snapshot.id]
-        # Tab membership is the EFFECTIVE lane, not the raw verdict: a hand override moves an item
-        # to the lane of what will actually happen -- a spared condemnation shows under Kept, a
-        # honored hand reap under Condemned -- while its stored verdict stays pure policy. Only
-        # overridden rows move, so raw verdict==lane stays the indexed path and the few moves are
-        # spliced on; condemned.effective_verdict is the one classifier the scan summary shares.
-        shifts = await overridden_lane_shifts(session, snapshot.id, decisions)
-        moved_out = [c.media_key for c, from_lane, _to in shifts if from_lane == verdict]
-        moved_in = [c.media_key for c, _from, to_lane in shifts if to_lane == verdict]
-        lane = Candidate.verdict == verdict
-        if moved_out:
-            lane = and_(lane, Candidate.media_key.not_in(moved_out))
-        if moved_in:
-            lane = or_(lane, Candidate.media_key.in_(moved_in))
-        conditions.append(lane)
+        if verdict != "any":
+            # Tab membership is the EFFECTIVE lane, not the raw verdict: a hand override moves
+            # an item to the lane of what will actually happen -- a spared condemnation shows
+            # under Kept, a honored hand reap under Condemned -- while its stored verdict stays
+            # pure policy. Only overridden rows move, so raw verdict==lane stays the indexed
+            # path and the few moves are spliced on; condemned.effective_verdict is the one
+            # classifier the scan summary shares. ``any`` (the collection screen, #816) wants
+            # every lane, so this whole step is skipped: nothing is excluded, so nothing moves.
+            shifts = await overridden_lane_shifts(session, snapshot.id, decisions)
+            moved_out = [c.media_key for c, from_lane, _to in shifts if from_lane == verdict]
+            moved_in = [c.media_key for c, _from, to_lane in shifts if to_lane == verdict]
+            lane = Candidate.verdict == verdict
+            if moved_out:
+                lane = and_(lane, Candidate.media_key.not_in(moved_out))
+            if moved_in:
+                lane = or_(lane, Candidate.media_key.in_(moved_in))
+            conditions.append(lane)
+        search_rank: ColumnElement[int] | None = None
+        matched_collection: ColumnElement[str] | None = None
         if search and search.strip():
             term = search.strip()
 
@@ -361,21 +449,71 @@ async def list_candidates(
                     Candidate.group_title.ilike(pattern, escape="\\"),
                 )
 
+            def exact(text_: str) -> ColumnElement[bool]:
+                # Whole-string equality, not a LIKE: block 0 is "typed the exact title",
+                # where `matches` above already covers "typed something inside it" (block 1).
+                return or_(
+                    func.lower(Candidate.title) == text_.lower(),
+                    func.lower(Candidate.group_title) == text_.lower(),
+                )
+
+            def collection_pattern(text_: str) -> str:
+                return f"%{_like_literal(text_)}%"
+
             stem, year = _split_search_year(term)
             if year is None:
-                conditions.append(matches(term))
+                title_hit = matches(term)
+                exact_hit = exact(term)
+                collection_terms = [term]
             elif stem:
                 # Either reading of the number, never one or the other: "Blade Runner 2049" is a
                 # title that ends in a year it was not released in, and "Freaky Tales 2025" is a
                 # title beside its year. Trying the whole string first keeps the first kind
                 # findable, and the stem-plus-year arm makes the second kind work at all.
-                conditions.append(or_(matches(term), and_(Candidate.year == year, matches(stem))))
+                title_hit = or_(matches(term), and_(Candidate.year == year, matches(stem)))
+                exact_hit = or_(exact(term), and_(Candidate.year == year, exact(stem)))
+                collection_terms = [term, stem]
             else:
                 # A year on its own is the operator asking what came out that year. It is also
                 # still a string, so a title *named* after a year ("1917", "2012") comes back
                 # too -- both readings, the same as the arm above. Every other search is text
-                # that happens to allow a year; this is the one the year is the whole of.
-                conditions.append(or_(matches(term), Candidate.year == year))
+                # that happens to allow a year; this is the one the year is the whole of. A
+                # bare year is never an "exact title" match on its own.
+                title_hit = or_(matches(term), Candidate.year == year)
+                exact_hit = exact(term)
+                collection_terms = [term]
+
+            # A collection name matched partially -- typing a franchise finds its members
+            # (#816 phase 3b). It joins the same OR the title reading uses, so a title-only
+            # match and a collection-only match land on the same page; collections stay
+            # navigation, nothing here re-decides a verdict.
+            collection_hit = or_(
+                *(
+                    _json_array_like("collections_json", collection_pattern(t))
+                    for t in collection_terms
+                )
+            )
+            conditions.append(or_(title_hit, collection_hit))
+
+            # The queue has no relevance order of its own: search filters, and the operator's
+            # chosen sort orders within what's left. "Titles first, collections after" is a
+            # SECOND ordering laid on top of that one, and two orderings can't both hold -- so
+            # the server hands back which of three blocks a row landed in (0 exact title, 1
+            # partial title/show, 2 collection-name) and the client sorts *within* each block
+            # in the operator's own order, with a labeled divider marking where block 2 starts.
+            search_rank = case((exact_hit, 0), (title_hit, 1), else_=2)
+            # Which collection matched, for a block-2 row -- NOT the chip's usual smallest-
+            # first element 0, which would put an unrelated name on a row the operator cannot
+            # otherwise explain. NULL for a row that matched by title.
+            # `coalesce` needs 2+ args in SQLite; the trailing NULL is a no-op when there
+            # are already two terms and the only way to call it at all when there's one.
+            matched_collection = func.coalesce(
+                *(
+                    _json_array_first_like("collections_json", collection_pattern(t))
+                    for t in collection_terms
+                ),
+                null(),
+            )
         if media_type:
             conditions.append(Candidate.media_type == media_type)
         if library and library.strip():
@@ -386,19 +524,12 @@ async def list_candidates(
         elif requested == "no":
             conditions.append(Candidate.requested_by.is_(None))
         if genre and genre.strip():
-            # Exact term match inside the stored JSON genre array. json_each raises
-            # mid-query on a malformed document, so invalid or missing rows are swapped
-            # for an empty array inside the expression itself and simply never match.
-            # Raw SQL (the season scan's precedent for json/table-valued reads), cast to
-            # the boolean element type the conditions list carries.
-            genre_predicate = text(
-                "EXISTS (SELECT 1 FROM json_each("
-                "CASE WHEN candidate.genres_json IS NOT NULL "
-                "AND json_valid(candidate.genres_json) "
-                "THEN candidate.genres_json ELSE '[]' END"
-                ") WHERE json_each.value = :genre)"
-            ).bindparams(genre=genre.strip())
-            conditions.append(cast("ColumnElement[bool]", genre_predicate))
+            # Exact term match inside the stored JSON genre array.
+            conditions.append(_json_array_term("genres_json", genre.strip()))
+        if collection and collection.strip():
+            # Exact name match inside the stored JSON collection array -- the same
+            # predicate as genre above, over collections_json instead (rule 72).
+            conditions.append(_json_array_term("collections_json", collection.strip()))
         if override in {"spare", "reap", "none"}:
             # Hand overrides resolve in Python: whitelist.effective_override is the one
             # decision function (an item's own key beats its show's), and re-stating that
@@ -460,19 +591,36 @@ async def list_candidates(
         # renders the same way. Only when size is the chosen key: on a title or year sort
         # the owner asked for alphabetical or chronological, not for a size grouping.
         sort_keys = [primary] if sort != "size" else [Candidate.size_bytes.is_(None), primary]
+        # A search's block order (0/1/2) sorts ABOVE the operator's chosen key, never mixed
+        # into it: within a block, the owner's sort still holds. Absent a search, there is no
+        # block and this prefix is empty.
+        rank_prefix = [search_rank] if search_rank is not None else []
         # A score/size tiebreak after the chosen key keeps ordering deterministic -- so a
         # show's seasons stay adjacent and paging never splits or shuffles the list.
         stmt = (
-            select(Candidate)
+            select(
+                Candidate,
+                search_rank if search_rank is not None else null(),
+                matched_collection if matched_collection is not None else null(),
+            )
             .where(*conditions)
-            .order_by(*sort_keys, Candidate.score.desc(), Candidate.size_bytes.desc())
+            .order_by(*rank_prefix, *sort_keys, Candidate.score.desc(), Candidate.size_bytes.desc())
             # limit/offset are validated at the boundary (Query ge/le above), so a
             # negative limit -- which SQLite reads as "no limit" -- can never reach here.
             .limit(limit)
             .offset(offset)
         )
 
-        rows = (await session.execute(stmt)).scalars().all()
+        page = (await session.execute(stmt)).all()
+        rows = [p[0] for p in page]
+        # media_key is already relied on as a unique per-snapshot key elsewhere on this page
+        # (the `flagged` map below); block/matched-collection are display-only extras riding
+        # the same query, read back the same way.
+        ranks = {p[0].media_key: p[1] for p in page if p[1] is not None}
+        # Only a block-2 row carries a matched collection: a title match's OWN collections
+        # can independently contain the term too, and that must not leak a name onto a row
+        # that did not need one to be found (#816 phase 3b).
+        matched_names = {p[0].media_key: p[2] for p in page if p[2] is not None and p[1] == 2}
 
         flagged = {
             f.media_key: f.first_flagged_at
@@ -494,7 +642,14 @@ async def list_candidates(
 
         return CandidatePageOut(
             items=[
-                _candidate_out(r, flagged.get(r.media_key), decisions, expiries=expiries)
+                _candidate_out(
+                    r,
+                    flagged.get(r.media_key),
+                    decisions,
+                    expiries=expiries,
+                    search_rank=ranks.get(r.media_key),
+                    matched_collection=matched_names.get(r.media_key),
+                )
                 for r in rows
             ],
             # One entry per show on the page, in place of the same four values stamped onto
@@ -1205,6 +1360,8 @@ def _candidate_out(
     decisions: dict[str, str] | None = None,
     *,
     expiries: dict[str, datetime | None] | None = None,
+    search_rank: int | None = None,
+    matched_collection: str | None = None,
 ) -> CandidateOut:
     # Three views of the one whitelist: the decision in EFFECT (own, or inherited from the
     # show) colors the row; the item's OWN decision is what a control on this row can toggle;
@@ -1272,6 +1429,9 @@ def _candidate_out(
         chip=_chip(explanation, r.verdict, r.score, r.media_type),
         season_number=_season_number(r.media_key),
         show_status=r.show_status,
+        collections=_collections(r.collections_json),
+        search_rank=search_rank,
+        matched_collection=matched_collection,
     )
 
 
@@ -1364,6 +1524,42 @@ def _genres(genres_json: str | None) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(g) for g in raw if g]
+
+
+def _collection_sizes(collection_sizes_json: str | None) -> dict[str, int] | None:
+    """The stored collection-size map, decoded the same defensive way ``_collections`` reads
+    the per-item list: unparseable or absent both read as ``None`` (not recorded), and a
+    non-integer count is dropped rather than guessed at, so the header omits a number sooner
+    than states a wrong one."""
+    if not collection_sizes_json:
+        return None
+    try:
+        raw = json.loads(collection_sizes_json)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return {str(k): v for k, v in raw.items() if isinstance(v, int)}
+
+
+def _collections(collections_json: str | None) -> list[str] | None:
+    """The stored collection list, defensively -- and unlike ``_genres``, ``None`` survives
+    rather than collapsing to an empty list.
+
+    ``None`` means "not recorded for this scan" (no Plex configured, a section read that
+    failed, a row from before this shipped), which the UI must render differently from "in
+    no collection": collections are navigation, never protection, so nothing here degrades
+    or re-decides -- a read failure just costs the chip. Anything unparseable reads the same
+    as absent, the same conservative default ``_genres`` uses."""
+    if not collections_json:
+        return None
+    try:
+        raw = json.loads(collections_json)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(raw, list):
+        return None
+    return [str(c) for c in raw if c]
 
 
 @router.get("/candidates/{candidate_id}", tags=[api_tags.REVIEW])
@@ -1492,5 +1688,9 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             # same scan. Skipping the rows that carry nothing keeps a snapshot taken
             # before this field existed from blanking a group whose other rows have it.
             show_status=next((c.show_status for c in seasons if c.show_status), None),
+            # Same pattern: a TV collection lists the SHOW, not its seasons, so every
+            # season row already carries the show's own list and the first one that has
+            # it answers for the whole group (#816).
+            collections=next((c.collections for c in seasons if c.collections), None),
             seasons=seasons,
         )

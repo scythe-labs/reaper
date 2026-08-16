@@ -1274,6 +1274,56 @@ describe("the merged-listing count", () => {
   });
 });
 
+// The collection chip's own line (#816 phase 4): its own paragraph beside cert/runtime/genres,
+// since that one is plain joined text a chip cannot join into. Navigation only, so these tests
+// are about the line showing up (or not) and staying reachable, never about fate.
+describe("the collection chip", () => {
+  it("renders no line when the scan recorded no collections", () => {
+    show(detail(WORKED_ROWS, { collections: null }));
+    expect(screen.queryByRole("button", { name: /Show the other/ })).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/^In the collection/)).not.toBeInTheDocument();
+  });
+
+  it("names the smallest collection beside the library chip, the order the cards use", () => {
+    show(
+      detail(WORKED_ROWS, {
+        content_rating: "PG",
+        runtime_minutes: 118,
+        genres: ["Drama"],
+        library: "Movies",
+        collections: ["Example Franchise", "Director Spotlight"],
+      }),
+    );
+    const chip = screen.getByRole("button", { name: "Example Franchise" });
+    // The head's chip row, with the library, not the plain cert/runtime/genre text below it:
+    // both chips answer "where does this file live in Plex", so they read as one group.
+    const head = chip.closest(".why-sub");
+    expect(head).not.toBeNull();
+    expect(head?.textContent).toMatch(/Movies/);
+    expect(head?.textContent).not.toMatch(/118 min/);
+    expect(screen.getByRole("button", { name: "Show the other 1 collection" })).toBeInTheDocument();
+  });
+
+  // One component, four call sites, so a picker fix lands on all of them (rule 18). The cards'
+  // pickers show each collection's size, so this one does too -- and a size the scan never
+  // recorded renders nothing rather than a "0", which would assert an empty shelf.
+  it("shows a known size in the picker and no number at all for an unrecorded one", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <WhyPanel
+        item={detail(WORKED_ROWS, { collections: ["Example Franchise", "Director Spotlight"] })}
+        onClose={() => {}}
+        collectionSizes={{ "Example Franchise": 4 }}
+      />,
+      { client: seedSettings(testQueryClient()) },
+    );
+    await user.click(screen.getByRole("button", { name: "Show the other 1 collection" }));
+    const pop = screen.getByRole("list", { name: "Collections" });
+    const rows = [...pop.querySelectorAll(".coll-pop-item")].map((r) => r.textContent);
+    expect(rows).toEqual(["Example Franchise4", "Director Spotlight"]);
+  });
+});
+
 // The per-title escape from a hold nothing else on this screen can lift (#275). Reaper keeps the
 // most watch evidence it has ever measured for a title, so plays that stop being readable hold it
 // back on every scan -- and until this the only way out was Settings' whole-library Forget, which

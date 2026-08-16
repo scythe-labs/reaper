@@ -297,6 +297,24 @@ class CandidateOut(BaseModel):
     server did not say" can never be drawn as a definite answer -- ``"unknown"`` renders
     in the "we could not check" treatment. ``"continuing"`` is labeled "Still going",
     because that arm also covers a show that has not started airing yet."""
+    collections: list[str] | None = None
+    """This item's Plex collection names (a season's are its SHOW's), sorted smallest
+    collection first by the scan that wrote them -- the chip takes element 0. Navigation
+    only: nothing reads this to decide a verdict (#816's fence). ``None`` means "not
+    recorded for this scan" (no Plex configured, a section read that failed, a row from
+    before this shipped), which is NOT the same as "in no collection" -- the UI must not
+    draw an empty chip for it."""
+    search_rank: int | None = None
+    """Which of the three search blocks this row matched: 0 exact title, 1 partial title or
+    show name, 2 collection-name only. ``None`` outside a search -- there is no relevance
+    order to carry when nothing was typed. The client sorts within a block by the operator's
+    chosen ``sort``, never across blocks; a divider marks where block 2 starts (#816 phase
+    3b)."""
+    matched_collection: str | None = None
+    """For a ``search_rank == 2`` row, the collection name that actually matched the typed
+    term -- NOT ``collections[0]``, which would show the operator's smallest collection
+    instead of the one their search found, on a row they could not otherwise explain.
+    ``None`` for a row that matched by title, and outside a search (#816 phase 3b)."""
 
 
 class CandidateDetail(CandidateOut):
@@ -412,6 +430,12 @@ class GroupOut(BaseModel):
     fact: one observation of the series is stamped onto every season of it in the same
     scan, so the rows of one group cannot disagree. None only if the group somehow holds
     no row carrying it (a pre-rescan snapshot), and the card then shows nothing."""
+    collections: list[str] | None = None
+    """The show's Plex collection names, taken from its season rows the same way
+    ``show_status`` is: a TV collection lists shows, not seasons, so every season carries
+    its show's own list and the first row that has one answers for the whole group. None
+    means "not recorded for this scan," never "in no collection" -- see
+    ``CandidateOut.collections``."""
     seasons: list[CandidateOut] = Field(default_factory=list)
     """Every season, sorted by season number (unnumbered rows last)."""
 
@@ -438,6 +462,13 @@ class SnapshotOut(BaseModel):
     IS known, and this is carried beside it rather than folded in as zeros: a sum with an
     unmeasured item in it is quietly low, whereas a total plus a count is honest. Hidden
     at zero, so a healthy library shows nothing new."""
+
+    collection_sizes: dict[str, int] | None = None
+    """Every collection this scan saw, name to Plex's own member count -- the collection
+    screen's header reads it for "N titles in this collection" beside the scan's own count
+    (#816 phase 5). ``None`` when none were read, whether none exist or the read failed;
+    the two are indistinguishable on purpose (docs/history/COLLECTIONS_PLAN.md's fence), and the
+    header omits that clause rather than guessing. Navigation only, never a verdict input."""
 
 
 class ProfileSettingsIO(BaseModel):

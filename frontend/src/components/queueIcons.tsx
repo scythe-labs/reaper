@@ -113,6 +113,20 @@ export function LibraryIcon() {
   );
 }
 
+/** Two spines and a leaning third, for a Plex collection -- distinct from the library shelf's
+ *  own spines-and-book glyph (the two sit side by side on a card's facts line, rule 21's "never
+ *  mix two meanings on one glyph" read straight through to icons). Sized down (12px) to sit
+ *  inside the collection chip, the chip family's own smaller cousin of the 14px set above. */
+export function CollectionIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+      <rect x="2" y="3" width="3.4" height="10" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="6.6" y="3" width="3.4" height="10" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M11.6 4.2l2.3 9.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function PlusIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">

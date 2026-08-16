@@ -39,6 +39,7 @@ import { useSuccessorFocus } from "../focus";
 import { coverage, itemBytes, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useArtFallback } from "./artFallback";
+import { CollectionChip } from "./CollectionChip";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { ExternalMark } from "./queueIcons";
 import { useHoldsBackUnmeasured } from "./queueSettings";
@@ -1317,10 +1318,20 @@ export function WhyPanel({
   item,
   onClose,
   onShowGroup,
+  onOpenCollection = () => {},
+  collectionSizes = null,
 }: {
   item: CandidateDetail;
   onClose: () => void;
   onShowGroup?: (key: string) => void;
+  /** Open the collection screen behind this panel on the named collection (#816 phase 5).
+   *  Optional so a caller with nowhere to send the jump (a test, an embedding with no queue
+   *  behind it) still renders a chip that simply does nothing when pressed, never a crash. */
+  onOpenCollection?: (name: string) => void;
+  /** Each known collection's member count, for the chip's picker. The cards' pickers show
+   *  these, so this one does too: one component, four call sites, and a picker fix lands on
+   *  all of them (rule 18). A name absent from the map renders no number, never a "0". */
+  collectionSizes?: Record<string, number> | null;
 }) {
   const { explanation } = item;
 
@@ -1385,6 +1396,13 @@ export function WhyPanel({
             {/* The Plex library the file lives in -- same quiet chip as the cards, so movies
                 and seasons read the same. */}
             <LibraryChip library={item.library} />
+            {/* Beside the library chip, the same order the cards use, because both answer
+                "where does this file live in Plex". Renders nothing without a collection. */}
+            <CollectionChip
+              collections={item.collections}
+              sizes={collectionSizes}
+              onOpen={onOpenCollection}
+            />
             {/* Next to the library, because both answer "where does this file live in Plex".
                 Silent on the ordinary single-listing bind. */}
             <MergedListingChip match={explanation.match} />

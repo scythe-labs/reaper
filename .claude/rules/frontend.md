@@ -158,9 +158,10 @@ not once on open:** a list that refilters as you type changes width while it is 
 leftward only and stops at the near gutter — a popover pushed right of its anchor loses the line
 back to the control that opened it, and one dragged off the left loses the side every label starts
 on. Two popovers answer this another way and are correct as they are: `.user-dropdown` is
-`right: 0` in a corner it never leaves, and the spare-length menu clamps its own `position: fixed`
-coordinates (`OverrideControls.toggleMenu`). A new popover left-aligned to an anchor with no fit
-pass is a blocker, and so is fixing one of these and leaving its twin (rule 72).
+`right: 0` in a corner it never leaves, and the spare-length menu and the collection picker both
+clamp their own `position: fixed` coordinates through the shared `useFixedMenu` hook
+(`components/popoverFit.ts`). A new popover left-aligned to an anchor with no fit pass is a
+blocker, and so is fixing one of these and leaving its twin (rule 72).
 
 **139. Text the operator did not choose is given a break opportunity.** A requester handle, a
 title, a path, a host — anything arriving from a portal, a file system, or someone else's

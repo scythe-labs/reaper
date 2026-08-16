@@ -21,6 +21,7 @@ import type {
   ProfileSettings,
   ScanStatus,
   SetupStatus,
+  Snapshot,
   Update,
   WatchEvidence,
 } from "../api";
@@ -104,6 +105,26 @@ export const DEFAULT_PLEX_STATUS: PlexStatus = {
  *  present and throws inside it, which React Query files as an ordinary rejection (#704,
  *  rule 135's stated blind spot). */
 export const DEFAULT_FIELD_VALUES: FieldValues = { field: "", values: [] };
+
+/** An ordinary finished scan, nothing degraded -- the shape `api.latestSnapshot` returns most of
+ *  the time. `collection_sizes` is left absent, which is the honest default: most tests never
+ *  put a candidate in a collection, and the queue's card pickers (#816 phase 4/5) read this
+ *  unconditionally now, so a tree that does not care about it still needs an answer rather than
+ *  the failed-read branch (rule 135). A test about a collection's own size sets its own. */
+export const DEFAULT_SNAPSHOT: Snapshot = {
+  id: 1,
+  created_at: "2026-01-01T00:00:00+00:00",
+  policy_hash: "p",
+  horizon_at: "2025-01-01T00:00:00+00:00",
+  item_count: 0,
+  degraded: false,
+  degraded_reason: null,
+  condemned: 0,
+  protected: 0,
+  abstained: 0,
+  reclaimable_bytes: 0,
+  unknown_size_items: 0,
+};
 
 /** Nothing running -- the shape `api.scanStatus` returns between scans. */
 export const IDLE_SCAN: ScanStatus = {

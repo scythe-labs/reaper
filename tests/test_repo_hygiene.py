@@ -3752,7 +3752,14 @@ _QUERY_FAILURE_HANDLES = {
     # UNKNOWN, and the page says so rather than staying silent, because silence there reads as
     # "nothing is missing" over a run the server is about to refuse.
     "frontend/src/components/ReapPlan.tsx": 4,
-    "frontend/src/components/ReviewQueue.tsx": 3,
+    # 3 -> 6: the collection screen's three fate-lane reads (condemned/protected/abstained) each
+    # gained a branch on their OWN failure. `isPending` alone reads true on an error exactly as
+    # it does on a success, so a lane that exhausted its retries used to render as loaded with
+    # its count defaulted to 0 -- a false zero and an undercounted "N in the last scan" (rule
+    # 17/36). Undivided like the safety reads above: a failed lane withholds the whole summary
+    # rather than mixing two real counts beside a false one, in the same `.error` text the
+    # queue's own never-loaded branch already uses.
+    "frontend/src/components/ReviewQueue.tsx": 6,
     # 4 render branches, plus 2 in the save handler (#204). Those two are neither of the
     # questions the docstring below names: they ask "may I PRUNE against this list", where a
     # failed read means the list is merely out of date and pruning would delete a stored
@@ -5757,7 +5764,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 218
+_EXPECTED_FRONTEND_MODULES = 220
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -7738,7 +7745,7 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned for rule 145's reason: a flag-shaped assertion cannot tell
 #: a revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 26
+_EXPECTED_REVISION_FILES = 27
 _EXPECTED_UNRECOVERABLE_REVISIONS = 4
 
 

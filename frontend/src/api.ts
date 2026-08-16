@@ -36,6 +36,12 @@ export interface Snapshot {
   /** How many condemned items have no size, and so sit outside the total above rather
    *  than inside it as zeros. Zero for a healthy library, and hidden at zero. */
   unknown_size_items: number;
+  /** Every collection this scan saw, name to Plex's own member count -- the collection
+   *  screen's header reads it for "N titles in this collection" beside the scan's own
+   *  count. Null when none were read, whether none exist or the read failed; the UI
+   *  omits that clause rather than guessing. Optional: most fixtures are not made to
+   *  carry it (#816 phase 5). */
+  collection_sizes?: Record<string, number> | null;
 }
 
 /** The one short status chip a card wears, display-ready from the server. `kept`
@@ -154,6 +160,22 @@ export interface Candidate {
   /** Whether the show has finished. Null for a movie, where the question doesn't apply,
    *  and on a row stored before this field existed -- both render nothing at all. */
   show_status: ShowStatus | null;
+  /** This item's Plex collection names (a season's are its SHOW's), sorted smallest
+   *  collection first -- `CollectionChip` takes element 0. Navigation only, never a verdict
+   *  input. Null means "not recorded for this scan" (no Plex configured, a failed
+   *  section read, a row from before this shipped), NOT "in no collection": render no
+   *  chip for null rather than an empty one. Optional: the test fixtures are not made to
+   *  carry it (#816 phase 3). */
+  collections?: string[] | null;
+  /** Which of three search blocks this row matched: 0 exact title, 1 partial title/show,
+   *  2 collection-name only. Null outside a search. Optional: no component reads it yet
+   *  (#816 phase 3b; the divider that reads it is phase 5). */
+  search_rank?: number | null;
+  /** For a `search_rank === 2` row, the collection name that matched -- not
+   *  `collections[0]`, which would show the smallest collection instead of the one the
+   *  search found. Null for a title match, and outside a search. Optional, same reason as
+   *  `search_rank`. */
+  matched_collection?: string | null;
 }
 
 /** Whether a show has finished, as three states rather than a bool, so "the server never
@@ -193,6 +215,12 @@ export interface Group {
    *  reading of the series is stamped onto every season in the same scan, so they cannot
    *  disagree. Null only when no row carries it (a snapshot from before this field). */
   show_status: ShowStatus | null;
+  /** The show's Plex collection names, taken the same way as `show_status`: a TV
+   *  collection lists the show, not its seasons, so every season carries the same list.
+   *  Null means "not recorded for this scan," never "in no collection". Optional, same
+   *  reason as `Candidate.collections` -- `toGroups` (ReviewQueue.tsx) reads it off the
+   *  first season into the local `Group.collections` `CollectionChip` renders. */
+  collections?: string[] | null;
   /** Every season, sorted by season number (unnumbered rows last). */
   seasons: Candidate[];
 }
@@ -246,6 +274,11 @@ export interface CandidateQuery {
   media_type?: string;
   requested?: RequestedFilter;
   genre?: string;
+  /** Exact name match against a row's stored collection list -- genre's sibling, over
+   *  `collections_json` instead. Navigation only; never re-decides a verdict.
+   *  Spelled `| undefined`: a caller forwards `activeCollection ?? undefined` straight
+   *  through, and `exactOptionalPropertyTypes` counts an explicit `undefined` as a value. */
+  collection?: string | undefined;
   library?: string;
   override?: OverrideFilter;
   sort?: SortKey;
@@ -1786,7 +1819,9 @@ export const api = {
    *  count and byte total without loading them all. Paged because a library runs to
    *  thousands of protected titles. */
   candidates: async (
-    verdict: Verdict,
+    // "any" is every stored lane at once -- what makes the collection screen cross-lane
+    // (#816 phase 5): a title's siblings show up whatever fate each one got.
+    verdict: Verdict | "any",
     q: CandidateQuery = {},
     limit = 100,
     offset = 0,
@@ -1796,6 +1831,7 @@ export const api = {
     if (q.media_type) params.set("media_type", q.media_type);
     if (q.requested && q.requested !== "any") params.set("requested", q.requested);
     if (q.genre) params.set("genre", q.genre);
+    if (q.collection) params.set("collection", q.collection);
     if (q.library) params.set("library", q.library);
     if (q.override && q.override !== "any") params.set("override", q.override);
     if (q.sort) params.set("sort", q.sort);

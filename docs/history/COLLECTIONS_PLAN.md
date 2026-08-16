@@ -1,5 +1,19 @@
 # Collections plan (#816)
 
+> **FROZEN 2026-08-15. Do not update this file; it is history, not state.**
+>
+> All six phases landed on `dev` as #816: the Plex collections read, the snapshot write, the
+> API filter and `verdict=any`, search reaching collection names, the chip and its picker on
+> all four surfaces, and the collection screen. Anything below that reads as outstanding work
+> describes the moment it was written.
+>
+> **One of the two measurements the plan called for was taken, on a real library, before this
+> merged.** "How many collections a real library has per title" (phase 2) is answered in
+> `docs/LEARNINGS.md`: median one, 97% of covered titles in exactly one, and 387 distinct
+> collections against tens of genres. It settled two of the open questions below and caught a
+> suggestion cap that was half the size a real library needs. The partial-match search query's
+> cost (phase 3b) was **not** timed and is still open.
+
 Live. Nothing landed. The design is approved and mocked up; this file is how it gets built.
 
 An operator deciding on one entry in a series wants the same decision, or the opposite one, on
@@ -212,8 +226,9 @@ complexity.** They disagree by design: the first will ask for a guard the second
 speculative. The orchestrator resolves that, and on this feature the tiebreak is the fence
 above. A guard that keeps a file is worth its lines. A guard on a chip is not.
 
-The runnable form is `.claude/workflows/collections.js`. Twelve agents at most, which is inside
-the session's workflow guideline.
+The build ran from a throwaway workflow script held outside the repository, one run per lane.
+Twelve agents at most. The script is scaffolding for this feature and is not committed: it would
+outlive the plan it reads and name a path that moves to `docs/history/` when this lands.
 
 ## What is not decided
 

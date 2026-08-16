@@ -26,10 +26,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { Override } from "../api";
-import { useBackGuard } from "../backnav";
 import { useDialogFocus } from "../focus";
 import { spareRemaining } from "../format";
 import { trapTab } from "./ModalShell";
+import { useFixedMenu, type MenuPos } from "./popoverFit";
 import { FixedQuantity } from "./QuantityInput";
 import { CaretDownGlyph, ClockGlyph, PenGlyph, ScytheIcon, SpareGlyph } from "./queueIcons";
 import { useDefaultSpareDays } from "./queueSettings";
@@ -50,11 +50,6 @@ export const SPARE_PRESETS = [30, 90];
  *
  *  On the Condemned lane the item is already on the block, so Reap would change nothing:
  *  `hideReap` drops it there and leaves Spare (rescue) on its own. */
-/** Where the Spare length menu is pinned (fixed, viewport coords). Always `left`, plus exactly
- *  one vertical anchor: `top` when it opens below the caret, `bottom` when it flips above -- the
- *  bottom anchor keeps it snug to the caret whatever the menu's rendered height. */
-export type MenuPos = { left: number; top?: number; bottom?: number };
-
 export function OverrideControls({
   override,
   onSet,
@@ -82,9 +77,19 @@ export function OverrideControls({
   roomy?: boolean;
 }) {
   const defaultDays = useDefaultSpareDays();
-  const [menuAt, setMenuAt] = useState<MenuPos | null>(null);
   const caretRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
+  // While the Custom-length box is open, a scroll must not close the menu: on a phone the
+  // virtual keyboard opening scrolls the viewport to reveal the focused field, and a
+  // scroll-close would dismiss the menu before a digit is typed. Set by `SpareMenu` itself
+  // (the only place that knows), read by the hook's own scroll listener.
+  const ignoreScrollRef = useRef(false);
+  const {
+    pos: menuAt,
+    menuRef,
+    toggle: toggleMenu,
+    close: closeMenu,
+  } = useFixedMenu<HTMLDivElement>(caretRef, { width: 224, height: 250, ignoreScrollRef });
   // Picking a length and clearing a spare each close the menu AND start a mutation, and the two
   // land in ONE batched commit -- so `pending` has already disabled the caret (below) by the time
   // `useDialogFocus`'s restore runs in the later passive phase, and `.focus()` on a disabled
@@ -119,33 +124,6 @@ export function OverrideControls({
       target.focus();
     }
   }, [pending]);
-  // Back closes the open length menu before it does anything else (only the one open menu has a
-  // non-null position, so only it registers).
-  useBackGuard(menuAt !== null, () => setMenuAt(null));
-
-  // The menu is position:fixed so the card's overflow:hidden can't clip it. Anchor it to the
-  // chevron, right-aligned, and flip above when it would run off the bottom of the viewport.
-  // Below: pin the menu's TOP under the caret. Above: pin its BOTTOM just over the caret with the
-  // `bottom` property -- never a `top` computed from a guessed height, which floated the menu off
-  // the button when the real menu was shorter than the guess. HEIGHT is only the flip decision's
-  // upper bound now, not a coordinate.
-  const toggleMenu = (e: ReactMouseEvent) => {
-    e.stopPropagation();
-    if (menuAt) {
-      setMenuAt(null);
-      return;
-    }
-    const btn = caretRef.current;
-    if (!btn) return;
-    const r = btn.getBoundingClientRect();
-    const WIDTH = 224;
-    const HEIGHT = 250;
-    const left = Math.max(8, Math.min(r.right - WIDTH, window.innerWidth - WIDTH - 8));
-    const below = r.bottom + HEIGHT <= window.innerHeight;
-    setMenuAt(
-      below ? { left, top: r.bottom + 4 } : { left, bottom: window.innerHeight - r.top + 4 },
-    );
-  };
 
   // Undecided, the button says what a press WILL do (the default length). Spared, it says what
   // is in force on this item -- its own glyph, its own count -- because the default stops
@@ -278,23 +256,23 @@ export function OverrideControls({
         <SpareMenu
           at={menuAt}
           menuId={menuId}
+          menuRef={menuRef}
           defaultDays={defaultDays}
-          triggerRef={caretRef}
+          ignoreScrollRef={ignoreScrollRef}
           onPick={(spareDays) => {
             returnToCaret.current = true;
-            setMenuAt(null);
+            closeMenu();
             onSet("spare", spareDays);
           }}
           onClear={
             spared
               ? () => {
                   returnToCaret.current = true;
-                  setMenuAt(null);
+                  closeMenu();
                   onClear();
                 }
               : undefined
           }
-          onClose={() => setMenuAt(null)}
         />
       )}
       {!hideReap && (
@@ -323,34 +301,40 @@ export function OverrideControls({
  *  position:fixed at `at`: the card clips its overflow AND its `.card-side` is a z-index:2
  *  stacking context (`.card > *`), which a fixed child alone can't escape -- so a later card's
  *  score badge, spare button, or tooltip paints over an in-card menu. The portal lifts it to the
- *  root stacking context so its own z-index wins. Closed on an outside click, Escape, or a
- *  scroll that would strand it off its anchor. */
+ *  root stacking context so its own z-index wins.
+ *
+ *  Its open/close state, its clamped position, and the outside-click/Escape/scroll dismissal all
+ *  live in `useFixedMenu` (`components/popoverFit.ts`), called by `OverrideControls` above --
+ *  `menuRef` and `ignoreScrollRef` are that hook's, threaded down so this component only has to
+ *  draw. */
 function SpareMenu({
   at,
   menuId,
+  menuRef,
   defaultDays,
-  triggerRef,
+  ignoreScrollRef,
   onPick,
   onClear,
-  onClose,
 }: {
   at: MenuPos;
   /** Pointed at by the caret's `aria-controls`. The portal puts this panel at the end of
    *  `<body>`, nowhere near the button that opened it, so the association has to be stated. */
   menuId: string;
+  menuRef: RefObject<HTMLDivElement | null>;
   defaultDays: number;
-  triggerRef: RefObject<HTMLButtonElement | null>;
+  /** Set to whether the Custom-length box is open, each render -- the hook's scroll listener
+   *  reads it so a phone's virtual keyboard opening cannot dismiss the menu before a digit is
+   *  typed (U-4). Owned by the hook; this component only writes it. */
+  ignoreScrollRef: RefObject<boolean>;
   onPick: (days: number) => void;
   /** Clears the spare on this control's own level. Omitted when there is nothing to clear,
    *  which is what keeps the row off an undecided item's menu. */
   onClear?: (() => void) | undefined;
-  onClose: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  // The portal is why this is not optional. Rendered at the end of <body>, the menu's items sit
-  // nowhere near the caret in the Tab order, so opening it and pressing Tab used to walk on to
-  // the next control INSIDE the card while the menu hung open beside it, its own rows reachable
-  // only by tabbing through the remainder of the page. Focus goes in, and Tab stays in.
+  // The portal is why focus-handling is not optional. Rendered at the end of <body>, the menu's
+  // items sit nowhere near the caret in the Tab order, so opening it and pressing Tab used to
+  // walk on to the next control INSIDE the card while the menu hung open beside it, its own rows
+  // reachable only by tabbing through the remainder of the page. Focus goes in, and Tab stays in.
   //
   // It hands focus back from here only on the exits that start no mutation: Escape, and Back. A
   // pick and a Clear disable the caret in the same commit that closes the menu, so their restore
@@ -369,59 +353,14 @@ function SpareMenu({
   // never implemented AND is skipped outright by TalkBack (`browser_accessibility_android.cc`
   // returns false for `kMenu` in `IsInterestingOnAndroid`), which works today.
   const firstRow = useRef<HTMLButtonElement>(null);
-  useDialogFocus(ref, true, firstRow);
+  useDialogFocus(menuRef, true, firstRow);
   const [custom, setCustom] = useState(false);
+  ignoreScrollRef.current = custom;
   // Held as free text so the box types and clears naturally; clamped to [1, 3650] only when
   // Spare is pressed, never mid-keystroke (which would snap a half-typed number).
   const [customText, setCustomText] = useState(String(defaultDays > 0 ? defaultDays : 30));
   const spareCustom = () =>
     onPick(Math.max(1, Math.min(3650, Math.floor(Number(customText) || 1))));
-
-  // Read fresh inside the scroll handler without re-subscribing the listeners on each keystroke
-  // (rule 19: useRef for a cross-render flag, stable effect deps).
-  const customRef = useRef(custom);
-  customRef.current = custom;
-  // `onClose` the same way, and for the same reason: OverrideControls allocates it fresh on
-  // every render, so depending on it tore down and re-added all three listeners on every
-  // render while the menu was open -- including on every keystroke in the Custom-length box,
-  // the one place this menu re-renders in a tight loop (P-8). The file already avoided this
-  // for `custom`; this is the other half.
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-
-  useEffect(() => {
-    const onClose = () => closeRef.current();
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      // The chevron is its own toggle; leave it out of the outside-close so a click there
-      // doesn't close-then-reopen the menu.
-      if (!ref.current?.contains(t) && !triggerRef.current?.contains(t)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // This menu is the newest layer, so it consumes the press. `document` bubbles on to
-      // `window`, where the `.why` panel's Escape sits (WhyShell), and without this one press
-      // closed the menu AND the reasoning panel it was opened from. The filter popovers in
-      // ReviewQueue stop the same key for the same reason (rule 72).
-      e.stopPropagation();
-      onClose();
-    };
-    const onScroll = () => {
-      // While the Custom-length input is open, ignore scroll: on a phone the virtual keyboard
-      // opening scrolls the viewport to reveal the focused field, and a scroll-close would then
-      // dismiss the menu before a digit is typed. Outside-click and Escape still close it (U-4).
-      if (customRef.current) return;
-      onClose();
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [triggerRef]);
 
   // The day-rows: the presets, plus the operator's default when it is a custom number not
   // already among them, sorted so the ladder reads low to high.
@@ -431,7 +370,7 @@ function SpareMenu({
 
   return createPortal(
     <div
-      ref={ref}
+      ref={menuRef}
       id={menuId}
       className="dur-menu"
       // Not `role="menu"`: that promises arrow-key navigation between items, which this never
@@ -441,7 +380,7 @@ function SpareMenu({
       role="group"
       aria-label="Spare this item for"
       tabIndex={-1}
-      onKeyDown={(e) => trapTab(e, ref.current)}
+      onKeyDown={(e) => trapTab(e, menuRef.current)}
       style={{
         position: "fixed",
         left: at.left,

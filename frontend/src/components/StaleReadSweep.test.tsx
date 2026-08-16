@@ -30,7 +30,13 @@ import type {
   UnmatchedRequest,
   Vocabulary,
 } from "../api";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE, IDLE_SCAN, seedSettings } from "../test/apiFixtures";
+import {
+  DEFAULT_GENERAL,
+  DEFAULT_PROFILE,
+  DEFAULT_SNAPSHOT,
+  IDLE_SCAN,
+  seedSettings,
+} from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { Fairness } from "./Fairness";
@@ -58,6 +64,8 @@ beforeEach(() => {
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
+  // Every card's collection picker reads this unconditionally now (#816 phase 4/5).
+  apiMock.latestSnapshot.mockResolvedValue(DEFAULT_SNAPSHOT);
 });
 
 /** The shared sentence with any noun in it. `what` is the one thing a caller varies, so each

@@ -435,6 +435,14 @@ class Snapshot(Base):
     ``NULL`` means "not recorded", which is every snapshot taken before this column
     existed -- read it as unknown, never as zero."""
 
+    collection_sizes_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """Every Plex collection this scan saw, name to Plex's own member count, as a JSON
+    object -- see ``services.snapshot._collection_membership``. Feeds the collection
+    picker's counts and the collection screen's header; navigation only, never a verdict
+    input. NULL means no collection was read this scan, whether because none exist or
+    because the read failed -- the two are indistinguishable on purpose, since a failed
+    collection read costs a missing chip and nothing else (#816's fence)."""
+
 
 class SizeSource(enum.StrEnum):
     """Which measurement ``Candidate.size_bytes`` holds.
@@ -545,6 +553,14 @@ class Candidate(Base):
     genres_json: Mapped[str | None] = mapped_column(Text, default=None)
     """The item's genres at scan time, as a JSON array. Feeds the rule editors' value
     suggestions (GET /api/vocabulary/values); suggestion only, never a verdict input."""
+
+    collections_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """This item's Plex collection names at scan time, as a JSON array, sorted smallest
+    collection first (ties alphabetical) -- see ``services.snapshot._collection_membership``.
+    NULL means "not recorded for this scan", never "in no collection": a scan taken before
+    this column existed and a scan whose Plex collection read failed are indistinguishable,
+    on purpose (#816's fence). Navigation only -- no gate, signal, or policy field reads it,
+    and it is never a verdict input."""
 
     quality: Mapped[str | None] = mapped_column(String(100), default=None)
     """The file's quality name at scan time (e.g. "Bluray-1080p"), same purpose."""
