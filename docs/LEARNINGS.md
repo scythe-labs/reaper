@@ -22,10 +22,11 @@ Validated against a large, active, multi-instance production setup. The findings
 recorded as shapes and ratios — see `docs/LEARNINGS.md` and `docs/SIGNALS.md` for the
 detail.
 
-- **An active library is not mostly dead weight.** The share of films *never* played at
-  all was under one percent. A film watched in the past year is more likely than not to
-  be watched again within the next one. This is the finding that most contradicts the
-  intuition a pruning tool gets built on.
+- **An active library is not mostly dead weight, and how active it is varies by server.**
+  The share of films *never* played at all was under one percent on the first library and
+  24% on a second one. Neither share is dead weight: on the second, 7.4% of the
+  never-played films were watched in the following year. This is the finding that most
+  contradicts the intuition a pruning tool gets built on.
 - **There is no cliff, and nothing is ever free to delete.** A film dormant for five
   years still has a double-digit chance of being watched next year. There is only
   *cheaper* and *dearer*.
@@ -4170,6 +4171,44 @@ work at all.
 
 ⇒ Before optimizing a read, measure whether its cost tracks what it returns. Where it does not,
 the only lever is asking fewer times.
+
+## What the shipped defaults do on somebody else's library (2026-08-16)
+
+The first foreign dump, 1,904 movies, 729 shows, 2,397 seasons, 84,235 plays, 52 users and
+ten and a half years of watch history. Run through `judge_facts` and `plan_series_prune`
+themselves rather than a copy of them, under `DEFAULT_MOVIE_POLICY` and `DEFAULT_TV_POLICY`.
+The rewatch curve is in `docs/SIGNALS.md`. What follows is everything else.
+
+**The engine held. 621 of 1,904 movies condemned, 73 of 2,397 seasons.** No season came from
+a show anyone had watched in the past year, and the condemned seasons had a median dormancy
+of seven years. Nothing crashed, no dormancy came out negative, and no item past the dormancy
+floor still had a watcher inside the popularity window.
+
+**Coverage read 1.0 for every single item, so the coverage floor never decided anything.**
+That is what a ten-year mirror does. It also means this library exercised none of the reach
+code that a shallow Tautulli would, so `history_shortfall` and `lifetime_shortfall` stayed
+almost silent. The keep-rule conflict detector was the exception, holding 343 of 779 prunable
+seasons across 126 shows for a human, and only 126 of those conflicts came from the reach.
+
+**The popularity gate protected 34 of 1,904 movies.** Its floor is three distinct watchers in
+a year, and 30 of the 52 users watched anything at all in that window, so the bar asks for a
+tenth of the active audience on one title. On this server it is close to inert. The bar is an
+absolute count and nothing scales it to how many people are actually watching, which is worth
+knowing before reading a why-panel that reports it as checked.
+
+**The score has little room left once dormancy saturates.** `UNWATCHED` tops out at 1,825
+days, and 642 of these films are past that, so 430 of the 537 condemned in the backtest sat
+in a single five-point band. Moving `condemn_at` from 70 to 90 drops the condemned set from
+537 to 434. An operator on a deep history is tuning a much blunter control than the slider
+suggests.
+
+**Regret concentrates at the threshold, not across it.** In the backtest the films scoring 70
+to 79 were played again 16.7% of the time, against 7.2% for the bulk at 90 and above. The
+score is ordering correctly, and the default cut admits its worst cohort. 48 films, so this
+is a direction rather than a number.
+
+⇒ The defaults are safe on a second library and they are not tuned for it. Read every
+absolute threshold in the shipped policy as one server's number.
 
 ## `watched_status` has five values, and two of them were the whole model (2026-08-16)
 
