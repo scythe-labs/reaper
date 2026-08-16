@@ -7,11 +7,12 @@
 > all four surfaces, and the collection screen. Anything below that reads as outstanding work
 > describes the moment it was written.
 >
-> **Two measurements the plan called for were not taken.** "How many collections a real
-> library has per title" (phase 2) and the partial-match search query's cost (phase 3b) both
-> need a real Plex library, and this build ran without one. Both open questions under *What is
-> not decided* below are still open; the first scan that runs this code against a real library
-> should take them, into `docs/LEARNINGS.md`.
+> **One of the two measurements the plan called for was taken, on a real library, before this
+> merged.** "How many collections a real library has per title" (phase 2) is answered in
+> `docs/LEARNINGS.md`: median one, 97% of covered titles in exactly one, and 387 distinct
+> collections against tens of genres. It settled two of the open questions below and caught a
+> suggestion cap that was half the size a real library needs. The partial-match search query's
+> cost (phase 3b) was **not** timed and is still open.
 
 Live. Nothing landed. The design is approved and mocked up; this file is how it gets built.
 

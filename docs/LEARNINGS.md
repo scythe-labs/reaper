@@ -4102,6 +4102,39 @@ own copy.
 menu anchored inside it, independent of what the menu holds. Reach for the portaled, clamped
 `position: fixed` pattern from the first render, not after a clip gets reported.
 
+## A title is in one collection, but a library holds hundreds of them (2026-08-15)
+
+Measured on one real library of 5,984 scanned items, which #816's plan asked for before
+committing to the chip's shape:
+
+| | |
+|---|---|
+| Titles in at least one collection | 994, 16.6% |
+| Collections per such title | median 1, mean 1.04, max 4 |
+| Titles in exactly one | 967 of 994, 97.3% |
+| Distinct collections | 387 |
+| Members per collection, as Plex reports it | median 2, max 25 |
+
+**The chip's design holds.** It renders one collection and hides the rest behind a caret, on the
+assumption of "usually one, sometimes a few". 97% of covered titles never draw a caret at all,
+and the worst case is four. The plan said that a median of five would earn the picker its own
+search; at a median of one it does not.
+
+**The distribution is the opposite of what the suggestion list assumed.** Few collections per
+title, but 387 distinct ones against tens of genres, so a shared 200-value cap on
+`vocabulary_values` would have dropped roughly half the collection set. The list is ranked by how
+many titles carry a value, so a truncation takes the rarest, which is the specific shelf someone
+goes looking for.
+
+⇒ Per-item and per-library counts of the same relation size very differently, and a ceiling
+picked from one of them is wrong about the other. The number that sizes a *card* is not the
+number that sizes a *picker*.
+
+**Reaper's own "Leaving Soon" shelf appears as a collection**, at 18 members here, because it is
+a Plex collection like any other. That is left as-is: it is a real shelf, and one chip covering
+every library's leaving-soon titles is arguably useful. Whether a shelf Reaper itself maintains
+should be offered as navigation is still open.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

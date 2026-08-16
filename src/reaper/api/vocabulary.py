@@ -65,12 +65,18 @@ _VALUE_COLUMNS = {
     "library": Candidate.library_title,
 }
 
-#: How many ranked values a suggestion list carries. Genres run to tens per library and a
-#: real Plex collection set can run well past that (smart collections included, #816), so
-#: one shared ceiling covers both rather than a per-field table nobody would remember to
-#: extend for the next JSON-array field. Raised here rather than making the picker
-#: type-to-search, which is frontend work this change does not otherwise touch.
-_MAX_VALUES = 200
+#: How many ranked values a suggestion list carries. One shared ceiling rather than a per-field
+#: table nobody would remember to extend for the next JSON-array field.
+#:
+#: **Measured rather than guessed, and the first guess was too low.** A real library of 5,984
+#: scanned items carries 387 distinct Plex collections against tens of genres (#816, recorded in
+#: `docs/LEARNINGS.md`), so the 200 this shipped with would have dropped roughly half of them
+#: with nothing saying so. The list is ranked by how many titles carry the value, so a truncation
+#: takes the rarest, which on a collection set is the specific shelf the operator went looking
+#: for. Raised rather than making the picker type-to-search, which is frontend work this change
+#: does not otherwise touch; past this a truncation still says nothing, and that is the fix the
+#: next library to outgrow it should get instead of another number here.
+_MAX_VALUES = 2000
 
 
 @router.get("/vocabulary/values", tags=[api_tags.POLICY])
