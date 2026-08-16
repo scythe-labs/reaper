@@ -179,35 +179,47 @@
   border-left: 1px solid var(--border-strong);
   border-radius: 0 5px 5px 0;
 }
-/* Behind `(hover: hover)` because a touch screen has no hover to leave: iOS Safari applies
-   `:hover` to the last element TAPPED and holds it there until something else is tapped, so on
-   an iPad this chip kept the accent text and accent border long after the tap that opened the
-   collection, reading as a stuck selection on a card that was merely visited. The rest of the
-   app has the same shape and no guard, which is its own issue, not this one's to sweep. The
-   expanded arm stays outside: it is a real state, not a pointer's. */
+/* Finishing the opt-out the two rules above start. They drop `button`'s border and fill at
+   rest, but `button:hover` in 04-buttons.css repaints whichever half the pointer is over
+   `--hover`, an opaque fill sitting on top of the chip's own. That is what lit the name and
+   left the caret dark. Written as a descendant of `.coll-chip` to match that rule's
+   specificity exactly and declared after it, rather than out-specifying it, which is the part
+   that stays true if either side is edited later. */
+.coll-chip button:hover,
+.coll-chip button:active {
+  background: transparent;
+}
+/* THE LIT STATE BELONGS TO THE CHIP, never to one half of it. The two halves are the only
+   buttons inside it, so `button` names them both, and the fill, the border, the divider and the
+   glyph all light together. Lighting the half under the pointer was the reported defect: the
+   name went accent and the caret sat dark inside an already-accent border.
+
+   Two triggers, deliberately not one selector list. `:active` is every device, and it is the
+   ONLY one a tap ever matches, since `:focus-visible` below is keyboard-only in Safari.
+   `:hover` is pointer-only because a touch screen keeps it on the last element TAPPED, which
+   left the chip lit long after the tap that opened the collection. Every other `:hover` in this
+   stylesheet has the same shape and no guard (#818). */
+.coll-chip:has(button:active) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.coll-chip:has(button:active) :is(button, svg) {
+  color: var(--accent-text);
+}
+.coll-chip:has(button:active) .coll-chip-caret {
+  border-left-color: var(--accent);
+}
 @media (hover: hover) {
-  .coll-chip-main:hover,
-  .coll-chip-caret:hover {
-    color: var(--accent-text);
+  .coll-chip:has(button:hover) {
     background: var(--accent-soft);
-  }
-  .coll-chip:has(.coll-chip-main:hover),
-  .coll-chip:has(.coll-chip-caret:hover) {
     border-color: var(--accent);
   }
-}
-/* PRESS is the state a touch device actually has, and it is the one that has to paint. Hover
-   above is pointer-only and `:focus-visible` below never matches a tap at all (Safari reserves
-   it for keyboard focus), so between them a tapped chip had nothing: the whole chip lights on
-   `:active`, from either half, on every device. */
-.coll-chip-main:active,
-.coll-chip-caret:active {
-  color: var(--accent-text);
-  background: var(--accent-soft);
-}
-.coll-chip:has(.coll-chip-main:active),
-.coll-chip:has(.coll-chip-caret:active) {
-  border-color: var(--accent);
+  .coll-chip:has(button:hover) :is(button, svg) {
+    color: var(--accent-text);
+  }
+  .coll-chip:has(button:hover) .coll-chip-caret {
+    border-left-color: var(--accent);
+  }
 }
 /* The ring wraps the WHOLE chip, from either half. Drawn on the inner button it landed inside
    the chip's own 1px border (`outline-offset: -2px`), so it read as a second edge crowded into

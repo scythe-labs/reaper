@@ -39,23 +39,32 @@ function hoverGuardedRegions(): string[] {
   return out;
 }
 
-describe("the collection chip's hover", () => {
-  // The two spellings the chip's own rules use. Written out rather than matched loosely,
-  // because a matcher that accepts anything containing "coll-chip" and ":hover" would also
-  // accept the `:has()` arm moving somewhere it does not belong (rule 147).
-  const HOVER_RULES = [".coll-chip-main:hover", ".coll-chip-caret:hover"];
+/** The trigger that lights the whole chip, by state. Written out rather than matched loosely: a
+ *  matcher accepting anything with "coll-chip" and ":hover" would also accept a rule that lights
+ *  only one half, which is the defect this file exists for (rule 147). */
+const LIT = {
+  hover: ".coll-chip:has(button:hover)",
+  press: ".coll-chip:has(button:active)",
+};
 
-  it("repaints only where a pointer can actually hover", () => {
+describe("the collection chip's lit state", () => {
+  it("repaints on hover only where a pointer can actually hover", () => {
     const guarded = hoverGuardedRegions().join("\n");
     expect(guarded).not.toBe("");
-    for (const rule of HOVER_RULES) {
-      // Present in the sheet at all, so a deleted rule cannot pass this by being absent.
-      expect(code).toContain(rule);
-      // ...and every occurrence of it sits inside a hover-capable block.
-      const total = code.split(rule).length - 1;
-      const inside = guarded.split(rule).length - 1;
-      expect(inside).toBe(total);
-    }
+    // Present in the sheet at all, so a deleted rule cannot pass by being absent.
+    expect(code).toContain(LIT.hover);
+    // ...and every occurrence sits inside a hover-capable block.
+    const total = code.split(LIT.hover).length - 1;
+    expect(guarded.split(LIT.hover).length - 1).toBe(total);
+  });
+
+  // The half this file was first written without, which left a tap with NO feedback: hover is
+  // pointer-only above, and `:focus-visible` never matches a tap at all, since Safari reserves
+  // it for keyboard focus. Press is the state a touch device actually has.
+  it("lights on press, on every device, so a tap is never silent", () => {
+    const guarded = hoverGuardedRegions().join("\n");
+    expect(code).toContain(LIT.press);
+    expect(guarded).not.toContain(LIT.press);
   });
 
   // The caret's expanded state is NOT a pointer's, so it must stay outside the guard: a picker
@@ -67,15 +76,14 @@ describe("the collection chip's hover", () => {
     expect(guarded).not.toContain(expanded);
   });
 
-  // The half this file was written without, and it left the chip with NO feedback on a tap:
-  // hover is pointer-only above, and `:focus-visible` never matches a tap at all, since Safari
-  // reserves it for keyboard focus. Press is the state a touch device actually has, so it must
-  // exist and must never move inside the hover guard.
-  it("lights on press, on every device, so a tap is never silent", () => {
-    const guarded = hoverGuardedRegions().join("\n");
-    for (const rule of [".coll-chip-main:active", ".coll-chip-caret:active"]) {
-      expect(code).toContain(rule);
-      expect(guarded).not.toContain(rule);
+  // The lit state belongs to the CHIP. Lighting one half was the reported defect: the name went
+  // accent and the caret sat dark inside an already-accent border. Both triggers therefore hang
+  // off `.coll-chip`, never off a half, so neither can paint one side on its own.
+  it("is triggered from the chip, never from one half of it", () => {
+    for (const half of [".coll-chip-main", ".coll-chip-caret"]) {
+      for (const state of [":hover", ":active"]) {
+        expect(code).not.toContain(`${half}${state}`);
+      }
     }
   });
 });
