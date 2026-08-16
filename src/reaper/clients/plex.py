@@ -107,6 +107,16 @@ _TAGS_ONLY = (
     "&excludeFields=summary,tagline,titleSort"
 )
 
+#: Seconds Reaper waits for one Plex response, over plexapi's default of 30, which is a
+#: budget for an idle server. A busy library can take longer than that to answer a section
+#: sweep, and the read that times out is a protection source the scan then does without.
+#: Still a bound: nothing here waits forever.
+#:
+#: ``PlexServer.query`` passes it on every call, so it covers the sweeps, the shelf reads and
+#: the writes alike. The watchlist reads plex.tv through ``myPlexAccount()``, which plexapi
+#: builds with no timeout, so that one call keeps the 30.
+PLEX_READ_TIMEOUT = 60
+
 
 def _parse_rating_children(el: Element) -> list[Rating]:
     """Per-provider scores from full-metadata ``Rating`` children.
@@ -648,10 +658,13 @@ class PlexClient:
 
             # The guarded session, not plexapi's default. Every write plexapi makes
             # goes through it, so Plex is held to the same rule as everything else.
+            # The timeout rides the server object, not the session: query passes its own
+            # value explicitly, so a session default would be overridden.
             return _PlexServer(  # type: ignore[no-untyped-call]
                 self._base_url,
                 self._token,
                 session=GuardedSession(self._safety, verify=self._verify),
+                timeout=PLEX_READ_TIMEOUT,
             )
 
         async with self._connect_lock:

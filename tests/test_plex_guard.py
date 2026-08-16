@@ -24,6 +24,7 @@ from structlog.testing import capture_logs
 
 from reaper.clients.base import SafetyViolationError
 from reaper.clients.plex import (
+    PLEX_READ_TIMEOUT,
     GuardedSession,
     PlexClient,
     PlexError,
@@ -497,3 +498,30 @@ class TestEveryRefusalIsOnTheRecord:
             session.put("http://plex.test/library/sections/1/all")
 
         assert [line for line in logs if line["event"] == "plex.write_blocked"] == []
+
+
+class TestTheConnectionCarriesReapersOwnTimeout:
+    """``query`` reads the timeout off the server object and passes it explicitly on every
+    call, so a default set on the session alone would be overridden and the widening would
+    read as applied while doing nothing."""
+
+    async def test_the_server_is_built_with_the_wider_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import plexapi
+        import plexapi.server
+
+        captured: dict[str, Any] = {}
+
+        class _Stub:
+            def __init__(
+                self, baseurl: str, token: str, session: Any = None, timeout: int | None = None
+            ) -> None:
+                captured["timeout"] = timeout
+
+        monkeypatch.setattr(plexapi.server, "PlexServer", _Stub)
+        await PlexClient("http://plex.test", "t", safety=READ_ONLY).connect()
+
+        assert captured["timeout"] == PLEX_READ_TIMEOUT
+        # Wider than plexapi's own, which the constant alone cannot prove (rule 141).
+        assert PLEX_READ_TIMEOUT > plexapi.TIMEOUT
