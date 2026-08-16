@@ -305,6 +305,30 @@ class TestSequentialProgression:
         """
         assert sequential_protections({"alice": {3: 10}}, {3: 10}, on_disk={1, 2, 3}) == set()
 
+    def test_the_lookahead_counts_seasons_on_disk_over_a_hole(self) -> None:
+        """The other half of rule 124: the cushion lands on seasons that exist too.
+
+        Mid-way through season 2 of a show numbered 1, 2, 18, 19, 20, the viewer's next
+        season is 18. `start + offset` gave them 3, which nothing holds, so no lookahead
+        value reached the season they are about to watch while the anchor stayed held and
+        hid it.
+        """
+        on_disk = {1, 2, 18, 19, 20}
+        assert sequential_protections({"a": {2: 5}}, {2: 10}, lookahead=1, on_disk=on_disk) == {
+            2,
+            18,
+        }
+        assert sequential_protections({"a": {2: 5}}, {2: 10}, lookahead=3, on_disk=on_disk) == {
+            2,
+            18,
+            19,
+            20,
+        }
+        # Past the end there is nothing left to cushion with, and the lookahead invents none.
+        assert sequential_protections({"a": {20: 5}}, {20: 10}, lookahead=2, on_disk=on_disk) == {
+            20
+        }
+
     def test_an_unknown_position_still_holds_the_anchor_over_a_hole(self) -> None:
         """The fail-closed branch keeps the anchor and adds the next REAL season, not m+1."""
         assert sequential_protections({"alice": {3: None}}, {3: 10}, on_disk={3, 7}) == {3, 7}
