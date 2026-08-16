@@ -28,8 +28,7 @@ Credit is given in the release notes unless you would rather it was not.
 ## Supported versions
 
 The latest release is supported, and so is the current `dev` image. Fixes land on `dev`
-first and ship in the next release. Nothing is backported, so an older tag runs without
-the fixes that followed it.
+first and ship in the next release.
 
 ## Where the sensitive parts are
 
