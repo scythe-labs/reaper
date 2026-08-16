@@ -27,9 +27,9 @@ Credit is given in the release notes unless you would rather it was not.
 
 ## Supported versions
 
-Fixes land on `dev` and reach operators in the next release. The supported versions are
-the latest release and the current `dev` image. Nothing is backported, so running an older
-tag means running without the fixes that followed it.
+The latest release is supported, and so is the current `dev` image. Fixes land on `dev`
+first and ship in the next release. Nothing is backported, so an older tag runs without
+the fixes that followed it.
 
 ## Where the sensitive parts are
 
