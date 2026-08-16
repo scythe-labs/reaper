@@ -905,17 +905,31 @@ async def season_watch_stats(
     # rows (movies, or pre-backfill TV) are excluded, so a season with only those is simply
     # absent here and the guard falls back to season-level protection for it.
     #
-    # `max_unknown` is the highest episode whose completion Tautulli never reported. If it
-    # sits ABOVE the highest known-completed one, the viewer may be further along than the
+    # `max_unfinished` is the highest episode this viewer reached without completing. If it
+    # sits ABOVE the highest completed one, the viewer may be further along than the
     # position says, and being wrong in that direction unprotects the season they are about
     # to watch next: `sequential_protections` reads "finished season m" as ready-for-m+1 and
     # anything less as still-on-m, and the default lookahead is 0, so there is no cushion.
     # Those pairs are dropped below, which makes the position Unknown and fails the guard
     # closed to season level, exactly as a season with no episode indexes at all does.
+    #
+    # **A part-watched episode belongs here, and only a genuine 0 does not.** Tautulli's
+    # `watched_status` is a quantized fraction of the operator's watched-percent threshold,
+    # so it arrives as 0, 0.25, 0.5, 0.75 or 1, and 14.3% of episode rows on a real foreign
+    # library carried one of the middle three (`docs/LEARNINGS.md`). Matching `IS NULL`
+    # alone left those raising neither column, so a viewer whose finale stopped at 0.75
+    # recorded a position one episode short and the skip below never fired. That is
+    # 0c87f28's own failure reached by a second route (#825).
+    #
+    # `0` keeps the reading 0c87f28 gave it, pinned by its own test. "They did not watch
+    # this" is an answer and leaves the position exact, where a quarter, a half or three
+    # quarters reports progress THROUGH an episode and puts the viewer at it.
     progress = text(
         "SELECT user_id AS u, parent_rating_key AS k, "
         "       MAX(CASE WHEN watched_status = 1 THEN media_index END) AS max_ep, "
-        "       MAX(CASE WHEN watched_status IS NULL THEN media_index END) AS max_unknown "
+        "       MAX(CASE WHEN watched_status IS NULL "
+        "                  OR (watched_status > 0 AND watched_status < 1) "
+        "           THEN media_index END) AS max_unfinished "
         "FROM watch_event "
         "WHERE parent_rating_key IN :keys AND media_type = 'episode' "
         "  AND media_index IS NOT NULL "
@@ -945,7 +959,7 @@ async def season_watch_stats(
             for row in (await conn.execute(progress, {"keys": key_chunk})).all():
                 if row.max_ep is None:
                     continue  # nothing completed here: position unknown, guard falls back
-                if row.max_unknown is not None and int(row.max_unknown) > int(row.max_ep):
+                if row.max_unfinished is not None and int(row.max_unfinished) > int(row.max_ep):
                     continue  # they may be further on than this; see the query note
                 stats.user_season_progress.setdefault(int(row.u), {})[int(row.k)] = int(row.max_ep)
 

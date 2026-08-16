@@ -22,10 +22,11 @@ Validated against a large, active, multi-instance production setup. The findings
 recorded as shapes and ratios — see `docs/LEARNINGS.md` and `docs/SIGNALS.md` for the
 detail.
 
-- **An active library is not mostly dead weight.** The share of films *never* played at
-  all was under one percent. A film watched in the past year is more likely than not to
-  be watched again within the next one. This is the finding that most contradicts the
-  intuition a pruning tool gets built on.
+- **An active library is not mostly dead weight, and how active it is varies by server.**
+  The share of films *never* played at all was under one percent on the first library and
+  24% on a second one. Neither share is dead weight: on the second, 7.4% of the
+  never-played films were watched in the following year. This is the finding that most
+  contradicts the intuition a pruning tool gets built on.
 - **There is no cliff, and nothing is ever free to delete.** A film dormant for five
   years still has a double-digit chance of being watched next year. There is only
   *cheaper* and *dearer*.
@@ -4170,6 +4171,86 @@ work at all.
 
 ⇒ Before optimizing a read, measure whether its cost tracks what it returns. Where it does not,
 the only lever is asking fewer times.
+
+## What the shipped defaults do on somebody else's library (2026-08-16)
+
+The first foreign dump, 1,904 movies, 729 shows, 2,397 seasons, 84,235 plays, 52 users and
+ten and a half years of watch history. Run through `judge_facts` and `plan_series_prune`
+themselves rather than a copy of them, under `DEFAULT_MOVIE_POLICY` and `DEFAULT_TV_POLICY`.
+The rewatch curve is in `docs/SIGNALS.md`. What follows is everything else.
+
+**The engine held. 621 of 1,904 movies condemned, 73 of 2,397 seasons.** No season came from
+a show anyone had watched in the past year, and the condemned seasons had a median dormancy
+of seven years. Nothing crashed, no dormancy came out negative, and no item past the dormancy
+floor still had a watcher inside the popularity window.
+
+**Coverage read 1.0 for every single item, so the coverage floor never decided anything.**
+That is what a ten-year mirror does. It also means this library exercised none of the reach
+code that a shallow Tautulli would, so `history_shortfall` and `lifetime_shortfall` stayed
+almost silent. The keep-rule conflict detector was the exception, holding 343 of 779 prunable
+seasons across 126 shows for a human, and only 126 of those conflicts came from the reach.
+
+**The popularity gate protected 34 of 1,904 movies.** Its floor is three distinct watchers in
+a year, and 30 of the 52 users watched anything at all in that window, so the bar asks for a
+tenth of the active audience on one title. On this server it is close to inert. The bar is an
+absolute count and nothing scales it to how many people are actually watching, which is worth
+knowing before reading a why-panel that reports it as checked.
+
+**The score has little room left once dormancy saturates.** `UNWATCHED` tops out at 1,825
+days, and 642 of these films are past that, so 430 of the 537 condemned in the backtest sat
+in a single five-point band. Moving `condemn_at` from 70 to 90 drops the condemned set from
+537 to 434. An operator on a deep history is tuning a much blunter control than the slider
+suggests.
+
+**Regret concentrates at the threshold, not across it.** In the backtest the films scoring 70
+to 79 were played again 16.7% of the time, against 7.2% for the bulk at 90 and above. The
+score is ordering correctly, and the default cut admits its worst cohort. 48 films, so this
+is a direction rather than a number.
+
+⇒ The defaults are safe on a second library and they are not tuned for it. Read every
+absolute threshold in the shipped policy as one server's number.
+
+## `watched_status` has five values, and two of them were the whole model (2026-08-16)
+
+Measured on the first foreign library to reach us, a `tautulli_anon_dump.py` dump of 2,633
+titles and 84,235 plays. Tautulli's `watched_status` is a quantized fraction of the operator's
+own watched-percent threshold, so a row arrives as 0, 0.25, 0.5, 0.75 or 1. Cross-tabbed
+against `percent_complete` on 63,103 episode rows, the quantization is what it looks like: 0.75
+sits at 70-90% watched, 0.5 at 40-60%, 0 at 0-20%. **8,997 rows, 14.3%, carried one of the
+three middle values.**
+
+`season_scan.season_watch_stats` modeled two of the five. Its position query bucketed a play as
+completed (`= 1`) or unreported (`IS NULL`), and the middle three raised neither column, so a
+viewer whose finale stopped at 0.75 recorded a confident position one episode short. The
+fail-closed skip that exists for exactly that case reads `max_unfinished > max_ep` and never
+fired, because the row was invisible to both sides of the comparison. 212 of 3,691 positions
+read low on that library, 50 of them viewers who had reached the season's last episode (#825).
+
+**The harm is not a protection that fails to fire, it is one aimed at the wrong season.**
+`sequential_protections` reads "finished season m" as ready-for-m+1 and anything less as
+still-on-m, so an under-read position holds the season the viewer has just finished and
+releases the one they are about to start. The released season is by construction the one with
+old or no plays of its own, which is the one that scores high enough to be reaped. Re-run over
+the same dump the fix holds 4 more seasons and moves no verdict, because keep-last-2 and the
+dormancy floor happened to cover them there.
+
+**The same failure had already been fixed here once, for a different value.** 0c87f28 closed it
+for the unreported rows and its message names the fraction outright, so the values were known
+and the reasoning was traced rather than assumed. What it weighed was precision: reading a
+non-complete status as unknown "would blind the guard on every partially-watched episode." That
+is true, and blinding it means holding the anchor season AND the next one, which is more
+protection rather than less. An understated position is the only reading that holds the wrong
+season, so coarse beats wrong and the middle three moved across. A genuine `0` did not: Tautulli
+saying "they did not watch this" is an answer, and the test pinning it stays green.
+
+**Two readers, two readings, and the tree only had one test.** `rewatch.qualifies` already read
+this column at `>= 0.5`. Nothing in `tests/` wrote a partial value except one `qualifies` case,
+so every season-lane row the suite ever wrote was 1, 0 or NULL, and a column with five values
+was pinned at three.
+
+⇒ A quantized field is not a boolean with a null. Enumerate what the source actually emits
+before writing a `CASE` over it, and where a dump is available, count the values. A prior fix
+that names the other values is not the same as one that covers them.
 
 ## Prior art
 

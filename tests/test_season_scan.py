@@ -1096,8 +1096,9 @@ class TestSeasonWatchStats:
 
     async def test_a_genuine_zero_still_means_not_finished(self, cache_engine: AsyncEngine) -> None:
         """0.0 is a real answer ("started it, did not finish") and must keep behaving as
-        one. Only a MISSING status is unknown; conflating them again in the other
-        direction would blind the guard on every partially-watched episode."""
+        one. It is where the line sits after #825 moved the three middle values across:
+        Tautulli reporting a viewer 25%, 50% or 75% through an episode says they are AT it,
+        while 0 says they are not, so only 0 leaves the position exact."""
         await _episode(cache_engine, season_key=712, user_id=1, episode=3)
         await _episode(cache_engine, season_key=712, user_id=1, episode=4, status=0.0)
 
@@ -2844,6 +2845,10 @@ class TestUserSeasonProgress:
             # trusted low -- being wrong in that direction unprotects the season they are
             # about to watch next.
             ([(1, 1.0), (4, None)], "a later play whose completion is unknown"),
+            # The same reach, reported rather than missing: Tautulli quantizes
+            # `watched_status` against the operator's own threshold, so a play that stopped
+            # short arrives as 0.75 and not as NULL. It is still a play of episode 4 (#825).
+            ([(1, 1.0), (4, 0.75)], "a later play that stopped short of complete"),
         ],
     )
     async def test_a_dropped_position_holds_the_season_rather_than_clearing_it(
@@ -2888,6 +2893,43 @@ class TestUserSeasonProgress:
         held = {p.season_number: p.reason for p in plan.protected}
         assert held[3] == "a viewer is part-way through the show"
         assert held[4] == "a viewer is part-way through the show"
+
+    @pytest.mark.parametrize("status", [0.25, 0.5, 0.75])
+    async def test_a_finale_that_stopped_short_still_holds_the_next_season(
+        self, cache_engine: AsyncEngine, status: float
+    ) -> None:
+        """#825. A viewer completed every episode but the last, and reached the last one
+        without finishing it. They are done with the season, and the next one is what they
+        start next.
+
+        Read as "still on season 3", the guard holds the season they have just finished and
+        releases the one they are about to start -- the protection pointed at the wrong
+        season, not merely missed, and the released one carries the old plays that let it
+        score. `watched_status` is quantized against the operator's own watched-percent
+        threshold, so it arrives as one of 0, 0.25, 0.5, 0.75 or 1, and matching the
+        unfinished plays on `IS NULL` alone left the three middle values raising neither
+        column. Swept rather than pinned at 0.75, so a fix that names one value fails
+        (rule 141).
+        """
+        for episode in range(1, 10):
+            await _episode(cache_engine, season_key=913, user_id=7, episode=episode)
+        await _episode(cache_engine, season_key=913, user_id=7, episode=10, status=status)
+
+        stats = await season_scan.season_watch_stats(cache_engine, {913, 914}, window_days=365)
+        assert stats.user_season_progress.get(7, {}).get(913) is None, "position read 9, not 10"
+
+        key_to_number = {913: 3, 914: 4}
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n, files=10, total=10) for n in (3, 4)],
+            keep_last=0,
+            keep_first_season=False,
+            progress_by_user=season_scan._progress_by_user(stats, key_to_number),
+            last_play_by_user=season_scan._last_play_by_user_season(stats, key_to_number),
+            season_final_episode={3: 10, 4: 10},
+        )
+        assert plan.prunable == []
+        assert {p.season_number for p in plan.protected} == {3, 4}
 
 
 class TestFinalEpisodes:
