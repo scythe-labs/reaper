@@ -723,7 +723,8 @@ async def _collection_membership(
 
     The fallback reads run concurrently, bounded by ``_COLLECTION_CHILDREN_CONCURRENCY``;
     one collection's failure is caught inside its own task and logged rather than raised
-    into the fan-out, so it can never cancel a sibling read or degrade the snapshot.
+    into the fan-out, so it can never cancel a sibling read or degrade the snapshot. A
+    collection read both ways lands on one chip, since the per-item names are a set.
     """
     if plex is None:
         return {}, {}
@@ -733,15 +734,11 @@ async def _collection_membership(
         log.warning("snapshot.collections_unreadable", error=str(exc))
         return {}, {}
 
-    membership: dict[int, list[str]] = {}
+    # A SET per item: a collection the tags covered AND the fallback read returns arrives
+    # twice, and the sort below is a total order, so nothing depends on insertion order.
+    membership: dict[int, set[str]] = {}
     sizes: dict[str, int] = {}
     bound = asyncio.Semaphore(_COLLECTION_CHILDREN_CONCURRENCY)
-
-    def _add(key: int, name: str) -> None:
-        """One item's chip list, without repeating a name a fallback read also returned."""
-        names = membership.setdefault(key, [])
-        if name not in names:
-            names.append(name)
 
     async def _children(row: PlexCollectionRow) -> tuple[str, set[int] | None]:
         try:
@@ -785,7 +782,7 @@ async def _collection_membership(
                 if stored is None:
                     continue
                 seen[stored] += 1
-                _add(key, stored)
+                membership.setdefault(key, set()).add(stored)
 
         unexplained = [row for row in rows if row.child_count and seen[row.title] < row.child_count]
         if unexplained:
@@ -801,7 +798,7 @@ async def _collection_membership(
             if children is None:
                 continue
             for key in children:
-                _add(key, title)
+                membership.setdefault(key, set()).add(title)
 
     def _size_key(name: str) -> tuple[int, int, str]:
         size = sizes.get(name)
