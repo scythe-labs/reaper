@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
@@ -173,14 +173,29 @@ class _FakeCollectionsPlex(PlexClient):
         sections: list[PlexSection],
         collections: dict[int, list[PlexCollectionRow]] | None = None,
         children: dict[int, set[int]] | None = None,
+        untagged: set[int] | None = None,
+        extra_tags: dict[int, tuple[str, ...]] | None = None,
+        tag_spelling: Callable[[str], str] | None = None,
         fail_section: int | None = None,
+        fail_tags_section: int | None = None,
         movie_spine: list[dict[str, Any]] | None = None,
     ) -> None:
         self._sections = sections
         self._collections = collections or {}
         self._children = children or {}
+        # Collections whose members carry no `collection` tag -- what a smart collection, or
+        # one holding seasons rather than shows, looks like to the item-tag read.
+        self._untagged = untagged or set()
+        # Tags an item carries for no collection this section lists -- what Plex leaves
+        # behind when a collection is deleted.
+        self._extra_tags = extra_tags or {}
+        self._tag_spelling = tag_spelling or (lambda title: title)
         self._fail_section = fail_section
+        self._fail_tags_section = fail_tags_section
         self._movie_spine = movie_spine if movie_spine is not None else _movie_spine()
+        #: Every ``collection_children`` call this fake answered, in order. The point of the
+        #: tag read is that this stays empty for an ordinary library (#821).
+        self.children_reads: list[int] = []
 
     async def library_guid_index(
         self, *, section_type: str, allowed_sections: set[int] | None = None
@@ -210,7 +225,29 @@ class _FakeCollectionsPlex(PlexClient):
             raise PlexError("plex hiccuped")
         return self._collections.get(section_key, [])
 
+    async def collection_tags(self, section_key: int, *, kind: str) -> dict[int, tuple[str, ...]]:
+        """The membership the real client reads off each item's ``collection`` tags.
+
+        Derived from the same ``children`` fixture the per-collection read answers from, so
+        one fixture describes one library and the two reads cannot describe different ones.
+        ``untagged`` is how a collection whose membership is not a tag is expressed, and a
+        ``child_count`` above what this returns is what sends the caller back to
+        ``collection_children``.
+        """
+        if section_key == self._fail_tags_section:
+            raise PlexError("plex hiccuped")
+        out: dict[int, list[str]] = {}
+        for row in self._collections.get(section_key, []):
+            if row.rating_key in self._untagged:
+                continue
+            for key in self._children.get(row.rating_key, set()):
+                out.setdefault(key, []).append(self._tag_spelling(row.title))
+        for key, names in self._extra_tags.items():
+            out.setdefault(key, []).extend(names)
+        return {key: tuple(names) for key, names in out.items()}
+
     async def collection_children(self, collection_key: int) -> set[int]:
+        self.children_reads.append(collection_key)
         return self._children.get(collection_key, set())
 
 
@@ -917,10 +954,142 @@ class TestAnUnknownCollectionSizeIsNotZero:
         assert "Unsized" not in sizes
 
 
+class TestMembershipIsReadFromTheItems:
+    """#821: a scan asked every collection for its children -- 397 reads and 667 seconds of
+    Plex time on a live library, which also starved the GUID sweep running beside it. The
+    membership is on the items instead, one read per ~400 of them, and only a collection
+    Plex counts more members for than the tags showed is still read its own way."""
+
+    @staticmethod
+    def _plex(**kwargs: Any) -> _FakeCollectionsPlex:
+        return _FakeCollectionsPlex(
+            sections=[PlexSection(key=1, title="Movies", kind="movie")], **kwargs
+        )
+
+    async def test_an_ordinary_library_needs_no_per_collection_read(self) -> None:
+        plex = self._plex(
+            collections={
+                1: [
+                    PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=2),
+                    PlexCollectionRow(rating_key=502, title="Heist", child_count=1),
+                ]
+            },
+            children={501: {11, 12}, 502: {12}},
+        )
+
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"], 12: ["Heist", "Cult Classics"]}
+        assert sizes == {"Cult Classics": 2, "Heist": 1}
+        # The saving itself, not a proxy for it.
+        assert plex.children_reads == []
+
+    async def test_a_collection_the_tags_missed_is_read_the_old_way(self) -> None:
+        """A smart collection is a saved filter and a season collection holds objects the
+        section listing never lists, so neither leaves a tag on anything this read sees.
+        Plex's own child count is what gives them away, without asking which kind it is."""
+        plex = self._plex(
+            collections={
+                1: [
+                    PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1),
+                    PlexCollectionRow(rating_key=502, title="Recently Added", child_count=1),
+                ]
+            },
+            children={501: {11}, 502: {12}},
+            untagged={502},
+        )
+
+        membership, _sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"], 12: ["Recently Added"]}
+        # Only the one it had to.
+        assert plex.children_reads == [502]
+
+    async def test_a_fallback_read_does_not_repeat_a_name_the_tags_gave(self) -> None:
+        """A collection Plex counts 2 members for while one carries the tag is read again,
+        and that read returns the tagged item too."""
+        plex = self._plex(
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=2)]
+            },
+            children={501: {11}},
+        )
+
+        membership, _sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert plex.children_reads == [501]
+        assert membership == {11: ["Cult Classics"]}
+
+    async def test_a_tag_naming_no_collection_here_is_dropped(self) -> None:
+        """Plex leaves a ``collection`` tag on items whose collection is gone. A chip for a
+        shelf the operator cannot open is worse than no chip, and its size is unknowable."""
+        plex = self._plex(
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1)]
+            },
+            children={501: {11}},
+            extra_tags={11: ("Deleted Last Year",), 12: ("Deleted Last Year",)},
+        )
+
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"]}
+        assert sizes == {"Cult Classics": 1}
+
+    async def test_a_tag_spelled_differently_stores_the_listings_spelling(self) -> None:
+        """Rule 88: the tag and the listing are folded on both sides, and the name a chip
+        shows is the one the size map is keyed by -- otherwise the sort reads no size at
+        all and the chip renders a collection whose size Reaper knows as unknown."""
+        plex = self._plex(
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1)]
+            },
+            children={501: {11}},
+            tag_spelling=str.upper,
+        )
+
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"]}
+        assert sizes == {"Cult Classics": 1}
+        assert plex.children_reads == []
+
+    async def test_a_failed_tag_read_falls_back_rather_than_losing_the_section(self) -> None:
+        plex = self._plex(
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1)]
+            },
+            children={501: {11}},
+            fail_tags_section=1,
+        )
+
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"]}
+        assert sizes == {"Cult Classics": 1}
+        assert plex.children_reads == [501]
+
+
 class _ConcurrencyTrackingPlex(PlexClient):
     """A one-section Plex stand-in that counts overlapping ``collection_children`` reads,
     to prove the fan-out is bounded rather than either fully sequential or unbounded.
-    Never calls ``super().__init__`` (``_FakeCollectionsPlex``'s convention)."""
+    Never calls ``super().__init__`` (``_FakeCollectionsPlex``'s convention).
+
+    Its item tags are empty, so every collection is one the tags could not account for and
+    every one falls back to its own read -- which is the population the bound now governs.
+    """
 
     def __init__(self, *, rows: list[PlexCollectionRow], bound: int) -> None:
         self._rows = rows
@@ -933,6 +1102,9 @@ class _ConcurrencyTrackingPlex(PlexClient):
 
     async def list_collections(self, section_key: int) -> list[PlexCollectionRow]:
         return self._rows
+
+    async def collection_tags(self, section_key: int, *, kind: str) -> dict[int, tuple[str, ...]]:
+        return {}
 
     async def collection_children(self, collection_key: int) -> set[int]:
         self._in_flight += 1
