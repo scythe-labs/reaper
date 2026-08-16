@@ -75,7 +75,13 @@ DECISION_SECTIONS = 18
 
 
 def _live_docs() -> list[Path]:
-    """Every doc that claims to describe the present. Excludes the frozen archive."""
+    """Every doc that claims to describe the present. Excludes the frozen archive.
+
+    ``docs/history/`` is out of every gate below, and that is what the exclusion is for. Its
+    files quote the tree as it stood before each change, so a citation or a figure that no
+    longer resolves is the record working rather than rot. Re-pathing them against today's tree
+    destroys the history they exist to keep.
+    """
     return sorted(p for p in DOCS.rglob("*.md") if HISTORY not in p.parents)
 
 
@@ -3181,6 +3187,82 @@ def test_archived_docs_declare_they_are_frozen() -> None:
     assert not offenders, "archived docs must open with a FROZEN banner:\n" + "\n".join(offenders)
 
 
+#: A FILE under ``docs/history/``. The directory on its own is not one, and the status-doc
+#: budget above tells an author to move the story of a fix there, which is where a retired
+#: narrative goes. Naming a file in it inside an instruction is the defect.
+_ARCHIVED_FILE = re.compile(r"docs/history/\S+\.md")
+
+
+def _assert_messages(path: Path) -> list[tuple[int, str]]:
+    """Every ``assert`` message in a file, as ``(line, its literal text)``.
+
+    The constants are joined with nothing between them, so a message written as a dozen adjacent
+    string literals reads back as one sentence, which is how every long one in this suite is
+    written. An interpolated value contributes nothing, and the test below states that bound.
+    """
+    return [
+        (
+            node.lineno,
+            "".join(
+                n.value
+                for n in ast.walk(node.msg)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            ),
+        )
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Assert) and node.msg is not None
+    ]
+
+
+def test_no_failure_message_sends_an_author_into_the_frozen_archive() -> None:
+    """A gate's message is an instruction, and nothing under ``docs/history/`` can be edited.
+
+    Six count guards named a figure in the archived simplification plan and told the author to
+    bump it there too (#813). That file's own banner says do not update it, so the instruction
+    could only be followed by breaking a stated rule. Following it made a correct record false
+    besides, since every figure in there is a measurement at a named commit. Nobody had followed
+    it, which is why two of the figures were already stale by two when one of those messages was
+    written.
+
+    A docstring may still cite the archive for the reasoning behind a decision, which is why the
+    plan is archived rather than deleted. This reads assert messages alone.
+
+    **What it cannot see is a path built at runtime** (rule 147). ``tests/test_migrations.py``'s
+    ``_GET_BIND_CLAIM_SITES`` reached its message through an f-string over a tuple, so the
+    strongest form of this defect, a gate that FAILS until the frozen file is edited, was
+    invisible here. That one was found by reading.
+
+    Deliberately not a count (rule 145). The population is every assert in the suite and it moves
+    with ordinary writing, so a number here would be bumped without being read. The non-empty
+    floor is what catches a walk that collected nothing.
+    """
+    #: The spellings the matcher takes and the ones it drops, run rather than claimed (rule 147).
+    #: A path hard-wrapped across two literals joins whole above. One wrapped AT the slash, with
+    #: the newline inside the literal, does not, and that is the hole this cannot close.
+    assert _ARCHIVED_FILE.search("docs/history/SIMPLIFICATION_PLAN.md's S7 paragraph")
+    assert _ARCHIVED_FILE.search("`docs/history/SIMPLIFICATION_" + "PLAN.md`")
+    assert not _ARCHIVED_FILE.search("docs/history/\nSIMPLIFICATION_PLAN.md")
+    assert not _ARCHIVED_FILE.search("move the story of how a fix was chosen to docs/history/")
+
+    scanned = [
+        (path, line, text)
+        for path in sorted(TESTS.rglob("*.py"))
+        for line, text in _assert_messages(path)
+    ]
+    assert scanned, "the walk read no assert messages at all, so it can report nothing"
+    offenders = [
+        f"{path.relative_to(REPO).as_posix()}:{line}"
+        for path, line, text in scanned
+        if _ARCHIVED_FILE.search(text)
+    ]
+    assert not offenders, (
+        "these failure messages name a file under docs/history/:\n"
+        + "\n".join(offenders)
+        + "\n\nThat tree is frozen, so the author cannot do what the message asks. State the "
+        "figure's live home and stop there, and leave the archived copy at what it measured."
+    )
+
+
 def test_live_docs_carry_no_unresolved_placeholders() -> None:
     """A live doc never ships a ``TBD``.
 
@@ -3259,13 +3341,6 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
 
     #: A dotted name ending in one of these is a filename, not a symbol: `api.types.gen.ts`.
     suffixes = (".ts", ".tsx", ".py", ".md", ".mdx", ".json", ".css", ".html", ".yml", ".yaml")
-    #: `docs/history/SIMPLIFICATION_PLAN.md` is exempt, and it is the one document that has
-    #: to be. Its
-    #: finding bodies quote the tree as it stood *before* each change, with `> Corrected:` and
-    #: `Landed` blocks layered on top rather than edited in — so a citation that no longer
-    #: resolves is often the record working, not rot. Re-pathing them against today's tree would
-    #: destroy the history the plan exists to keep (its own preamble says so of `refuted.md`).
-    exempt = {REPO / "docs" / "SIMPLIFICATION_PLAN.md"}
     #: This file names the retired module to DECLARE it, in `retired_modules` and in the prose
     #: explaining why the tombstone exists, so the tombstone check skips its own declaration.
     #: Scoped to that check alone -- the dotted check below still reads this file.
@@ -3298,7 +3373,7 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
     assert modules, "the module walk found nothing, so every check below passes vacuously"
 
     dangling: list[str] = []
-    for path in [p for p in (*_code_files(), *_live_docs()) if p not in exempt]:
+    for path in (*_code_files(), *_live_docs()):
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if path != declares_the_tombstone:
                 for m in cites.finditer(line):
@@ -5393,13 +5468,9 @@ def test_the_four_packages_import_only_downward() -> None:
     modules = _layered_modules()
     assert len(modules) == _EXPECTED_LAYERED_MODULES, (
         f"expected {_EXPECTED_LAYERED_MODULES} modules under {'/, '.join(_LAYERS)}/, walked "
-        f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number -- AND the two prose\n"
-        "copies of it, which nothing else asserts (rule 144):\n"
-        "docs/history/SIMPLIFICATION_PLAN.md's S7\n"
-        "paragraph names this constant and restates the figure, and its C3 checkpoint row does\n"
-        "too. Both were already stale by two when this message was written. Leave the *Landed*\n"
-        "rows alone -- their figures are historical deltas, and editing one makes a correct\n"
-        "record false.\n"
+        f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number here, and here only.\n"
+        "The archived simplification plan restates this figure in two places and is frozen\n"
+        "history, so both copies stay at the number they measured.\n"
         "`_EXPECTED_SOURCE_MODULES` moves with the same module, counting all of src/reaper\n"
         "rather than these four, and it fails separately rather than telling you about this.\n"
         "If you did not add or delete one, the walk lost part of the tree -- and every\n"
@@ -5455,10 +5526,7 @@ def test_every_deferred_cross_package_import_is_named() -> None:
         f"  gone: {sorted(_DEFERRED_CROSS_PACKAGE_IMPORTS - deferred) or 'none'}\n\n"
         "The set is empty, so anything here at all is NEW, and a new one needs a\n"
         "reason written down: it is a cross-package dependency that no import graph will show,\n"
-        "so if it is here to break a cycle, name the cycle.\n"
-        "docs/history/SIMPLIFICATION_PLAN.md's S7 paragraph restates this set's size in\n"
-        "prose, and\n"
-        "nothing asserts that copy (rule 144)."
+        "so if it is here to break a cycle, name the cycle."
     )
 
 
@@ -6650,8 +6718,8 @@ def test_every_arr_client_is_built_with_the_same_arguments() -> None:
     assert len(sites) == _EXPECTED_ARR_CONSTRUCTIONS, (
         f"expected {_EXPECTED_ARR_CONSTRUCTIONS} *arr client constructions under src/, walked "
         f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass "
-        f"{sorted(_ARR_CONSTRUCTION_ARGS)}; bump the number here AND in "
-        "docs/history/SIMPLIFICATION_PLAN.md's wave 3 row, which states the population in prose."
+        f"{sorted(_ARR_CONSTRUCTION_ARGS)}; bump the number here. The archived simplification "
+        "plan states this population too, and its copy stays at what it measured."
     )
     missing = {
         site: sorted(_ARR_CONSTRUCTION_ARGS - args)
@@ -6784,9 +6852,9 @@ def test_every_client_carries_the_operators_own_tls_setting() -> None:
     assert len(sites) == _EXPECTED_TLS_CONSTRUCTIONS, (
         f"expected {_EXPECTED_TLS_CONSTRUCTIONS} client constructions under src/ for "
         f"{sorted(_TLS_CLIENTS)}, walked {len(sites)}: {sorted(sites)}. A new one is fine and "
-        f"must pass {sorted(_TLS_CLIENT_ARGS)}; bump the number here AND in "
-        "docs/history/SIMPLIFICATION_PLAN.md's W3b-8 kill block, which states it in prose "
-        "(rule 144). "
+        f"must pass {sorted(_TLS_CLIENT_ARGS)}; bump the number here. The archived "
+        "simplification plan states this population too, and its copy stays at what it "
+        "measured. "
         "A new client CLASS built against a stored address belongs in _TLS_CLIENTS, or the "
         "walk cannot see any of its sites and this count cannot tell you."
     )
@@ -7035,9 +7103,8 @@ def test_a_judged_item_is_never_handed_the_other_lanes_policy() -> None:
     assert len(sites) == _EXPECTED_JUDGE_ITEM_CALLS, (
         f"expected {_EXPECTED_JUDGE_ITEM_CALLS} `_judge_item` calls under src/, walked "
         f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass every argument in "
-        f"{sorted(_LANE_ARGUMENTS)} off one lane's locals; bump the number here AND in "
-        "docs/history/SIMPLIFICATION_PLAN.md's wave 3 parameter-object paragraph, which states the "
-        "population in prose."
+        f"{sorted(_LANE_ARGUMENTS)} off one lane's locals; bump the number here. The archived "
+        "simplification plan states this population too, and its copy stays at what it measured."
     )
     lanes: dict[str, str] = {}
     for site, args in sorted(sites.items()):
