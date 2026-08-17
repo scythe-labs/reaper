@@ -20,7 +20,7 @@ name: Submit to WinGet
 #   - the ScytheLabs.Reaper manifest must exist in winget-pkgs once (first
 #     submission is a hand-written PR; packaging/README.md walks through it)
 #   - a WINGET_TOKEN secret: a PAT with public_repo scope, which wingetcreate
-#     uses to fork winget-pkgs and open the version PR
+#     uses to fork winget-pkgs, open the version PR, and keep that fork level
 # Without the token this workflow says so and exits green; without the manifest,
 # wingetcreate itself fails and the log names the missing package.
 
@@ -57,6 +57,16 @@ jobs:
           }
           $version = $env:RAW_VERSION -replace '^v', ''
           $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$version/Reaper-$version-windows-x64-setup.exe"
+          # wingetcreate cannot open a pull request from a fork that trails upstream, and
+          # winget-pkgs moves fast enough to strand it between releases. A first run has no
+          # fork yet, so a failure here is left to wingetcreate.
+          $env:GH_TOKEN = $env:WINGET_TOKEN
+          try {
+            $owner = gh api user --jq .login
+            gh api -X POST "repos/$owner/winget-pkgs/merge-upstream" -f branch=master
+          } catch {
+            Write-Host "Could not sync the winget-pkgs fork, submitting anyway: $_"
+          }
           # wingetcreate is Microsoft's manifest tool. "latest" is deliberate, unlike
           # every pinned action here: the manifest schema it must emit is
           # winget-pkgs' current one, not whatever was current when this line landed.
