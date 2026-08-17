@@ -117,9 +117,8 @@ the secret the workflows build and attach the snap but skip the store, green.
 [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) by hand
 (`wingetcreate new <installer-url>` walks through it). After that,
 `submit-winget.yml` opens the version PR on every release, using the `WINGET_TOKEN`
-secret (a PAT with `public_repo` scope). That same step fast-forwards the token
-account's fork of winget-pkgs first. A fork left behind cannot open a pull request,
-and upstream moves fast enough to strand it between two releases (#832). Without the
+secret (a PAT with `public_repo` scope). It fast-forwards the token account's fork
+first, because a fork that trails upstream cannot open a pull request. Without the
 secret it skips, green.
 
 **VirusTotal.** Mint a key at <https://www.virustotal.com/gui/my-apikey> and store it

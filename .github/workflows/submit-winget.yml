@@ -20,8 +20,7 @@ name: Submit to WinGet
 #   - the ScytheLabs.Reaper manifest must exist in winget-pkgs once (first
 #     submission is a hand-written PR; packaging/README.md walks through it)
 #   - a WINGET_TOKEN secret: a PAT with public_repo scope, which wingetcreate
-#     uses to fork winget-pkgs and open the version PR, and which the step below
-#     also uses to keep that fork level with upstream
+#     uses to fork winget-pkgs, open the version PR, and keep that fork level
 # Without the token this workflow says so and exits green; without the manifest,
 # wingetcreate itself fails and the log names the missing package.
 
@@ -58,14 +57,9 @@ jobs:
           }
           $version = $env:RAW_VERSION -replace '^v', ''
           $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$version/Reaper-$version-windows-x64-setup.exe"
-          # wingetcreate submits through a fork of winget-pkgs and cannot open the pull
-          # request once that fork has fallen behind upstream. winget-pkgs takes hundreds
-          # of commits a day, so the fork is thousands behind by the next release and the
-          # submission stops to ask for a manual sync, which is what happened to 2026.8.4
-          # (#832). Fast-forward it here so no release needs a human. Each submission goes
-          # to its own branch, so the fork's master only ever trails and never diverges.
-          # A first run has no fork yet and wingetcreate creates one, so a failure here is
-          # reported and left to wingetcreate rather than failing the release.
+          # wingetcreate cannot open a pull request from a fork that trails upstream, and
+          # winget-pkgs moves fast enough to strand it between releases. A first run has no
+          # fork yet, so a failure here is left to wingetcreate.
           $env:GH_TOKEN = $env:WINGET_TOKEN
           try {
             $owner = gh api user --jq .login
