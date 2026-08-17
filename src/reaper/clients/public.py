@@ -12,12 +12,20 @@ redirect to carry away, and public mirrors genuinely do bounce to CDNs.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import ClassVar
 
 import httpx2
 
-from reaper.clients.base import _REDIRECTS, BaseClient, IntegrationError, transient_retry
+from reaper.clients.base import (
+    _REDIRECTS,
+    BaseClient,
+    IntegrationError,
+    http_failure,
+    transient_retry,
+    transport_failure,
+)
 from reaper.config import RuntimeSafety
 
 #: Streamed-download chunk size. Large enough that the 280 MB IMDb dataset is a few
@@ -57,10 +65,8 @@ class PublicClient(BaseClient):
         """
         try:
             await self._stream_once(path, destination)
-        except httpx2.TimeoutException as exc:
-            raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
         except httpx2.TransportError as exc:
-            raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+            raise transport_failure(self.service, exc) from exc
 
     @transient_retry
     async def _stream_once(self, path: str, destination: Path) -> None:
@@ -76,27 +82,31 @@ class PublicClient(BaseClient):
         one would parse as a valid dataset of the wrong contents, and nothing downstream
         would notice.
         """
-        target = path
-        for _ in range(4):  # the request itself, plus at most three redirects
-            async with self._client.stream("GET", target) as response:
-                if response.status_code in _REDIRECTS:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise IntegrationError(
-                            self.service,
-                            f"redirect with no Location for GET {path}",
-                            status=response.status_code,
-                        )
-                    target = str(response.request.url.join(location))
-                    continue
-                if response.status_code >= 400:
-                    raise IntegrationError(
-                        self.service,
-                        f"HTTP {response.status_code} for GET {path}",
-                        status=response.status_code,
-                    )
-                with destination.open("wb") as handle:
-                    async for chunk in response.aiter_bytes(_CHUNK):
-                        handle.write(chunk)
-                return
-        raise IntegrationError(self.service, f"too many redirects for GET {path}")
+        # The streamed download rides past `_send`, so it traces itself: `path` is the
+        # argument, never the post-redirect target, matching every other `client.call` line.
+        started = time.monotonic()
+        status: int | None = None
+        try:
+            target = path
+            for _ in range(4):  # the request itself, plus at most three redirects
+                async with self._client.stream("GET", target) as response:
+                    status = response.status_code
+                    if response.status_code in _REDIRECTS:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise IntegrationError(
+                                self.service,
+                                f"redirect with no Location for GET {path}",
+                                status=response.status_code,
+                            )
+                        target = str(response.request.url.join(location))
+                        continue
+                    if response.status_code >= 400:
+                        raise http_failure(self.service, response, "GET", path)
+                    with destination.open("wb") as handle:
+                        async for chunk in response.aiter_bytes(_CHUNK):
+                            handle.write(chunk)
+                    return
+            raise IntegrationError(self.service, f"too many redirects for GET {path}")
+        finally:
+            self._trace("GET", path, status, started)

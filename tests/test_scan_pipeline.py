@@ -14,8 +14,9 @@ still produces the snapshot a sequential gather would have:
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
@@ -25,10 +26,11 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
-from reaper.api import routes
+from reaper.api import simulate
 from reaper.api.schemas import SimStale, SimulationOut
 from reaper.clients.base import IntegrationError
-from reaper.clock import utcnow
+from reaper.clients.plex import PlexClient, PlexCollectionRow, PlexError, PlexSection
+from reaper.clock import from_epoch, utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import (
@@ -36,6 +38,7 @@ from reaper.db.models import (
     FirstFlagged,
     Instance,
     InstanceKind,
+    LibrarySeen,
     SeasonPruneEvidence,
     SizeSource,
     Snapshot,
@@ -45,8 +48,10 @@ from reaper.db.models import (
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.dormancy import history_reach_days
 from reaper.engine.gates import GateId
+from reaper.engine.identity import PlexItem
 from reaper.engine.observation import Known, Unknown
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, PolicyRepair
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
+from reaper.engine.policy_migrations import PolicyRepair
 from reaper.services import (
     app_settings,
     history_sync,
@@ -58,10 +63,12 @@ from reaper.services import (
     season_scan,
     watch_evidence,
 )
+from reaper.services import snapshot as snapshot_service
 from reaper.services.condemned import reap_is_effective
 from reaper.services.planner import MediaRef
 from reaper.services.scan_runner import _allowed_sections, build_gates
 from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, scan
+from tests._fakes import FakeRadarr, FakeSonarr, FakeTautulli, scan_library
 
 
 async def candidates(
@@ -102,69 +109,16 @@ SEASONS_ADDED = NOW - timedelta(days=1500)
 # ---------------------------------------------------------------------------
 
 
-class _FakeTautulli:
-    def __init__(
-        self,
-        *,
-        movies: list[dict[str, Any]],
-        shows: list[dict[str, Any]] | None = None,
-        children: dict[int, list[dict[str, Any]]] | None = None,
-        sessions: list[dict[str, Any]] | None = None,
-    ) -> None:
-        self._movies = movies
-        self._shows = shows or []
-        self._children = children or {}
-        self._sessions = sessions or []
+class _GriddedSonarr(FakeSonarr):
+    """Five seasons of five episodes for every series, whatever it was asked about.
 
-    async def activity(self) -> dict[str, Any]:
-        return {"sessions": self._sessions}
-
-    async def libraries(self) -> list[dict[str, Any]]:
-        return [
-            {"section_id": 1, "section_type": "movie"},
-            {"section_id": 3, "section_type": "show"},
-        ]
-
-    async def library_media_info(
-        self, section_id: int, *, start: int = 0, length: int = 1000
-    ) -> dict[str, Any]:
-        rows = self._movies if section_id == 1 else self._shows
-        return {"data": rows if start == 0 else []}
-
-    async def children_metadata(self, rating_key: int) -> list[dict[str, Any]]:
-        return self._children.get(rating_key, [])
-
-
-class _FakeRadarr:
-    def __init__(self, movies: list[dict[str, Any]]) -> None:
-        self._movies = movies
-
-    async def movies(self) -> list[dict[str, Any]]:
-        return self._movies
-
-    async def root_folders(self) -> list[dict[str, Any]]:
-        return [{"path": "/data/movies", "accessible": True}]
-
-
-class _BrokenRadarr:
-    async def movies(self) -> list[dict[str, Any]]:
-        raise IntegrationError("radarr", "unreachable (boom)")
-
-    async def root_folders(self) -> list[dict[str, Any]]:
-        raise IntegrationError("radarr", "unreachable (boom)")
-
-
-class _FakeSonarr:
-    def __init__(self, series: list[dict[str, Any]]) -> None:
-        self._series = series
-
-    async def series(self) -> list[dict[str, Any]]:
-        return self._series
-
-    async def root_folders(self) -> list[dict[str, Any]]:
-        return [{"path": "/data/tv", "accessible": True}]
+    The scan spine wants a season map for series it was never handed rows for, which a
+    payload-driven fake cannot answer -- so the grid lives here rather than widening the
+    shared fake with a mode only this suite drives.
+    """
 
     async def episodes(self, series_id: int) -> list[dict[str, Any]]:
+        await super().episodes(series_id)
         return [
             {"seasonNumber": season, "episodeNumber": ep, "hasFile": True}
             for season in range(1, 6)
@@ -172,7 +126,7 @@ class _FakeSonarr:
         ]
 
 
-class _MuteEpisodesSonarr(_FakeSonarr):
+class _MuteEpisodesSonarr(_GriddedSonarr):
     """Answers `series()` and refuses `episodes()`, which the scan logs rather than degrading.
 
     The one shape that leaves a scan holding season statistics and no episode map while the
@@ -203,6 +157,99 @@ class _StaticList:
 
     async def fetch(self) -> list[lists.ListItem]:
         return self._items
+
+
+class _FakeCollectionsPlex(PlexClient):
+    """A movie-only Plex stand-in for #816 phase 2.
+
+    Inherits the real client rather than duck-typing it (``_fakes.py``'s convention), so a
+    signature drift on any of the four methods scan touches fails the mypy gate instead of
+    passing silently. Never calls ``super().__init__``: every method scan can reach while
+    ``plex`` is set is overridden below, so nothing here can open a socket.
+    """
+
+    def __init__(
+        self,
+        *,
+        sections: list[PlexSection],
+        collections: dict[int, list[PlexCollectionRow]] | None = None,
+        children: dict[int, set[int]] | None = None,
+        untagged: set[int] | None = None,
+        extra_tags: dict[int, tuple[str, ...]] | None = None,
+        tag_spelling: Callable[[str], str] | None = None,
+        fail_section: int | None = None,
+        fail_tags_section: int | None = None,
+        movie_spine: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._sections = sections
+        self._collections = collections or {}
+        self._children = children or {}
+        # Collections whose members carry no `collection` tag -- what a smart collection, or
+        # one holding seasons rather than shows, looks like to the item-tag read.
+        self._untagged = untagged or set()
+        # Tags an item carries for no collection this section lists -- what Plex leaves
+        # behind when a collection is deleted.
+        self._extra_tags = extra_tags or {}
+        self._tag_spelling = tag_spelling or (lambda title: title)
+        self._fail_section = fail_section
+        self._fail_tags_section = fail_tags_section
+        self._movie_spine = movie_spine if movie_spine is not None else _movie_spine()
+        #: Every ``collection_children`` call this fake answered, in order. The point of the
+        #: tag read is that this stays empty for an ordinary library (#820).
+        self.children_reads: list[int] = []
+
+    async def library_guid_index(
+        self, *, section_type: str, allowed_sections: set[int] | None = None
+    ) -> dict[int, PlexItem]:
+        # Mirrors the Tautulli spine exactly -- same rating key, title, year, added-at, no
+        # extra enrichment -- so a real (if uninteresting) sweep does not RETIRE the very
+        # rows the spine already lists. `library_index.build_index` drops any spine row a
+        # sweep that answered (`swept=True`) does not also list, so an empty `{}` here would
+        # silently unmatch every movie: a fixture bug, not the behavior this suite tests.
+        if section_type != "movie":
+            return {}
+        return {
+            int(row["rating_key"]): PlexItem(
+                rating_key=int(row["rating_key"]),
+                title=str(row["title"]),
+                year=row.get("year"),
+                added_at=from_epoch(row.get("added_at")),
+            )
+            for row in self._movie_spine
+        }
+
+    async def video_sections(self) -> list[PlexSection]:
+        return self._sections
+
+    async def list_collections(self, section_key: int) -> list[PlexCollectionRow]:
+        if section_key == self._fail_section:
+            raise PlexError("plex hiccuped")
+        return self._collections.get(section_key, [])
+
+    async def collection_tags(self, section_key: int, *, kind: str) -> dict[int, tuple[str, ...]]:
+        """The membership the real client reads off each item's ``collection`` tags.
+
+        Derived from the same ``children`` fixture the per-collection read answers from, so
+        one fixture describes one library and the two reads cannot describe different ones.
+        ``untagged`` is how a collection whose membership is not a tag is expressed, and a
+        ``child_count`` above what this returns is what sends the caller back to
+        ``collection_children``.
+        """
+        if section_key == self._fail_tags_section:
+            raise PlexError("plex hiccuped")
+        out: dict[int, list[str]] = {}
+        for row in self._collections.get(section_key, []):
+            if row.rating_key in self._untagged:
+                continue
+            for key in self._children.get(row.rating_key, set()):
+                out.setdefault(key, []).append(self._tag_spelling(row.title))
+        for key, names in self._extra_tags.items():
+            out.setdefault(key, []).extend(names)
+        return {key: tuple(names) for key, names in out.items()}
+
+    async def collection_children(self, collection_key: int) -> set[int]:
+        self.children_reads.append(collection_key)
+        return self._children.get(collection_key, set())
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +286,7 @@ class TestLibraryScope:
         runs (a viewable snapshot beats an aborted one) but says so, which makes the
         snapshot un-executable.
         """
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_engine(settings)  # no create_all: the app_setting table is missing
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         async with factory() as s:
@@ -266,7 +313,7 @@ class TestLibraryScope:
 
 @pytest.fixture
 async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -278,26 +325,31 @@ async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
 
 @pytest.fixture
 async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_cache_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_cache_engine(Settings(data_dir=tmp_path, secret_key="k"))
     await history_sync.ensure_schema(eng)
     yield eng
     await eng.dispose()
 
 
-async def _seed_sync(engine: AsyncEngine, *, ago: timedelta) -> None:
+async def _seed_sync(engine: AsyncEngine, *, ago: timedelta, source_total: int = 1) -> None:
     """Record when the watch-history ingest last ran, the way a real sync does.
 
     This clock, not the newest play, is what the scan checks for a stalled ingest
     (``snapshot.MIRROR_STALE_AFTER``); with no row at all the scan has no evidence the
     ingest ever ran and degrades.
+
+    ``source_total`` is what Tautulli said IT holds, which the completeness guard compares
+    the mirror against (``snapshot.MIRROR_SHORTFALL_FRACTION``). The default of 1 matches
+    the single play ``_seed_play`` writes, so every test predating that guard describes a
+    complete mirror and none of them degrades on it.
     """
     async with engine.begin() as conn:
         await conn.execute(
             text(
                 "INSERT OR REPLACE INTO history_sync_state (id, tautulli_total, synced_at) "
-                "VALUES (1, 1, :ts)"
+                "VALUES (1, :total, :ts)"
             ),
-            {"ts": int((NOW - ago).timestamp())},
+            {"ts": int((NOW - ago).timestamp()), "total": source_total},
         )
 
 
@@ -476,7 +528,7 @@ class TestScanPipelineEndToEnd:
             kind=lists.ListKind.WHITELIST,
         )
 
-        tautulli = _FakeTautulli(
+        tautulli = scan_library(
             movies=_movie_spine(), shows=_show_spine(), children=_show_children()
         )
         seen: list[Progress] = []
@@ -485,14 +537,16 @@ class TestScanPipelineEndToEnd:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -625,21 +679,23 @@ class TestScanPipelineEndToEnd:
         )
         await session.flush()
 
-        tautulli = _FakeTautulli(
+        tautulli = scan_library(
             movies=_movie_spine(), shows=_show_spine(), children=_show_children()
         )
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -672,15 +728,17 @@ class TestScanPipelineEndToEnd:
         await _seed_play(cache_engine, row_id=1, rating_key=99)
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000)})
 
-        tautulli = _FakeTautulli(movies=_movie_spine())
+        tautulli = scan_library(movies=_movie_spine())
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd"),  # type: ignore[arg-type]
-                RadarrSource(client=_BrokenRadarr(), instance_id=2, name="uhd"),  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                ),
+                RadarrSource(client=FakeRadarr(fail_movies=True), instance_id=2, name="uhd"),
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -694,6 +752,389 @@ class TestScanPipelineEndToEnd:
         assert "Radarr 'uhd' unreachable" in (snapshot.degraded_reason or "")
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert set(rows) == {"radarr:1:1", "radarr:1:2", "radarr:1:3"}
+
+
+class TestCollectionsRideTheSnapshot:
+    """#816 phase 2: the Plex collections read lands on the Candidate and Snapshot rows,
+    and a failed read costs a missing chip alone -- never a degraded scan
+    (docs/history/COLLECTIONS_PLAN.md's fence: collections are navigation, never protection)."""
+
+    async def test_a_candidates_collections_are_sorted_smallest_first_then_alphabetical(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000002": (5.0, 5000)})
+
+        tautulli = scan_library(movies=_movie_spine())
+        plex = _FakeCollectionsPlex(
+            sections=[PlexSection(key=1, title="Movies", kind="movie")],
+            collections={
+                1: [
+                    PlexCollectionRow(rating_key=501, title="Zeta Collection", child_count=1),
+                    PlexCollectionRow(rating_key=502, title="Alpha Collection", child_count=1),
+                    PlexCollectionRow(rating_key=503, title="Big Collection", child_count=10),
+                ]
+            },
+            # Dust (rating key 11, "radarr:1:1") sits in all three; Beloved (22) in none.
+            children={501: {11}, 502: {11}, 503: {11}},
+        )
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
+            ],
+            tautulli=tautulli,
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+            plex=plex,
+        )
+        await session.commit()
+
+        assert snapshot.degraded is False, snapshot.degraded_reason
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+
+        # Two size-1 collections tie, so the alphabetically-first leads; the size-10
+        # collection sorts last despite "Big" alphabetizing ahead of "Zeta" -- proving size
+        # is the primary key, not the alphabet.
+        assert json.loads(rows["radarr:1:1"].collections_json or "[]") == [
+            "Alpha Collection",
+            "Zeta Collection",
+            "Big Collection",
+        ]
+        # Recorded no membership, not an empty list: Reaper looked and found nothing.
+        assert rows["radarr:1:2"].collections_json is None
+
+        sizes = json.loads(snapshot.collection_sizes_json or "{}")
+        assert sizes == {"Zeta Collection": 1, "Alpha Collection": 1, "Big Collection": 10}
+
+    async def test_a_failed_collection_read_leaves_the_snapshot_intact(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000002": (5.0, 5000)})
+
+        def _radarr() -> RadarrSource:
+            return RadarrSource(
+                client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+            )
+
+        common: dict[str, Any] = {
+            "movie_policy": DEFAULT_MOVIE_POLICY,
+            "movie_gates": build_gates(DEFAULT_MOVIE_POLICY),
+            "tv_policy": DEFAULT_TV_POLICY,
+            "tv_gates": build_gates(DEFAULT_TV_POLICY),
+        }
+        # Every run carries the SAME Plex client shape (id enrichment included), differing
+        # only in whether the one section's collections read raises -- isolating the
+        # comparison to that one read. Diffing against `plex=None` instead would also move
+        # unrelated fields (#553's "seen in Plex" ledger only writes when `plex` is set),
+        # which is not what this test means to prove.
+        sections = [PlexSection(key=1, title="Movies", kind="movie")]
+        succeeding = _FakeCollectionsPlex(
+            sections=sections,
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1)]
+            },
+            children={501: {11}},
+        )
+        # A warm-up scan, discarded, so both compared runs see the SAME "seen in Plex before"
+        # ledger (#553): the very first scan of a session always reads that ledger as unknown
+        # ("never seen before"), which the ledger's own write during that scan then resolves
+        # for every scan after it -- an artifact of running two real scans in one test, not
+        # anything a failed collection read moves.
+        await scan(
+            cache_engine,
+            session,
+            radarrs=[_radarr()],
+            tautulli=scan_library(movies=_movie_spine()),
+            plex=succeeding,
+            **common,
+        )
+        baseline = await scan(
+            cache_engine,
+            session,
+            radarrs=[_radarr()],
+            tautulli=scan_library(movies=_movie_spine()),
+            plex=succeeding,
+            **common,
+        )
+        # The one section this scan has raises on every collections read.
+        failed = await scan(
+            cache_engine,
+            session,
+            radarrs=[_radarr()],
+            tautulli=scan_library(movies=_movie_spine()),
+            plex=_FakeCollectionsPlex(sections=sections, fail_section=1),
+            **common,
+        )
+        await session.commit()
+
+        # The contrast is real: the baseline recorded the collection the failed run lost.
+        assert baseline.collection_sizes_json == '{"Cult Classics": 1}'
+        assert failed.degraded is False, failed.degraded_reason
+        assert failed.collection_sizes_json is None
+
+        before = {c.media_key: c for c in await candidates(session, baseline.id)}
+        after = {c.media_key: c for c in await candidates(session, failed.id)}
+        assert set(before) == set(after)
+        for key, was in before.items():
+            now_ = after[key]
+            # Everything a failed collection read must never touch -- the fence's whole
+            # point, proven field by field rather than by eye.
+            assert now_.verdict == was.verdict
+            assert now_.score == was.score
+            assert now_.coverage_bp == was.coverage_bp
+            assert now_.size_bytes == was.size_bytes
+            assert now_.explanation_json == was.explanation_json
+            assert now_.facts_json == was.facts_json
+            # And the one field that DID have something to lose recorded nothing, since the
+            # only section that carries collections failed to read.
+            assert now_.collections_json is None
+
+
+class TestCollectionSizesAreIdentifiedByName:
+    """#816 review: two sections each holding a same-named collection used to
+    silently last-write-wins the later section's count into ``sizes[title]`` (rule 6).
+    The collection NAME is the identity: Reaper's own Leaving Soon shelf creates a
+    same-named collection in every section, so an operator with two libraries hits this
+    case by default, and one merged chip covering both is what they mean."""
+
+    async def test_same_named_collections_in_two_sections_merge_and_sum(self) -> None:
+        plex = _FakeCollectionsPlex(
+            sections=[
+                PlexSection(key=1, title="Movies", kind="movie"),
+                PlexSection(key=2, title="4K Movies", kind="movie"),
+            ],
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Leaving Soon", child_count=2)],
+                2: [PlexCollectionRow(rating_key=502, title="Leaving Soon", child_count=3)],
+            },
+            children={501: {11}, 502: {22}},
+        )
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        # One chip's worth of size, not the second section's 3 silently replacing the
+        # first section's 2.
+        assert sizes == {"Leaving Soon": 5}
+        # Each item still carries its own single membership entry.
+        assert membership == {11: ["Leaving Soon"], 22: ["Leaving Soon"]}
+
+
+class TestAnUnknownCollectionSizeIsNotZero:
+    """A collection Plex never reported a childCount for is a different fact from one
+    Plex reported as empty. Folding the unknown to 0 handed it the sort's element-0
+    slot -- the exact slot the chip renders -- ahead of a collection that is genuinely
+    small."""
+
+    async def test_an_unknown_size_sorts_last_and_is_absent_from_sizes(self) -> None:
+        plex = _FakeCollectionsPlex(
+            sections=[PlexSection(key=1, title="Movies", kind="movie")],
+            collections={
+                1: [
+                    PlexCollectionRow(rating_key=501, title="Unsized", child_count=None),
+                    PlexCollectionRow(rating_key=502, title="Genuinely Small", child_count=1),
+                ]
+            },
+            children={501: {11}, 502: {11}},
+        )
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        # The known-small collection wins element 0, not the unsized one.
+        assert membership[11] == ["Genuinely Small", "Unsized"]
+        # An unknown size never carries a fabricated 0 into the stored map.
+        assert sizes == {"Genuinely Small": 1}
+        assert "Unsized" not in sizes
+
+
+class TestMembershipIsReadFromTheItems:
+    """#820: a scan asked every collection for its children, one read each, which on a
+    library holding hundreds of them starved the GUID sweep running beside it. The
+    membership is on the items instead, one read per ~400 of them, and only a collection
+    Plex counts more members for than the tags showed is still read its own way."""
+
+    @staticmethod
+    def _plex(**kwargs: Any) -> _FakeCollectionsPlex:
+        return _FakeCollectionsPlex(
+            sections=[PlexSection(key=1, title="Movies", kind="movie")], **kwargs
+        )
+
+    async def test_an_ordinary_library_needs_no_per_collection_read(self) -> None:
+        plex = self._plex(
+            collections={
+                1: [
+                    PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=2),
+                    PlexCollectionRow(rating_key=502, title="Heist", child_count=1),
+                ]
+            },
+            children={501: {11, 12}, 502: {12}},
+        )
+
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"], 12: ["Heist", "Cult Classics"]}
+        assert sizes == {"Cult Classics": 2, "Heist": 1}
+        # The saving itself, not a proxy for it.
+        assert plex.children_reads == []
+
+    async def test_a_collection_the_tags_missed_is_read_the_old_way(self) -> None:
+        """A smart collection is a saved filter and a season collection holds objects the
+        section listing never lists, so neither leaves a tag on anything this read sees.
+        Plex's own child count is what gives them away, without asking which kind it is."""
+        plex = self._plex(
+            collections={
+                1: [
+                    PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1),
+                    PlexCollectionRow(rating_key=502, title="Recently Added", child_count=1),
+                ]
+            },
+            children={501: {11}, 502: {12}},
+            untagged={502},
+        )
+
+        membership, _sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"], 12: ["Recently Added"]}
+        # Only the one it had to.
+        assert plex.children_reads == [502]
+
+    async def test_a_fallback_read_does_not_repeat_a_name_the_tags_gave(self) -> None:
+        """A collection Plex counts 2 members for while one carries the tag is read again,
+        and that read returns the tagged item too."""
+        plex = self._plex(
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=2)]
+            },
+            children={501: {11}},
+        )
+
+        membership, _sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert plex.children_reads == [501]
+        assert membership == {11: ["Cult Classics"]}
+
+    async def test_a_tag_naming_no_collection_here_is_dropped(self) -> None:
+        """Plex leaves a ``collection`` tag on items whose collection is gone. A chip for a
+        shelf the operator cannot open is worse than no chip, and its size is unknowable."""
+        plex = self._plex(
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1)]
+            },
+            children={501: {11}},
+            extra_tags={11: ("Deleted Last Year",), 12: ("Deleted Last Year",)},
+        )
+
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"]}
+        assert sizes == {"Cult Classics": 1}
+
+    async def test_a_tag_spelled_differently_stores_the_listings_spelling(self) -> None:
+        """Rule 88: the tag and the listing are folded on both sides, and the name a chip
+        shows is the one the size map is keyed by -- otherwise the sort reads no size at
+        all and the chip renders a collection whose size Reaper knows as unknown."""
+        plex = self._plex(
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1)]
+            },
+            children={501: {11}},
+            tag_spelling=str.upper,
+        )
+
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"]}
+        assert sizes == {"Cult Classics": 1}
+        assert plex.children_reads == []
+
+    async def test_a_failed_tag_read_falls_back_rather_than_losing_the_section(self) -> None:
+        plex = self._plex(
+            collections={
+                1: [PlexCollectionRow(rating_key=501, title="Cult Classics", child_count=1)]
+            },
+            children={501: {11}},
+            fail_tags_section=1,
+        )
+
+        membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert membership == {11: ["Cult Classics"]}
+        assert sizes == {"Cult Classics": 1}
+        assert plex.children_reads == [501]
+
+
+class _ConcurrencyTrackingPlex(PlexClient):
+    """A one-section Plex stand-in that counts overlapping ``collection_children`` reads,
+    to prove the fan-out is bounded rather than either fully sequential or unbounded.
+    Never calls ``super().__init__`` (``_FakeCollectionsPlex``'s convention).
+
+    Its item tags are empty, so every collection is one the tags could not account for and
+    every one falls back to its own read -- which is the population the bound now governs.
+    """
+
+    def __init__(self, *, rows: list[PlexCollectionRow], bound: int) -> None:
+        self._rows = rows
+        self._bound = bound
+        self._in_flight = 0
+        self.peak_in_flight = 0
+
+    async def video_sections(self) -> list[PlexSection]:
+        return [PlexSection(key=1, title="Movies", kind="movie")]
+
+    async def list_collections(self, section_key: int) -> list[PlexCollectionRow]:
+        return self._rows
+
+    async def collection_tags(self, section_key: int, *, kind: str) -> dict[int, tuple[str, ...]]:
+        return {}
+
+    async def collection_children(self, collection_key: int) -> set[int]:
+        self._in_flight += 1
+        self.peak_in_flight = max(self.peak_in_flight, self._in_flight)
+        assert self._in_flight <= self._bound, "the fan-out exceeded its declared bound"
+        await asyncio.sleep(0)  # yield, so a wider-than-bound fan-out would overlap here
+        self._in_flight -= 1
+        return {collection_key}
+
+
+class TestTheChildrenFanOutIsBounded:
+    """#816 review: N collections in one section each ran their ``collection_children``
+    read sequentially. Bounded concurrency now runs them in waves, the same pattern
+    ``leaving_soon.sync_shelves`` already uses for its own fan-out."""
+
+    async def test_more_collections_than_the_bound_still_peaks_at_the_bound(self) -> None:
+        bound = snapshot_service._COLLECTION_CHILDREN_CONCURRENCY
+        rows = [
+            PlexCollectionRow(rating_key=n, title=f"Collection {n}", child_count=1)
+            for n in range(bound * 3)
+        ]
+        plex = _ConcurrencyTrackingPlex(rows=rows, bound=bound)
+
+        _membership, sizes = await snapshot_service._collection_membership(
+            plex, allowed_sections=None
+        )
+
+        assert plex.peak_in_flight == bound
+        assert len(sizes) == len(rows)
 
 
 class TestAStoredSizeSaysWhereItCameFrom:
@@ -720,9 +1161,9 @@ class TestAStoredSizeSaysWhereItCameFrom:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(payloads), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(client=FakeRadarr(movie_rows=payloads), instance_id=1, name="hd")
             ],
-            tautulli=_FakeTautulli(movies=_movie_spine()),  # type: ignore[arg-type]
+            tautulli=scan_library(movies=_movie_spine()),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -754,11 +1195,11 @@ class TestAStoredSizeSaysWhereItCameFrom:
             session,
             radarrs=[],
             sonarrs=[
-                season_scan.SonarrSource(client=_FakeSonarr(series), instance_id=1, name="tv")
+                season_scan.SonarrSource(
+                    client=_GriddedSonarr(series_rows=series), instance_id=1, name="tv"
+                )
             ],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
-                movies=[], shows=_show_spine(), children=_show_children()
-            ),
+            tautulli=scan_library(movies=[], shows=_show_spine(), children=_show_children()),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -804,12 +1245,10 @@ class TestAStoredSizeSaysWhereItCameFrom:
             radarrs=[],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
-                movies=[], shows=_show_spine(), children=children
-            ),
+            tautulli=scan_library(movies=[], shows=_show_spine(), children=children),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -849,7 +1288,7 @@ class TestTheScanCountsHowOftenItCouldNotMeasure:
     """
 
     @staticmethod
-    def _tally(logs: list[dict[str, Any]]) -> dict[str, Any]:
+    def _tally(logs: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
         """The one tally event, or a failure naming how many there actually were."""
         events = [e for e in logs if e["event"] == "scan.size_source_tally"]
         assert len(events) == 1, f"one tally per scan, got {len(events)}"
@@ -862,7 +1301,7 @@ class TestTheScanCountsHowOftenItCouldNotMeasure:
         *,
         movies: list[dict[str, Any]],
         series: list[dict[str, Any]],
-    ) -> tuple[Snapshot, dict[str, Any]]:
+    ) -> tuple[Snapshot, Mapping[str, Any]]:
         await _seed_play(cache_engine, row_id=1, rating_key=99)
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
         with capture_logs() as logs:
@@ -870,12 +1309,14 @@ class TestTheScanCountsHowOftenItCouldNotMeasure:
                 cache_engine,
                 session,
                 radarrs=[
-                    RadarrSource(client=_FakeRadarr(movies), instance_id=1, name="hd")  # type: ignore[arg-type]
+                    RadarrSource(client=FakeRadarr(movie_rows=movies), instance_id=1, name="hd")
                 ],
                 sonarrs=[
-                    season_scan.SonarrSource(client=_FakeSonarr(series), instance_id=1, name="tv")
+                    season_scan.SonarrSource(
+                        client=_GriddedSonarr(series_rows=series), instance_id=1, name="tv"
+                    )
                 ],
-                tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                tautulli=scan_library(
                     movies=_movie_spine(), shows=_show_spine(), children=_show_children()
                 ),
                 movie_policy=DEFAULT_MOVIE_POLICY,
@@ -949,10 +1390,12 @@ class TestAStaleMirrorDegradesTheSnapshot:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+            tautulli=scan_library(
                 movies=_movie_spine(), shows=_show_spine(), children=_show_children()
             ),
             movie_policy=DEFAULT_MOVIE_POLICY,
@@ -995,6 +1438,78 @@ class TestAStaleMirrorDegradesTheSnapshot:
         assert snapshot.degraded is True
         assert "Watch history has not updated recently" in (snapshot.degraded_reason or "")
 
+    async def test_a_mirror_still_catching_up_degrades(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The state between the two guards above: populated, freshly synced, and short.
+
+        This is what a restore leaves behind. Backups exclude the mirror deliberately, and
+        every sync until the first full sweep is incremental, so each completes correctly
+        against its own increment while the mirror holds a fraction of the source. Measured
+        on a real library at 65%: 245 titles came off the condemned list, 2.17 TB, under an
+        identical policy and scorer, and the snapshot read `degraded = 0` (rule 2).
+        """
+        await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
+        await _seed_sync(cache_engine, ago=timedelta(hours=1), source_total=100_000)
+
+        snapshot = await self._scan_with(session, cache_engine)
+
+        assert snapshot.degraded is True
+        assert "still catching up" in (snapshot.degraded_reason or "")
+
+    async def test_a_mirror_short_by_less_than_the_floor_does_not_degrade(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """A play in progress is counted by the source and skipped by the ingest, so the
+        mirror can never equal the total. Measured at 8 rows on a 425,604-row history.
+
+        Both bounds have to bite, so a handful of live plays cannot degrade a scan however
+        small the library is. This mirror is short by 400, under ``MIRROR_SHORTFALL_FLOOR``,
+        and 400 of 402 is far past the fraction on its own.
+        """
+        await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
+        await _seed_sync(cache_engine, ago=timedelta(hours=1), source_total=402)
+
+        snapshot = await self._scan_with(session, cache_engine)
+
+        assert snapshot.degraded is False, snapshot.degraded_reason
+
+    async def test_a_mirror_holding_more_than_the_source_reports_has_no_shortfall(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The total is read once per sync and the mirror never deletes, so a source pruned
+        since we asked leaves us holding more than it reports.
+
+        Asserted on ``shortfall`` rather than through a scan, because a scan cannot tell the
+        two apart: a negative shortfall and a clamped zero both fail the floor test, so the
+        guard degrades on neither and a scan-level assertion here would pass with the clamp
+        deleted (rule 118). The clamp is a property of the value, so it is pinned as one.
+        """
+        await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
+        await _seed_sync(cache_engine, ago=timedelta(hours=1), source_total=0)
+
+        state = await history_sync.state(cache_engine)
+
+        assert state.rows > 0
+        assert state.shortfall == 0
+
+    async def test_a_mirror_nobody_ever_synced_cannot_report_a_shortfall(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """No stored total is "we were not told", which is Unknown and not zero (rule 93).
+
+        The staleness guard is what fails such a mirror, and it already does. What must not
+        happen is this reading as a complete mirror on the strength of a total nobody wrote.
+        """
+        await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
+        async with cache_engine.begin() as conn:
+            await conn.execute(text("DELETE FROM history_sync_state"))
+
+        state = await history_sync.state(cache_engine)
+
+        assert state.source_total is None
+        assert state.shortfall is None
+
     async def test_a_quiet_library_that_synced_recently_does_not_degrade(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
@@ -1027,18 +1542,20 @@ class TestADegradedSnapshotDoesNotActOnItsOwnCondemnSet:
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
         await _seed_play(cache_engine, row_id=1, rating_key=99)
         radarrs = [
-            RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            RadarrSource(client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd")
         ]
         if degrade:
             # A second, unreachable Radarr: one failed source, snapshot degraded, and the
             # first instance's items still judged. The same shape as the loud-failure test.
-            radarrs.append(RadarrSource(client=_BrokenRadarr(), instance_id=2, name="uhd"))  # type: ignore[arg-type]
+            radarrs.append(
+                RadarrSource(client=FakeRadarr(fail_movies=True), instance_id=2, name="uhd")
+            )
         return await scan(
             cache_engine,
             session,
             radarrs=radarrs,
             sonarrs=[],
-            tautulli=_FakeTautulli(movies=_movie_spine()),  # type: ignore[arg-type]
+            tautulli=scan_library(movies=_movie_spine()),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -1099,6 +1616,136 @@ class TestADegradedSnapshotDoesNotActOnItsOwnCondemnSet:
         assert after.last_seen_condemned_at == seen_before
 
 
+class TestALibraryWideIdentityChangeDegradesTheSnapshot:
+    """A slow rebuild: Plex hands the whole library new rating keys while Reaper keeps scanning.
+
+    ``tests/test_identity_churn.py`` pins what the share counts. This drives it through a real
+    scan, which is the half that can go missing: the measurement is only worth anything if the
+    call site degrades the snapshot, and it has to do so ABOVE the grace clocks (rule 116), or a
+    countdown starts on the run that just called itself untrustworthy.
+
+    The two scans differ in one thing, the ledger the fillers are already recorded under.
+    """
+
+    #: Over ``identity_churn._APPLIES_ABOVE`` on purpose, and the smallest population that can
+    #: reach it, since every one of these is judged through the whole pipeline.
+    FILLERS: ClassVar[int] = 210
+
+    def _filler_payloads(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": 1000 + i,
+                "title": f"Filler {i}",
+                "year": 1975,
+                "tmdbId": 5000 + i,
+                "imdbId": f"tt{2_000_000 + i}",
+                "hasFile": True,
+                "sizeOnDisk": 1_000_000_000,
+            }
+            for i in range(self.FILLERS)
+        ]
+
+    def _filler_spine(self) -> list[dict[str, Any]]:
+        """What Plex lists them under NOW, which is a fresh key for every one of them."""
+        return [
+            {
+                "rating_key": 700_000 + i,
+                "title": f"Filler {i}",
+                "year": 1975,
+                "added_at": "1000000",
+            }
+            for i in range(self.FILLERS)
+        ]
+
+    async def _seed_ledger(self, session: AsyncSession) -> None:
+        """What Plex listed them under before: keys sharing nothing with the spine above."""
+        for i in range(self.FILLERS):
+            session.add(
+                LibrarySeen(
+                    id_key=f"movie:tmdb:{5000 + i}",
+                    rating_keys_json=json.dumps([300_000 + i]),
+                    first_seen_at=LONG_AGO,
+                    last_seen_at=LONG_AGO,
+                )
+            )
+        await session.flush()
+
+    async def _scan(
+        self, session: AsyncSession, cache_engine: AsyncEngine, *, seed: bool = True
+    ) -> Any:
+        # The cache rows are the same for both runs of the two-scan case, and both tables
+        # refuse a second insert of the same row.
+        if seed:
+            await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+            await _seed_play(cache_engine, row_id=1, rating_key=99)
+        return await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads() + self._filler_payloads()),
+                    instance_id=1,
+                    name="hd",
+                )
+            ],
+            sonarrs=[],
+            tautulli=scan_library(movies=_movie_spine() + self._filler_spine()),
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+    async def _flagged(self, session: AsyncSession) -> set[str]:
+        rows = (await session.execute(text("SELECT media_key FROM first_flagged"))).all()
+        return {r.media_key for r in rows}
+
+    async def test_the_same_library_with_nothing_recorded_is_an_ordinary_scan(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The control: every key here is new to Reaper, which is a first scan, not an event."""
+        snapshot = await self._scan(session, cache_engine)
+
+        assert snapshot.degraded is False, snapshot.degraded_reason
+        assert snapshot.degraded_doc is None
+        assert await self._flagged(session) != set()
+
+    async def test_a_whole_library_rebound_to_new_keys_stops_the_scan_being_acted_on(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await self._seed_ledger(session)
+
+        snapshot = await self._scan(session, cache_engine)
+
+        assert snapshot.degraded is True
+        assert snapshot.degraded_reason is not None
+        assert "brand new" in snapshot.degraded_reason
+        # The help page the notice offers. Stored beside the reason, because by the time the
+        # notice renders the cause is prose.
+        assert snapshot.degraded_doc == "plex-rebuild"
+        # Above the grace clocks, so no countdown started (rule 116).
+        assert await self._flagged(session) == set()
+
+    async def test_the_ledger_is_still_written_so_the_next_scan_is_clean(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """Freezing it instead would leave the share at 100% and every later scan un-plannable.
+
+        The keys are unioned onto the row, so what the guard measured against survives beside
+        what Plex lists now (``library_seen.record``).
+        """
+        await self._seed_ledger(session)
+
+        await self._scan(session, cache_engine)
+
+        row = await session.get(LibrarySeen, "movie:tmdb:5000")
+        assert row is not None
+        assert json.loads(row.rating_keys_json) == [300_000, 700_000]
+
+        second = await self._scan(session, cache_engine, seed=False)
+        assert second.degraded is False, second.degraded_reason
+
+
 class TestTheStreamingVetoNeedsAReadableAnswer:
     """ "Nobody is watching" and "we could not tell" look identical from an empty set.
 
@@ -1117,7 +1764,9 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[],
             tautulli=tautulli,
@@ -1131,7 +1780,7 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
         snapshot = await self._scan_with(
-            session, cache_engine, _FakeTautulli(movies=_movie_spine(), sessions=[])
+            session, cache_engine, scan_library(movies=_movie_spine(), sessions=[])
         )
 
         assert snapshot.degraded is False, snapshot.degraded_reason
@@ -1146,12 +1795,12 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
         the only thing left between that and deleting a file mid-stream.
         """
 
-        class _NullSessions(_FakeTautulli):
+        class _NullSessions(FakeTautulli):
             async def activity(self) -> dict[str, Any]:
                 return {"sessions": None}
 
         snapshot = await self._scan_with(
-            session, cache_engine, _NullSessions(movies=_movie_spine())
+            session, cache_engine, _NullSessions(sections={1: _movie_spine()})
         )
 
         assert snapshot.degraded is True
@@ -1160,12 +1809,12 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
     async def test_an_unreachable_tautulli_still_degrades(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        class _BrokenActivity(_FakeTautulli):
+        class _BrokenActivity(FakeTautulli):
             async def activity(self) -> dict[str, Any]:
                 raise IntegrationError("tautulli", "unreachable (boom)")
 
         snapshot = await self._scan_with(
-            session, cache_engine, _BrokenActivity(movies=_movie_spine())
+            session, cache_engine, _BrokenActivity(sections={1: _movie_spine()})
         )
 
         assert snapshot.degraded is True
@@ -1190,16 +1839,18 @@ class TestAnUnreadableRatingsDatasetKeepsInsteadOfCondemning:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()),  # type: ignore[arg-type]
+                    client=_GriddedSonarr(series_rows=_series_payloads()),
                     instance_id=1,
                     name="tv",
                 )
             ],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+            tautulli=scan_library(
                 movies=_movie_spine(), shows=_show_spine(), children=_show_children()
             ),
             movie_policy=DEFAULT_MOVIE_POLICY,
@@ -1222,7 +1873,12 @@ class TestAnUnreadableRatingsDatasetKeepsInsteadOfCondemning:
         # One movie and one season, so the fix is pinned on both fact builders -- a field
         # populated on one path and not the other silently moves scores on the other.
         for key in ("radarr:1:1", "sonarr:1:42:2"):
-            facts, _ = facts_from_dict(_json.loads(rows[key].facts_json))
+            stored = rows[key].facts_json
+            # Nullable on the model, because a row can exist before its facts are frozen. A
+            # scanned row always has them, and this says so where a None would otherwise
+            # reach `json.loads` as the string "None".
+            assert stored is not None, key
+            facts, _ = facts_from_dict(_json.loads(stored))
             rating = facts.imdb_rating_tenths
             assert isinstance(rating, Unknown), (key, rating)
             assert "could not be read" in rating.reason, key
@@ -1289,16 +1945,16 @@ class TestRunScanHistorySync:
             return []
 
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
-        monkeypatch.setattr(scan_runner.history_sync, "sync", failing_sync)
-        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
-        monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
-        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(history_sync, "sync", failing_sync)
+        monkeypatch.setattr(profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(profiles, "active_profile", fake_profile)
+        monkeypatch.setattr(snapshot_service, "scan", fake_scan)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync_lists)
         monkeypatch.setattr(
-            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+            snapshot_service, "protection_sync_degradations", fake_sync_degradations
         )
 
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         try:
@@ -1347,7 +2003,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
         from reaper.engine.policy import ProfileSettings
         from reaper.services import scan_runner
 
-        class _ScanTautulli(_FakeTautulli):
+        class _ScanTautulli(FakeTautulli):
             """The scan's Tautulli surface plus the user list run_scan checks."""
 
             async def users(self) -> list[dict[str, Any]]:
@@ -1355,9 +2011,13 @@ class TestARepairedPolicyCannotBeReapedFrom:
 
         async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
             return (
-                [RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")],
+                [
+                    RadarrSource(
+                        client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                    )
+                ],
                 [],
-                _ScanTautulli(movies=_movie_spine()),
+                _ScanTautulli(sections={1: _movie_spine()}),
                 [],
                 None,
             )
@@ -1386,18 +2046,18 @@ class TestARepairedPolicyCannotBeReapedFrom:
             return []
 
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
-        monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
-        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
-        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(history_sync, "sync", ok_sync)
+        monkeypatch.setattr(profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(profiles, "active_profile", fake_profile)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync_lists)
         monkeypatch.setattr(
-            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+            snapshot_service, "protection_sync_degradations", fake_sync_degradations
         )
 
         await _seed_play(cache_engine, row_id=1, rating_key=99)
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000)})
 
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -1552,6 +2212,99 @@ class TestReleaseAgeRoundsTowardKeeping:
         assert obs.value == 0.0
 
 
+class TestTheWindowScoredAgainstIsThePolicysOwn:
+    """The span a watcher count was taken over is the span its reach is checked against.
+
+    ``_watch_stats`` COUNTS ``distinct_watchers`` over the policy's popularity window, and
+    since rule 140 every reader of that count checks ``Facts.history_reach_days`` against the
+    span the count claims to cover. Hand one span to the counter and a different one to
+    ``score`` and you compare a count to a reach it was never taken over, which fails OPEN:
+    measured, a 730-day window over a 400-day mirror scored against the 365-day default takes
+    the full 20 points of ``FEW_WATCHERS`` pressure at coverage 1.00, where production
+    withholds them at coverage 0.00 (``engine/signals.py``, above ``_branch_signal``).
+
+    **Both consumers are pinned, not just one.** "One span, two readers" is the invariant, and
+    either drifting to its own 365 default reopens the hole. Spying on ``score`` alone proves
+    the line it watches and nothing about the count built four hundred lines above it.
+
+    **365 is deliberately excluded from the sweep** (rule 141). It is the default of both
+    callees *and* of both shipped policies, so it is the one value that cannot tell a window
+    that was passed from one that was omitted. This test replaces a sweep that lived on the
+    retired replay engine, where every other fixture pinned 365 and hid exactly this for a
+    release; the live lane had no equivalent, which is the gap deleting that engine exposed.
+
+    Each spy reads its kwarg with ``.get`` rather than subscripting, so an omission fails on
+    the VALUE that was used. Subscripting raises ``KeyError`` and passes for the wrong reason:
+    it pins that an argument arrived, never which one.
+    """
+
+    @pytest.mark.parametrize("window", [30, 90, 730])
+    async def test_both_readers_of_the_span_get_the_policys_own(
+        self,
+        session: AsyncSession,
+        cache_engine: AsyncEngine,
+        monkeypatch: pytest.MonkeyPatch,
+        window: int,
+    ) -> None:
+        counted: list[int | None] = []
+        scored: list[int | None] = []
+        real_watch_stats = snapshot_service._watch_stats
+        # Captured through the module deliberately: the spy below rebinds this name IN
+        # `snapshot`, so taking it from `engine.signals` would restore a different binding
+        # and production would keep calling the spy. `score` is imported there rather than
+        # defined, which is what mypy is objecting to.
+        real_score = snapshot_service.score  # type: ignore[attr-defined]
+
+        async def _counting_spy(*args: object, **kwargs: object) -> Any:
+            counted.append(kwargs.get("window_days"))  # type: ignore[arg-type]
+            return await real_watch_stats(*args, **kwargs)  # type: ignore[arg-type]
+
+        def _scoring_spy(*args: object, **kwargs: object) -> Any:
+            scored.append(kwargs.get("window_days"))  # type: ignore[arg-type]
+            return real_score(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(snapshot_service, "_watch_stats", _counting_spy)
+        monkeypatch.setattr(snapshot_service, "score", _scoring_spy)
+
+        movie_policy = DEFAULT_MOVIE_POLICY.model_copy(
+            update={
+                # A tuple, not a list: `gates` is declared `tuple[GateSetting, ...]`, and a
+                # list round-trips with a pydantic serializer warning on every model_dump.
+                "gates": tuple(
+                    g.model_copy(update={"window_days": window, "enabled": True})
+                    if g.gate is GateId.SERVER_POPULARITY
+                    else g
+                    for g in DEFAULT_MOVIE_POLICY.gates
+                )
+            }
+        )
+        # The premise, asserted rather than assumed: the sweep is worthless if the policy
+        # copy silently kept 365.
+        assert movie_policy.popularity_window_days() == window
+
+        await _seed_sync(cache_engine, ago=timedelta(minutes=5))
+        await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
+            ],
+            sonarrs=[],
+            tautulli=scan_library(movies=_movie_spine(), shows=[], children={}),
+            movie_policy=movie_policy,
+            movie_gates=build_gates(movie_policy),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+        assert counted, "the scan never counted watchers, so this test proved nothing"
+        assert scored, "the scan never scored an item, so this test proved nothing"
+        assert set(counted) == {window}, counted
+        assert set(scored) == {window}, scored
+
+
 # ---------------------------------------------------------------------------
 # One scan at a time -- the claim lives inside run_scan, shared by every caller.
 # ---------------------------------------------------------------------------
@@ -1601,13 +2354,13 @@ class TestOneScanAtATime:
             return []
 
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
-        monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
-        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
-        monkeypatch.setattr(scan_runner.snapshot_service, "scan", parked_scan)
-        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(history_sync, "sync", ok_sync)
+        monkeypatch.setattr(profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(profiles, "active_profile", fake_profile)
+        monkeypatch.setattr(snapshot_service, "scan", parked_scan)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync_lists)
         monkeypatch.setattr(
-            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+            snapshot_service, "protection_sync_degradations", fake_sync_degradations
         )
 
     async def test_a_second_scan_is_refused_while_one_runs(
@@ -1627,7 +2380,7 @@ class TestOneScanAtATime:
             return SimpleNamespace(id=1, item_count=0, degraded=False)
 
         self._stub_pipeline(monkeypatch, parked_scan)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         try:
@@ -1668,7 +2421,7 @@ class TestOneScanAtATime:
             return SimpleNamespace(id=2, item_count=0, degraded=False)
 
         self._stub_pipeline(monkeypatch, failing_then_fine)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         try:
@@ -1693,7 +2446,7 @@ class TestOneScanAtATime:
         firing is skipped and the next one runs normally."""
         from reaper.services import scan_runner, scheduler
 
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         assert scan_runner._claim_scan()  # a scan is "running"
@@ -1709,17 +2462,6 @@ class TestOneScanAtATime:
 # Keep History coverage -- a user Tautulli is not recording makes "nobody watched
 # it" untrustworthy, so the scan degrades.
 # ---------------------------------------------------------------------------
-
-
-class _UsersTautulli:
-    def __init__(self, rows: list[dict[str, Any]] | None = None, *, raise_error: bool = False):
-        self._rows = rows or []
-        self._raise = raise_error
-
-    async def users(self) -> list[dict[str, Any]]:
-        if self._raise:
-            raise IntegrationError("tautulli", "users unavailable")
-        return list(self._rows)
 
 
 class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
@@ -1738,18 +2480,16 @@ class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
         await _seed_play(cache_engine, row_id=1, rating_key=99)
 
-        class _BrokenSpine(_FakeTautulli):
-            async def libraries(self) -> list[dict[str, Any]]:
-                raise IntegrationError("tautulli", "libraries timed out")
-
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[],
-            tautulli=_BrokenSpine(movies=_movie_spine()),  # type: ignore[arg-type]
+            tautulli=scan_library(movies=_movie_spine(), fail_libraries=True),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -1778,23 +2518,21 @@ class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
         await _seed_play(cache_engine, row_id=1, rating_key=99)
 
-        class _BrokenSpine(_FakeTautulli):
-            async def libraries(self) -> list[dict[str, Any]]:
-                raise IntegrationError("tautulli", "libraries timed out")
-
         # Both lanes populated, so both reach `build_index` and the duplicate can occur.
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=_BrokenSpine(movies=_movie_spine()),  # type: ignore[arg-type]
+            tautulli=scan_library(movies=_movie_spine(), fail_libraries=True),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -1824,12 +2562,12 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli(
-                [
+            FakeTautulli(
+                user_rows=[
                     {"username": "user-one", "is_active": 1, "keep_history": 1},
                     {"username": "user-two", "is_active": 1, "keep_history": 0},
                 ]
-            )  # type: ignore[arg-type]
+            )
         )
 
         assert any("user-two" in r for r in reasons)
@@ -1839,12 +2577,12 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli(
-                [
+            FakeTautulli(
+                user_rows=[
                     {"username": "user-one", "is_active": 1, "keep_history": 1},
                     {"username": "user-two", "is_active": True, "keep_history": "1"},
                 ]
-            )  # type: ignore[arg-type]
+            )
         )
 
         assert reasons == []
@@ -1855,12 +2593,12 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli(
-                [
+            FakeTautulli(
+                user_rows=[
                     {"username": "user-one", "is_active": 1, "keep_history": 1},
                     {"username": "departed", "is_active": 0, "keep_history": 0},
                 ]
-            )  # type: ignore[arg-type]
+            )
         )
 
         assert reasons == []
@@ -1903,12 +2641,12 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli(
-                [
+            FakeTautulli(
+                user_rows=[
                     {"username": "user-one", "is_active": 1, "keep_history": 1},
                     {"username": "user-two", "is_active": 1, "keep_history": "maybe"},
                 ]
-            )  # type: ignore[arg-type]
+            )
         )
 
         assert any("cannot confirm" in r for r in reasons)
@@ -1919,7 +2657,9 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli([{"username": "user-two", "is_active": 1, "keep_history": "false"}])  # type: ignore[arg-type]
+            FakeTautulli(
+                user_rows=[{"username": "user-two", "is_active": 1, "keep_history": "false"}]
+            )
         )
 
         assert any("user-two" in r for r in reasons)
@@ -1927,9 +2667,7 @@ class TestKeepHistoryCoverage:
     async def test_an_unreadable_user_list_degrades(self) -> None:
         from reaper.services.scan_runner import _keep_history_degradations
 
-        reasons = await _keep_history_degradations(
-            _UsersTautulli(raise_error=True)  # type: ignore[arg-type]
-        )
+        reasons = await _keep_history_degradations(FakeTautulli(fail_users=True))
 
         assert any("could not check" in r for r in reasons)
 
@@ -1939,7 +2677,7 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli([{"username": "user-one", "is_active": 1}])  # type: ignore[arg-type]
+            FakeTautulli(user_rows=[{"username": "user-one", "is_active": 1}])
         )
 
         assert any("cannot confirm" in r for r in reasons)
@@ -1960,9 +2698,11 @@ class TestKeepHistoryCoverage:
             captured.update(kwargs)
             return SimpleNamespace(id=1, item_count=0, degraded=False)
 
-        class _OffTautulli(_UsersTautulli):
+        class _OffTautulli(FakeTautulli):
             def __init__(self) -> None:
-                super().__init__([{"username": "user-two", "is_active": 1, "keep_history": 0}])
+                super().__init__(
+                    user_rows=[{"username": "user-two", "is_active": 1, "keep_history": 0}]
+                )
 
             async def __aenter__(self) -> Any:
                 return self
@@ -1992,16 +2732,16 @@ class TestKeepHistoryCoverage:
             return []
 
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
-        monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
-        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
-        monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
-        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(history_sync, "sync", ok_sync)
+        monkeypatch.setattr(profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(profiles, "active_profile", fake_profile)
+        monkeypatch.setattr(snapshot_service, "scan", fake_scan)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync_lists)
         monkeypatch.setattr(
-            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+            snapshot_service, "protection_sync_degradations", fake_sync_degradations
         )
 
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         try:
@@ -2044,14 +2784,16 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+            tautulli=scan_library(
                 movies=_movie_spine(), shows=_show_spine(), children=_show_children()
             ),
             movie_policy=DEFAULT_MOVIE_POLICY,
@@ -2216,21 +2958,23 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
     async def _scan_under(
         self, session: AsyncSession, cache_engine: AsyncEngine, movie_policy: Any
     ) -> dict[str, Candidate]:
-        tautulli = _FakeTautulli(
+        tautulli = scan_library(
             movies=_movie_spine(), shows=_show_spine(), children=_show_children()
         )
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=movie_policy,
             movie_gates=build_gates(movie_policy),
             tv_policy=DEFAULT_TV_POLICY,
@@ -2258,6 +3002,12 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
         # is kept by the bar while it is on, and judged on its score once it is off.
         assert on.scoring_hash() != off.scoring_hash()
 
+        # A warm-up under the SAME policy, because one piece of frozen evidence is stateful
+        # across scans: the came-back ledger (#553) has no row for a title the first scan
+        # ever sees, so that scan freezes `Unknown` where every later one freezes `Absent`.
+        # That is the ledger filling in, not the policy moving, and comparing scan one
+        # against scan two would read it as the latter.
+        await self._scan_under(session, cache_engine, on)
         with_gate = await self._scan_under(session, cache_engine, on)
         without_gate = await self._scan_under(session, cache_engine, off)
 
@@ -2296,6 +3046,9 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
 
         low, high = _at(30), _at(100_000)
 
+        # The warm-up its sibling above explains: both compared scans read a settled
+        # came-back ledger, so the only thing that moves is the floor.
+        await self._scan_under(session, cache_engine, low)
         lenient = await self._scan_under(session, cache_engine, low)
         strict = await self._scan_under(session, cache_engine, high)
 
@@ -2469,21 +3222,25 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         *,
         sonarr: Any = None,
     ) -> tuple[Snapshot, dict[str, Candidate]]:
-        tautulli = _FakeTautulli(
+        tautulli = scan_library(
             movies=_movie_spine(), shows=_show_spine(), children=self._children()
         )
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=sonarr or _FakeSonarr(self._series()), instance_id=1, name="tv"
+                    client=sonarr or _GriddedSonarr(series_rows=self._series()),
+                    instance_id=1,
+                    name="tv",
                 )
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=tv_policy,
@@ -2530,14 +3287,14 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 
         # The same per-show memo the production loop keeps -- one thaw and one plan per show,
         # so a plan cached for one season is the plan its siblings are judged against here too.
-        seasons = routes._SeasonReplay(
-            await routes._season_payloads(session, snapshot_id=snapshot.id),
+        seasons = simulate._SeasonReplay(
+            await simulate._season_payloads(session, snapshot_id=snapshot.id),
             policy=season_evidence.SeasonPolicy.from_body(tv_policy),
         )
         out: dict[str, tuple[Any, ...]] = {}
         for key, row in rows.items():
             _, extra = facts_from_dict(json.loads(row.facts_json or "{}"))
-            replayed = routes._season_guard_replay(row, extra, seasons=seasons)
+            replayed = simulate._season_guard_replay(row, extra, seasons=seasons)
             guard = next(e for e in replayed if e.gate is GateId.SEASON_PROGRESSION)
             out[key] = (guard.outcome, guard.detail, guard.blocked, guard.unestablishable)
         return out
@@ -2587,11 +3344,17 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     ) -> None:
         """The load-bearing sweep, one setting at a time.
 
-        Two roads carry a ``PolicyBody`` to the planner: ``snapshot.scan`` unpacks it into
-        ``season_scan.gather``, and the simulator builds a ``SeasonPolicy`` off the draft. A
-        value that reaches one road and not the other is invisible until the two answers are
-        compared under a body where it differs from the default (rule 141, rule 144), and
-        invisible per-setting until each is swept alone.
+        One road carries a ``PolicyBody`` to the planner, ``SeasonPolicy.from_body``, and
+        the scan and the simulator both take it. A value that reaches the carrier and not
+        the planner is invisible until it is compared under a body where it differs from the
+        default (rule 141, rule 144), and invisible per-setting until each is swept alone.
+
+        **The first assertion is the discriminating one**, and it became so when the scan's
+        second road was removed. While the scan unpacked the body itself, a value dropped in
+        ``from_body`` moved the replay alone and the second assertion caught it. Now both
+        sides read the same carrier, so such a value is dropped on both and they still agree;
+        what reds instead is the two scans agreeing when the edit should have moved them.
+        Neither assertion is a sanity check. Only this docstring changed when the road went.
         """
         await self._seed(cache_engine)
         edited = self._tv(**edit)
@@ -2654,12 +3417,12 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
             "the edit moved no figure, so comparing the replay against it proves nothing"
         )
 
-        out = await routes._replay_simulation(
+        out = await simulate._replay_simulation(
             list(before.values()),
             edited,
             {},
             reach_days=history_reach_days(first.horizon_at, now=first.created_at),
-            season_payloads=await routes._season_payloads(session, snapshot_id=first.id),
+            season_payloads=await simulate._season_payloads(session, snapshot_id=first.id),
         )
 
         assert out.exact is True
@@ -2729,7 +3492,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
             "previews the mid-binge guard off a map nobody gathered"
         )
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv(keep_in_progress=True))
 
         assert caught.value.kind is SimStale.IN_PROGRESS_NOT_READ
@@ -2750,7 +3513,10 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(
-            session, cache_engine, self._tv(), sonarr=_MuteEpisodesSonarr(self._series())
+            session,
+            cache_engine,
+            self._tv(),
+            sonarr=_MuteEpisodesSonarr(series_rows=self._series()),
         )
 
         (payload,) = (await self._bundles_json(session, first.id)).values()
@@ -2766,7 +3532,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 
         edited = self._tv(keep_last_seasons=1)
         _, after = await self._scan_under(
-            session, cache_engine, edited, sonarr=_MuteEpisodesSonarr(self._series())
+            session, cache_engine, edited, sonarr=_MuteEpisodesSonarr(series_rows=self._series())
         )
         assert self._scanned_guards(before) != self._scanned_guards(after), (
             "the edit moved no guard even with the episode reads refused, so comparing a "
@@ -2822,7 +3588,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv(keep_last_seasons=4))
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
@@ -2840,15 +3606,15 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(session, cache_engine, self._tv())
-        seasons = routes._SeasonReplay(
-            await routes._season_payloads(session, snapshot_id=first.id),
+        seasons = simulate._SeasonReplay(
+            await simulate._season_payloads(session, snapshot_id=first.id),
             policy=season_evidence.SeasonPolicy.from_body(self._tv()),
         )
         row = next(iter(before.values()))
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             # A row whose frozen extras hold no season guard at all.
-            routes._season_guard_replay(row, (), seasons=seasons)
+            simulate._season_guard_replay(row, (), seasons=seasons)
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
 
@@ -2877,7 +3643,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
@@ -2902,7 +3668,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
@@ -2920,7 +3686,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
@@ -2960,7 +3726,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
@@ -2969,7 +3735,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 class TestTheScanRecordsTheListsItGatheredUnder:
     """The write side of ``Snapshot.list_config_hash`` (#512).
 
-    ``api.routes.simulate`` refuses whenever the recorded value does not match the registry,
+    ``api.simulate.simulate`` refuses whenever the recorded value does not match the registry,
     so a scan that stopped recording it would not fail loudly: it would leave the panel
     permanently refusing, which reads as "run a scan" forever. The read side is pinned in
     ``test_simulate_hardening``; this is the half that fills it in.
@@ -3021,16 +3787,16 @@ class TestTheScanRecordsTheListsItGatheredUnder:
             return []
 
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
-        monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
-        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
-        monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
-        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(history_sync, "sync", ok_sync)
+        monkeypatch.setattr(profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(profiles, "active_profile", fake_profile)
+        monkeypatch.setattr(snapshot_service, "scan", fake_scan)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync_lists)
         monkeypatch.setattr(
-            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+            snapshot_service, "protection_sync_degradations", fake_sync_degradations
         )
 
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         try:

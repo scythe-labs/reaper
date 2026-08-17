@@ -22,9 +22,10 @@ from reaper.engine.policy import (
     PolicyBody,
     ProfileSettings,
     SignalSetting,
-    inspect,
 )
+from reaper.engine.policy_warnings import inspect
 from reaper.engine.signals import (
+    REWATCH_KEEP,
     CustomSignalConfig,
     KeepConfig,
     SignalConfig,
@@ -78,7 +79,7 @@ def _policy(**over: object) -> PolicyBody:
             ),
         ),
     }
-    return PolicyBody(**{**base, **over})  # type: ignore[arg-type]
+    return PolicyBody(**{**base, **over})
 
 
 def _boolean(**over: object) -> CustomSignalConfig:
@@ -385,3 +386,231 @@ class TestGradedKeep:
         )
         warnings = inspect(policy, ProfileSettings())
         assert any(w.field == "graded_keeps" and w.severity == "warn" for w in warnings)
+
+
+def _rewatch_keep(**over: object) -> KeepConfig:
+    """Both bars off the shipped 10/730 default throughout this class (rule 141): a fixture
+    pinned to the default cannot tell a caller that read the config's own bars from one that
+    silently fell back to them. Two different bar pairs are exercised below for the same
+    reason -- one pair alone could not tell a caller that reads the RIGHT bar from one that
+    reads a constant."""
+    params: dict[str, object] = {
+        "name": REWATCH_KEEP,
+        "max_discount": 22,
+        "field": REWATCH_KEEP,
+        "floor": 0,
+        "saturate_at": 1,
+        "min_viewings": 6,
+        "recent_days": 400,
+    }
+    return KeepConfig(**{**params, **over})  # type: ignore[arg-type]
+
+
+class TestBuiltinRewatchKeep:
+    """The built-in habitual-rewatch keep (``docs/history/REWATCH_PLAN.md`` Stage 1): a flat arm of
+    ``evaluate_keep`` keyed on ``field == REWATCH_KEEP``, deciding the condition over two
+    frozen observations against the config's own two bars rather than a ramp."""
+
+    def test_the_condition_met_takes_the_full_discount_and_states_the_figures(self) -> None:
+        keep = _rewatch_keep(min_viewings=6, recent_days=400)
+        facts = _facts(
+            rewatch_viewings=Known(value=8, source="tautulli"),
+            rewatch_last_play_days=Known(value=30.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == pytest.approx(22.0)
+        assert (
+            result.detail
+            == "Watched 8 times, most recently 1 month ago. Likely to be watched again."
+        )
+
+    def test_the_condition_met_at_a_second_bar_pair(self) -> None:
+        """A different bar pair from the test above, so this class does not merely prove
+        one pair of numbers works."""
+        keep = _rewatch_keep(max_discount=15, min_viewings=9, recent_days=550)
+        facts = _facts(
+            rewatch_viewings=Known(value=12, source="tautulli"),
+            rewatch_last_play_days=Known(value=100.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == pytest.approx(15.0)
+
+    def test_too_few_viewings_discounts_nothing(self) -> None:
+        keep = _rewatch_keep(min_viewings=6, recent_days=400)
+        facts = _facts(
+            rewatch_viewings=Known(value=3, source="tautulli"),
+            rewatch_last_play_days=Known(value=10.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == 0.0
+        assert result.detail == "Watched 3 times in all."
+
+    def test_a_stale_last_play_discounts_nothing(self) -> None:
+        """Enough viewings, but the most recent one is outside the window: read-and-not-met,
+        never Unknown, so the miss detail states both figures honestly."""
+        keep = _rewatch_keep(min_viewings=6, recent_days=400)
+        facts = _facts(
+            rewatch_viewings=Known(value=8, source="tautulli"),
+            rewatch_last_play_days=Known(value=401.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == 0.0
+        assert result.detail == "Watched 8 times, but not in the last 1 year, 1 month."
+
+    def test_recency_exactly_at_the_window_fires(self) -> None:
+        keep = _rewatch_keep(min_viewings=6, recent_days=400)
+        facts = _facts(
+            rewatch_viewings=Known(value=6, source="tautulli"),
+            rewatch_last_play_days=Known(value=400.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == pytest.approx(float(keep.max_discount))
+
+    def test_viewings_exactly_at_the_bar_fires(self) -> None:
+        keep = _rewatch_keep(min_viewings=9, recent_days=550)
+        facts = _facts(
+            rewatch_viewings=Known(value=9, source="tautulli"),
+            rewatch_last_play_days=Known(value=1.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == pytest.approx(float(keep.max_discount))
+
+    def test_unknown_viewings_takes_the_full_discount_and_is_not_evaluated(self) -> None:
+        keep = _rewatch_keep()
+        facts = _facts(
+            rewatch_viewings=Unknown(reason="mirror down", source="tautulli"),
+            rewatch_last_play_days=Known(value=10.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is False
+        assert result.discount == float(keep.max_discount)
+        assert result.detail == "kept fully: could not check your watch history"
+
+    def test_unknown_last_play_takes_the_full_discount_and_is_not_evaluated(self) -> None:
+        keep = _rewatch_keep()
+        facts = _facts(
+            rewatch_viewings=Known(value=8, source="tautulli"),
+            rewatch_last_play_days=Unknown(reason="mirror down", source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is False
+        assert result.discount == float(keep.max_discount)
+        assert result.detail == "kept fully: could not check your watch history"
+
+    def test_never_watched_here_discounts_nothing(self) -> None:
+        """``Known(0)`` viewings paired with an ``Absent`` last play: the never-watched shape
+        ``snapshot.build_facts`` freezes when the mirror was read and holds no qualified play
+        at all (rule 93), never ``Unknown``."""
+        keep = _rewatch_keep()
+        facts = _facts(
+            rewatch_viewings=Known(value=0, source="tautulli"),
+            rewatch_last_play_days=Absent(source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == 0.0
+        assert result.detail == "Never watched here."
+
+    def test_ungathered_facts_discount_nothing(self) -> None:
+        """``rewatch_viewings`` Absent means the caller never gathered watch history
+        (hand-built ``Facts``; both live builders now write the observation), never a
+        failed read, so the keep withholds no discount over evidence that was never
+        gathered rather than fail-closing on it."""
+        keep = _rewatch_keep()
+        facts = _facts(
+            rewatch_viewings=Absent(source="tautulli"),
+            rewatch_last_play_days=Absent(source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == 0.0
+        assert result.detail == "Does not apply here."
+
+
+class TestBuiltinRewatchKeepTvWording:
+    """The same flat arm on a TV config (``KeepConfig.media_type == "tv"``): the count is
+    whole re-watches of the show (``services.rewatch.replay_period_count``), so every
+    detail that states it says "again" (the approved TV mockup's copy). Condition
+    arithmetic is the movie class above; only the wording forks."""
+
+    def test_the_condition_met_states_rewatches(self) -> None:
+        keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
+        facts = _facts(
+            rewatch_viewings=Known(value=3, source="tautulli"),
+            rewatch_last_play_days=Known(value=30.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == pytest.approx(22.0)
+        assert (
+            result.detail
+            == "Watched again 3 times, most recently 1 month ago. Likely to be watched again."
+        )
+
+    def test_too_few_rewatches_states_the_count(self) -> None:
+        keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
+        facts = _facts(
+            rewatch_viewings=Known(value=1, source="tautulli"),
+            rewatch_last_play_days=Known(value=10.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.discount == 0.0
+        assert result.detail == "Watched again 1 time in all."
+
+    def test_a_stale_last_play_states_the_window(self) -> None:
+        keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
+        facts = _facts(
+            rewatch_viewings=Known(value=3, source="tautulli"),
+            rewatch_last_play_days=Known(value=501.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.discount == 0.0
+        assert result.detail == "Watched again 3 times, but not in the last 1 year, 4 months."
+
+    def test_zero_rewatches_says_never_again_not_never(self) -> None:
+        """A show at zero was possibly watched once through -- its count is re-watches --
+        so the movie lane's "Never watched here." would overclaim about a show someone
+        followed to the end."""
+        keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
+        facts = _facts(
+            rewatch_viewings=Known(value=0, source="tautulli"),
+            rewatch_last_play_days=Known(value=40.0, source="tautulli"),
+        )
+
+        result = evaluate_keep(keep, facts)
+
+        assert result.evaluated is True
+        assert result.discount == 0.0
+        assert result.detail == "Never watched again here."

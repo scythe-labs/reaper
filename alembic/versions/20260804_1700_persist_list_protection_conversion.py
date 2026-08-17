@@ -2,7 +2,7 @@
 """persist the list-protection conversion, so the upgrade needs no visit to the policy page
 
 ``c3d4e5f6a7b8`` moved the keep tags into the list registry and left the policy-body half to
-``engine.policy.convert_list_protections``, which runs **on load** and is never written back.
+``engine.policy_migrations.convert_list_protections``, which runs **on load** and is never written back.
 That is the shape the shim was designed for -- a protection moving between surfaces is a
 policy edit nobody has saved, so the editor opens on it as a draft and the scan degrades
 until it is saved (rule 65). What it misses is that the load shim can never *finish*: the
@@ -37,11 +37,16 @@ that never passed through this revision.
 to the schema.** It resolved the tag and IMDb lists by age, and age is the operator's to change:
 delete the tag list this converts and the *arr-tag list they added for something else becomes
 the oldest of its source, so this wrote that list's name into their policy permanently. It now
-asks ``policy.conversion_list_names``, which identifies each row by what it holds. A database
+asks ``policy_migrations.conversion_list_names``, which identifies each row by what it holds. A database
 that has already run this revision does not run it again, so an install that upgraded into the
 window keeps the wrong rule -- visible on Policy as an ordinary keep rule and removable there,
 which is why it is left alone rather than healed by a later revision that would have to guess
 whether the rule was invented or re-tagged (#526).
+
+The same correction reaches the IMDb rule: the chart is movies only, so ``media_type`` now
+scopes it to the movie body, and a TV row converts to the tag list alone (#539). An install
+already through this revision keeps the inert TV rule, removable on Policy; it protects
+nothing, so no later revision heals it.
 
 Revision ID: d5e6f7a8b9c0
 Revises: a1b2c3d4e5f7
@@ -64,7 +69,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def _list_rows(conn: sa.Connection) -> list[tuple[str, str, str | None]]:
-    """Every registry row as ``policy.conversion_list_names`` takes them, oldest first. That
+    """Every registry row as ``policy_migrations.conversion_list_names`` takes them, oldest first. That
     function decides WHICH row answers each half of the conversion, here and on the load path
     alike (rule 104)."""
     rows = conn.execute(
@@ -73,19 +78,47 @@ def _list_rows(conn: sa.Connection) -> list[tuple[str, str, str | None]]:
     return [(str(r[0]), str(r[1]), r[2]) for r in rows]
 
 
+def _library_media_types(conn: sa.Connection) -> dict[str, frozenset[str]]:
+    """Casefolded Plex library title -> the media types it spans, from the synced
+    ``plex_libraries`` setting. Read best-effort: it only ever narrows a collection's rule to
+    one policy, so an absent, unparseable, or unreadable setting leaves every collection on both
+    -- the wider protection, and the same fail-open the load path takes (rule 104, #545)."""
+    from reaper.engine.policy_migrations import library_media_types
+
+    try:
+        row = conn.execute(
+            sa.text("SELECT value_json FROM app_setting WHERE key = 'plex_libraries'")
+        ).first()
+    except sa.exc.SQLAlchemyError:
+        return {}
+    if row is None:
+        return {}
+    try:
+        libraries = json.loads(row[0])
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(libraries, list):
+        return {}
+    return library_media_types([lib for lib in libraries if isinstance(lib, dict)])
+
+
 def upgrade() -> None:
     # Imported inside the function, so a module that moves or fails to import cannot stop an
     # upgrade whose other revisions are unrelated to policy bodies.
-    from reaper.engine.policy import (
-        PolicyBody,
+    from reaper.engine.policy import PolicyBody
+    from reaper.engine.policy_migrations import (
         conversion_list_names,
         convert_list_protections,
         has_legacy_list_protections,
         legacy_keep_tags,
+        own_list_media_scope,
     )
 
     conn = op.get_bind()
     rows = _list_rows(conn)
+    # One derivation of a collection's media scope for both bodies (rule 104): a single-library
+    # collection's rule lands only on the policy for its library's type (#545).
+    collection_scope = own_list_media_scope(rows, _library_media_types(conn))
     now = int(datetime.now(UTC).timestamp())
 
     for media_type in ("movie", "tv"):
@@ -109,9 +142,11 @@ def upgrade() -> None:
             )
             converted = convert_list_protections(
                 raw,
+                media_type=media_type,
                 tag_list_name=tag_name,
                 imdb_list_name=imdb_name,
                 collection_list_names=own_names,
+                collection_media_scope=collection_scope,
             )
             # A conversion that left any legacy shape behind did so deliberately, to keep a
             # protection whose replacement list does not exist. Leave the stored row alone and

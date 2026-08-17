@@ -32,7 +32,6 @@ to death without a Plex server in sight.
 from __future__ import annotations
 
 import asyncio
-import weakref
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,7 +39,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.aio import gather_reaped
+from reaper.aio import gather_reaped, per_loop_lock
 from reaper.clients.plex import PlexClient, PlexError, benign_shelf_write
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -80,6 +79,16 @@ class LeavingSoonDisabledError(RuntimeError):
 
 class LeavingSoonDegradedError(RuntimeError):
     """The last scan declared itself untrustworthy, so the shelf must not act on it."""
+
+
+class LeavingSoonUnlinkedError(RuntimeError):
+    """No Plex server is linked, so there is nowhere to put a shelf.
+
+    Its own class because the route answers it 400 and a client ``PlexError`` 502. This used
+    to raise ``PlexError`` too, so one class reached the route carrying a configuration
+    problem and an upstream failure, and the route could not tell them apart: an unreachable
+    server was reported as a bad request, in a sentence the client wrote for a log (#734).
+    """
 
 
 async def _latest_scan_degraded(session: AsyncSession) -> bool:
@@ -181,6 +190,52 @@ class LeavingSoonResult:
     @property
     def problems(self) -> list[str]:
         return [f"{o.section_title}: {o.error}" for o in self.outcomes if o.error]
+
+    @property
+    def no_libraries(self) -> bool:
+        """Nothing is turned on, so the pass had nothing it was allowed to touch.
+
+        One outcome is recorded per enabled library (``sync_shelves``), so an empty list is
+        exactly that state, and never a library that ran and found nothing to do.
+        """
+        return not self.outcomes
+
+    @property
+    def ok(self) -> bool:
+        """Whether the pass did what it set out to do: no library failed, and there was one
+        turned on to update. Preview is not a failure, so this stays true there -- the shelf
+        was computed and the heads-up went out, and only the Plex write was held back."""
+        return not self.problems and not self.no_libraries
+
+    @property
+    def summary(self) -> str:
+        """One plain sentence saying how this pass went.
+
+        Every surface reporting the pass reads this one: the stored Jobs row, the response the
+        "Update now" button flashes, and the Plex panel's status line. It was written twice --
+        here, and again in TypeScript over the response -- and the two disagreed, because the
+        route added the no-libraries case AFTER this had been stored. A pass with nothing
+        turned on was stored green while the button flashed red about the same pass (#555).
+
+        The order is the fix. Nothing turned on is reported as itself rather than as preview,
+        which is what ``applied`` alone calls it (it is false whenever there are no outcomes),
+        and a real per-library failure beats the benign preview caveat.
+        """
+        if self.no_libraries:
+            return "No libraries are turned on, so no shelf was updated"
+        if self.problems:
+            # Named, not counted. "Some shelves didn't update" was the whole answer the
+            # operator got, on every surface, while the response carried the failing library
+            # per entry and nothing rendered it -- so one unreachable library out of five was
+            # indistinguishable from all five, and there was nowhere to go and look. The
+            # titles come from here rather than from ``problems`` because that string appends
+            # ``str(exc)``, which is a stack-shaped sentence rule 21 keeps off the screen; it
+            # stays the log's field, where a raw cause belongs.
+            failed = ", ".join(o.section_title for o in self.outcomes if o.error)
+            return f"These shelves didn't update: {failed}"
+        if not self.applied:
+            return "Preview only, nothing written"
+        return f"{self.added:,} added, {self.removed:,} cleared"
 
 
 def _grace_keys(report: GraceReport) -> tuple[set[int], set[int], dict[int, str]]:
@@ -388,38 +443,21 @@ async def announce_new(
 # Orchestration: the one pass the button, the scan hook, and the cleanup share
 # ---------------------------------------------------------------------------
 
-#: One announce lock per event loop, created lazily so it always binds to the running one.
-#: A single module-level ``asyncio.Lock`` would bind to whichever loop first awaited it and
-#: raise on every other, and the suite runs a fresh loop per test (rule 37) -- the shape
-#: ``history_sync._rebuild_lock`` uses, for the same reason. Weak-keyed so a closed loop's
-#: lock is collected. In production there is exactly one loop, hence one lock.
-_pass_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
-    weakref.WeakKeyDictionary()
-)
-
-
-def _pass_lock() -> asyncio.Lock:
-    """Serializes a whole Leaving Soon pass against every other one in this process.
-
-    The announced set is read at the start of a pass and written at the end, with a
-    whole-library Plex reconcile and a Discord post in between -- minutes of network I/O
-    across which nothing else was held back. Two passes overlap easily: the operator presses
-    "Update now" while a scheduled scan is landing, and its after-scan hook fires. Both read
-    the same "already announced", both decide the same title is new, and your users get
-    the same heads-up twice. Worse, the later writer persists a set derived from ITS pre-I/O
-    read, dropping whatever the first pass recorded -- so that title is announced a third
-    time on the next pass. Rule 8 wants the announcement idempotent on the durable set; the
-    set was durable, the read-modify-write around it was not.
-
-    Held across the reconcile too, not just the announce: a second concurrent whole-section
-    reconcile against the same libraries is wasted work at best.
-    """
-    loop = asyncio.get_running_loop()
-    lock = _pass_locks.get(loop)
-    if lock is None:
-        lock = asyncio.Lock()
-        _pass_locks[loop] = lock
-    return lock
+#: Serializes a whole Leaving Soon pass against every other one in this process.
+#:
+#: The announced set is read at the start of a pass and written at the end, with a
+#: whole-library Plex reconcile and a Discord post in between -- minutes of network I/O
+#: across which nothing else was held back. Two passes overlap easily: the operator presses
+#: "Update now" while a scheduled scan is landing, and its after-scan hook fires. Both read
+#: the same "already announced", both decide the same title is new, and your users get
+#: the same heads-up twice. Worse, the later writer persists a set derived from ITS pre-I/O
+#: read, dropping whatever the first pass recorded -- so that title is announced a third
+#: time on the next pass. Rule 8 wants the announcement idempotent on the durable set; the
+#: set was durable, the read-modify-write around it was not.
+#:
+#: Held across the reconcile too, not just the announce: a second concurrent whole-section
+#: reconcile against the same libraries is wasted work at best.
+_pass_lock = per_loop_lock()
 
 
 async def _plex_client(
@@ -445,10 +483,12 @@ async def run_sync(
     """One full Leaving Soon pass: reconcile every enabled library and announce.
 
     The single implementation behind the Reap-page button and the after-scan hook, so
-    the two can never drift. Raises :class:`LeavingSoonDisabledError` when the shelf is
-    off, and :class:`PlexError` when no server is linked or none of it is reachable.
+    the two can never drift. Raises :class:`LeavingSoonDisabledError` when the shelf is off,
+    :class:`LeavingSoonUnlinkedError` when no server is linked, and :class:`PlexError` when
+    a linked server did not answer. The last two used to be one class, so the route reported
+    an unreachable server as a bad request (#734).
 
-    Serialized against every other pass in this process (see :func:`_pass_lock`), because
+    Serialized against every other pass in this process (see :data:`_pass_lock`), because
     the announced set is read at the top and written at the bottom with minutes of network
     I/O in between.
     """
@@ -488,7 +528,9 @@ async def _run_pass(
         plex = await _plex_client(session, box, settings)
 
     if plex is None:
-        raise PlexError("Leaving Soon needs a linked Plex server. Link one in Settings first.")
+        raise LeavingSoonUnlinkedError(
+            "Leaving Soon needs a linked Plex server. Link one in Settings first."
+        )
 
     try:
         movie_keys, season_keys, _titles = _grace_keys(report)
@@ -511,17 +553,8 @@ async def _run_pass(
         seasons_on_shelves=sum(o.on_shelf for o in outcomes if o.kind == "show"),
     )
 
-    # A plain-language summary for the Jobs page's status line, in the same precedence a
-    # real per-library problem takes over the (benign) preview-mode caveat, which takes
-    # over a clean run's counts. ``applied`` alone cannot drive this: it is false in
-    # preview too, and a preview with no problems is not a failure.
-    if result.problems:
-        last_result = "Some shelves didn't update"
-    elif not result.applied:
-        last_result = "Preview only, nothing written"
-    else:
-        last_result = f"{result.added} added, {result.removed} cleared"
-
+    # The row stores the same two answers the route hands the browser, off one derivation
+    # (``ok`` and ``summary``). Nothing downstream re-words this pass.
     async with session_factory() as session:
         await app_settings.set_leaving_soon_announced(session, set(result.announced))
         await app_settings.set_leaving_soon_last(
@@ -530,8 +563,8 @@ async def _run_pass(
             movies=result.movies_on_shelves,
             seasons=result.seasons_on_shelves,
             applied=result.applied,
-            ok=not result.problems,
-            result=last_result,
+            ok=result.ok,
+            result=result.summary,
         )
         await session.commit()
 
@@ -564,10 +597,11 @@ async def after_scan(
     failure here is logged and swallowed: the warning layer must never fail a scan that
     already committed.
 
-    Every skip below is written down (:func:`_record_skip`), because none of them reach the
-    row ``_run_pass`` writes: the Jobs page then re-read the last COMPLETED pass and showed
-    its green dot, its timestamp and its counts as the answer for a scan that never touched
-    the shelf, under a heading reading "Runs after every scan".
+    Every skip below is written down (:func:`_record_skip`) bar one, the shelf being off,
+    and the comment on ``shelf_on`` says why. None of them reach the row ``_run_pass``
+    writes: the Jobs page then re-read the last COMPLETED pass and showed its green dot, its
+    timestamp and its counts as the answer for a scan that never touched the shelf, under a
+    heading reading "Runs after every scan".
     """
     # The shelf is on until the pass says otherwise. Off is the one skip not worth writing
     # down: the Jobs row renders its "Off" branch from that same setting and shows no
@@ -589,10 +623,18 @@ async def after_scan(
             log.info("leaving_soon.skipped_degraded")
             await _record_skip(session_factory, "the scan didn't finish cleanly")
             return
+        except LeavingSoonUnlinkedError:
+            # Shelf on, no server linked at all. A separate clause from the one below, and
+            # separate for the same reason the degraded clause is: they are the operator's
+            # only signal for which of the two happened, and the fixes are different (rule
+            # 21). One class carried both until #734.
+            log.info("leaving_soon.skipped_unlinked")
+            await _record_skip(session_factory, "no Plex server is linked")
+            recorded = True
         except PlexError as exc:
-            # Shelf on, but Plex is unlinked or unreachable. Fall through to the Discord
-            # heads-up below, but do not swallow it silently: an operator who enabled the
-            # shelf and sees it not updating has no other trail to this cause.
+            # Shelf on and a server linked, but it did not answer. Fall through to the
+            # Discord heads-up below, but do not swallow it silently: an operator who
+            # enabled the shelf and sees it not updating has no other trail to this cause.
             log.warning("leaving_soon.shelf_unreachable", error=str(exc))
             await _record_skip(session_factory, "Reaper couldn't reach Plex")
             recorded = True

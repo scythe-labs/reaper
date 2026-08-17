@@ -29,7 +29,9 @@ from xml.etree.ElementTree import fromstring as _unsafe_fromstring
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, collecting_incomplete_reads
+from reaper.clients.tautulli import TautulliClient
 from reaper.config import RuntimeSafety, Settings
 from reaper.db.session import create_engine
 from reaper.services import library_index
@@ -37,34 +39,21 @@ from reaper.services.list_config import ListDefinition
 from reaper.services.lists import ListSource, load_membership_index
 from reaper.services.season_scan import SonarrSource
 from reaper.services.snapshot import sync_protection_lists
+from tests._fakes import FakeSonarr
 
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
 
 
-class _TaggedSonarr:
-    service = "sonarr"
-
-    def __init__(self, tags: list[dict[str, object]], series: list[dict[str, object]]) -> None:
-        self._tags = tags
-        self._series = series
-
-    async def tags(self) -> list[dict[str, object]]:
-        return self._tags
-
-    async def series(self) -> list[dict[str, object]]:
-        return self._series
-
-
 def _sonarr() -> SonarrSource:
     return SonarrSource(
-        client=_TaggedSonarr(  # type: ignore[arg-type]
-            [{"id": 1, "label": "keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        client=FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         ),
         instance_id=1,
         name="hd",
@@ -207,14 +196,14 @@ class TestAShortRatingsReadDegradesTheScan:
                 "</MediaContainer>",
             }
         )
-        tautulli = _FakeTautulli(
+        tautulli = _RawLibraries(
             [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
             [{"rating_key": "41", "title": "One", "year": 1999}],
         )
         reasons: list[str] = []
 
         index = await library_index.build_index(
-            tautulli,  # type: ignore[arg-type]
+            tautulli,
             _client_with(server),
             section_type="movie",
             degrade=reasons.append,
@@ -225,18 +214,53 @@ class TestAShortRatingsReadDegradesTheScan:
         assert set(index.by_rating_key) == {41, 42}  # the sweep was kept
 
 
-class _FakeTautulli:
-    def __init__(self, libraries: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
+class _RawLibraries(TautulliClient):
+    """Serves a library list exactly as written, malformed rows included.
+
+    Not `tests._fakes.FakeTautulli`: that one builds its `libraries()` from the keys of a
+    section map, so it can only ever emit a well-formed integer `section_id`. These cases
+    need the shapes it cannot produce, which is the whole subject here -- a section with a
+    string id, and a section carrying no id at all.
+
+    Two knobs cover the paging shapes. `page` caps how many rows one call serves whatever
+    `length` asked for, which is ordinary API behavior and the shape #559 turned on; `count`
+    is what the envelope reports, with `None` for a server that reports no count at all.
+    Neither defaults to the production page size, so no case can pass by accident (rule 141).
+    """
+
+    def __init__(
+        self,
+        libraries: list[dict[str, Any]],
+        rows: list[dict[str, Any]],
+        *,
+        page: int | None = None,
+        count: int | None = None,
+    ) -> None:
         self._libraries = libraries
         self._rows = rows
+        self._page = page
+        self._count = count
+        #: Every `start` the walk asked for, so a test can pin what it advanced by.
+        self.starts: list[int] = []
 
     async def libraries(self) -> list[dict[str, Any]]:
         return self._libraries
 
     async def library_media_info(
-        self, section_id: int, *, start: int = 0, length: int = 100
+        self,
+        section_id: int,
+        *,
+        start: int = 0,
+        length: int = 100,
+        order_column: str = "added_at",
+        order_dir: str = "desc",
     ) -> dict[str, Any]:
-        return {"data": self._rows if start == 0 else []}
+        self.starts.append(start)
+        served = min(length, self._page) if self._page is not None else length
+        page: dict[str, Any] = {"data": self._rows[start : start + served]}
+        if self._count is not None:
+            page["recordsFiltered"] = self._count
+        return page
 
 
 class TestAMalformedLibraryRowDegradesInsteadOfRaising:
@@ -245,11 +269,11 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
     rating key is not a number, used to raise straight out of the spine read."""
 
     async def test_a_library_with_no_id_is_skipped_and_degrades(self) -> None:
-        tautulli = _FakeTautulli([{"section_type": "movie", "section_name": "Movies"}], [])
+        tautulli = _RawLibraries([{"section_type": "movie", "section_name": "Movies"}], [])
         reasons: list[str] = []
 
         index = await library_index.build_index(
-            tautulli,  # type: ignore[arg-type]
+            tautulli,
             None,
             section_type="movie",
             degrade=reasons.append,
@@ -260,7 +284,7 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
         assert any("without an id" in r for r in reasons)
 
     async def test_an_item_with_an_unusable_rating_key_is_skipped_and_degrades(self) -> None:
-        tautulli = _FakeTautulli(
+        tautulli = _RawLibraries(
             [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
             [
                 {"rating_key": "not-a-number", "title": "Bad", "year": 1999},
@@ -270,7 +294,7 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
         reasons: list[str] = []
 
         index = await library_index.build_index(
-            tautulli,  # type: ignore[arg-type]
+            tautulli,
             None,
             section_type="movie",
             degrade=reasons.append,
@@ -279,3 +303,109 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
 
         assert set(index.by_rating_key) == {7}  # the good row still entered the index
         assert any("without a usable id" in r for r in reasons)
+
+
+class TestAShortPageDoesNotEndTheLibraryWalk:
+    """The spine walk used to exit on ``len(rows) < 1000``. A server is free to clamp a page
+    below the length asked for, so that read part of a library as the whole of it and degraded
+    nothing: every item never listed resolves unmatched, which keeps the file but explains a
+    live one as something Plex has not matched (#559). Tautulli's own reported count is the
+    paging authority now, the way ``history_sync`` reads it off the same API."""
+
+    @staticmethod
+    def _rows(n: int) -> list[dict[str, Any]]:
+        return [{"rating_key": str(k), "title": f"Item {k}", "year": 2001} for k in range(1, n + 1)]
+
+    @staticmethod
+    async def _build(tautulli: TautulliClient, reasons: list[str]) -> Any:
+        return await library_index.build_index(
+            tautulli,
+            None,
+            section_type="movie",
+            degrade=reasons.append,
+            allowed_sections=None,
+        )
+
+    async def test_a_clamped_page_is_followed_to_the_end(self) -> None:
+        """Three rows a call against a count of seven: the walk keeps going, and it advances
+        by what each page held rather than by the length it asked for."""
+        tautulli = _RawLibraries(
+            [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
+            self._rows(7),
+            page=3,
+            count=7,
+        )
+        reasons: list[str] = []
+
+        index = await self._build(tautulli, reasons)
+
+        assert set(index.by_rating_key) == set(range(1, 8))
+        assert reasons == []  # a complete read is not an anomaly
+        assert tautulli.starts == [0, 3, 6]
+
+    async def test_a_walk_that_ends_before_the_count_degrades(self) -> None:
+        """Tautulli says nine and serves four. What was read is kept, and the operator is told
+        rather than shown a scan that quietly judged a fraction of a library (rule 28)."""
+        tautulli = _RawLibraries(
+            [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
+            self._rows(4),
+            page=2,
+            count=9,
+        )
+        reasons: list[str] = []
+
+        index = await self._build(tautulli, reasons)
+
+        assert set(index.by_rating_key) == {1, 2, 3, 4}
+        assert any("4 of 9" in r and "nothing may be deleted" in r for r in reasons)
+
+    @pytest.mark.parametrize("count", [None, 0])
+    async def test_a_source_that_reports_no_count_is_still_paged_to_the_end(
+        self, count: int | None
+    ) -> None:
+        """ "We were not told how many" must never read as "none", in either spelling: an
+        omitted field and a reported zero both mean the count cannot end the walk. Folding
+        them to zero ends it after page one and calls the truncation complete."""
+        tautulli = _RawLibraries(
+            [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
+            self._rows(5),
+            page=2,
+            count=count,
+        )
+        reasons: list[str] = []
+
+        index = await self._build(tautulli, reasons)
+
+        assert set(index.by_rating_key) == {1, 2, 3, 4, 5}
+        assert reasons == []
+
+    async def test_a_server_that_never_advances_is_stopped_and_degrades(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The count bounds every walk that is given one. A server that reports no count AND
+        ignores ``start`` is bounded by nothing else once the short-page exit is gone, so the
+        page cap is what stops it, and stopping early is a partial read like any other
+        (rule 56)."""
+        monkeypatch.setattr(library_index, "_SPINE_MAX_PAGES", 3)
+
+        class _IgnoresStart(_RawLibraries):
+            """Serves page one forever, and refuses once asked past the cap so that deleting
+            the cap fails this test rather than hanging the suite (rule 118)."""
+
+            async def library_media_info(self, section_id: int, **kwargs: Any) -> dict[str, Any]:
+                if len(self.starts) >= 3:
+                    raise IntegrationError("tautulli", "asked for a page past the cap")
+                return await super().library_media_info(section_id, **{**kwargs, "start": 0})
+
+        tautulli = _IgnoresStart(
+            [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
+            self._rows(2),
+            page=2,
+            count=None,
+        )
+        reasons: list[str] = []
+
+        index = await self._build(tautulli, reasons)
+
+        assert set(index.by_rating_key) == {1, 2}  # it stopped, and kept what it read
+        assert any("only 6 items" in r and "nothing may be deleted" in r for r in reasons)

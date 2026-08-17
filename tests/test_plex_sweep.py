@@ -16,7 +16,13 @@ from xml.etree.ElementTree import fromstring as _unsafe_fromstring
 
 import pytest
 
-from reaper.clients.plex import SWEEP_PAGE_SIZE, PlexClient, PlexError, _parse_sweep_element
+from reaper.clients.plex import (
+    SWEEP_PAGE_SIZE,
+    PlexClient,
+    PlexCollectionRow,
+    PlexError,
+    _parse_sweep_element,
+)
 from reaper.config import RuntimeSafety
 from reaper.ratings import RatingSource
 
@@ -208,6 +214,87 @@ class TestLibraryGuidIndex:
         assert len(server.queries) == 2  # one listing page + one metadata batch
 
 
+class TestCollectionTags:
+    """#820: the section's whole membership in one read per ~400 items, off each item's own
+    ``collection`` tags, where asking each collection for its children cost one read per
+    collection."""
+
+    @staticmethod
+    def _server(listing: str, batch: str, *, section: int = 1, kind: str = "movie") -> _FakeServer:
+        return _FakeServer(
+            [_FakeSection(section, kind)],
+            {
+                f"/library/sections/{section}/all": listing,
+                "/library/metadata/": batch,
+            },
+        )
+
+    async def test_a_sections_membership_arrives_in_two_requests(self) -> None:
+        listing = (
+            '<MediaContainer size="3" totalSize="3">'
+            '<Video ratingKey="41"/><Video ratingKey="42"/><Video ratingKey="43"/>'
+            "</MediaContainer>"
+        )
+        batch = (
+            '<MediaContainer size="3">'
+            '<Video ratingKey="41"><Collection tag="Cult Classics"/></Video>'
+            '<Video ratingKey="42">'
+            '<Collection tag="Cult Classics"/><Collection tag="Heist"/>'
+            "</Video>"
+            '<Video ratingKey="43"/>'
+            "</MediaContainer>"
+        )
+        server = self._server(listing, batch)
+
+        tags = await _client_with(server).collection_tags(1, kind="movie")
+
+        assert tags == {41: ("Cult Classics",), 42: ("Cult Classics", "Heist")}
+        # An item in nothing is absent, never an empty tuple: the caller stores "no
+        # membership" as nothing at all, and a key present with () would read as one.
+        assert 43 not in tags
+        # THE point: three items, TWO requests -- one listing page plus one metadata batch.
+        assert len(server.queries) == 2
+
+    async def test_a_show_library_is_read_at_the_show_level(self) -> None:
+        """A TV collection lists SHOWS, and the chip is looked up by the show's own key.
+        Reading a show section at ``type=3`` would return seasons, whose keys match no
+        chip -- every TV collection would silently come back empty."""
+        listing = (
+            '<MediaContainer size="1" totalSize="1"><Directory ratingKey="90"/></MediaContainer>'
+        )
+        batch = (
+            '<MediaContainer size="1">'
+            '<Directory ratingKey="90"><Collection tag="Comfort Shows"/></Directory>'
+            "</MediaContainer>"
+        )
+        server = self._server(listing, batch, section=2, kind="show")
+
+        tags = await _client_with(server).collection_tags(2, kind="show")
+
+        assert tags == {90: ("Comfort Shows",)}
+        assert "type=2" in server.queries[0]
+
+    async def test_a_short_metadata_batch_keeps_what_it_read(self) -> None:
+        """Rule 28 binds evidence sources and a collection is not one, so a server that
+        windows the multi-id response costs a chip, never the scan (the GUID sweep's own
+        batch degrades on this, which is the contrast: it carries the ratings)."""
+        listing = (
+            '<MediaContainer size="2" totalSize="2">'
+            '<Video ratingKey="41"/><Video ratingKey="42"/>'
+            "</MediaContainer>"
+        )
+        batch = (
+            '<MediaContainer size="1">'
+            '<Video ratingKey="41"><Collection tag="Cult Classics"/></Video>'
+            "</MediaContainer>"
+        )
+        server = self._server(listing, batch)
+
+        tags = await _client_with(server).collection_tags(1, kind="movie")
+
+        assert tags == {41: ("Cult Classics",)}
+
+
 SEASON_LISTING = """
 <MediaContainer size="4" totalSize="4">
   <Directory ratingKey="901" parentRatingKey="900" index="1" addedAt="1000000" title="Season 1"/>
@@ -383,6 +470,21 @@ class TestTheShelfReadsPageToo:
 
         assert await _client_with(server).find_collection(1, "leaving soon") == 11
 
+    async def test_a_row_with_no_rating_key_raises_instead_of_being_skipped(self) -> None:
+        """The old ``find_collection`` skipped a falsy ``ratingKey`` and returned ``None``,
+        which the caller reads as "no such collection" and then CREATES a second "Leaving
+        Soon" shelf. Now it raises instead of degrading honestly."""
+        listing = (
+            '<MediaContainer size="1" totalSize="1">'
+            '<Directory ratingKey="" title="Leaving Soon"/>'
+            "</MediaContainer>"
+        )
+        server = _FakeServer(
+            [_FakeSection(1, "movie")], {"/library/sections/1/collections": listing}
+        )
+        with pytest.raises(PlexError):
+            await _client_with(server).find_collection(1, "leaving soon")
+
     async def test_a_truncated_member_list_is_never_read_as_the_whole_shelf(self) -> None:
         """The reconcile detaches ``current - wanted``, so a short read leaves titles marked
         "Leaving Soon" long after they were reprieved."""
@@ -409,6 +511,129 @@ class TestTheShelfReadsPageToo:
 
         with pytest.raises(PlexError):
             await _client_with(server).collection_children(9)
+
+
+class TestListCollections:
+    """#816 phase 1: ``list_collections`` is the third read over the shelf's
+    ``/collections`` listing, alongside ``find_collection`` and ``collection_children`` --
+    same path, same ``_iter_pages`` loop (rule 72)."""
+
+    async def test_a_paged_listing_returns_every_row_and_an_empty_section_returns_none(
+        self,
+    ) -> None:
+        page0 = (
+            '<MediaContainer size="1" totalSize="2">'
+            '<Directory ratingKey="10" title="Other" childCount="3"/>'
+            "</MediaContainer>"
+        )
+        page1 = (
+            '<MediaContainer size="1" totalSize="2">'
+            '<Directory ratingKey="11" title="Leaving Soon"/>'  # no childCount attribute
+            "</MediaContainer>"
+        )
+        server = _FakeServer(
+            [_FakeSection(1, "movie"), _FakeSection(2, "show")],
+            {
+                "/library/sections/1/collections?X-Plex-Container-Start=0": page0,
+                "/library/sections/1/collections?X-Plex-Container-Start=1": page1,
+                "/library/sections/2/collections": '<MediaContainer size="0" totalSize="0"/>',
+            },
+        )
+        client = _client_with(server)
+
+        rows = await client.list_collections(1)
+        assert rows == [
+            PlexCollectionRow(rating_key=10, title="Other", child_count=3),
+            PlexCollectionRow(rating_key=11, title="Leaving Soon", child_count=None),
+        ]
+
+        # The section with none: an empty listing is a clean empty list, never an error.
+        assert await client.list_collections(2) == []
+
+    async def test_an_unbounded_full_page_raises_rather_than_truncating(self) -> None:
+        """Complete-or-raise like every other listing (rule 56): a truncated page is
+        never read as the whole shelf."""
+        rows = "".join(f'<Directory ratingKey="{i}" title="C{i}"/>' for i in range(SWEEP_PAGE_SIZE))
+        server = _FakeServer(
+            [_FakeSection(1, "movie")],
+            {"/library/sections/1/collections": f"<MediaContainer>{rows}</MediaContainer>"},
+        )
+        with pytest.raises(PlexError):
+            await _client_with(server).list_collections(1)
+
+
+class _NeverAdvancing(_FakeServer):
+    """Serves a full page whose ``totalSize`` sits far ahead of ``start``, forever.
+
+    None of the loop's existing exits fire: the page is never empty, never short, and the
+    reported total is always ahead. Refuses once asked past the cap, so deleting the cap fails
+    this test instead of hanging the suite (rule 118).
+    """
+
+    def __init__(self, limit: int) -> None:
+        super().__init__([_FakeSection(1, "movie")], {})
+        self._limit = limit
+
+    def query(self, path: str) -> Any:
+        self.queries.append(path)
+        if len(self.queries) > self._limit:
+            raise AssertionError("asked for a page past the cap")
+        return fromstring(
+            '<MediaContainer size="1" totalSize="10000">'
+            f'<Video ratingKey="{len(self.queries)}"/>'
+            "</MediaContainer>"
+        )
+
+
+class TestASweepThatNeverFinishesIsBounded:
+    """Rule 56/89's page backstop, on the one paged read of four that lacked one.
+
+    ``plex.SWEEP_MAX_PAGES`` carries why it raises and what a runaway sweep costs.
+    """
+
+    async def test_a_section_sweep_stops_and_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The page count is what stops it, never the total: the fixture's 10,000 would end on
+        its own after 10,000 pages. It raises rather than returning short, matching
+        ``seerr.MAX_PAGES`` and not ``history_sync.MAX_HISTORY_PAGES``, because ``_iter_pages``
+        is complete-or-raise and every caller reads a protection source."""
+        monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 3)
+        server = _NeverAdvancing(limit=4)
+
+        with pytest.raises(PlexError, match="never finished, after 3 items"):
+            await _client_with(server).section_rating_keys(1, kind="movie")
+
+        assert len(server.queries) == 3
+
+    async def test_the_shelf_read_is_bounded_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The two shelf reads enter ``_iter_pages`` directly rather than through
+        ``_iter_section_pages``, and a different cap value from the case above so neither test
+        rests on one number (rule 141). Production is 1,000."""
+        monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 2)
+        server = _NeverAdvancing(limit=3)
+
+        with pytest.raises(PlexError, match="never finished, after 2 items"):
+            await _client_with(server).collection_children(9)
+
+        assert len(server.queries) == 2
+
+    async def test_a_listing_that_ends_on_the_cap_still_reads_in_full(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The trip sits after the ``start >= totalSize`` exit, so a listing whose last page is
+        the cap'th page returns everything. Off by one the other way and the cap would refuse
+        reads that finished."""
+        monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 2)
+        page0 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="1"/></MediaContainer>'
+        page1 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="2"/></MediaContainer>'
+        server = _FakeServer(
+            [_FakeSection(1, "movie")],
+            {
+                "/library/sections/1/all?type=1&X-Plex-Container-Start=0": page0,
+                "/library/sections/1/all?type=1&X-Plex-Container-Start=1": page1,
+            },
+        )
+
+        assert await _client_with(server).section_rating_keys(1, kind="movie") == {1, 2}
 
 
 class TestSectionPaths:

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: CI
 
-# One workflow, two lanes, one list of paths.
+# One workflow, three lanes, and the classification done in a job rather than in a filter.
 #
 # The expensive lane (uv install, mypy, pytest, a node build, an image build) costs ~3.5
 # minutes and cannot be changed by prose: .dockerignore drops `docs/` and `*.md`, the single
@@ -13,16 +13,24 @@ name: CI
 # "it's only docs" is false in this repo: that test reads CLAUDE.md, docs/ and .claude/, and
 # a prose-only commit is precisely when it has something to say.
 #
+# The third is the site: `manual/` and `website/` ship in neither the image nor the wheel, so
+# they need neither the image build nor the Python suite -- and they do need an .mdx build, or
+# one that fails to compile lands with nothing having tried. They also need the guards that
+# READ those two trees, which live in `hygiene` and in `frontend`, so this lane runs those two
+# jobs as well as its own build (#783).
+#
 # This used to be two workflow files whose `paths` and `paths-ignore` lists had to stay exact
 # complements of each other, with a comment in each saying "edit one and you must edit the
 # other". Two consequences retired that arrangement:
 #
-#   1. A path-filtered workflow that skips reports NO check run at all, so naming any of
-#      these jobs as a required check would leave the other lane's pull requests pending
-#      forever. Branch protection needs one check that always reports, which is `CI gate`
-#      below.
-#   2. One fact written in two places drifts. The list now exists once, in `changes`, and
-#      both lanes read it from there.
+#   1. A workflow skipped by its own path filter reports NO check run at all, so naming any
+#      of these jobs as a required check would leave the other lane's pull requests pending
+#      forever. (A JOB skipped by an `if:` is the opposite: it reports, with conclusion
+#      `skipped`, which is what lets `CI gate` below count one as a pass.) Branch protection
+#      needs one check that always reports, which is `CI gate`.
+#   2. One fact written in two places drifts. This file's copy now exists once, in `changes`,
+#      and every job here reads it from there. It is not the repository's only copy -- see
+#      the `changes` comment below, which names the two workflows that cannot read it.
 #
 # `changes` and `CI gate` each cost a runner start (~10s a side). The lane that skips still
 # skips, so the saving that motivated the split is intact.
@@ -51,8 +59,25 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # The single source of truth for which lane a change belongs to. Everything downstream
-  # reads these two outputs; nothing else in the repository restates the path list.
+  # The single source of truth for which lane a change belongs to: every job in this file
+  # reads these three outputs rather than carrying globs of its own.
+  #
+  # It is not the repository's only path list, and saying so was wrong for as long as it
+  # was written (rule 7/24). Two other workflows filter themselves and neither can read an
+  # output of this one, because a `paths` filter decides whether a workflow starts at all:
+  # `codeql.yml` restates the prose globs below as `paths-ignore`, twice, once per trigger;
+  # `docs-deploy.yml` carries its own, three globs against the two here.
+  #
+  # **`docs-deploy.yml`'s list and the `site` lane are near neighbors, not the same set**,
+  # and one gap remains -- do not restate one as the other, which a correction here already
+  # did once. Editing `docs-deploy.yml` itself fires that workflow while landing in `code`
+  # here, so `site` skips. The second direction is closed: a `.md` under `manual/` or
+  # `website/` used to hit the `*.md` arm first and skip `site` while docs-deploy published
+  # it, which is why the site arm is ordered ahead of prose below (#589). Restoring
+  # prose-first re-opens it.
+  #
+  # `tests/test_repo_hygiene.py` pins all three by name, so neither the count nor which
+  # file holds which can move without this comment being re-read.
   changes:
     name: Decide what to run
     runs-on: ubuntu-latest
@@ -124,13 +149,22 @@ jobs:
           while IFS= read -r f; do
             [ -n "${f}" ] || continue
             case "${f}" in
-              docs/*|.claude/*|*.md)   prose=true ;;
               # The manual's words and the site that renders them. Neither ships in the
-              # image, so a docs-only commit does not need the backend, frontend or
-              # docker lanes -- but it DOES need a lane of its own, or an .mdx that fails
-              # to compile lands with nothing having tried to build it. Note `*.md` above
-              # does not match `.mdx`, which is why these are listed rather than assumed.
+              # image, so a docs-only commit does not need the backend or docker lanes --
+              # but it DOES need a lane of its own, or a page that fails to compile lands
+              # with nothing having tried to build it.
+              #
+              # The lane names a tree, not a job list. `hygiene` and `frontend` each hold
+              # guards that READ these two directories, so both name `site` in their `if:`
+              # below alongside the lane they were written for (#783).
+              #
+              # First arm, ahead of prose, because `*.md` below matches at any depth: with
+              # prose first, `manual/guide.md` classified as prose and the `site` job never
+              # ran, while docs-deploy.yml (which filters on `manual/**` with no ordering)
+              # published it anyway (#589). The tree happens to be all `.mdx` today, which
+              # `*.md` does not match, so the hole was latent rather than firing.
               manual/*|website/*)      site=true  ;;
+              docs/*|.claude/*|*.md)   prose=true ;;
               *)                       code=true  ;;
             esac
           done <<< "${files}"
@@ -180,7 +214,10 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Typecheck
-        run: uv run mypy src/reaper
+        # `src/reaper` is passed alongside `tests/` rather than left implicit: without
+        # it mypy resolves `reaper` from site-packages, finds no py.typed marker, and
+        # reports 731 import errors while silently checking almost nothing.
+        run: uv run mypy src/reaper tests/
 
       # The full suite includes tests/test_repo_hygiene.py, which is why `hygiene` below
       # runs only for the prose lane: a commit touching code has already proved it here.
@@ -224,10 +261,14 @@ jobs:
           uv run alembic upgrade head
           uv run alembic check
 
+  # Also runs for the site lane, because `src/docs/manual.gen.test.ts` is the drift gate for
+  # the generated `manual/*.mdx` pages and it lives here. A commit that hand-edits one of
+  # those pages used to run the `site` build alone, which compiles a wrong page as happily
+  # as a right one (#783).
   frontend:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.site == 'true'
     defaults:
       run:
         working-directory: frontend
@@ -288,10 +329,15 @@ jobs:
   # commit did not touch. A commit that changes both prose and code runs this and the full
   # pytest in `check`, which is redundant and deliberate: the alternative is a conditional
   # that can silently fail to run.
+  #
+  # It runs for the site lane too. Four of these asserts read `manual/features.mdx`,
+  # `manual/**/*.mdx` and `website/src/css/custom.css`, and on a commit touching only those
+  # trees the whole suite skipped, so the one lane that could have caught a wrong page was
+  # the one that did not run (#783).
   hygiene:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.prose == 'true'
+    if: needs.changes.outputs.prose == 'true' || needs.changes.outputs.site == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -405,9 +451,12 @@ jobs:
   # never registered all fail the build here rather than on the published site. `onBrokenLinks`
   # is `throw` in the config, which is what makes a dead cross-reference a red run.
   #
-  # This lane does NOT check that the generated pages are current. That is the frontend lane's
-  # `manual.gen.test.ts`, which runs against the app's own blocks; a stale page reaching here
-  # would build perfectly well while saying the wrong thing.
+  # This job does NOT check that the generated pages are current. That is `manual.gen.test.ts`
+  # in the `frontend` job, which runs against the app's own blocks; a stale page reaching here
+  # would build perfectly well while saying the wrong thing. `frontend` and `hygiene` both name
+  # this lane in their `if:` above, so they run beside this build rather than only when code or
+  # prose changed -- which they did not, and a hand-edited `manual/` page therefore published
+  # with nothing having read it (#783).
   site:
     name: Manual site
     runs-on: ubuntu-latest

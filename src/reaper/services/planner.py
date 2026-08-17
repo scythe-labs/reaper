@@ -169,7 +169,13 @@ def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
 def _movie_steps(
     run_id: int, candidate: Candidate, ref: MediaRef, ordinal: int, *, add_exclusion: bool
 ) -> list[ActionStep]:
-    """The steps to remove one movie: delete-with-exclusion, then verify, then refresh.
+    """The one step to remove one movie: delete-with-exclusion.
+
+    A season prunes in three journalled steps because two of them are reversible and their
+    order is load-bearing (``_season_steps``). A movie has one irreversible call, so the
+    exclusion poll and the Plex refresh that follow it are the executor's
+    (``executor._send_movie``) and are never journalled as steps. A reader auditing the
+    journal for a verify step on a movie will not find one.
 
     ``path`` and ``body`` are recorded WITHOUT credentials -- the api key is injected by
     the client at send time -- so the journal is safe to render in the UI and to keep

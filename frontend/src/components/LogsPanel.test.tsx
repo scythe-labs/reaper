@@ -2,17 +2,17 @@
 // Two things the log viewer must not get wrong: it may only claim to be retrying when a
 // retry is actually scheduled ("Follow new lines" is the only thing that schedules one), and
 // every option in the level filter has to filter something different from its neighbors.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { LogsPanel } from "./LogsPanel";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { logs: vi.fn(), setLogLevel: vi.fn(), downloadLogs: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -31,14 +31,15 @@ function page(seq: number) {
 
 function renderPanel() {
   const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
+  renderWithProviders(
+    <>
       {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when
           no region is listening -- so without it here Try again's sentence is dropped and a test
           about it passes against silence. */}
       <Announcer />
       <LogsPanel />
-    </QueryClientProvider>,
+    </>,
+    { client: queryClient },
   );
   return { queryClient, person: userEvent.setup() };
 }
@@ -145,5 +146,38 @@ describe("LogsPanel", () => {
     apiMock.logs.mockResolvedValue(page(1)); // files_kept: 3
     renderPanel();
     expect(await screen.findByText(/keeps the newest 3 files/i)).toBeInTheDocument();
+  });
+
+  async function levelPicker() {
+    const picker = await screen.findByLabelText<HTMLSelectElement>("Logging level");
+    // It is disabled until the first read lands, so this is also the wait for the level
+    // the server reported (rule 137).
+    await waitFor(() => expect(picker).toBeEnabled());
+    return picker;
+  }
+
+  function optionsOf(picker: HTMLSelectElement) {
+    return Array.from(picker.querySelectorAll("option")).map((o) => o.textContent);
+  }
+
+  // #700: REAPER_LOG_LEVEL may carry ERROR, which this picker does not offer on purpose --
+  // hiding warnings from a tool that deletes files serves nobody. A <select> whose value
+  // matches no option renders blank, so without the extra option the one surface that says
+  // what Reaper is recording goes silent for exactly the operator who chose it. Both
+  // directions, since an option rendered unconditionally would put the choice on sale.
+  it("offers three levels while Reaper is recording at one of them", async () => {
+    renderPanel();
+
+    expect(optionsOf(await levelPicker())).toEqual(["Debug", "Info", "Warning"]);
+  });
+
+  it("names the recording level even when it is one the picker does not offer", async () => {
+    apiMock.logs.mockResolvedValue({ ...page(1), level: "ERROR" });
+    renderPanel();
+
+    const picker = await levelPicker();
+
+    expect(optionsOf(picker)).toEqual(["Debug", "Info", "Warning", "Error"]);
+    expect(picker.value).toBe("ERROR");
   });
 });

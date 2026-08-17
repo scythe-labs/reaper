@@ -15,7 +15,7 @@ pinned in ``tests/test_list_rules.py``.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -25,20 +25,20 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.api import lists as list_config_api
 from reaper.clients.plex import PlexError
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
-from reaper.services import list_config
+from reaper.services import list_config, scan_runner
+from reaper.services import snapshot as snapshot_service
 from reaper.services.lists import ListSource
 from tests._auth import login
 
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -48,8 +48,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 @pytest.fixture
-async def session(tmp_path: Path) -> Iterator[AsyncSession]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     sync = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(sync)
     sync.dispose()
@@ -609,7 +609,7 @@ def _definition(**overrides: object) -> list_config.ListDefinition:
 class TestTheRegistryFingerprint:
     """What a scan records so the simulator can tell its evidence went stale (#512).
 
-    ``Snapshot.list_config_hash`` is this value, and ``api.routes.simulate`` refuses when it
+    ``Snapshot.list_config_hash`` is this value, and ``api.simulate.simulate`` refuses when it
     no longer matches. Every assertion below is about which edits an operator can make that
     change what a scan would GATHER, so the cases are chosen from that question rather than
     from the fields the function happens to read.
@@ -668,20 +668,20 @@ class TestTheRegistryFingerprint:
         no lists, and preview against membership nobody could confirm. ``None`` is not that,
         and it is also not a value to COMPARE: a snapshot that degraded for the same
         unreadable registry recorded ``None`` too, so each caller tests either side for it
-        and refuses (``api.routes.simulate``, ``services.executor``), rather than resting on
+        and refuses (``api.simulate.simulate``, ``services.executor``), rather than resting on
         an inequality that reads two unknowns as agreement.
 
         The same row is read twice, readable then not, so the ``None`` is pinned to the
         decode failure and not to anything else about this database (rule 141).
         """
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         sync_engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(sync_engine)
         with sync_engine.begin() as conn:
             conn.execute(
                 text(
-                    "INSERT INTO list_config (name, source, config_json, enabled, built_in,"
-                    " created_at) VALUES ('Keep', 'arr_tag', '{\"tags\": [\"keep\"]}', 1, 0, 0)"
+                    "INSERT INTO list_config (name, source, config_json, enabled,"
+                    " created_at) VALUES ('Keep', 'arr_tag', '{\"tags\": [\"keep\"]}', 1, 0)"
                 )
             )
         sync_engine.dispose()
@@ -692,8 +692,10 @@ class TestTheRegistryFingerprint:
                 readable = await list_config.current_fingerprint(session)
             assert readable is not None, "a registry that reads fine has to answer"
 
-            with sa_create_engine(settings.sync_database_url).begin() as conn:
+            corrupt_engine = sa_create_engine(settings.sync_database_url)
+            with corrupt_engine.begin() as conn:
                 conn.execute(text("UPDATE list_config SET config_json = 'not json'"))
+            corrupt_engine.dispose()
 
             async with create_session_factory(engine)() as session:
                 assert await list_config.current_fingerprint(session) is None
@@ -717,7 +719,7 @@ class TestCheckingTheListsNow:
         async def fake_build(factory: object, settings: object, box: object, **kw: object) -> Any:
             return ([], [], None, [], plex)
 
-        monkeypatch.setattr(list_config_api.scan_runner, "build_sources", fake_build)
+        monkeypatch.setattr(scan_runner, "build_sources", fake_build)
 
     @staticmethod
     def _syncs(monkeypatch: pytest.MonkeyPatch, result: dict[str, object]) -> dict[str, Any]:
@@ -729,7 +731,7 @@ class TestCheckingTheListsNow:
             seen.update(kw)
             return result
 
-        monkeypatch.setattr(list_config_api.snapshot, "sync_protection_lists", fake_sync)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync)
         return seen
 
     def test_a_list_saved_in_a_form_reaper_cannot_read_stops_the_whole_check(
@@ -746,7 +748,7 @@ class TestCheckingTheListsNow:
         # Read once so the shipped lists are actually seeded -- the registry fills in lazily,
         # and corrupting an empty table would leave a valid registry and prove nothing.
         assert client.get("/api/lists/configured").json()
-        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)  # type: ignore[call-arg]
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
         with engine.begin() as conn:
             assert conn.execute(text("UPDATE list_config SET config_json = 'not json'")).rowcount
         engine.dispose()
@@ -783,9 +785,9 @@ class TestCheckingTheListsNow:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def refuses(factory: object, settings: object, box: object, **kw: object) -> Any:
-            raise list_config_api.scan_runner.ScanConfigError("Add a Radarr before checking.")
+            raise scan_runner.ScanConfigError("Add a Radarr before checking.")
 
-        monkeypatch.setattr(list_config_api.scan_runner, "build_sources", refuses)
+        monkeypatch.setattr(scan_runner, "build_sources", refuses)
         seen = self._syncs(monkeypatch, {})
 
         response = client.post("/api/lists/sync", json={})
@@ -896,7 +898,7 @@ class TestARowStaysOnScreenSoTheOperatorCanFixIt:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         assert client.get("/api/lists/configured").json()
-        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)  # type: ignore[call-arg]
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
         with engine.begin() as conn:
             assert conn.execute(
                 text("UPDATE list_config SET config_json = 'not json' WHERE source = 'arr_tag'")

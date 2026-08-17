@@ -172,7 +172,7 @@ deletion path on the strength of it trades a hypothetical bug for a real diff. I
 question instead, per *Opening issues*. Say which ones you skipped and why.
 
 Run the gates the change touches before you hand back — for backend edits at minimum
-`uv run ruff format .`, `uv run ruff check .`, `uv run mypy src/reaper`, and the test files
+`uv run ruff format .`, `uv run ruff check .`, `uv run mypy src/reaper tests/`, and the test files
 covering what you changed. A fix that breaks a test means the finding was wrong about the
 mechanism: return the corrected variant, or withdraw the finding to `references/refuted.md`.
 
@@ -186,6 +186,35 @@ reference file. GitHub, via `gh`. The remote used to be a private forge that `gh
 reach, which is why this section once banned it and why `/code-review --comment` was unusable;
 both now work, so a finding can also land as an inline PR comment where that fits better than
 an issue.
+
+**First, does it exist on `dev`?** Before anything else about a finding — before severity, before
+the class, before the duplicate check — establish which tree it lives on:
+
+```
+git show origin/dev:<path> | grep -n '<the thing>'
+```
+
+**A defect the diff under review introduced is fixed in that diff, not filed.** The tracker
+describes what an operator can hit, and nobody can hit an unlanded branch. Filing it ships a
+known-broken change and asks a stranger to notice.
+
+The failure this prevents is not hypothetical and it is not cheap. Three branch-created defects
+filed as issues drew a verification pass, which did the correct thing — measured `dev`, found all
+three absent, closed them `Reviewed/Invalid`, and opened a PR adding three rows to
+`references/refuted.md`. Two of the three were real on the branch. The third was real for a
+mechanism the refutation had not reached, and the `Invalid` label would have buried a
+`Priority/High` lockout behind a row asserting it could not happen — in the file a later pass
+reads *instead of* re-deriving. Nobody was careless; the issues never said which tree they
+described, so every reader answered the only question they could.
+
+**A verdict inherits the tree it was measured on.** Refuting a candidate means naming the ref you
+read (`refuted at <sha>` is already the index's third column) and checking that ref is the one the
+candidate was raised against. A refutation measured on a different tree is not a refutation.
+
+**When a branch defect genuinely needs an issue** — deferred, or spanning work someone else holds
+— the title says `on <branch>` and the body opens with `on <branch>, not on dev`, the base commit,
+and the `git show` output proving the contrast. Without that line it will be verified against
+`dev` and closed, correctly.
 
 **One issue per fix, not per finding.** This is `CLAUDE.md`'s commit rule pointed at the
 tracker: one commit tells one story, so one issue describes one commit. If two findings would
@@ -313,7 +342,7 @@ work across sites** — grep it first, and reuse an existing class slug verbatim
 coining a synonym.
 
 A site-shaped fingerprint alone is why #203 and #204 were never linked:
-`Settings.tsx:api-key-row — stale-api-key-set-drops-the-confirm` and
+`GeneralPanel.tsx:api-key-row — stale-api-key-set-drops-the-confirm` and
 `PlexPanel.tsx:saveVerify — absolute-write-from-cached-value` are one mechanism, a cached value
 used as the input to a write or a gate, and share no matchable text. A shared
 `class: cached-value-drives-a-write` would have collided where neither `finding:` line could,

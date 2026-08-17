@@ -38,16 +38,23 @@ from reaper.engine.policy import (
     DEFAULT_TV_POLICY,
     ConditionSpec,
     PolicyBody,
-    PolicyRepair,
     ProfileSettings,
     combine_hashes,
+)
+from reaper.engine.policy_migrations import (
+    BOTH_MEDIA_TYPES,
+    PolicyRepair,
     conversion_list_names,
     convert_list_protections,
     has_legacy_list_protections,
     legacy_keep_tags,
+    library_media_types,
+    own_list_media_scope,
     rebalance,
     recover_rating_rules,
 )
+from reaper.services import app_settings
+from reaper.text import fold
 
 log = structlog.get_logger(__name__)
 
@@ -212,13 +219,13 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     editor, the simulator and the scan, so a validator added after a row was written would
     otherwise take out all three at once, including the page that fixes it. That holds for
     a body that is not JSON at all and one that decodes to something other than an object:
-    the decode below is guarded, and ``policy.rebalance`` returns ``None`` rather than
+    the decode below is guarded, and ``policy_migrations.rebalance`` returns ``None`` rather than
     raising on any shape it cannot read. A body whose removal weights predate the
     100-point budget is rescaled and flagged ``repaired``; anything else unreadable falls
     back to the shipped default, also flagged.
 
     One recovery runs on a body that validates *perfectly well*: a rating bar written
-    before the bar moved off the gate row is restored by ``policy.recover_rating_rules``,
+    before the bar moved off the gate row is restored by ``policy_migrations.recover_rating_rules``,
     because that body loads cleanly while protecting nothing. It is checked first, on the
     raw dict, since validation cannot see what is missing.
     """
@@ -244,14 +251,16 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     # so a body needing two of them reports two and the editor says both.
     repairs: tuple[PolicyRepair, ...] = ()
     if has_legacy_list_protections(raw):
-        tag_name, imdb_name, own_names = await _conversion_list_names(
+        tag_name, imdb_name, own_names, scope = await _conversion_list_names(
             session, keep_tags=legacy_keep_tags(raw)
         )
         converted = convert_list_protections(
             raw,
+            media_type=media_type,
             tag_list_name=tag_name,
             imdb_list_name=imdb_name,
             collection_list_names=own_names,
+            collection_media_scope=scope,
         )
         if converted is not None:
             raw = converted
@@ -312,23 +321,44 @@ async def _conversion_list_names(
     session: AsyncSession,
     *,
     keep_tags: tuple[str, ...],
-) -> tuple[str | None, str | None, tuple[str, ...]]:
-    """The registry rows ``convert_list_protections`` must point its rules at, read from the
-    database and selected by ``policy.conversion_list_names`` -- which owns WHICH row answers
-    each half, so the load path here and the upgrade migration cannot answer it differently
-    (rule 104)."""
-    rows = (
-        await session.execute(
-            select(
-                ListConfigModel.source,
-                ListConfigModel.name,
-                ListConfigModel.config_json,
-            ).order_by(ListConfigModel.id)
-        )
-    ).all()
-    return conversion_list_names(
-        [(str(r.source), str(r.name), r.config_json) for r in rows], keep_tags=keep_tags
-    )
+) -> tuple[str | None, str | None, tuple[str, ...], dict[str, frozenset[str]]]:
+    """The registry rows ``convert_list_protections`` must point its rules at, plus the media
+    scope each of the operator's own Plex lists may keep on. Selected by
+    ``policy_migrations.conversion_list_names`` and ``policy_migrations.own_list_media_scope``,
+    which own WHICH row answers each half and WHICH policy a collection's rule belongs on, so
+    the load path here and the upgrade migration cannot answer either differently (rule 104).
+
+    ``plex_libraries`` is read best-effort. Its only effect is to NARROW a collection's rule to
+    one policy, so losing it leaves the rule on both -- the wider protection, the keep direction
+    -- and does not degrade. Rules 65/91 forbid a read failure WIDENING what can be reaped; this
+    read only ever widens protection. The registry read below still raises, and the caller
+    degrades on it.
+
+    A malformed stored value is caught here too, not only a database error: ``get_plex_libraries``
+    parses ``value_json`` and iterates it, so a corrupt or non-list setting (a restored backup, a
+    hand-edit) raises ``ValueError``/``TypeError``, and ``active_policy`` must not raise (its
+    contract, and the reason the whole load path is total). Falls back to no scoping, exactly as
+    the sibling migration ``_library_media_types`` does on the same value (rule 104)."""
+    try:
+        libraries = await app_settings.get_plex_libraries(session)
+    except (SQLAlchemyError, ValueError, TypeError):
+        log.warning("policy.plex_libraries_unreadable")
+        libraries = []
+    rows = [
+        (str(r.source), str(r.name), r.config_json)
+        for r in (
+            await session.execute(
+                select(
+                    ListConfigModel.source,
+                    ListConfigModel.name,
+                    ListConfigModel.config_json,
+                ).order_by(ListConfigModel.id)
+            )
+        ).all()
+    ]
+    tag, imdb, own = conversion_list_names(rows, keep_tags=keep_tags)
+    scope = own_list_media_scope(rows, library_media_types(libraries))
+    return tag, imdb, own, scope
 
 
 async def _default_with_own_lists(
@@ -337,9 +367,11 @@ async def _default_with_own_lists(
     """The shipped default plus an outright keep rule for each Plex list the registry holds,
     and whether the registry could be read at all.
 
-    ``DEFAULT_LIST_CONDITIONS`` names the two lists ``list_config.DEFAULT_LISTS`` seeds. A
-    Plex keep collection arrives by migration instead (``20260803_1900``), so on an install
-    that has never saved a policy nothing pointed a rule at it: the row above returns before
+    The shipped conditions (``DEFAULT_MOVIE_LIST_CONDITIONS`` / ``DEFAULT_TV_LIST_CONDITIONS``)
+    name the seeded lists ``list_config.DEFAULT_LISTS`` holds, scoped to the media type each
+    can hold. A Plex keep collection arrives by migration instead (``20260803_1900``), so on
+    an install that has never saved a policy nothing pointed a rule at it: the row above returns
+    before
     ``convert_list_protections`` can run, and the WHITELISTED gate that used to spare its
     titles is retired. That is a protection which fired on the previous release and cannot
     fire on this one, with no degradation and no draft to review -- so the rule is put back
@@ -358,20 +390,24 @@ async def _default_with_own_lists(
     try:
         # No tags to resolve against: there is no stored body here, so nothing was ever
         # protecting on tags. Only the Plex half is read, and it is asked for by name.
-        _, _, own = await _conversion_list_names(session, keep_tags=())
+        _, _, own, scope = await _conversion_list_names(session, keep_tags=())
     except SQLAlchemyError:
         log.warning("policy.default_lists_unreadable")
         return default, True
     carried = {
-        str(c.value).strip().casefold()
+        fold(str(c.value))
         for c in default.protect_conditions
         if c.field == "on_list" and isinstance(c.value, str)
     }
     # Case-folded on both sides, the comparison every reader of a list name makes (rule 88).
+    # A single-library collection's rule is added only to the policy for its library's media
+    # type; an unsynced or ambiguous library, and every watchlist, keep the rule on both
+    # (``scope`` reads BOTH there, fail-open -- #545).
     extra = tuple(
         ConditionSpec(field="on_list", op=Op.EQ, value=name)
         for name in dict.fromkeys(own)
-        if name.strip().casefold() not in carried
+        if fold(name) not in carried
+        and default.media_type in scope.get(fold(name), BOTH_MEDIA_TYPES)
     )
     if not extra:
         return default, False
@@ -405,33 +441,6 @@ async def live_policy_hash(session: AsyncSession) -> str:
     return combine_hashes(movie.body.policy_hash(), tv.body.policy_hash())
 
 
-async def _ensure_active_policy_row(session: AsyncSession) -> int:
-    """The id of a persisted policy row, creating one from the default if none exists.
-
-    A profile references a policy by foreign key, but a fresh install has never saved
-    one -- it runs on ``DEFAULT_MOVIE_POLICY``, which lives in code, not the table. So we
-    persist it (append-only, content-addressed like any policy) and point the profile at
-    it. Idempotent: the ``latest`` check writes only when the table has no rows at all.
-    """
-    latest = (
-        await session.execute(select(PolicyModel).order_by(PolicyModel.id.desc()).limit(1))
-    ).scalar_one_or_none()
-    if latest is not None:
-        return latest.id
-
-    body: PolicyBody = DEFAULT_MOVIE_POLICY
-    row = PolicyModel(
-        policy_hash=body.policy_hash(),
-        body_json=body.model_dump_json(),
-        media_type=body.media_type,
-        name=DEFAULT_PROFILE_NAME,
-        created_at=utcnow(),
-    )
-    session.add(row)
-    await session.flush()
-    return row.id
-
-
 async def save_profile_settings(
     session: AsyncSession, settings: ProfileSettings
 ) -> ProfileSettings:
@@ -442,12 +451,17 @@ async def save_profile_settings(
     and the scheduler alike. Tightening a cap here is always safe: it cannot void a
     pending approval, because the caps are not part of the policy hash.
 
-    The row this creates carries ``Profile.enabled = False`` and this function never flips
-    it -- but do not read that as the interlock. Nothing in ``src/`` reads the column: it is
-    written at creation and never consulted, so there is no on-step and no consumer, and it
-    gates nothing. What actually keeps a saved cap from acting is that the scheduler never
-    deletes and the one route that does (``api.runs.execute_run``) needs the host armed and
-    the typed content-bound phrase.
+    **There is no on-step here and never was.** The row used to carry an ``enabled`` flag
+    written False at creation and read by nothing; it retired in release M (rule 148). What
+    keeps a saved cap from acting is that the scheduler never deletes and the one route that
+    does (``api.runs.execute_run``) needs the host armed and the typed content-bound phrase.
+
+    **And nothing here writes a policy row.** It used to, to satisfy the foreign key that
+    retired alongside ``enabled``, and the body it persisted was the bare shipped default --
+    so the first save silently replaced the wider body ``active_policy`` computes for an
+    unsaved install, and an operator's Plex keep collection stopped protecting the moment
+    they touched Pace, with ``repaired`` False and nothing degraded. Leaving the table empty
+    is what keeps that computation live until the operator saves a policy of their own.
     """
     profile = (
         await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
@@ -457,8 +471,6 @@ async def save_profile_settings(
     if profile is None:
         profile = Profile(
             name=DEFAULT_PROFILE_NAME,
-            enabled=False,
-            active_policy_id=await _ensure_active_policy_row(session),
             settings_json=settings.model_dump_json(),
             created_at=now,
             updated_at=now,

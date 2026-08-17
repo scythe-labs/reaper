@@ -11,8 +11,8 @@ toward *keeping the file* at every ambiguity.
 
 ## Why this module is pure
 
-There is exactly one production join, reachable from the movie path, the season path, the
-backtest and the planner without any of them importing a client (rule #3: never
+There is exactly one production join, reachable from the movie path, the season path and
+the planner without any of them importing a client (rule #3: never
 reimplement the decision in a second place where it can drift). So this module holds only
 data types and pure functions; the *index builders* that call Tautulli/Plex live in
 ``services`` and hand the frozen types in.
@@ -95,6 +95,7 @@ from datetime import datetime
 from typing import Any
 
 from reaper.ratings import Rating
+from reaper.text import fold
 
 
 class MatchedBy(enum.StrEnum):
@@ -205,7 +206,22 @@ class ExternalIds:
 
     @classmethod
     def of(cls, *, imdb: object = None, tmdb: object = None, tvdb: object = None) -> ExternalIds:
-        """Construct with the sentinel filter applied to every id -- the only safe door in."""
+        """Construct with the sentinel filter applied to every id -- the only safe door in.
+
+        "Only" is a grep trigger (rule 127): every site that reads an ``imdbId``/``tmdbId``/
+        ``tvdbId`` off a payload comes through here, not just the matcher. Nine did not, and a
+        raw ``tt0000000`` reaching a stored record is truthy, so it shadowed the cleaned id at
+        every ``item.imdb_id or item.plex_imdb_id`` downstream and sent the keep-list lookup
+        out under an id no list row carries (#709).
+        ``test_repo_hygiene.test_every_external_id_read_goes_through_the_sentinel_filter``
+        parses ``src/`` and fails on a tenth.
+
+        Two reads are exempt, in writing rather than by omission: ``executor.py``'s Radarr
+        import-exclusion pair reads ``tmdbId`` raw on both sides of a comparison against the
+        same instance, and the send already fails closed on ``tmdb_id == 0``. They are the
+        two entries the gate counts, so a third cannot inherit the exemption. Someone
+        grepping to check the sentence above finds them and can tell they are deliberate.
+        """
         return cls(
             imdb=_clean_imdb(imdb),
             tmdb=_clean_numeric(tmdb),
@@ -384,7 +400,7 @@ def libraries_for_ids(ids: ExternalIds, index: PlexIndex, id_priority: Sequence[
     Case-folded to match :func:`_same_library`. Never used to bind -- that is
     :func:`_narrow_among_id_hits`.
     """
-    return {lib.strip().casefold() for lib in candidate_libraries(ids, index, id_priority)}
+    return {fold(lib) for lib in candidate_libraries(ids, index, id_priority)}
 
 
 def _plex_size_of(rating_key: int, basename: str, index: PlexIndex) -> int | None:
@@ -442,7 +458,7 @@ def _same_library(candidate: str | None, mapped: str) -> bool:
     consulted at all -- so unknown is handled there, deliberately, never silently as
     "different".
     """
-    return candidate is not None and candidate.strip().casefold() == mapped.strip().casefold()
+    return candidate is not None and fold(candidate) == fold(mapped)
 
 
 def _ends_with(path_segments: Sequence[str], suffix: Sequence[str]) -> bool:

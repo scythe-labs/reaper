@@ -45,8 +45,8 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import _policy_out, _to_body
-from reaper.api.schemas import PolicyIn
+from reaper.api.policy import _policy_out, _to_body
+from reaper.api.schemas import PolicyIn, SimulationOut
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -376,7 +376,15 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
         for c in (0, 2_500, 7_500, 10_000)
     ],
     # --- every shipped gate, dropped ------------------------------------------------
-    *[(f"drop:{g.gate.value}", _without(g.gate)) for g in BASE.gates],
+    # Except the two rows a validated body cannot NOT carry, either lane: the rewatch-odds
+    # row (`PolicyBody._rewatch_odds_row`) and the came-back row (`_returned_row`) are both
+    # re-appended on validation, so a dropped copy is a shape no wire round-trip can
+    # preserve and no operator can produce.
+    *[
+        (f"drop:{g.gate.value}", _without(g.gate))
+        for g in BASE.gates
+        if g.gate not in {GateId.REWATCH_ODDS, GateId.RETURNED}
+    ],
     # --- every shipped list protection, dropped -------------------------------------
     # Where `drop:whitelisted` and `drop:curated_list` used to sit. Those gates retired and
     # list membership now protects through an `on_list` condition per list, so the lane is
@@ -511,7 +519,7 @@ def _client_over(tmp: Path, *, stored_scores_usable: bool) -> Iterator[TestClien
         "conftest's _hermetic fixture is not in effect: this fixture must be function-scoped"
     )
     tmp.mkdir(parents=True, exist_ok=True)
-    settings = Settings(data_dir=tmp, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -538,7 +546,7 @@ def replay(tmp_path: Path) -> Iterator[TestClient]:
 def load_snapshot(tmp: Path, policy: PolicyBody, rows: list[Judged]) -> None:
     """Replace the stored scan with one taken under `policy`."""
     tmp.mkdir(parents=True, exist_ok=True)
-    settings = Settings(data_dir=tmp, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp, secret_key="k")
     # Before the sync session opens, for the reason the fixture's own docstring gives: two
     # engines on one SQLite file is a lock waiting to happen.
     list_hash = seeded_fingerprint(settings)
@@ -596,7 +604,7 @@ def load_snapshot(tmp: Path, policy: PolicyBody, rows: list[Judged]) -> None:
 
 def break_scoring_hash(tmp: Path) -> None:
     """Make the stored scores unusable, which is what routes an edit to the replay."""
-    settings = Settings(data_dir=tmp, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with Session(engine) as session:
         snapshot = session.query(Snapshot).one()
@@ -648,6 +656,24 @@ NUMBERS = (
     "protected_by",
     "examples_newly_condemned",
 )
+
+
+def test_every_field_of_the_answer_is_compared_across_the_two_tiers() -> None:
+    """``NUMBERS`` mirrors ``SimulationOut``'s field list by hand (rule 103). A 16th field
+    populated at one ``return SimulationOut(`` and not the other leaves the parity test
+    below green, which is the drift the two hand-written constructors can produce.
+
+    The three names added here are covered a different way rather than skipped:
+    ``assert_panel_adds_up`` asserts ``exact``, and ``stale_kind`` / ``stale_reason`` are
+    written only by ``api/simulate.py``'s ``_refused``, which is the refusal shape and
+    shares no keyword set with the two answering sites.
+    """
+    compared = set(NUMBERS) | {"exact", "stale_kind", "stale_reason"}
+    assert compared == set(SimulationOut.model_fields), (
+        "api/schemas.py's SimulationOut and NUMBERS disagree. A new field belongs in "
+        "NUMBERS above and must be populated at BOTH api/simulate.py return sites, "
+        "_replay_simulation and simulate."
+    )
 
 
 @pytest.mark.parametrize("name,draft", DRAFTS, ids=[n for n, _ in DRAFTS])

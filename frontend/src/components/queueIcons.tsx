@@ -113,6 +113,20 @@ export function LibraryIcon() {
   );
 }
 
+/** Two spines and a leaning third, for a Plex collection -- distinct from the library shelf's
+ *  own spines-and-book glyph (the two sit side by side on a card's facts line, rule 21's "never
+ *  mix two meanings on one glyph" read straight through to icons). Sized down (12px) to sit
+ *  inside the collection chip, the chip family's own smaller cousin of the 14px set above. */
+export function CollectionIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+      <rect x="2" y="3" width="3.4" height="10" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="6.6" y="3" width="3.4" height="10" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M11.6 4.2l2.3 9.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function PlusIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
@@ -167,9 +181,12 @@ export function ScytheIcon() {
 
 /** A small clock, the dormancy pill's shape reused -- here in the spare's green to mean "kept,
  *  for now". It marks a TIMED spare, where ∞ marks a forever one. */
-export function ClockGlyph({ dashed = false }: { dashed?: boolean } = {}) {
+export function ClockGlyph({
+  dashed = false,
+  size = 13,
+}: { dashed?: boolean; size?: number } = {}) {
   return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" aria-hidden="true">
       {/* `dashed` marks a spare whose clock has PASSED: the same dial, drawn the way this app
           draws every decision whose effect is pending a scan (the dashed .status-reap-held /
           .score-refused family). The hands stay solid so it still reads as a clock. */}
@@ -205,6 +222,31 @@ export function CaretDownGlyph() {
         d="M4 6l4 4 4-4"
         stroke="currentColor"
         strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** The mark that says a link leaves Reaper, worn by the why panel's title and the Scales
+ *  panel's heading. Decoration: the destination is already in the link's words, so it is
+ *  `aria-hidden` like everything else here (rule 21's middot clause, same reasoning). The two
+ *  sites style it differently, which is the only thing `className` carries. */
+export function ExternalMark({ className }: { className: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 16 16"
+      width="13"
+      height="13"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M6 3h7v7M13 3L4 12"
+        stroke="currentColor"
+        strokeWidth="1.7"
         strokeLinecap="round"
         strokeLinejoin="round"
       />

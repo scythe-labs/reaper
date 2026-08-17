@@ -9,7 +9,7 @@ paths:
 Blockers, not suggestions, distilled from six adversarial review passes. **Rule numbers are
 permanent** (tests and comments cite them); where two overlap, the more specific governs.
 Rules binding every file are in the root `CLAUDE.md`; the SPA's are in
-`.claude/rules/frontend.md`. Holds 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143.
+`.claude/rules/frontend.md`. Holds 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143, 148.
 
 ## The safety / deletion path
 
@@ -25,7 +25,10 @@ may coast on stored membership from a *recent* successful sync
 Past that bound, or with no record of a successful sync, degrade.
 
 **3 / 22. One decision function.** Condemn/abstain/protect lives only in
-`engine/verdict.decide_verdict`, and `snapshot`, `simulate`, and `backtest` import it. Never
+`engine/verdict.decide_verdict`, and four callers import it: `snapshot`, `simulate`,
+`condemned`, and `policy_warnings.inspect` — which is the one every list of them has forgotten,
+and whose "nothing will be flagged for removal" warning rests on the decision being monotone in
+score and coverage. Never
 write `score >= threshold` or `coverage_bp >= floor` inline outside it, and never reimplement
 scoring, coverage, rounding, or floors anywhere they can drift.
 
@@ -134,8 +137,12 @@ response carrying a null or malformed body is not a genuine empty either.
   *withdraw* a protection never qualifies.
 
 **35. New `Facts` fields are populated — or explicitly `Absent` with a comment — in every fact
-builder**: snapshot movies, season_scan, backtest, calibration. Grep all builders when adding a
-field; one populated in a single path silently changes scores and coverage in the others.
+builder.** Two build from evidence — `snapshot.build_facts` and `season_scan.build_season_facts` —
+and one populated in a single path silently changes scores and coverage in the other. Two more
+construct a `Facts` and are just as easy to miss: `facts_codec.facts_from_dict`, which thaws only
+what a builder already wrote, and `preview._bare_facts`, whose `Facts(**observations)` raises at
+runtime for a field with no default and whose `# type: ignore` on the unpack hides that from mypy.
+Grep for `Facts(`, not for the two you remember.
 
 **65 / 91. Silent recovery on operator-configured safety values is forbidden, and a config read
 *failure* is not "nothing configured."** A fallback replacing saved profile/policy values
@@ -293,10 +300,14 @@ every call — trash, refresh, count, and refresh-status, not just label and col
 Where only a title is known and it is ambiguous, ask each same-titled library in turn
 (`lists.PlexCollection` is the model), never the first match.
 
-**88. Case-fold both sides of every label, tag, collection, or list-name match.** When one side
-of a lookup is lower-cased, the other must be too. Lower-casing the source but not the
-operator's configured value is a fail-open protection bug: the protection stops matching and
-nothing announces it. Every new name-matching path ships a mixed-case test.
+**88. Case-fold both sides of every label, tag, collection, or list-name match, through
+`reaper.text.fold`.** When one side of a lookup is lower-cased, the other must be too.
+Lower-casing the source but not the operator's configured value is a fail-open protection bug:
+the protection stops matching and nothing announces it. Every new name-matching path ships a
+mixed-case test. The helper is named here because greppability is the point of it having a
+name, and `test_repo_hygiene.py` bans spelling `.strip().casefold()` again in `src/`. Folding a
+PATH is a different job with a different answer (`identity.to_basename`, `to_segments`), and so
+is a token that is not a name.
 
 **114. A sleep, retry budget, or allocation whose size comes from a remote server is clamped** —
 to a ceiling *and* to the caller's remaining deadline. `notify/discord.py`'s `_MAX_RETRY_AFTER`
@@ -315,9 +326,15 @@ carries the heal migration's reflection guard, so in-window databases upgrade in
 boot-looping. Never edit the baseline; when the rule is broken anyway, the follow-up is guarded,
 not plain.
 
-**94. Every `WHERE col IN :keys` over a scan-sized set is chunked at 500 or fewer.** An unchunked
-expanding bindparam overflows SQLite's variable ceiling and aborts the scan; chunk it, or express
-the filter as an anti-join. A new `parent_rating_key`-style filter also needs its covering index.
+**94. Every `WHERE col IN :keys` over a scan-sized set is chunked on `db.KEY_CHUNK`.** An
+unchunked expanding bindparam overflows SQLite's variable ceiling and aborts the scan; chunk it,
+or express the filter as an anti-join. **The bound is one declaration and the sweep is a gate**:
+this rule spelled the number in prose and nowhere in code, five sites spelled it five ways, and
+the grace report shipped reading the whole condemned set in one statement, so
+`test_repo_hygiene.py` collects the three spellings `src/` uses — the ORM operators, an
+`expanding` bindparam, a hand-built placeholder list — and fails on one carrying no written
+classification. A **fourth** spelling is invisible to it and has no count to go missing from
+(rule 147), so a new form ships with the walk that reads it. A new `parent_rating_key`-style filter also needs its covering index.
 Reconcile a `cache.db` index by name and create the missing one in place; never bump the
 column-shape tuple to force it, which drops the whole mirror.
 
@@ -449,3 +466,51 @@ when it is empty.
 results exactly as it does to facts, and conflating them tells the operator a check passed when
 it never ran. `engine/verdict.py` carries what a block does and does not hold today; do not
 infer it from the encoding.
+
+## Schema removal
+
+**148. Schema leaves in two releases, never in one, and never by accumulating instead.**
+Release M removes the reads, the writes and the ORM attribute, and ships whatever revision the
+column needs to keep working without Python holding it up — for a `NOT NULL` column with no
+server default, an `alter_column` adding one, because the Python-side `default=` dies with the
+attribute and the next `INSERT` omits the column. Release M+1 drops the column. One release
+where both images *can read the same schema* is what makes the operator's rollback
+survivable, and it is the only thing that does: a `downgrade()` recreating the column does not
+bring its data back.
+
+**What "rollback" means here is putting the image back, not moving the database back**, and the
+distinction is the whole reason release M ships its revision rather than nothing. A database is
+only ever carried forward: it stays at whatever revision it reached, and the older image has to
+be able to serve *that*. So the sequence buys survivability exactly when M+1 shipped no new
+revision — which is the ordinary case, since M is where the schema work happens. When M+1 does
+ship one, its database sits at a revision M has never heard of, and `db/schema_gate.refusal`
+refuses the boot in plain words (#565); Alembic refused it before that too, with
+`Can't locate revision identified by …`. The way back is then M's own backup, not M's image, so
+say which of the two a removal costs when you write the release note.
+
+**Measure the cost against the alternative, not against zero.** Under `render_as_batch`, SQLite
+rebuilds the whole table for anything outside `add_column`/`create_index`/`drop_index` — so the
+`server_default` revision that lets you KEEP a dead column copies the table exactly as dropping
+it would. Where both cost the same rebuild, keeping it buys only a permanent `include_object`
+arm and a registry entry, and defers the drop forever. That symmetry is the reason this rule
+exists; it does not hold for a nullable column, which can be abandoned for free.
+
+**Three obligations on the M+1 revision.** One `batch_alter_table` block per table with every
+one of that table's drops inside it, since each block is another full copy of the table. This
+used to be the obligation that bricked an install, because each block was another chance to
+strand `_alembic_tmp_<table>` behind a failure; #564 put DDL back inside the migration's
+transaction, so a failed sweep now rolls the temp table back with everything else and the
+remaining cost is the copying.
+`drop_index` before `drop_constraint` before `drop_column`, because Alembic reflects an index
+on a column being dropped and recreates it against a column that is gone — a two-line
+authoring slip that is invisible against a fresh database and fatal against a populated one.
+And assert the surviving indexes and named constraints in a test rather than by eye: a batch
+recreate silently drops expression indexes, triggers and `AUTOINCREMENT`, and Alembic's own
+docs record that unnamed CHECK constraints do not survive it.
+
+**Leave `recreate` at its default.** On SQLite the default already recreates for a drop;
+`recreate="always"` adds nothing here and forces a rebuild on backends that would not need one.
+
+**A column holding anything the operator chose is not dead because no code reads it.** Prove it
+write-only across `src/`, `tests/` and `frontend/src/` before release M, and say in the PR body
+what you grepped. Rule 143's sweep applies to a column exactly as it does to a set.

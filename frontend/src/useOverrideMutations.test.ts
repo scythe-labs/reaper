@@ -13,11 +13,10 @@
 // This is the regression guard for both the whole-show "no feedback" gap and the whole-show
 // "jumps out of the list" regression.
 
-import { act, renderHook } from "@testing-library/react";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { createElement, type ReactNode } from "react";
+import { act } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "./test/queryClient";
+import { renderHookWithProviders } from "./test/renderWithProviders";
 import { api } from "./api";
 import { useOverrideMutations } from "./useOverrideMutations";
 import type { QueryClient } from "@tanstack/react-query";
@@ -33,7 +32,6 @@ const row = (media_key: string, group_key: string | null) =>
     group_key,
     override: null,
     override_own: null,
-    spared: false,
     show_override: null,
     show_spare_expires_at: null,
   }) as never;
@@ -66,9 +64,7 @@ const setup = () => {
   const client = testQueryClient();
   seedCandidates(client);
   const invalidateSpy = vi.spyOn(client, "invalidateQueries");
-  const wrapper = ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client }, children);
-  const hook = renderHook(() => useOverrideMutations(), { wrapper });
+  const hook = renderHookWithProviders(() => useOverrideMutations(), { client });
   return { client, invalidateSpy, hook };
 };
 

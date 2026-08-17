@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import _split_search_year
+from reaper.api.review import _split_search_year
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -39,12 +39,12 @@ def _candidate(**kw: object) -> Candidate:
         "created_at": utcnow(),
     }
     base.update(kw)
-    return Candidate(**base)  # type: ignore[arg-type]
+    return Candidate(**base)
 
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 
@@ -121,7 +121,7 @@ def _titles(rows: list[dict[str, object]]) -> set[str]:
 
 class TestFilters:
     def test_unfiltered_returns_every_condemned_item(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=condemn").json()
+        rows = client.get("/api/candidates?verdict=condemn").json()["items"]
         # Two, not three: Example Zulu is condemned by policy but spared by hand, so it rides the
         # Kept lane now while its stored verdict stays pure "condemn" underneath. The reaped season
         # stays here, its hand reap being effective.
@@ -134,7 +134,7 @@ class TestFilters:
         assert alpha["requested_by"] == "Alice"
 
     def test_search_matches_title(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=condemn&search=alpha").json()
+        rows = client.get("/api/candidates?verdict=condemn&search=alpha").json()["items"]
         assert _titles(rows) == {"Example Alpha"}
 
     def test_search_understands_a_year_typed_after_the_title(self, client: TestClient) -> None:
@@ -142,30 +142,32 @@ class TestFilters:
         # "Example Alpha 1979" as one string and types it back. It used to match nothing: the
         # year lives in its own column and was never in `title`.
         for term in ("Example Alpha 1979", "Example Alpha (1979)", "alpha 1979"):
-            rows = client.get(f"/api/candidates?verdict=condemn&search={term}").json()
+            rows = client.get(f"/api/candidates?verdict=condemn&search={term}").json()["items"]
             assert _titles(rows) == {"Example Alpha"}, term
 
     def test_search_with_the_wrong_year_finds_nothing(self, client: TestClient) -> None:
         # The year narrows; it is not decoration. Example Alpha is 1979.
-        rows = client.get("/api/candidates?verdict=condemn&search=Example Alpha 1980").json()
+        rows = client.get("/api/candidates?verdict=condemn&search=Example Alpha 1980").json()[
+            "items"
+        ]
         assert rows == []
 
     def test_search_also_matches_the_show_name(self, client: TestClient) -> None:
         # "mid" matches the show name, carried on the season row's group_title.
-        rows = client.get("/api/candidates?verdict=condemn&search=mid").json()
+        rows = client.get("/api/candidates?verdict=condemn&search=mid").json()["items"]
         assert _titles(rows) == {"Example Mid · Season 5"}
 
     def test_media_type_filter(self, client: TestClient) -> None:
-        movies = client.get("/api/candidates?verdict=condemn&media_type=movie").json()
+        movies = client.get("/api/candidates?verdict=condemn&media_type=movie").json()["items"]
         # Example Zulu is a movie too, but spared by hand, so it rides the Kept lane now.
         assert _titles(movies) == {"Example Alpha"}
-        kept_movies = client.get("/api/candidates?verdict=protect&media_type=movie").json()
+        kept_movies = client.get("/api/candidates?verdict=protect&media_type=movie").json()["items"]
         assert _titles(kept_movies) == {"Example Zulu"}
-        seasons = client.get("/api/candidates?verdict=condemn&media_type=season").json()
+        seasons = client.get("/api/candidates?verdict=condemn&media_type=season").json()["items"]
         assert _titles(seasons) == {"Example Mid · Season 5"}
 
     def test_requested_yes_keeps_just_requested_media(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=condemn&requested=yes").json()
+        rows = client.get("/api/candidates?verdict=condemn&requested=yes").json()["items"]
         assert _titles(rows) == {
             "Example Alpha",
             "Example Mid · Season 5",
@@ -173,84 +175,433 @@ class TestFilters:
 
     def test_requested_no_keeps_just_the_unrequested(self, client: TestClient) -> None:
         # The only unrequested title, Example Zulu, is spared by hand, so it rides the Kept lane.
-        rows = client.get("/api/candidates?verdict=protect&requested=no").json()
+        rows = client.get("/api/candidates?verdict=protect&requested=no").json()["items"]
         assert _titles(rows) == {"Example Zulu"}  # the only one nobody asked for
 
     def test_filters_stack(self, client: TestClient) -> None:
         # media_type AND requested are ANDed, not either-or.
-        rows = client.get("/api/candidates?verdict=condemn&media_type=movie&requested=yes").json()
+        rows = client.get("/api/candidates?verdict=condemn&media_type=movie&requested=yes").json()[
+            "items"
+        ]
         assert _titles(rows) == {"Example Alpha"}  # a movie AND requested; the season is excluded
 
 
 class TestGenreFilter:
     def test_a_genre_matches_the_whole_term_only(self, client: TestClient) -> None:
         # "Comedy" must match ["Comedy", ...] and NOT ["Comedy Special"].
-        rows = client.get("/api/candidates?verdict=condemn&genre=Comedy").json()
+        rows = client.get("/api/candidates?verdict=condemn&genre=Comedy").json()["items"]
         assert _titles(rows) == {"Example Alpha"}
 
     def test_a_malformed_genre_row_is_skipped_not_an_error(self, client: TestClient) -> None:
         # The season row's genres_json does not parse; it never matches and never 500s.
         response = client.get("/api/candidates?verdict=condemn&genre=Horror")
         assert response.status_code == 200
-        assert _titles(response.json()) == {"Example Alpha"}
+        assert _titles(response.json()["items"]) == {"Example Alpha"}
 
     def test_an_unseen_genre_matches_nothing(self, client: TestClient) -> None:
-        response = client.get("/api/candidates?verdict=condemn&genre=Western")
-        assert response.json() == []
-        assert response.headers["X-Total-Count"] == "0"
+        page = client.get("/api/candidates?verdict=condemn&genre=Western").json()
+        assert page["items"] == []
+        assert page["total"] == 0
+
+
+class TestCollectionFilter:
+    """``collection`` is genre's sibling (rule 72): same predicate, over
+    ``collections_json`` instead of ``genres_json``. Collections are navigation, never
+    protection -- this filter only narrows the frozen snapshot, same as every other one
+    on this route (#816 phase 3)."""
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            snap = Snapshot(
+                created_at=now, policy_hash="e" * 64, horizon_at=now, item_count=2, degraded=False
+            )
+            session.add(snap)
+            session.flush()
+            session.add_all(
+                [
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:50",
+                        title="Example India",
+                        collections_json='["Alpha Trilogy", "Best Of", "Zeta Anthology"]',
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:51",
+                        title="Example Juliet",
+                        # Malformed on purpose: the collection filter must skip it, never
+                        # 500 -- the same defense the genre filter already has.
+                        collections_json="not json",
+                    ),
+                ]
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def test_a_title_in_three_collections_is_returned_under_all_three(
+        self, client: TestClient
+    ) -> None:
+        for name in ("Alpha Trilogy", "Best Of", "Zeta Anthology"):
+            rows = client.get(
+                "/api/candidates", params={"verdict": "condemn", "collection": name}
+            ).json()["items"]
+            assert _titles(rows) == {"Example India"}, name
+
+    def test_a_malformed_collection_row_is_skipped_not_an_error(self, client: TestClient) -> None:
+        response = client.get(
+            "/api/candidates", params={"verdict": "condemn", "collection": "Alpha Trilogy"}
+        )
+        assert response.status_code == 200
+        assert _titles(response.json()["items"]) == {"Example India"}
+
+    def test_an_unseen_collection_matches_nothing(self, client: TestClient) -> None:
+        page = client.get(
+            "/api/candidates", params={"verdict": "condemn", "collection": "Nonexistent"}
+        ).json()
+        assert page["items"] == []
+        assert page["total"] == 0
+
+    def test_vocabulary_values_lists_the_collection_names(self, client: TestClient) -> None:
+        # The same fixture, through /api/vocabulary/values: proves _VALUE_COLUMNS' new
+        # "collection" entry, keyed off the column, decodes the JSON array and skips the
+        # malformed row rather than raising.
+        body = client.get("/api/vocabulary/values", params={"field": "collection"}).json()
+        assert body["field"] == "collection"
+        assert set(body["values"]) == {"Alpha Trilogy", "Best Of", "Zeta Anthology"}
+
+
+class TestCollectionSizesOnTheSnapshot:
+    """``collection_sizes_json`` rides the snapshot route as ``collection_sizes`` -- the
+    collection screen's header reads it for Plex's own member count (#816 phase 5)."""
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            session.add(
+                Snapshot(
+                    created_at=now,
+                    policy_hash="f" * 64,
+                    horizon_at=now,
+                    item_count=0,
+                    degraded=False,
+                    collection_sizes_json='{"Alpha Trilogy": 8, "not-an-int": "nope"}',
+                )
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def test_the_map_rides_the_snapshot_route(self, client: TestClient) -> None:
+        body = client.get("/api/snapshots/latest").json()
+        # The non-int value is dropped rather than guessed at: it was never a size Plex
+        # reported, so a wrong number is worse than a missing one.
+        assert body["collection_sizes"] == {"Alpha Trilogy": 8}
+
+
+class TestSearchReachesCollectionNames:
+    """``search`` gains collection names, matched partially -- typing a franchise finds its
+    members (#816 phase 3b). A row lands in one of three blocks (0 exact title, 1 partial
+    title/show, 2 collection-name), carried on the response as ``search_rank``, and the
+    three blocks always sort ahead of each other regardless of the operator's chosen
+    ``sort`` -- only the order WITHIN a block follows it. A block-2 row's
+    ``matched_collection`` is the collection that actually matched, never the chip's usual
+    smallest-first pick."""
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            snap = Snapshot(
+                created_at=now, policy_hash="9" * 64, horizon_at=now, item_count=5, degraded=False
+            )
+            session.add(snap)
+            session.flush()
+            session.add_all(
+                [
+                    # Block 0: the term typed exactly.
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:70",
+                        title="Nova",
+                        year=2020,
+                        score=50,
+                        size_bytes=500,
+                    ),
+                    # Block 1: the term inside the title, two rows so within-block order
+                    # can be told apart from the fixed block order.
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:71",
+                        title="Nova Prime",
+                        year=1999,
+                        score=90,
+                        size_bytes=300,
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:72",
+                        title="Nova Zulu",
+                        year=2010,
+                        score=10,
+                        size_bytes=700,
+                    ),
+                    # Block 2: the title itself never mentions the term, only a collection
+                    # does -- this is search "reaching" a collection name at all.
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:73",
+                        title="Reel Delta",
+                        year=2001,
+                        score=99,
+                        size_bytes=999,
+                        collections_json='["Nova Collection"]',
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:74",
+                        title="Reel Alpha",
+                        year=2030,
+                        score=1,
+                        size_bytes=1,
+                        # "Something Else" sorts first (the chip's usual element-0 pick);
+                        # only "Nova Vault" matches the search, and that is the one the
+                        # row must report.
+                        collections_json='["Something Else", "Nova Vault"]',
+                    ),
+                ]
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def test_a_collection_only_match_is_found_at_all(self, client: TestClient) -> None:
+        # Neither "Reel Delta" nor "Reel Alpha" mentions "nova" in its own title -- only
+        # their collections do. Search reaching collection names is what puts them here.
+        rows = client.get("/api/candidates?verdict=condemn&search=nova").json()["items"]
+        assert _titles(rows) == {"Nova", "Nova Prime", "Nova Zulu", "Reel Delta", "Reel Alpha"}
+
+    def test_a_multi_collection_row_reports_the_match_not_the_smallest(
+        self, client: TestClient
+    ) -> None:
+        rows = client.get("/api/candidates?verdict=condemn&search=nova").json()["items"]
+        reel_alpha = next(r for r in rows if r["title"] == "Reel Alpha")
+        assert reel_alpha["search_rank"] == 2
+        assert reel_alpha["matched_collection"] == "Nova Vault"
+
+    def test_a_title_match_carries_no_matched_collection(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=condemn&search=nova").json()["items"]
+        nova = next(r for r in rows if r["title"] == "Nova")
+        assert nova["search_rank"] == 0
+        assert nova["matched_collection"] is None
+
+    @pytest.mark.parametrize(
+        ("sort", "order"),
+        [("score", "desc"), ("score", "asc"), ("size", "desc"), ("year", "asc"), ("title", "asc")],
+    )
+    def test_the_three_blocks_stay_in_order_under_every_sort_key(
+        self, client: TestClient, sort: str, order: str
+    ) -> None:
+        rows = client.get(
+            "/api/candidates",
+            params={"verdict": "condemn", "search": "nova", "sort": sort, "order": order},
+        ).json()["items"]
+        ranks = [int(r["search_rank"]) for r in rows]
+        # Non-decreasing: every block-0 row precedes every block-1 row precedes every
+        # block-2 row, whatever the operator asked the REST of the ordering to do.
+        assert ranks == sorted(ranks), (sort, order, ranks)
+        assert ranks == [0, 1, 1, 2, 2]
+
+    def test_within_a_block_the_operators_own_sort_still_applies(self, client: TestClient) -> None:
+        by_score = client.get(
+            "/api/candidates",
+            params={"verdict": "condemn", "search": "nova", "sort": "score", "order": "desc"},
+        ).json()["items"]
+        by_title = client.get(
+            "/api/candidates",
+            params={"verdict": "condemn", "search": "nova", "sort": "title", "order": "asc"},
+        ).json()["items"]
+        # Block 1 (indices 1-2): score-desc puts "Nova Prime" (90) before "Nova Zulu" (10);
+        # title-asc puts them in the same order ("Prime" < "Zulu"), so this pair alone
+        # cannot tell the two sorts apart.
+        assert [r["title"] for r in by_score[1:3]] == ["Nova Prime", "Nova Zulu"]
+        assert [r["title"] for r in by_title[1:3]] == ["Nova Prime", "Nova Zulu"]
+        # Block 2 (indices 3-4) is where the two sorts disagree: score-desc wants "Reel
+        # Delta" (99) before "Reel Alpha" (1); title-asc wants "Reel Alpha" before "Reel
+        # Delta". Matching flip proves the block is sorted by the operator's OWN key, not
+        # by some fixed order the server picked for it.
+        assert [r["title"] for r in by_score[3:5]] == ["Reel Delta", "Reel Alpha"]
+        assert [r["title"] for r in by_title[3:5]] == ["Reel Alpha", "Reel Delta"]
+
+
+class TestSearchMatchedCollectionOnlyAppliesToBlockTwo:
+    """A title match's own collections can independently contain the search term too --
+    that must not leak a ``matched_collection`` onto a row that did not need one to be
+    found. Only a block-2 row (search_rank == 2) carries it (#816 phase 3b)."""
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            snap = Snapshot(
+                created_at=now, policy_hash="8" * 64, horizon_at=now, item_count=1, degraded=False
+            )
+            session.add(snap)
+            session.flush()
+            session.add(
+                _candidate(
+                    snapshot_id=snap.id,
+                    media_key="radarr:1:80",
+                    title="Nova",
+                    # The row's own collection also matches "nova" -- exactly the case a
+                    # naive "did any collection match" read would misreport.
+                    collections_json='["Nova Boxset"]',
+                )
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def test_a_title_matched_row_never_carries_a_matched_collection(
+        self, client: TestClient
+    ) -> None:
+        rows = client.get("/api/candidates?verdict=condemn&search=nova").json()["items"]
+        nova = next(r for r in rows if r["title"] == "Nova")
+        assert nova["search_rank"] == 0
+        assert nova["matched_collection"] is None
+
+
+class TestVerdictAny:
+    """``verdict=any`` is every stored lane at once, unfiltered -- what the collection
+    screen needs so a title's siblings show up whatever fate each one got (#816 phase 3).
+    No hand-override lane-shift step runs for it: nothing is excluded from one named lane,
+    so there is nothing to move in or out of."""
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            snap = Snapshot(
+                created_at=now, policy_hash="f" * 64, horizon_at=now, item_count=3, degraded=False
+            )
+            session.add(snap)
+            session.flush()
+            session.add_all(
+                [
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:60",
+                        title="Example Foxtrot",
+                        verdict="condemn",
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:61",
+                        title="Example Golf",
+                        verdict="protect",
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:62",
+                        title="Example Hotel",
+                        verdict="abstain",
+                    ),
+                ]
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def test_any_mixes_every_stored_fate(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=any").json()["items"]
+        assert _titles(rows) == {"Example Foxtrot", "Example Golf", "Example Hotel"}
+
+    def test_a_named_lane_still_narrows_to_just_that_lane(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=condemn").json()["items"]
+        assert _titles(rows) == {"Example Foxtrot"}
 
 
 class TestLibraryFilter:
     def test_the_library_rides_along_on_every_row(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=condemn").json()
+        rows = client.get("/api/candidates?verdict=condemn").json()["items"]
         by_title = {str(r["title"]): r["library"] for r in rows}
         assert by_title["Example Alpha"] == "Movies"
         assert by_title["Example Mid · Season 5"] == "TV Shows"
 
     def test_library_keeps_only_that_section(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=condemn&library=Movies").json()
+        rows = client.get("/api/candidates?verdict=condemn&library=Movies").json()["items"]
         assert _titles(rows) == {"Example Alpha"}
 
     def test_library_matches_the_whole_name_not_a_substring(self, client: TestClient) -> None:
         # A filter for "Movies" must not drag in the "4K Movies" library. Example Zulu (the
         # "4K Movies" title) is spared by hand, so query the Kept lane it now rides.
         rows = client.get("/api/candidates", params={"verdict": "protect", "library": "4K Movies"})
-        assert _titles(rows.json()) == {"Example Zulu"}
+        assert _titles(rows.json()["items"]) == {"Example Zulu"}
 
     def test_an_unseen_library_matches_nothing(self, client: TestClient) -> None:
-        response = client.get("/api/candidates?verdict=condemn&library=Anime")
-        assert response.json() == []
-        assert response.headers["X-Total-Count"] == "0"
+        page = client.get("/api/candidates?verdict=condemn&library=Anime").json()
+        assert page["items"] == []
+        assert page["total"] == 0
 
     def test_it_stacks_with_media_type(self, client: TestClient) -> None:
         rows = client.get(
             "/api/candidates",
             params={"verdict": "condemn", "library": "TV Shows", "media_type": "season"},
         )
-        assert _titles(rows.json()) == {"Example Mid · Season 5"}
+        assert _titles(rows.json()["items"]) == {"Example Mid · Season 5"}
 
 
 class TestOverrideFilter:
     def test_spared_by_hand(self, client: TestClient) -> None:
         # A hand spare moves the item onto the Kept lane (its stored verdict stays pure policy);
         # the spare filter finds it there, not on the Condemned lane it left.
-        response = client.get("/api/candidates?verdict=protect&override=spare")
-        assert _titles(response.json()) == {"Example Zulu"}
+        page = client.get("/api/candidates?verdict=protect&override=spare").json()
+        assert _titles(page["items"]) == {"Example Zulu"}
         # The totals describe the filtered set, exactly what the page is drawn from.
-        assert response.headers["X-Total-Count"] == "1"
+        assert page["total"] == 1
 
     def test_a_show_level_reap_covers_its_season(self, client: TestClient) -> None:
         # The override sits on the SHOW key (sonarr:1:5); the season row inherits it.
-        rows = client.get("/api/candidates?verdict=condemn&override=reap").json()
+        rows = client.get("/api/candidates?verdict=condemn&override=reap").json()["items"]
         assert _titles(rows) == {"Example Mid · Season 5"}
 
     def test_untouched_items_only(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=condemn&override=none").json()
+        rows = client.get("/api/candidates?verdict=condemn&override=none").json()["items"]
         assert _titles(rows) == {"Example Alpha"}
 
     def test_it_stacks_with_the_other_filters(self, client: TestClient) -> None:
         # A spare override AND a requester: Zulu is spared but was never requested.
-        rows = client.get("/api/candidates?verdict=condemn&override=spare&requested=yes").json()
+        rows = client.get("/api/candidates?verdict=condemn&override=spare&requested=yes").json()[
+            "items"
+        ]
         assert rows == []
 
     def test_a_season_spared_on_its_own_key_beats_its_shows_reap(self, client: TestClient) -> None:
@@ -263,15 +614,15 @@ class TestOverrideFilter:
         """
         assert (
             client.post(
-                "/api/whitelist",
+                "/api/override",
                 json={"media_key": "sonarr:1:5:5", "title": "Season 5", "decision": "spare"},
             ).status_code
             < 300
         )
-        spared = client.get("/api/candidates?verdict=protect&override=spare").json()
+        spared = client.get("/api/candidates?verdict=protect&override=spare").json()["items"]
         assert "Example Mid · Season 5" in _titles(spared)
         # And it is no longer counted under its show's reap.
-        reaped = client.get("/api/candidates?verdict=condemn&override=reap").json()
+        reaped = client.get("/api/candidates?verdict=condemn&override=reap").json()["items"]
         assert _titles(reaped) == set()
 
     def test_a_row_reports_both_the_spare_it_toggles_and_the_one_that_covers_it(
@@ -295,7 +646,7 @@ class TestOverrideFilter:
         ):
             assert (
                 client.post(
-                    "/api/whitelist",
+                    "/api/override",
                     json={
                         "media_key": key,
                         "title": title,
@@ -306,7 +657,7 @@ class TestOverrideFilter:
                 < 300
             )
 
-        rows = client.get("/api/candidates?verdict=protect&override=spare").json()
+        rows = client.get("/api/candidates?verdict=protect&override=spare").json()["items"]
         season = next(r for r in rows if r["media_key"] == "sonarr:1:5:5")
         assert season["spare_expires_at"] is not None, "the control still toggles the season's own"
         assert season["spare_covers_until"] is None, "the show's forever spare outlasts it"
@@ -322,7 +673,7 @@ class TestOverrideFilter:
         """
         assert (
             client.post(
-                "/api/whitelist",
+                "/api/override",
                 json={
                     "media_key": "sonarr:1:5:5",
                     "title": "Season 5",
@@ -332,7 +683,7 @@ class TestOverrideFilter:
             ).status_code
             < 300
         )
-        rows = client.get("/api/candidates?verdict=protect&override=spare").json()
+        rows = client.get("/api/candidates?verdict=protect&override=spare").json()["items"]
         season = next(r for r in rows if r["media_key"] == "sonarr:1:5:5")
         assert season["spare_covers_until"] == season["spare_expires_at"] is not None
 
@@ -344,7 +695,7 @@ class TestOverrideFilter:
         run past SQLite's bound-variable ceiling into a 500. It is derived from the
         operator's decisions now, so what must not change is which rows it names.
         """
-        rows = client.get("/api/candidates?verdict=condemn&override=none").json()
+        rows = client.get("/api/candidates?verdict=condemn&override=none").json()["items"]
         # Alpha has no decision at any level. The season is covered by its SHOW's reap and
         # Zulu by its own spare, so neither is untouched.
         assert _titles(rows) == {"Example Alpha"}
@@ -362,14 +713,14 @@ class TestTheShowKeyInvariantTheFilterRelieson:
     """
 
     def test_a_seasons_group_key_is_its_show_key(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=protect&media_type=season").json()
-        rows += client.get("/api/candidates?verdict=condemn&media_type=season").json()
+        rows = client.get("/api/candidates?verdict=protect&media_type=season").json()["items"]
+        rows += client.get("/api/candidates?verdict=condemn&media_type=season").json()["items"]
         assert rows, "the fixture must hold at least one season for this to mean anything"
         for row in rows:
             assert row["group_key"] == show_key(str(row["media_key"]))
 
     def test_a_movie_has_neither(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=condemn&media_type=movie").json()
+        rows = client.get("/api/candidates?verdict=condemn&media_type=movie").json()["items"]
         assert rows
         for row in rows:
             assert row["group_key"] is None
@@ -378,7 +729,7 @@ class TestTheShowKeyInvariantTheFilterRelieson:
 
 class TestSort:
     def test_by_title_ascending_uses_the_show_name(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=condemn&sort=title&order=asc").json()
+        rows = client.get("/api/candidates?verdict=condemn&sort=title&order=asc").json()["items"]
         # The season sorts under its show name ("Example Mid"), not its own full season title.
         # Example Zulu is spared by hand, so it rides the Kept lane and is not among these.
         assert [r["title"] for r in rows] == [
@@ -387,7 +738,7 @@ class TestSort:
         ]
 
     def test_by_year_descending_is_newest_first(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates?verdict=condemn&sort=year&order=desc").json()
+        rows = client.get("/api/candidates?verdict=condemn&sort=year&order=desc").json()["items"]
         # Newest first; the season carries no year and sorts last. Example Zulu (1995) is spared by
         # hand and rides the Kept lane, so Example Alpha now leads the condemned lane.
         assert [r["title"] for r in rows] == ["Example Alpha", "Example Mid · Season 5"]
@@ -414,7 +765,7 @@ class TestYearInSearch:
 
     @pytest.fixture
     def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         now = utcnow()
@@ -447,7 +798,7 @@ class TestYearInSearch:
             yield c
 
     def _found(self, client: TestClient, term: str) -> set[str]:
-        return _titles(client.get("/api/candidates", params={"search": term}).json())
+        return _titles(client.get("/api/candidates", params={"search": term}).json()["items"])
 
     def test_a_title_ending_in_a_year_it_predates_is_findable_by_its_whole_name(
         self, client: TestClient
@@ -494,7 +845,7 @@ class TestSearchIsLiteralText:
 
     @pytest.fixture
     def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         now = utcnow()
@@ -527,7 +878,7 @@ class TestSearchIsLiteralText:
             yield c
 
     def _found(self, client: TestClient, term: str) -> set[str]:
-        return _titles(client.get("/api/candidates", params={"search": term}).json())
+        return _titles(client.get("/api/candidates", params={"search": term}).json()["items"])
 
     def test_an_underscore_matches_only_an_underscore(self, client: TestClient) -> None:
         # As a wildcard this found "Example Alpha". As a literal it finds nothing, because no

@@ -80,8 +80,14 @@ class TautulliClient(BaseClient):
         )
         self._api_key = api_key
 
-    async def call(self, cmd: str, **params: Any) -> Any:
-        """Issue a read command and unwrap the response envelope."""
+    async def call(self, cmd: str, *, read_timeout: float | None = None, **params: Any) -> Any:
+        """Issue a read command and unwrap the response envelope.
+
+        ``read_timeout`` widens the read budget for this one call (``BaseClient._request``).
+        Every other command keeps the client's shared budget, which is the point: the history
+        sweep asks for tens of thousands of rows, while the artwork proxy on the same client
+        is answering a browser.
+        """
         if cmd not in READ_COMMANDS:
             # Not an IntegrationError: this is a programming error, and the request
             # must never be built. Tautulli's key can delete libraries and restart
@@ -95,7 +101,7 @@ class TautulliClient(BaseClient):
         query: dict[str, Any] = {"apikey": self._api_key, "cmd": cmd}
         query.update({k: v for k, v in params.items() if v is not None})
 
-        payload = await self.get_json("/api/v2", params=query)
+        payload = await self.get_json("/api/v2", params=query, read_timeout=read_timeout)
         if not isinstance(payload, dict):
             raise IntegrationError(self.service, f"{cmd}: unexpected response shape")
 
@@ -172,6 +178,7 @@ class TautulliClient(BaseClient):
         length: int = 100,
         start: int = 0,
         grouping: int = 0,
+        read_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Watch history.
 
@@ -179,9 +186,15 @@ class TautulliClient(BaseClient):
         query by ``grandparent_rating_key`` -- Seerr stores the *show* rating key,
         but history rows are per-episode, so filtering on ``rating_key`` would find
         nothing and report a watched show as never played.
+
+        ``read_timeout`` is the caller's own read budget for one page, which the mirror sweep
+        sets because it asks for tens of thousands of rows at a time
+        (``history_sync.PAGE_READ_TIMEOUT``). A per-item lookup passes nothing and keeps the
+        client's shared budget.
         """
         data = await self.call(
             "get_history",
+            read_timeout=read_timeout,
             rating_key=rating_key,
             parent_rating_key=parent_rating_key,
             grandparent_rating_key=grandparent_rating_key,

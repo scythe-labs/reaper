@@ -49,12 +49,14 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from reaper.aio import per_loop_lock
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
 from reaper.clients.public import PublicClient
 from reaper.clock import from_epoch, utcnow
 from reaper.engine import identity
 from reaper.engine.observation import Absent, Known, Observation
+from reaper.text import fold
 
 if TYPE_CHECKING:
     # Annotation only. ``list_config`` imports this module at runtime, so the runtime
@@ -272,16 +274,23 @@ class ImdbList:
         if not isinstance(payload, list):
             raise IntegrationError(self.slug, "expected a JSON array")
 
-        items = [
-            ListItem(
-                media_type="movie",
-                imdb_id=entry.get("ImdbId") or None,
-                tmdb_id=entry.get("TmdbId") or None,
-                title=str(entry.get("Title") or ""),
-                rank=None,  # See the class docstring. The source does not carry one.
+        # Through identity.ExternalIds.of like every other id write: the mirror emits
+        # `tt0000000` for a title it has no IMDb id for, and stored raw that row would be
+        # matched by every other item carrying the same sentinel (#709). The entry still
+        # becomes a ListItem either way; `is_protectable` is what decides whether an entry
+        # with no usable key is stored.
+        items: list[ListItem] = []
+        for entry in payload:
+            ids = identity.ExternalIds.of(imdb=entry.get("ImdbId"), tmdb=entry.get("TmdbId"))
+            items.append(
+                ListItem(
+                    media_type="movie",
+                    imdb_id=ids.imdb,
+                    tmdb_id=ids.tmdb,
+                    title=str(entry.get("Title") or ""),
+                    rank=None,  # See the class docstring. The source does not carry one.
+                )
             )
-            for entry in payload
-        ]
 
         if len(items) < floor:
             # A truncated or empty answer is worse than no answer: installing it would
@@ -303,7 +312,7 @@ def _tag_key(tag: str) -> str:
     through here, on BOTH sides, so a keep tag can never fail to match the label it
     names -- the ``plex.normalize_label`` of the *arr side.
     """
-    return tag.strip().casefold()
+    return fold(tag)
 
 
 def _name_key(name: str) -> str:
@@ -313,7 +322,7 @@ def _name_key(name: str) -> str:
     case-folded, or a library the operator spells "movies" never matches the configured
     "Movies" and their keep collection reads as a missing library.
     """
-    return name.strip().casefold()
+    return fold(name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -450,31 +459,37 @@ class ArrTagRule:
                 return wanted <= carried
             return not wanted.isdisjoint(carried)
 
+        # Through identity.ExternalIds.of, the same door the scan's own reads of these two
+        # payloads use: a raw `tt0000000` stored here is a row every other sentinel-bearing
+        # item matches, and a keep tag would report protecting titles it does not (#709).
         self.tag_counts.clear()
+        out: list[ListItem] = []
         if isinstance(self.client, RadarrClient):
-            movies = await self.client.movies()
-            out = [
-                ListItem(
-                    media_type="movie",
-                    imdb_id=m.get("imdbId") or None,
-                    tmdb_id=m.get("tmdbId") or None,
-                    title=str(m.get("title") or ""),
+            for m in await self.client.movies():
+                if not keeps(m):
+                    continue
+                ids = identity.ExternalIds.of(imdb=m.get("imdbId"), tmdb=m.get("tmdbId"))
+                out.append(
+                    ListItem(
+                        media_type="movie",
+                        imdb_id=ids.imdb,
+                        tmdb_id=ids.tmdb,
+                        title=str(m.get("title") or ""),
+                    )
                 )
-                for m in movies
-                if keeps(m)
-            ]
         else:
-            series = await self.client.series()
-            out = [
-                ListItem(
-                    media_type="tv",
-                    imdb_id=s.get("imdbId") or None,
-                    tvdb_id=s.get("tvdbId") or None,
-                    title=str(s.get("title") or ""),
+            for s in await self.client.series():
+                if not keeps(s):
+                    continue
+                ids = identity.ExternalIds.of(imdb=s.get("imdbId"), tvdb=s.get("tvdbId"))
+                out.append(
+                    ListItem(
+                        media_type="tv",
+                        imdb_id=ids.imdb,
+                        tvdb_id=ids.tvdb,
+                        title=str(s.get("title") or ""),
+                    )
                 )
-                for s in series
-                if keeps(s)
-            ]
         self.tag_counts.update(counts)
         return out
 
@@ -714,7 +729,8 @@ CREATE INDEX IF NOT EXISTS ix_pli_plex ON protection_list_item (plex_rating_key)
 #: Columns added to ``protection_list_item`` after it first shipped. ``CREATE TABLE IF NOT
 #: EXISTS`` leaves a table that already exists exactly as it is, so a stored ``cache.db``
 #: never sees a new column from :data:`SCHEMA` alone -- and this table is not Alembic's
-#: (``alembic/env.py`` excludes it), so nothing else would add it either. Additive only:
+#: (it lives in ``cache.db``, which alembic is never pointed at), so nothing else would add
+#: it either. Additive only:
 #: every one is nullable, and the next sync fills it in.
 _ADDED_COLUMNS = {"plex_rating_key": "INTEGER"}
 
@@ -724,6 +740,10 @@ _ADDED_COLUMNS = {"plex_rating_key": "INTEGER"}
 #: ``rule_name`` is what a keep rule matches (:func:`rule_name`); a stored row that predates
 #: it reads as its display name, which is what it was matched by before the column existed.
 _ADDED_LIST_COLUMNS = {"stats_json": "TEXT", "rule_name": "TEXT"}
+
+#: Serializes the widening in :func:`ensure_schema`, which is a check-then-write that SQLite
+#: does not serialize for us. Whole-process, so it holds across the seven callers.
+_widen_lock = per_loop_lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -786,23 +806,25 @@ async def ensure_schema(engine: AsyncEngine) -> None:
         for statement in SCHEMA.strip().split(";"):
             if statement.strip():
                 await conn.execute(text(statement))
-        stored = {
-            str(row.name)
-            for row in (await conn.execute(text("PRAGMA table_info(protection_list_item)"))).all()
-        }
-        for column, kind in _ADDED_COLUMNS.items():
-            if column not in stored:
-                # No ADD COLUMN IF NOT EXISTS in SQLite, so the PRAGMA above is the guard.
-                await conn.execute(
-                    text(f"ALTER TABLE protection_list_item ADD COLUMN {column} {kind}")
-                )
-        list_stored = {
-            str(row.name)
-            for row in (await conn.execute(text("PRAGMA table_info(protection_list)"))).all()
-        }
-        for column, kind in _ADDED_LIST_COLUMNS.items():
-            if column not in list_stored:
-                await conn.execute(text(f"ALTER TABLE protection_list ADD COLUMN {column} {kind}"))
+    # Each shape is re-read INSIDE the lock and its ALTERs decided from THAT, never from a
+    # read taken before it (rule 58). Nothing at the SQLite level serializes these: pysqlite
+    # autocommits DDL, so `engine.begin()` above and below opens no transaction around it,
+    # and there is no ADD COLUMN IF NOT EXISTS. Two callers reading the pre-widen shape both
+    # ALTER and the second raises `duplicate column name`, which aborts a scan -- and two
+    # callers is ordinary, since the Lists screen, a running scan and the nightly refresh all
+    # reach here on three different job ids.
+    async with _widen_lock(), engine.begin() as conn:
+        for table, added in (
+            ("protection_list_item", _ADDED_COLUMNS),
+            ("protection_list", _ADDED_LIST_COLUMNS),
+        ):
+            stored = {
+                str(row.name)
+                for row in (await conn.execute(text(f"PRAGMA table_info({table})"))).all()
+            }
+            for column, kind in added.items():
+                if column not in stored:
+                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {kind}"))
         for statement in INDEXES.strip().split(";"):
             if statement.strip():
                 await conn.execute(text(statement))

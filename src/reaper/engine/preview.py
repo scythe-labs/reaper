@@ -67,8 +67,14 @@ NOT_PROBED_REASON = "not part of this preview"
 
 _NOTHING = Unknown(source="preview", reason=NOT_PROBED_REASON)
 
-#: Long enough that the watch mirror never withholds a watcher count here. See the module
-#: docstring: the probe is about the ramp, and the shortfall has its own warning elsewhere.
+#: Long enough that the watch mirror never withholds a watcher count here. A century, above any
+#: history anyone has. See the module docstring: the probe is about the ramp, and the shortfall
+#: has its own warning elsewhere. ``history_shortfall`` returns ``None`` at ``reach >= needed``,
+#: so this only has to out-reach the window the engine is handed.
+#:
+#: It used to be half of a pair, with a ``MAX_PROBE_WINDOW_DAYS`` the wire read as the ceiling on
+#: a ``window_days`` a caller could send. The request field is gone, so the window is now the
+#: engine's own default and there is one number here rather than two held together by a rule.
 _REACH_DAYS = 36_500.0
 
 
@@ -89,6 +95,10 @@ def _bare_facts(field: str, value: float) -> Facts:
         "in_curated_list": _NOTHING,
         "is_whitelisted": _NOTHING,
         "history_reach_days": Known(value=_REACH_DAYS, source="preview"),
+        "rewatch_viewings": _NOTHING,
+        "rewatch_last_play_days": _NOTHING,
+        "rewatch_cohort_n": _NOTHING,
+        "rewatch_cohort_k": _NOTHING,
     }
     observations[field] = Known(value=value, source="preview")
     return Facts(**observations)  # type: ignore[arg-type]
@@ -100,21 +110,20 @@ class ProbeResult:
 
     ``points`` is what the rule moves the score by in its own direction -- pressure for a
     signal, and a discount for a keep rule when one is added -- so the editor renders any
-    kind the same way. ``detail`` is the engine's own words for the answer. Nothing renders it
-    today: ``signalRamp.ts`` words both the editor's sentence and the panel's row, so that is
-    where the two are held in step, and a second wording arriving over the wire would be a
+    kind the same way. It is the only field: the engine's own wording for the answer used to
+    ride beside it and no surface ever rendered it, because ``signalRamp.ts`` words both the
+    editor's sentence and the panel's row, and a second wording over the wire would be a
     third copy rather than the thing that reconciles them.
     """
 
     points: float
-    detail: str
 
 
 class UnprobableSignalError(LookupError):
     """A signal with no fact mapped to it, so there is nothing to try a value against."""
 
 
-def probe_signal(config: SignalConfig, value: float, *, window_days: int) -> ProbeResult:
+def probe_signal(config: SignalConfig, value: float) -> ProbeResult:
     """What a title at ``value`` would earn from this signal, in ``[0, weight]``.
 
     Raises ``UnprobableSignalError`` for an id missing from ``READS``, which the route turns into
@@ -125,5 +134,5 @@ def probe_signal(config: SignalConfig, value: float, *, window_days: int) -> Pro
     field = READS.get(config.signal)
     if field is None:
         raise UnprobableSignalError(config.signal)
-    result = evaluate_signal(config, _bare_facts(field, value), window_days=window_days)
-    return ProbeResult(points=result.pressure, detail=result.detail)
+    result = evaluate_signal(config, _bare_facts(field, value))
+    return ProbeResult(points=result.pressure)

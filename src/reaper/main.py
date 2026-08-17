@@ -8,7 +8,6 @@ import hashlib
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
 from platform import python_version
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -19,12 +18,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import __version__, logbuffer
+from reaper.aio import report_background_failure
 from reaper.api import tags as api_tags
+from reaper.api.about import router as about_router
 from reaper.api.auth import router as auth_router
 from reaper.api.backup import router as backup_router
 from reaper.api.breakdown import router as breakdown_router
@@ -40,22 +41,26 @@ from reaper.api.middleware import (
     api_key_scope_description,
     no_credential_needed,
 )
+from reaper.api.plex import router as plex_router
 from reaper.api.plex_trash import router as plex_trash_router
+from reaper.api.policy import router as policy_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
-from reaper.api.routes import router
+from reaper.api.review import router as review_router
 from reaper.api.runs import profile_router, reap_in_flight
 from reaper.api.runs import router as runs_router
 from reaper.api.scan import router as scan_router
 from reaper.api.settings import router as settings_router
 from reaper.api.setup import router as setup_router
+from reaper.api.simulate import router as simulate_router
+from reaper.api.vocabulary import router as vocabulary_router
 from reaper.api.whitelist import router as whitelist_router
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.recovery import clear_recovery_file, mint_recovery_token, recovery_base_url
 from reaper.auth.sessions import clear_recovery_marks
-from reaper.buildinfo import build_version, install_kind, install_root, is_release, short_commit
+from reaper.buildinfo import build_version, install_kind, is_release, project_root, short_commit
 from reaper.config import (
     Settings,
     get_settings,
@@ -63,6 +68,7 @@ from reaper.config import (
     parse_instance_seeds,
 )
 from reaper.crypto import SecretBox
+from reaper.db import schema_gate
 from reaper.db.models import Instance, InstanceKind, PlexServer
 from reaper.db.session import (
     create_cache_engine,
@@ -74,8 +80,7 @@ from reaper.logging import configure_logging
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import app_settings
 from reaper.services.scheduler import (
-    apply_maintenance_schedule,
-    apply_scan_schedule,
+    apply_stored_schedules,
     build_scheduler,
     catch_up_on_startup,
     track_running_jobs,
@@ -97,35 +102,27 @@ class HealthResponse(BaseModel):
     status: str
 
 
-def _report_background_failure(task: asyncio.Task[Any]) -> None:
-    """Log why a detached startup task died, instead of letting asyncio mumble at GC time.
+def _refuse_unservable_schema(revision: str | None) -> None:
+    """Stop the boot rather than serve a schema this build does not know (#565).
 
-    A task nobody awaits keeps its exception until it is garbage collected, and then all
-    the operator gets is a bare "Task exception was never retrieved" with no name attached
-    (PR-12). Cancellation is the normal shutdown path and says nothing.
+    ``schema_gate.refusal`` is the verdict; this is the app's half of it. Raising out of
+    the lifespan is what uvicorn turns into "Application startup failed" and a non-zero
+    exit, so no request is ever answered against a database an older build cannot read --
+    which is the alternative, and it fails item by item, hours later, mid-scan.
+
+    Preflight refuses the same database earlier on every boot that runs it (the container
+    entrypoint, ``scripts/dev-local.sh``, ``launcher.main``). This is the copy for a
+    process started without one, and it is the reason the claim covers *every* path into
+    the app rather than the packaged ones (rule 127).
+
+    The revision rides as its own log field, never inside the sentence: support wants the
+    hash and the operator cannot do anything with it (rule 21).
     """
-    if task.cancelled():
+    message = schema_gate.refusal(revision)
+    if message is None:
         return
-    exc = task.exception()
-    if exc is not None:
-        log.warning("startup.background_task_failed", task=task.get_name(), error=str(exc))
-
-
-async def _schema_revision(session: AsyncSession) -> str | None:
-    """The Alembic revision this database sits at, for the boot log.
-
-    Nothing else in the app reads it outside backup and restore, so "which schema is
-    this install on, and did the upgrade run" has no answer today -- migrations are
-    applied by a different process (the container entrypoint, or `launcher._migrate`)
-    whose output never reaches the log file the operator downloads. ``None`` is a
-    database built straight from the models, which is what a test carries.
-    """
-    try:
-        result = await session.execute(text("SELECT version_num FROM alembic_version"))
-    except OperationalError:
-        return None
-    row = result.first()
-    return str(row[0]) if row and row[0] else None
+    log.error("db.schema_refused", detail=message, revision=revision)
+    raise schema_gate.SchemaRefusedError(message)
 
 
 async def _integration_inventory(
@@ -160,6 +157,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = engine
     factory = create_session_factory(engine)
     app.state.session_factory = factory
+
+    # First, before the block below seeds instances and writes settings: a database at a
+    # revision this build never shipped is refused here rather than discovered later as SQL
+    # naming a column that is not there.
+    #
+    # Read through the gate's own reader rather than a second query beside it. There was one
+    # here -- an async `SELECT version_num` catching `OperationalError` alone -- and it fed
+    # this gate, so "no alembic_version table" and "could not read the database" arrived as
+    # the same `None`, which `refusal` unconditionally allows. That is rule 93's conflation
+    # sitting on the gate's input, and one reader with one error policy is the fix (rule 104).
+    # It also serves `db.ready` below, which is where the revision was first wanted.
+    revision = schema_gate.stored_revision(settings.database_path)
+    _refuse_unservable_schema(revision)
 
     # The caches live in their own file. See Settings.cache_database_url.
     cache_engine = create_cache_engine(settings)
@@ -252,7 +262,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         proxy_trust = await app_settings.proxy_trust_enabled(session, settings)
         offered = await app_settings.get_trusted_proxies(session, settings) if proxy_trust else []
         app.state.trusted_proxies = parse_proxy_networks(offered) if proxy_trust else ()
-        revision = await _schema_revision(session)
         integrations = await _integration_inventory(session, box, settings)
         await session.commit()
 
@@ -349,7 +358,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     scheduler = build_scheduler(
         cache_engine,
-        settings.data_dir,
         session_factory=factory,
         secret_box=box,
         settings=settings,
@@ -367,43 +375,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.start()
     app.state.scheduler = scheduler
 
-    # Restore the owner's automatic-scan schedule, if they set one. A scan is read-only,
-    # so this is the one scheduled job that produces new review candidates; the rest is
-    # cache upkeep. A stored-but-malformed cron is logged and skipped rather than crashing
-    # startup.
-    if scan_cron:
-        try:
-            apply_scan_schedule(
-                scheduler,
-                scan_cron,
-                settings=settings,
-                session_factory=factory,
-                cache_engine=cache_engine,
-                secret_box=box,
-                timezone=scheduler_tz,
-            )
-        except ValueError:
-            log.warning("scheduler.bad_scan_cron", cron=scan_cron)
-
-    # Restore any upkeep-job schedule the owner changed from the built-in default -- a new
-    # cron, or off entirely. build_scheduler already wired the defaults; this overrides only
-    # the jobs with a stored value. A malformed stored cron leaves the default in place.
-    for job_id, cron in maintenance_schedules.items():
-        try:
-            apply_maintenance_schedule(
-                scheduler,
-                job_id,
-                cron,
-                cache_engine=cache_engine,
-                data_dir=settings.data_dir,
-                session_factory=factory,
-                secret_box=box,
-                settings=settings,
-                update_checker=app.state.update_checker,
-                timezone=scheduler_tz,
-            )
-        except (ValueError, KeyError):
-            log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)
+    # Restore what the owner stored: the automatic-scan cron if they set one, and any upkeep
+    # job they moved off its built-in default or turned off. A scan is read-only, so it is the
+    # one scheduled job that produces new review candidates; the rest is cache upkeep.
+    #
+    # The same call the timezone save makes, which is the point -- this used to be the same two
+    # ladders written out again here, and a guard that boot survives is only worth anything if
+    # the runtime replay of the same data survives it too (rule 87). A stored-but-malformed
+    # cron is logged and skipped in there rather than crashing startup.
+    apply_stored_schedules(
+        scheduler,
+        scheduler_tz,
+        settings=settings,
+        session_factory=factory,
+        cache_engine=cache_engine,
+        secret_box=box,
+        update_checker=app.state.update_checker,
+        scan_cron=scan_cron,
+        maintenance=maintenance_schedules,
+    )
 
     # Every registered job with its next firing, after the stored schedules have been
     # applied so this is the table that will actually run. Without it "why did my nightly
@@ -423,8 +413,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             detail="No automatic scan is scheduled. Reaper only scans when you ask it to.",
         )
 
-    catch_up = asyncio.create_task(catch_up_on_startup(cache_engine, settings.data_dir))
-    catch_up.add_done_callback(_report_background_failure)
+    catch_up = asyncio.create_task(
+        catch_up_on_startup(cache_engine, settings.data_dir), name="catch_up"
+    )
+    catch_up.add_done_callback(report_background_failure)
 
     try:
         yield
@@ -538,7 +530,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         The SPA renders ``detail[].msg`` verbatim (``api.ts``'s ``reason``), so a domain
         refusal raised in a schema validator reached the operator as "Value error, There is
         no ... protection to switch on" -- internal vocabulary in front of a plain sentence,
-        which rule 21 does not allow. ``routes._to_body`` already strips exactly this for
+        which rule 21 does not allow. ``policy._to_body`` already strips exactly this for
         refusals raised inside a route; this is the same removal for the ones FastAPI
         handles before the route body ever runs, so both paths read alike.
 
@@ -614,7 +606,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         that is reach the session lacked, since the SPA holds the same cookie; what
         changes is that the SPA spends it behind its own confirmations and this page
         spends it on one click. Say it plainly wherever the link is handed out rather than
-        rounding it off here: the "API reference" row in ``Settings.tsx`` is the copy that
+        rounding it off here: the "API reference" row in ``GeneralPanel.tsx`` is the copy that
         has to carry it, and this paragraph existing is not a substitute for that one.
 
         The header itself is not a credential. It proves same-origin, which this page is,
@@ -640,7 +632,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         entirely** -- once ``x-tagGroups`` is present Scalar builds the sidebar from the
         group members alone, so an ungrouped tag emits no navigation entry and its
         operations are reachable only by someone who already knows the path. Measured
-        against the shipped bundle by retagging one route: 86 of 87 operations
+        against the shipped bundle by retagging one route: every other operation
         navigable, the retagged one absent, and no stray heading.
         ``tests/test_openapi_tags.py`` refuses it for that reason, not for tidiness.
         """
@@ -659,8 +651,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "in": "header",
                 "name": "X-Api-Key",
                 # Built from the fence in api/middleware.py, never written beside it: the
-                # box that offers the key on all 87 operations has to say which ones it
-                # will actually get through.
+                # box that offers the key on every operation in the document has to say
+                # which ones it will actually get through. Neither sentence carries the
+                # operation count any more -- both said 87 against a real 96, drifting once
+                # per route added and reading as measured the whole time (rule 144). The
+                # count was load-bearing in neither, so it is gone rather than gated.
                 "description": api_key_scope_description(),
             }
             components["securitySchemes"]["Session"] = {
@@ -741,8 +736,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(setup_router)
     app.include_router(settings_router)
+    # Beside its parent, which is where a reader looks for it. Not an ordering
+    # constraint: `paths` insertion order moves whatever the include order, and
+    # nothing reads it.
+    app.include_router(plex_router)
     app.include_router(backup_router)
-    app.include_router(router)
+    # The five that used to be one API routes module, in the order its four banners drew them. The
+    # sections were contiguous there, so including them in that order reproduces the served
+    # route table **exactly** -- 79 paths and 96 operations, position for position, measured
+    # against the pre-split document rather than assumed. Keep them in this order: FastAPI
+    # matches first-registered-wins, and while no parameterized path in this app currently
+    # shadows a literal sibling, that is a property of today's paths and not of the framework.
+    app.include_router(review_router)
+    app.include_router(policy_router)
+    app.include_router(simulate_router)
+    app.include_router(vocabulary_router)
+    app.include_router(about_router)
     app.include_router(scan_router)
     app.include_router(poster_router)
     app.include_router(runs_router)
@@ -773,8 +782,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # directory that was never built -- so that case still warns rather than passing.
     # In a packaged install (frozen bundle, snap) the install root stands in for the
     # repo root: the built SPA travels inside it, with no src/ level above the package.
-    root = install_root() or Path(__file__).resolve().parent.parent.parent
-    dist = root / "frontend" / "dist"
+    dist = project_root() / "frontend" / "dist"
     if not settings.serve_spa:
         log.info(
             "frontend.not_served",

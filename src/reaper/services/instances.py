@@ -23,6 +23,7 @@ import json
 import ssl
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import ClassVar
 from urllib.parse import urlsplit
 
 import httpx2
@@ -64,16 +65,36 @@ SINGLETON_KINDS: frozenset[InstanceKind] = frozenset({InstanceKind.TAUTULLI})
 
 
 class InstanceError(RuntimeError):
-    """A configuration change could not be applied (e.g. a duplicate name)."""
+    """A configuration change could not be applied (e.g. a duplicate name).
+
+    **The status is declared here, not at the ``except``.** Each subclass below already
+    described the status it means in prose, and ``api/settings.py`` then hand-wrote that
+    number at five sites -- so the number and the sentence explaining it lived in different
+    files and only agreed by inspection (rule 144). ``restore.RestoreError`` already carried
+    its own; this is the same shape, per subclass rather than per raise, because here the
+    class *is* the discriminator and a raise site cannot then pass the wrong one.
+
+    422 is the base: the request was well-formed but the service refused its content, which
+    is what a blank required field is. A subclass meaning something else says so by
+    overriding, and a subclass that says nothing inherits the answer that blames the payload
+    rather than one that invents a resource state nobody checked.
+    """
+
+    #: The HTTP status the API answers with. Read by every ``except InstanceError`` arm.
+    status: ClassVar[int] = 422
 
 
 class InstanceNotFoundError(InstanceError):
     """The referenced instance does not exist -- the caller should see a 404."""
 
+    status: ClassVar[int] = 404
+
 
 class InstanceConflictError(InstanceError):
     """The change collides with an existing instance (a duplicate name) -- a 409, not a
     404: the request was well-formed and the target exists, it just cannot be applied."""
+
+    status: ClassVar[int] = 409
 
 
 @dataclass(frozen=True)

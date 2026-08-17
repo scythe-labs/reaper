@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 //
 // .github/social-preview.png is a snapshot of socialCardSvg at the default accent, produced by
 // `npm run social-card`. This guards it against two different kinds of drift.

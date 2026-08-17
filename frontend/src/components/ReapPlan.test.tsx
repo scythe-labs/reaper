@@ -3,30 +3,17 @@
 // plan can list titles that scan would now protect, so the warning has to sit in the summary
 // that carries Execute, next to the button that rebuilds it. These pin that it is there, and
 // that "we could not check" is said out loud rather than rendering nothing.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Run, Snapshot } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_PROFILE, IDLE_SCAN, READY_SETUP } from "../test/apiFixtures";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { ReapPlan } from "./ReapPlan";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    safety: vi.fn(),
-    createRun: vi.fn(),
-    run: vi.fn(),
-    dryRun: vi.fn(),
-    runs: vi.fn(),
-    latestSnapshot: vi.fn(),
-    reapBreakdown: vi.fn(),
-    plexTrash: vi.fn(),
-    profile: vi.fn(),
-    scanStatus: vi.fn(),
-    setupStatus: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -48,15 +35,12 @@ beforeEach(() => {
 const run = {
   id: 3,
   snapshot_id: 1,
-  policy_hash: "p",
   state: "planned",
   item_count: 2,
   total_bytes: 1024 ** 3,
   held_back_unknown_size: 0,
   confirmation_phrase: "REAP 2 ITEMS 1 GB",
-  approved_manifest_hash: "m",
-  approved_by: "owner",
-  approved_at: "2026-01-01T00:00:00+00:00",
+  step_count: 2,
   // Two steps, because `item_count` is 2: a run carrying a count with no steps under it is a
   // plan the planner cannot build, and the page renders `steps` unconditionally, so an empty
   // one drew a `<thead>` over an empty `<tbody>` -- a headers-only data table, which axe files
@@ -84,6 +68,7 @@ const snapshot: Snapshot = {
   item_count: 10,
   degraded: false,
   degraded_reason: null,
+  degraded_doc: null,
   condemned: 2,
   protected: 3,
   abstained: 5,
@@ -92,11 +77,8 @@ const snapshot: Snapshot = {
 };
 
 async function buildPlan() {
-  const queryClient = testQueryClient();
-  const { container } = render(
-    <QueryClientProvider client={queryClient}>
-      <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />
-    </QueryClientProvider>,
+  const { container } = renderWithProviders(
+    <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />,
   );
   const person = userEvent.setup();
   await person.click(screen.getByRole("button", { name: /build a plan/i }));
@@ -122,11 +104,9 @@ describe("ReapPlan staleness", () => {
       has_snapshot: true,
       policy_condemned: 2,
       policy_condemned_bytes: 1024 ** 3,
-      policy_condemned_unknown: 0,
       hand_spared: 0,
       hand_reaped: 0,
       hand_reaped_bytes: 0,
-      hand_reaped_unknown: 0,
       will_reap: 2,
       will_reap_bytes: 1024 ** 3,
       will_reap_unknown: 0,
@@ -149,6 +129,27 @@ describe("ReapPlan staleness", () => {
   it("has no accessibility violations", async () => {
     const { container } = await buildPlan();
     await expectNoA11yViolations(container);
+  });
+
+  it("counts the rows it is not showing off step_count, never off the page it was sent", async () => {
+    // The response carries a WINDOW of the journal, so the rows this line is counting are not
+    // in it. Subtracting the page from itself reads zero, the line disappears, and the operator
+    // sees 50 rows with nothing saying the plan is 500 -- the copy failing in the reassuring
+    // direction, beside a destructive action (rule 62). Driven: `steps.length` here renders
+    // "NaN more steps" against this fixture, since a windowed response is exactly the case
+    // where the two numbers differ.
+    apiMock.createRun.mockResolvedValue({ ...run, step_count: 500 });
+    apiMock.run.mockResolvedValue({ ...run, step_count: 500 });
+    await buildPlan();
+
+    expect(await screen.findByText(/498 more steps, not shown/i)).toBeInTheDocument();
+    expect(screen.getByText(/The run still covers every one of them/i)).toBeInTheDocument();
+  });
+
+  it("says nothing about hidden rows when the window holds the whole plan", async () => {
+    await buildPlan();
+
+    expect(screen.queryByText(/not shown/i)).not.toBeInTheDocument();
   });
 
   it("says nothing when the plan came from the newest scan", async () => {
@@ -294,11 +295,8 @@ describe("the plan the page is showing", () => {
     // one query, so a failed fetch used to unmount all of it with no message and no retry, and
     // clicking a history row simply looked like it did nothing (rule 36).
     apiMock.run.mockRejectedValue(new Error("the server dropped it"));
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />
-      </QueryClientProvider>,
+    renderWithProviders(
+      <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />,
     );
     const person = userEvent.setup();
     await person.click(await screen.findByRole("button", { name: `#${run.id}` }));
@@ -318,14 +316,32 @@ describe("the plan the page is showing", () => {
       degraded: true,
       degraded_reason: "A source didn't answer.",
     });
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />
-      </QueryClientProvider>,
+    renderWithProviders(
+      <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />,
     );
     expect(await screen.findByText(/came back incomplete/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /build a plan/i })).toBeDisabled();
+    // No page for a source that did not answer, and the pair below is the other branch.
+    expect(screen.queryByRole("button", { name: /rebuilding a plex library/i })).toBeNull();
+  });
+
+  it("offers the help page here too, when the scan named one", async () => {
+    // `ScanBar` renders the same pair off the same field (rule 72). Pinned at both call sites
+    // rather than in the shared component alone: what can go wrong here is this page not
+    // passing the field, which a component test cannot see.
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...snapshot,
+      id: run.snapshot_id,
+      degraded: true,
+      degraded_reason: "Plex is listing 210 of the 240 titles Reaper knows as brand new.",
+      degraded_doc: "plex-rebuild",
+    });
+    renderWithProviders(
+      <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />,
+    );
+    expect(
+      await screen.findByRole("button", { name: /rebuilding a plex library/i }),
+    ).toBeInTheDocument();
   });
 });
 

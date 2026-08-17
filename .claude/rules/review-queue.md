@@ -35,8 +35,9 @@ chosen decision is the solid hand-decision chip.
   the one place it lives; the show
   card's whole-show control and `ShowPanel` both call it, never a fourth inline copy.
 - **Every whole-show `hideReap` computation runs over the whole show, every lane.**
-  `showReapIsNoop` and `groupReapEffective` take `group.seasons` in the panel and `group_seasons`
-  (the strip marks, held as `showSeasons`) on the card, never the tab-filtered page — which on the
+  `showReapIsNoop` and `groupReapEffective` take `group.seasons` in the panel and the page's
+  per-show rollup (the strip marks, held as `showSeasons`) on the card, never the tab-filtered
+  page — which on the
   Condemned lane holds only the show's condemned seasons, and would hide the one control that
   reaps the show's kept seasons. The whole-show control's *lit* state is a separate question and
   is never an aggregate: it reads the show's OWN `show_override` (rule 50). `ShowPanel` carries
@@ -61,7 +62,7 @@ add the surface to `handFate`, and its class after the scan-verdict classes so i
 **50. An override control reflects and acts on its OWN level; the effective (inherited) decision
 colors the row but never lights a control.** The whitelist keeps a decision at two levels — a
 whole show (its show key) or a single season (its own key), the season's winning — so three views
-ride on every candidate, built once in `_candidate_out` / `GroupOut` (`api/routes.py`) from the
+ride on every candidate, built once in `_candidate_out` / `GroupOut` (`api/review.py`) from the
 one `whitelist.effective_override` + `show_key`, never recomputed as a client-side aggregate:
 - `override` — the decision *in effect* (own or inherited); colors the chip, score, and strip.
 - `override_own` — the item's own decision, and the ONLY value a Spare/Reap control passes to

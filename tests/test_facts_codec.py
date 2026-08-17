@@ -26,7 +26,7 @@ from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource
 
 
-def _obs(value_strategy: st.SearchStrategy[object]) -> st.SearchStrategy[Observation[object]]:
+def _obs[T](value_strategy: st.SearchStrategy[T]) -> st.SearchStrategy[Observation[T]]:
     return st.one_of(
         value_strategy.map(lambda v: Known(value=v, source="s")),
         st.just(Absent(source="s")),
@@ -64,6 +64,10 @@ def _facts(draw: st.DrawFn) -> Facts:
         release_age_days=draw(_obs(st.floats(0, 40000, allow_nan=False))),
         quality=draw(_obs(st.text(max_size=15))),
         show_ended=draw(_obs(st.booleans())),
+        rewatch_viewings=draw(_obs(st.integers(0, 5_000))),
+        rewatch_last_play_days=draw(_obs(st.floats(0, 9000, allow_nan=False))),
+        rewatch_cohort_n=draw(_obs(st.integers(0, 5_000))),
+        rewatch_cohort_k=draw(_obs(st.integers(0, 5_000))),
         ratings=tuple(draw(st.lists(_RATING, max_size=5))),
     )
 

@@ -4,8 +4,7 @@
 // false and every other suite in this tree exercises the rail; the picker is only reachable with
 // the query stubbed, which is what these do. Only one of the two is ever rendered, so each test
 // also asserts the absence of the other -- a CSS-hidden twin would leave both in the tree.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -18,52 +17,12 @@ import {
 } from "../test/apiFixtures";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
-import { PANELS as DECLARED_PANELS, Settings } from "./Settings";
+import { renderWithProviders } from "../test/renderWithProviders";
+import { useState } from "react";
+import { PANELS as DECLARED_PANELS, type Panel, Settings } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    update: vi.fn(),
-    about: vi.fn(),
-    safety: vi.fn(),
-    general: vi.fn(),
-    saveGeneral: vi.fn(),
-    // Plex and Notifications hold drafts of their own, so the switch guard is exercised on
-    // those panels too and both trees mount here. Rule 135: a module mock answers everything
-    // the tree under test reads, including the reads no test in the file names.
-    plexStatus: vi.fn(),
-    plexResources: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-    setPlexLibraries: vi.fn(),
-    watchEvidence: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    setLeavingSoonSettings: vi.fn(),
-    syncLeavingSoon: vi.fn(),
-    setPlexSettings: vi.fn(),
-    plexSetConnection: vi.fn(),
-    plexSwitchServer: vi.fn(),
-    plexUnlink: vi.fn(),
-    plexLinkStart: vi.fn(),
-    plexLinkPoll: vi.fn(),
-    // Lists renders on every panel switch this file drives, so its read is answered here
-    // too. Rule 135: an omitted key is `undefined`, which React Query files as a failed
-    // read, and the panel would render its error branch with nothing saying so.
-    lists: vi.fn(),
-    notifications: vi.fn(),
-    setWebhook: vi.fn(),
-    testWebhook: vi.fn(),
-    clearWebhook: vi.fn(),
-    // Security and Backup hold drafts inside a child component, so both trees mount here too.
-    setAdminPassword: vi.fn(),
-    // Security's password form reads ["me"] for the recovery mark that excuses the current
-    // password. Rule 135: answer it, or the form renders its strict branch off a failed read.
-    me: vi.fn(),
-    backupInfo: vi.fn(),
-    restorePrepare: vi.fn(),
-    restoreConfirm: vi.fn(),
-    restoreCancel: vi.fn(),
-    downloadBackup: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -147,7 +106,6 @@ beforeEach(() => {
   apiMock.restorePrepare.mockResolvedValue({
     app_version: null,
     created_at: null,
-    revision: null,
     verdict: "current",
     key_in_backup: true,
     reaper_db_bytes: 1024,
@@ -161,18 +119,37 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** `App` owns which panel is open, so the address bar can name it (`/settings/logs`, navUrl.ts).
+ *  This is that owner, so a rail click moves here the way it moves in the app. A test rendering
+ *  `Settings` with a fixed `panel` would sit still through every click and prove nothing. */
+function SettingsAt({ open, jumper = false }: { open: Panel; jumper?: boolean }) {
+  const [panel, setPanel] = useState(open);
+  // The user menu's update item, wired the way `App` wires it: it asks for About rather than
+  // setting it, so the confirm inside Settings gets to refuse (#794). Rendered only for the
+  // tests about that route, so the rail tests keep counting the rail's own buttons.
+  const [jump, setJump] = useState<{ panel: Panel; nonce: number } | null>(null);
+  return (
+    <>
+      {jumper && (
+        <button onClick={() => setJump((j) => ({ panel: "about", nonce: (j?.nonce ?? 0) + 1 }))}>
+          Update available
+        </button>
+      )}
+      <Settings panel={panel} onPanelChange={setPanel} jump={jump} />
+    </>
+  );
+}
+
 function renderSettings(
   initialPanel: "about" | "general" | "plex" | "notifications" | "security" | "backup" = "about",
+  jumper = false,
 ) {
   // Seeded, not just mocked: the General panel renders its fields from this read, and a mocked
   // answer lands a microtask later -- after a synchronous assertion, which would then be about
   // the "Loading…" panel rather than the one an operator types into (rule 136).
-  const queryClient = seedSettings(testQueryClient());
-  render(
-    <QueryClientProvider client={queryClient}>
-      <Settings initialPanel={initialPanel} />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<SettingsAt open={initialPanel} jumper={jumper} />, {
+    client: seedSettings(testQueryClient()),
+  });
   return userEvent.setup();
 }
 
@@ -331,6 +308,47 @@ describe("leaving General with something unsaved", () => {
 
     expect(warning()).toBeNull();
     expect(await screen.findByRole("heading", { name: "Security" })).toBeInTheDocument();
+  });
+
+  // The third way in, and the one that went around this confirm entirely: the user menu's update
+  // item is outside Settings, so it asked `App` for a panel and `App` set it. Everything typed
+  // went with the panel that unmounted, on a press that says nothing about settings at all (#794).
+  it("holds a jump from outside the page, the same as a rail click", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("general", true);
+    const url = await typeADraft(person);
+
+    await person.click(screen.getByRole("button", { name: "Update available" }));
+
+    expect(warning()!.textContent).toContain(
+      "You have unsaved General settings. Switching to About discards them.",
+    );
+    expect(heading()).toBe("General");
+    expect(url).toHaveValue("https://reaper.example.com");
+  });
+
+  it("lets a jump through on Discard and switch", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("general", true);
+    await typeADraft(person);
+
+    await person.click(screen.getByRole("button", { name: "Update available" }));
+    await person.click(screen.getByRole("button", { name: "Discard and switch" }));
+
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
+    expect(warning()).toBeNull();
+    expect(apiMock.saveGeneral).not.toHaveBeenCalled();
+  });
+
+  it("takes a jump straight through when the panel holds nothing", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("general", true);
+    await screen.findByLabelText("Application URL");
+
+    await person.click(screen.getByRole("button", { name: "Update available" }));
+
+    expect(warning()).toBeNull();
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
   });
 
   it("stops warning once the draft is discarded", async () => {

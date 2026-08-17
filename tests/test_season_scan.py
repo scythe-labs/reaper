@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from collections.abc import Set as AbstractSet
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -33,17 +35,29 @@ from reaper.db.session import create_cache_engine
 from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Unknown
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
 from reaper.engine.signals import Score, SignalConfig
 from reaper.engine.signals import score as score_signals
 from reaper.ratings import Rating, RatingSource
-from reaper.services import history_sync, lists, requested_by, season_scan
+from reaper.services import history_sync, lists, requested_by, rewatch, season_evidence, season_scan
 from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import plan_series_prune
-from reaper.services.snapshot import _explain, _verdict
+from reaper.services.snapshot import _explain, _verdict, judge_facts
+from tests._fakes import FakeSonarr, FakeTautulli, show_library
 
 GB = 1024**3
+
+
+def _season_policy(**edits: Any) -> season_evidence.SeasonPolicy:
+    """The shipped TV policy's nine season settings, with whichever ones a test varies.
+
+    Built through the real ``from_body`` off ``DEFAULT_TV_POLICY`` rather than spelled out,
+    so the settings a test does not vary are the shipped values and not a second copy of
+    them (rule 119). ``season_scan.gather`` held that copy as seven keyword defaults until
+    it took the carrier.
+    """
+    return replace(season_evidence.SeasonPolicy.from_body(DEFAULT_TV_POLICY), **edits)
 
 
 def _season(
@@ -322,11 +336,11 @@ def _hand_reap(result: GateResult) -> str:
     again**, which is exactly what the reversal bought and exactly what a future change
     re-adding a hold would break.
 
-    It goes through the freeze rather than ``snapshot._verdict(..., override="reap")`` for
-    two reasons. That call is a dead path -- its only caller, ``judge_facts``, passes
-    ``override=None`` unconditionally, and ``effective_fate`` routes every hand reap through
-    ``condemned`` off the frozen explanation instead -- so asserting on it proved nothing
-    about production. And going through ``_explain`` makes these assertions cover the
+    It goes through the freeze because that is the only way a hand reap is decided:
+    ``effective_fate`` routes every one of them through ``condemned`` off the frozen
+    explanation, and ``snapshot._verdict`` takes no override at all. It used to take one and
+    no caller ever passed it, so asserting through that parameter proved nothing about
+    production; it is gone. Going through ``_explain`` also makes these assertions cover the
     writer: a field the writer stops emitting changes the answer here.
     """
     policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})
@@ -340,7 +354,7 @@ class TestGuardResult:
     def test_a_protected_season_becomes_a_protecting_gate(self) -> None:
         plan = plan_series_prune(series_title="S", seasons=[_season(1), _season(2)], keep_last=1)
         # Season 1 is the first season -> protected.
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
         assert result.gate is GateId.SEASON_PROGRESSION
         assert result.outcome == PROTECT
 
@@ -355,7 +369,7 @@ class TestGuardResult:
             keep_first_season=False,
             watchers_by_season={1: 40, 2: 1, 3: 1, 4: 1},
         )
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
         assert result.outcome == ABSTAIN
         assert result.blocked is True
 
@@ -366,7 +380,7 @@ class TestGuardResult:
             keep_last=1,
             keep_first_season=False,
         )
-        result = season_scan.guard_result(plan, 2)
+        result = season_evidence.guard_result(plan, 2)
         assert result.outcome == ABSTAIN
         assert result.blocked is False
 
@@ -376,7 +390,7 @@ class TestGuardResult:
         is the decision it asked for.
 
         The flag no longer decides the reap -- no block does -- but it still picks the chip
-        the operator reads (``api.routes._chip``), which is why it is still produced and
+        the operator reads (``api.review._chip``), which is why it is still produced and
         still asserted here. It is the one shape whose chip names the comparison."""
         plan = plan_series_prune(
             series_title="S",
@@ -385,7 +399,7 @@ class TestGuardResult:
             keep_first_season=False,
             watchers_by_season={1: 40, 2: 1, 3: 1, 4: 1},
         )
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
 
         assert result.blocked is True
         assert result.defers_to_owner is True
@@ -410,7 +424,7 @@ class TestGuardResult:
             keep_first_season=False,
             watchers_by_season={1: 40, 2: 1, 3: 1, 4: None},
         )
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
 
         assert result.blocked is True
         assert result.defers_to_owner is False
@@ -442,7 +456,7 @@ class TestGuardResult:
         season_2 = [c for c in plan.conflicts if c.pruned_season == 2]
         assert [c.kept_watchers for c in season_2] == [0, 2, None]
 
-        result = season_scan.guard_result(plan, 2)
+        result = season_evidence.guard_result(plan, 2)
 
         assert result.blocked is True
         assert result.defers_to_owner is False
@@ -468,7 +482,7 @@ class TestGuardResult:
             watchers_by_season={1: 0, 2: 0, 3: 1, 4: 1},
             shortfall_by_season={1: "your watch history only goes back 12 months"},
         )
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
 
         assert result.blocked is True
         assert result.defers_to_owner is False
@@ -495,7 +509,7 @@ class TestGuardResult:
             "your watch history only goes back 12 months",
         ]
 
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
 
         assert result.defers_to_owner is False
         assert "Season 4" in result.detail
@@ -512,6 +526,9 @@ def _facts(**over: Any) -> Any:
         "season": _season(3, size=8 * GB),
         "rank": 2,
         "plex_rating_key": 700,
+        # No ledger row: the ordinary state of a season Reaper has not bound before, and
+        # what every case here that is not about #553 wants.
+        "seen": None,
         "season_added_at": utcnow() - timedelta(days=4000),
         "horizon": utcnow() - timedelta(days=4000),
         # Sampled once per scan on ``snapshot.ScanContext``, so the builder is handed it
@@ -699,6 +716,25 @@ class TestBuildSeasonFacts:
         facts = _facts(season_added_at=None, last_played=None)
         assert isinstance(facts.days_observed_unwatched, Unknown)
 
+    def test_a_season_carries_whatever_rewatch_observations_it_is_given(self) -> None:
+        """The builder no longer hardcodes the show's rewatch pair (#554 TV): it is a
+        pass-through, exactly like ``show_ended`` -- ``_judge_series`` computes the real
+        Known/Absent/Unknown once per show and hands it in ready-made
+        (``TestShowLevelRewatchFacts`` covers that computation end to end). A caller that
+        supplies neither still gets the fail-closed ``Absent`` default, which is what a raw
+        call with nothing to report should read as."""
+        viewings = Known(value=3, source="tautulli")
+        last_play_days = Known(value=17, source="tautulli")
+        facts = _facts(
+            plex_rating_key=700, rewatch_viewings=viewings, rewatch_last_play_days=last_play_days
+        )
+        assert facts.rewatch_viewings is viewings
+        assert facts.rewatch_last_play_days is last_play_days
+
+        defaulted = _facts(plex_rating_key=700)
+        assert isinstance(defaulted.rewatch_viewings, Absent)
+        assert isinstance(defaulted.rewatch_last_play_days, Absent)
+
     def test_no_arrival_date_but_a_play_measures_from_the_play(self) -> None:
         """The state neither lane had a test for (#257), on the lane that got it right.
 
@@ -740,7 +776,7 @@ def _judge(facts: Any, guard: Any = None) -> str:
 class TestNothingUnseenIsCondemned:
     def test_an_unresolved_season_cannot_be_condemned(self) -> None:
         facts = _facts(plex_rating_key=None)
-        clean = season_scan.guard_result(
+        clean = season_evidence.guard_result(
             plan_series_prune(
                 series_title="S", seasons=[_season(3)], keep_last=0, keep_first_season=False
             ),
@@ -752,7 +788,7 @@ class TestNothingUnseenIsCondemned:
         """The other side of the guarantee: when the evidence is real and the guards allow
         it, a season IS condemnable -- otherwise the whole path would be inert."""
         facts = _facts(plex_rating_key=700, last_played=None, watchers_window=0)
-        clean = season_scan.guard_result(
+        clean = season_evidence.guard_result(
             plan_series_prune(
                 series_title="S",
                 seasons=[_season(n) for n in range(1, 6)],
@@ -765,7 +801,7 @@ class TestNothingUnseenIsCondemned:
 
     def test_a_guard_protected_season_wins_over_any_score(self) -> None:
         facts = _facts(plex_rating_key=700, last_played=None, watchers_window=0)
-        protect = season_scan.guard_result(
+        protect = season_evidence.guard_result(
             plan_series_prune(series_title="S", seasons=[_season(3)], keep_last=1), 3
         )
         assert protect.outcome == PROTECT
@@ -784,7 +820,7 @@ class TestNothingUnseenIsCondemned:
             last_played=None,
             watchers_window=0,
         )
-        clean = season_scan.guard_result(
+        clean = season_evidence.guard_result(
             plan_series_prune(
                 series_title="S",
                 seasons=[_season(n) for n in range(1, 7)],
@@ -806,7 +842,7 @@ class TestNothingUnseenIsCondemned:
             last_played=None,
             watchers_window=0,
         )
-        clean = season_scan.guard_result(
+        clean = season_evidence.guard_result(
             plan_series_prune(
                 series_title="S",
                 seasons=[_season(n) for n in range(1, 6)],
@@ -841,6 +877,7 @@ async def _episode(
     days_ago: int = 1,
     episode: int | None = None,
     status: float | None = 1.0,
+    percent_complete: int = 100,
 ) -> None:
     """``status=None`` is the row Tautulli never told us the completion of."""
     when = int((utcnow() - timedelta(days=days_ago)).timestamp())
@@ -850,7 +887,7 @@ async def _episode(
                 "INSERT INTO watch_event (rating_key, parent_rating_key, "
                 "grandparent_rating_key, user_id, watched_at, watched_status, "
                 "percent_complete, media_type, media_index) "
-                "VALUES (:rk, :season, :show, :uid, :ts, :status, 100, 'episode', :ep)"
+                "VALUES (:rk, :season, :show, :uid, :ts, :status, :pct, 'episode', :ep)"
             ),
             {
                 "rk": season_key * 1000 + user_id + (episode or 0),
@@ -860,6 +897,7 @@ async def _episode(
                 "ts": when,
                 "ep": episode,
                 "status": status,
+                "pct": percent_complete,
             },
         )
 
@@ -1058,8 +1096,9 @@ class TestSeasonWatchStats:
 
     async def test_a_genuine_zero_still_means_not_finished(self, cache_engine: AsyncEngine) -> None:
         """0.0 is a real answer ("started it, did not finish") and must keep behaving as
-        one. Only a MISSING status is unknown; conflating them again in the other
-        direction would blind the guard on every partially-watched episode."""
+        one. It is where the line sits after #825 moved the three middle values across:
+        Tautulli reporting a viewer 25%, 50% or 75% through an episode says they are AT it,
+        while 0 says they are not, so only 0 leaves the position exact."""
         await _episode(cache_engine, season_key=712, user_id=1, episode=3)
         await _episode(cache_engine, season_key=712, user_id=1, episode=4, status=0.0)
 
@@ -1113,47 +1152,6 @@ class TestLastWatchedByUser:
 # ---------------------------------------------------------------------------
 # End to end, with fake clients
 # ---------------------------------------------------------------------------
-
-
-class _FakeSonarr:
-    def __init__(
-        self, series: list[dict[str, Any]], episodes: dict[int, list[dict[str, Any]]] | None = None
-    ) -> None:
-        self._series = series
-        self._episodes = episodes or {}
-        self.episodes_called: list[int] = []
-
-    async def series(self) -> list[dict[str, Any]]:
-        return self._series
-
-    async def root_folders(self) -> list[dict[str, Any]]:
-        return [{"path": "/data/tv", "accessible": True}]
-
-    async def episodes(self, series_id: int) -> list[dict[str, Any]]:
-        self.episodes_called.append(series_id)
-        return self._episodes.get(series_id, [])
-
-
-class _FakeTautulli:
-    def __init__(
-        self,
-        *,
-        shows: list[dict[str, Any]],
-        children: dict[int, list[dict[str, Any]]],
-    ) -> None:
-        self._shows = shows
-        self._children = children
-
-    async def libraries(self) -> list[dict[str, Any]]:
-        return [{"section_id": 3, "section_type": "show"}]
-
-    async def library_media_info(
-        self, section_id: int, *, start: int = 0, length: int = 1000
-    ) -> dict[str, Any]:
-        return {"data": self._shows if start == 0 else []}
-
-    async def children_metadata(self, rating_key: int) -> list[dict[str, Any]]:
-        return self._children.get(rating_key, [])
 
 
 def _degrade_sink() -> tuple[list[str], Any]:
@@ -1261,26 +1259,28 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],  # 1..5
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+        tautulli = show_library(
+            rows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
             children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
         )
         _reasons, degrade = _degrade_sink()
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -1312,8 +1312,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+        tautulli = show_library(
+            rows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
             children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
         )
         # Plex is linked and matches the show, but the season sweep is empty for it.
@@ -1333,19 +1333,21 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -1370,8 +1372,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+        tautulli = show_library(
+            rows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
             children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
         )
         plex = _FakePlexGuids(
@@ -1390,19 +1392,21 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -1427,9 +1431,11 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        sonarr = _FakeSonarr(series, episodes={42: [{"seasonNumber": 3, "episodeNumber": 8}]})
-        tautulli = _FakeTautulli(
-            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+        sonarr = FakeSonarr(
+            series_rows=series, episode_rows={42: [{"seasonNumber": 3, "episodeNumber": 8}]}
+        )
+        tautulli = show_library(
+            rows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
             children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
         )
         _reasons, degrade = _degrade_sink()
@@ -1437,39 +1443,47 @@ class TestGatherEndToEnd:
         off = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(sonarr)],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(
+                keep_last_seasons=2, keep_first_season=True, keep_in_progress=False
+            ),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
-            keep_in_progress=False,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         assert sonarr.episodes_called == []  # the fan-out was skipped
         assert "sonarr:1:42:3" in {j.media_key for j in off}  # seasons still resolve
 
         # Companion: with the guard ON, the fan-out runs, so the skip above is a real branch.
-        sonarr_on = _FakeSonarr(series, episodes={42: [{"seasonNumber": 3, "episodeNumber": 8}]})
+        sonarr_on = FakeSonarr(
+            series_rows=series, episode_rows={42: [{"seasonNumber": 3, "episodeNumber": 8}]}
+        )
         await season_scan.gather(
             cache_engine,
             sonarrs=[_source(sonarr_on)],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(
+                keep_last_seasons=2, keep_first_season=True, keep_in_progress=True
+            ),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
-            keep_in_progress=True,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         assert sonarr_on.episodes_called == [42]
 
@@ -1491,8 +1505,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[
+        tautulli = show_library(
+            rows=[
                 {
                     "rating_key": 800,
                     "title": "Duplicated Show",
@@ -1542,19 +1556,21 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         pruned = next(j for j in judgments if j.media_key == "sonarr:1:56:3")
@@ -1583,8 +1599,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[
+        tautulli = show_library(
+            rows=[
                 {"rating_key": 800, "title": "Reality Show", "year": 2020, "added_at": "1000000"}
             ],
             children={800: [{"media_index": n, "rating_key": 800 + n} for n in range(1, 6)]},
@@ -1617,19 +1633,21 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         pruned = next(j for j in judgments if j.media_key == "sonarr:1:55:3")
@@ -1679,10 +1697,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[
-                {"rating_key": 700, "title": "Tagged Show", "year": 2018, "added_at": "1000000"}
-            ],
+        tautulli = show_library(
+            rows=[{"rating_key": 700, "title": "Tagged Show", "year": 2018, "added_at": "1000000"}],
             children={700: [{"media_index": n, "rating_key": 700 + n} for n in range(1, 6)]},
         )
         keep_row = lists.Membership(
@@ -1699,25 +1715,119 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             membership_index=index,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         assert judgments, "the show's seasons must still be gathered"
         for judgment in judgments:
             assert isinstance(judgment.facts.is_whitelisted, Known)
             assert judgment.facts.is_whitelisted.value is True
+
+    async def test_sonarrs_unknown_id_sentinel_does_not_shadow_the_one_plex_matched(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Sonarr's ``tt0000000`` "unknown" sentinel must not stand in for the imdb id Plex
+        matched. A sentinel is truthy, so before the ids were cleaned at the write the show's
+        membership lookup ran under an id no keep row carries, and the row stored under the
+        real one was not found. The show owns every season beneath it, so one shadowed id
+        un-protects the whole series at once, which is why this is pinned end to end rather
+        than left to the hygiene gate: that gate reads the source for an ``ExternalIds.of``
+        call and would stay green if the lookup were re-pointed at the raw payload.
+
+        The keep row is stored under imdb ALONE on purpose. Give it a tvdb id as well and the
+        lookup finds it by tvdb whatever the imdb arm does, and the test stops discriminating.
+        """
+        series = [
+            {
+                "id": 91,
+                "title": "Sentinel Show",
+                "year": 2019,
+                "status": "ended",
+                "ended": True,
+                "tvdbId": 5150,
+                "imdbId": "tt0000000",  # the sentinel, not a real id
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        tautulli = show_library(
+            rows=[
+                {"rating_key": 900, "title": "Sentinel Show", "year": 2019, "added_at": "1000000"}
+            ],
+            children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
+        )
+        plex = _FakePlexGuids(
+            {
+                900: identity.PlexItem(
+                    rating_key=900,
+                    title="Sentinel Show",
+                    year=2019,
+                    added_at=None,
+                    ids=identity.ExternalIds.of(tvdb=5150, imdb="tt0000042"),
+                    content_rating="TV-14",
+                    runtime_minutes=45,
+                    ratings=(),
+                )
+            },
+            seasons=_season_rows(
+                {900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]}
+            ),
+        )
+        keep_row = lists.Membership(
+            slug="arr-tag-keep",
+            display_name='Sonarr tag "reaper-keep"',
+            mode=lists.ListMode.HARD,
+            kind=lists.ListKind.WHITELIST,
+            rank=None,
+        )
+        index = lists.MembershipIndex(
+            _by_imdb={"tt0000042": ((0, "tv", keep_row),)},
+            _by_tmdb={},
+            _by_tvdb={},
+            _by_plex_key={},
+        )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            plex=plex,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            membership_index=index,
+            watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
+        )
+
+        assert judgments, "the show's seasons must still be gathered"
+        for judgment in judgments:
+            assert isinstance(judgment.facts.is_whitelisted, Known)
+            assert judgment.facts.is_whitelisted.value is True, (
+                "the sentinel shadowed the imdb id Plex matched, so the keep row stored under "
+                "the real id was not found and every season of the show lost its protection"
+            )
 
     async def test_an_unmatched_series_yields_unresolved_seasons(
         self, cache_engine: AsyncEngine
@@ -1734,23 +1844,25 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(shows=[], children={})
+        tautulli = show_library([])
         _reasons, degrade = _degrade_sink()
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         pruned = next(j for j in judgments if j.media_key == "sonarr:1:7:3")
         assert pruned.plex_rating_key is None
@@ -1773,8 +1885,8 @@ class TestGatherEndToEnd:
         _reasons, degrade = _degrade_sink()
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=show_library([]),
             # Deep enough to span the default hold, so the two keep floors this test is
             # about are what hold these seasons. At reach 0 the mid-binge guard is
             # un-establishable and holds EVERY season on its own, which made the assertion
@@ -1783,12 +1895,14 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         # Both content-bearing seasons appear, each protected by a guard (never condemned).
         assert {j.media_key for j in judgments} == {"sonarr:1:9:1", "sonarr:1:9:2"}
@@ -1813,18 +1927,20 @@ class TestGatherEndToEnd:
         with capture_logs() as logs:
             await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series))],
-                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                sonarrs=[_source(FakeSonarr(series_rows=series))],
+                tautulli=show_library([]),
                 horizon=utcnow() - timedelta(days=4000),
                 reach_days=4000,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=2,
-                keep_first_season=True,
+                season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
         decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
         assert len(decisions) == 1
@@ -1858,18 +1974,20 @@ class TestGatherEndToEnd:
         with capture_logs() as logs:
             await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series))],
-                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                sonarrs=[_source(FakeSonarr(series_rows=series))],
+                tautulli=show_library([]),
                 horizon=utcnow(),
                 reach_days=0,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=2,
-                keep_first_season=True,
+                season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
         decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
         assert len(decisions) == 1
@@ -1931,9 +2049,9 @@ class TestGatherEndToEnd:
             _reasons, degrade = _degrade_sink()
             return await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series))],
-                tautulli=_FakeTautulli(  # type: ignore[arg-type]
-                    shows=[
+                sonarrs=[_source(FakeSonarr(series_rows=series))],
+                tautulli=show_library(
+                    rows=[
                         {
                             "rating_key": 800,
                             "title": "Five Seasons",
@@ -1948,13 +2066,16 @@ class TestGatherEndToEnd:
                 reach_days=reach_days,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=2,
-                keep_first_season=True,
+                season_policy=_season_policy(
+                    keep_last_seasons=2, keep_first_season=True, in_progress_hold_days=200
+                ),
                 window_days=365,
-                in_progress_hold_days=200,
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
 
         deep = await _run(400)
@@ -2051,9 +2172,9 @@ class TestGatherEndToEnd:
             _reasons, degrade = _degrade_sink()
             judgments = await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series, episodes))],
-                tautulli=_FakeTautulli(  # type: ignore[arg-type]
-                    shows=[
+                sonarrs=[_source(FakeSonarr(series_rows=series, episode_rows=episodes))],
+                tautulli=show_library(
+                    rows=[
                         {
                             "rating_key": 900,
                             "title": "Long Show",
@@ -2068,12 +2189,14 @@ class TestGatherEndToEnd:
                 reach_days=4000,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=0,  # nothing shields season 4 but the mid-binge guard
-                keep_first_season=False,
+                season_policy=_season_policy(keep_last_seasons=0, keep_first_season=False),
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
             assert not _reasons, f"the scan degraded, so no verdict here means anything: {_reasons}"
             return {j.media_key: j for j in judgments}
@@ -2125,7 +2248,7 @@ class TestGatherEndToEnd:
             }
         ]
 
-        class _DeadChildren(_FakeTautulli):
+        class _DeadChildren(FakeTautulli):
             async def children_metadata(self, rating_key: int) -> list[dict[str, Any]]:
                 raise IntegrationError("tautulli", "connection refused")
 
@@ -2141,12 +2264,19 @@ class TestGatherEndToEnd:
         _reasons, degrade = _degrade_sink()
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=_DeadChildren(  # type: ignore[arg-type]
-                shows=[
-                    {"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}
-                ],
-                children={},
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=_DeadChildren(
+                sections={
+                    3: [
+                        {
+                            "rating_key": 900,
+                            "title": "Long Show",
+                            "year": 2005,
+                            "added_at": "1000000",
+                        }
+                    ]
+                },
+                section_types={3: "show"},
             ),
             # The show binds to Plex; only its season list is unreadable, so the sweep is empty
             # and every season falls to the per-show read that raises.
@@ -2155,12 +2285,14 @@ class TestGatherEndToEnd:
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=0,
-            keep_first_season=False,
+            season_policy=_season_policy(keep_last_seasons=0, keep_first_season=False),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -2201,18 +2333,20 @@ class TestGatherEndToEnd:
         _reasons, degrade = _degrade_sink()
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=show_library([]),
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         by_key = {j.media_key: j for j in judgments}
         assert by_key["sonarr:1:77:2"].plex_rating_key is None
@@ -2229,9 +2363,11 @@ class TestGatherEndToEnd:
         # The cause is the one the season's own Unknown facts carry, character for character,
         # which is what makes `WhyPanel.LeftForYou` group all five under one heading instead
         # of opening a second box saying the same thing (rule 144).
-        cause = season_scan.no_key_reason(identity.MatchStatus.UNMATCHED)
+        cause = season_evidence.no_key_reason(identity.MatchStatus.UNMATCHED)
         assert guard.detail == f"could not check who is part-way through it: {cause}"
-        assert by_key["sonarr:1:77:2"].facts.days_observed_unwatched.reason == cause
+        unwatched = by_key["sonarr:1:77:2"].facts.days_observed_unwatched
+        assert isinstance(unwatched, Unknown)
+        assert unwatched.reason == cause
 
     async def test_a_show_without_files_logs_no_content(self, cache_engine: AsyncEngine) -> None:
         """A show Sonarr has no downloaded episodes for is dropped as no_content, and its
@@ -2248,18 +2384,20 @@ class TestGatherEndToEnd:
         with capture_logs() as logs:
             await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series))],
-                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                sonarrs=[_source(FakeSonarr(series_rows=series))],
+                tautulli=show_library([]),
                 horizon=utcnow(),
                 reach_days=0,
                 active_rating_keys=set(),
                 activity_degraded=False,
-                keep_last_seasons=2,
-                keep_first_season=True,
+                season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
                 watch_marks={},
+                seen_marks={},
+                seen_scans=[],
+                seen_absence_days=7,
             )
         decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
         assert len(decisions) == 1
@@ -2283,20 +2421,402 @@ class TestGatherEndToEnd:
         judgments = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(_DeadSonarr())],
-            tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+            tautulli=show_library([]),
             horizon=utcnow(),
             reach_days=0,
             active_rating_keys=set(),
             activity_degraded=False,
-            keep_last_seasons=2,
-            keep_first_season=True,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
             watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
         )
         assert judgments == []
         assert any("sonarr" in r and "unreachable" in r for r in reasons)
+
+
+class TestShowLevelRewatchFacts:
+    """#554 TV: ``services.rewatch.show_rewatch_stats`` is read once per scan, and
+    ``_judge_series`` turns it into the show's ``rewatch_viewings``/``rewatch_last_play_days``
+    pair, stamped identically on every season of that show -- the same shape ``show_ended``
+    already carries. The cohort pair (``rewatch_cohort_n``/``rewatch_cohort_k``) is the
+    season lane's own Stage 2 fit now, off the TV curve ``gather`` fits once per scan
+    (``TestTheTVCohortFit`` below); a show whose current dormancy lands nowhere in that
+    curve reads ``Unknown`` with the shared reason, never ``Absent`` -- the season lane
+    always has an opinion about its own cohort now, even when that opinion is "cannot say"
+    (the same discipline ``rewatch_viewings``/``rewatch_last_play_days`` already follow).
+    """
+
+    async def test_a_show_with_replayed_episodes_is_known_on_every_season(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        series = [
+            {
+                "id": 1,
+                "title": "Replayed Show",
+                "year": 2011,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1), _season_payload(2)],
+            }
+        ]
+        tautulli = show_library(
+            rows=[
+                {"rating_key": 900, "title": "Replayed Show", "year": 2011, "added_at": "1000000"}
+            ],
+            children={
+                900: [{"media_index": 1, "rating_key": 901}, {"media_index": 2, "rating_key": 902}]
+            },
+        )
+        # Two episodes, each played twice ~150 days apart: an older viewing and a later
+        # replay of the same two episode keys (rewatch.replay_period_count's >= 1/4-overlap
+        # floor), never a release-following binge.
+        for days_ago, episode in ((200, 1), (195, 2), (50, 1), (45, 2)):
+            await _episode(
+                cache_engine,
+                season_key=901,
+                user_id=1,
+                show_key=900,
+                days_ago=days_ago,
+                episode=episode,
+            )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
+        )
+
+        by_key = {j.media_key: j for j in judgments}
+        s1, s2 = by_key["sonarr:1:1:1"].facts, by_key["sonarr:1:1:2"].facts
+        # 1 replay period, never a value the "no entry" fallback (0) would also produce
+        # (rule 141); last play is the more recent pair, 45 days back.
+        assert s1.rewatch_viewings == Known(value=1, source="tautulli")
+        assert s1.rewatch_last_play_days == Known(value=45, source="tautulli")
+        # Show-level: computed once and stamped as the same object on the show's other season.
+        assert s2.rewatch_viewings is s1.rewatch_viewings
+        assert s2.rewatch_last_play_days is s1.rewatch_last_play_days
+        # This show is the only one in the whole scan and its season carries no added_at
+        # (``children`` above has none), so it contributes no training pair -- the fit is
+        # empty and no dormancy lands anywhere in it (``TestTheTVCohortFit`` below covers a
+        # populated curve).
+        assert s1.rewatch_cohort_n == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+        assert s1.rewatch_cohort_k == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+
+    async def test_a_resolved_show_with_no_qualified_plays_is_known_zero_and_absent(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The show resolved and the mirror was read, but it holds nothing for this show: a
+        checked zero, not the failed read Unknown would claim (rule 93). It also has no
+        anchor at all for the Stage 2 cohort -- no play, and (like the sibling test above)
+        no season added_at -- so the cohort reads Unknown rather than Known, whatever the fit
+        found elsewhere."""
+        series = [
+            {
+                "id": 2,
+                "title": "Unwatched Show",
+                "year": 2012,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1)],
+            }
+        ]
+        tautulli = show_library(
+            rows=[
+                {"rating_key": 800, "title": "Unwatched Show", "year": 2012, "added_at": "1000000"}
+            ],
+            children={800: [{"media_index": 1, "rating_key": 801}]},
+        )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
+        )
+
+        judgment = next(j for j in judgments if j.media_key == "sonarr:1:2:1")
+        facts = judgment.facts
+        assert facts.rewatch_viewings == Known(value=0, source="tautulli")
+        assert isinstance(facts.rewatch_last_play_days, Absent)
+        assert facts.rewatch_cohort_n == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+        assert facts.rewatch_cohort_k == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+        assert judgment.rewatch_block is None
+
+    async def test_an_unresolved_show_is_unknown_on_both_rewatch_observations(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """No Plex show key means no key to look this show's plays up under -- a failed
+        look, never the checked absence the resolved cases above record (rule 93)."""
+        series = [
+            {
+                "id": 3,
+                "title": "Missing Show",
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1)],
+            }
+        ]
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=show_library([]),
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
+        )
+
+        facts = next(j for j in judgments if j.media_key == "sonarr:1:3:1").facts
+        assert isinstance(facts.rewatch_viewings, Unknown)
+        assert isinstance(facts.rewatch_last_play_days, Unknown)
+        assert facts.rewatch_viewings.reason == "Plex has not matched this season"
+        assert facts.rewatch_last_play_days.reason == "Plex has not matched this season"
+        # The cohort's Unknown carries the one shared reason (rewatch.NO_REWATCH_ESTIMATE_
+        # REASON), not the match-status reason above: every "nothing to show" cause reads
+        # the same to the operator (services.snapshot.build_facts's own comment).
+        assert facts.rewatch_cohort_n == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+        assert facts.rewatch_cohort_k == Unknown(
+            reason=rewatch.NO_REWATCH_ESTIMATE_REASON, source="tautulli"
+        )
+
+
+class TestTheTVCohortFit:
+    """#554 TV, Stage 2: the TV curve ``gather`` fits off
+    ``services.rewatch.show_rewatch_outcomes`` (mirroring the movie lane's own fit in
+    ``snapshot.scan``), and the per-show cohort lookup ``_judge_series`` stamps off it."""
+
+    async def test_a_show_in_a_fitted_block_stamps_known_cohort_on_every_season(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Two shows train the fit's (0, 365] block: Show A watched again inside the year,
+        Show B was not, so the pooled block is a distinguishable, non-default n=2/k=1 (rule
+        141) -- never the "no entry" zero a bug swallowing the fit could also produce. Show
+        A's own current dormancy (its most recent play) falls in that same block, so every
+        one of its seasons is stamped ``Known`` off it, sharing the identical object (``is``)
+        the way ``rewatch_viewings`` already does.
+        """
+        series = [
+            {
+                "id": 10,
+                "title": "Fitted Show A",
+                "year": 2011,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1), _season_payload(2)],
+            },
+            {
+                "id": 11,
+                "title": "Fitted Show B",
+                "year": 2012,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1)],
+            },
+        ]
+        tautulli = show_library(
+            rows=[
+                {"rating_key": 910, "title": "Fitted Show A", "year": 2011},
+                {"rating_key": 920, "title": "Fitted Show B", "year": 2012},
+            ],
+            children={
+                910: [{"media_index": 1, "rating_key": 911}, {"media_index": 2, "rating_key": 912}],
+                920: [{"media_index": 1, "rating_key": 921}],
+            },
+        )
+        # Show A: an old play (well before the year-back cutoff) trains the fit, and a
+        # recent one both marks the training pair "watched again" and anchors its own
+        # current lookup at ~5 days dormant -- inside the (0, 365] block the training pairs
+        # populate.
+        await _episode(cache_engine, season_key=911, user_id=1, show_key=910, days_ago=400)
+        await _episode(cache_engine, season_key=911, user_id=1, show_key=910, days_ago=5, episode=2)
+        # Show B: the same old-play training anchor, never watched again -- the block's
+        # other member.
+        await _episode(cache_engine, season_key=921, user_id=2, show_key=920, days_ago=400)
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
+        )
+
+        by_key = {j.media_key: j for j in judgments}
+        s1 = by_key["sonarr:1:10:1"]
+        s2 = by_key["sonarr:1:10:2"]
+        assert s1.facts.rewatch_cohort_n == Known(value=2, source="tautulli")
+        assert s1.facts.rewatch_cohort_k == Known(value=1, source="tautulli")
+        # Every season of the show shares the identical block object.
+        assert s2.facts.rewatch_cohort_n is s1.facts.rewatch_cohort_n
+        assert s2.facts.rewatch_cohort_k is s1.facts.rewatch_cohort_k
+        assert s1.rewatch_block is not None
+        assert s1.rewatch_block is s2.rewatch_block
+        assert (s1.rewatch_block.n, s1.rewatch_block.k) == (2, 1)
+
+        # Pipeline-level (rule 5 of #554 TV): the season lane's Known cohort really reaches
+        # the stored explanation through the shared judge_facts/_explain path snapshot.scan
+        # uses for every season row, not just the in-memory Facts object.
+        gates = build_gates(DEFAULT_TV_POLICY)
+        signals = [
+            SignalConfig(signal=s.signal, weight=s.weight, saturate_at=s.saturate_at, floor=s.floor)
+            for s in DEFAULT_TV_POLICY.signals
+        ]
+        judged = judge_facts(
+            s1.facts,
+            gates,
+            DEFAULT_TV_POLICY,
+            signals=signals,
+            custom_condemn=DEFAULT_TV_POLICY.custom_signal_configs(),
+            keeps=DEFAULT_TV_POLICY.keep_configs(),
+            window_days=DEFAULT_TV_POLICY.popularity_window_days(),
+            extra_results=(s1.guard_result,),
+            rewatch_block=s1.rewatch_block,
+        )
+        stored = json.loads(judged.explanation)
+        assert stored["rewatch_odds"] == {
+            "n": 2,
+            "k": 1,
+            "lo_days": 0.0,
+            "hi_days": 365.0,
+            "state": "thin",
+        }
+
+    async def test_the_cohort_lookup_uses_the_any_play_anchor_not_the_qualified_one(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The discriminating case: this show's only RECENT play is unqualified (low percent
+        complete), so the stage 1 keep's qualified ``rewatch_last_play_days`` reads its older
+        qualified play (~400 days back) -- but the Stage 2 cohort lookup must anchor on the
+        ANY-play last play (~5 days back, unqualified) exactly as
+        ``services.rewatch.show_rewatch_outcomes`` promises, or it reads the wrong dormancy
+        entirely.
+
+        The fit is trained off this show's own old-play-to-recent-play pair, which lands in
+        the (0, 365] block. If the lookup mistakenly anchored on the qualified ~400-day play
+        instead, that dormancy falls in the DIFFERENT (365, 548] block -- which the fit never
+        populated -- and the cohort would read Unknown instead of Known. That divergence is
+        what makes this test discriminate the two anchors rather than merely re-assert the
+        cohort code path test 1 above already covers.
+        """
+        series = [
+            {
+                "id": 20,
+                "title": "Unqualified Recent Play Show",
+                "year": 2013,
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1)],
+            }
+        ]
+        tautulli = show_library(
+            rows=[{"rating_key": 930, "title": "Unqualified Recent Play Show", "year": 2013}],
+            children={930: [{"media_index": 1, "rating_key": 931}]},
+        )
+        # The older QUALIFIED play: what rewatch_last_play_days (stage 1) must read, and
+        # what trains the fit's (0, 365] block (~35 days before the year-back cutoff).
+        await _episode(cache_engine, season_key=931, user_id=1, show_key=930, days_ago=400)
+        # The newer play: low percent_complete, no watched_status, so `rewatch.qualifies`
+        # rejects it -- but Stage 2's any-play anchor counts it regardless (module docstring:
+        # "any user, any completion").
+        await _episode(
+            cache_engine,
+            season_key=931,
+            user_id=1,
+            show_key=930,
+            days_ago=5,
+            episode=2,
+            status=None,
+            percent_complete=10,
+        )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            season_policy=_season_policy(keep_last_seasons=2, keep_first_season=True),
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+            seen_marks={},
+            seen_scans=[],
+            seen_absence_days=7,
+        )
+
+        facts = next(j for j in judgments if j.media_key == "sonarr:1:20:1").facts
+        # Stage 1 stays on the older QUALIFIED play.
+        assert facts.rewatch_last_play_days == Known(value=400, source="tautulli")
+        # Stage 2's cohort is Known -- only possible if the lookup anchored on the recent
+        # any-play (~5 days, inside the trained block), not the qualified ~400-day play
+        # (outside it, where the cohort would read Unknown).
+        assert facts.rewatch_cohort_n == Known(value=1, source="tautulli")
+        assert facts.rewatch_cohort_k == Known(value=1, source="tautulli")
 
 
 class TestUserSeasonProgress:
@@ -2325,6 +2845,10 @@ class TestUserSeasonProgress:
             # trusted low -- being wrong in that direction unprotects the season they are
             # about to watch next.
             ([(1, 1.0), (4, None)], "a later play whose completion is unknown"),
+            # The same reach, reported rather than missing: Tautulli quantizes
+            # `watched_status` against the operator's own threshold, so a play that stopped
+            # short arrives as 0.75 and not as NULL. It is still a play of episode 4 (#825).
+            ([(1, 1.0), (4, 0.75)], "a later play that stopped short of complete"),
         ],
     )
     async def test_a_dropped_position_holds_the_season_rather_than_clearing_it(
@@ -2370,6 +2894,43 @@ class TestUserSeasonProgress:
         assert held[3] == "a viewer is part-way through the show"
         assert held[4] == "a viewer is part-way through the show"
 
+    @pytest.mark.parametrize("status", [0.25, 0.5, 0.75])
+    async def test_a_finale_that_stopped_short_still_holds_the_next_season(
+        self, cache_engine: AsyncEngine, status: float
+    ) -> None:
+        """#825. A viewer completed every episode but the last, and reached the last one
+        without finishing it. They are done with the season, and the next one is what they
+        start next.
+
+        Read as "still on season 3", the guard holds the season they have just finished and
+        releases the one they are about to start -- the protection pointed at the wrong
+        season, not merely missed, and the released one carries the old plays that let it
+        score. `watched_status` is quantized against the operator's own watched-percent
+        threshold, so it arrives as one of 0, 0.25, 0.5, 0.75 or 1, and matching the
+        unfinished plays on `IS NULL` alone left the three middle values raising neither
+        column. Swept rather than pinned at 0.75, so a fix that names one value fails
+        (rule 141).
+        """
+        for episode in range(1, 10):
+            await _episode(cache_engine, season_key=913, user_id=7, episode=episode)
+        await _episode(cache_engine, season_key=913, user_id=7, episode=10, status=status)
+
+        stats = await season_scan.season_watch_stats(cache_engine, {913, 914}, window_days=365)
+        assert stats.user_season_progress.get(7, {}).get(913) is None, "position read 9, not 10"
+
+        key_to_number = {913: 3, 914: 4}
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n, files=10, total=10) for n in (3, 4)],
+            keep_last=0,
+            keep_first_season=False,
+            progress_by_user=season_scan._progress_by_user(stats, key_to_number),
+            last_play_by_user=season_scan._last_play_by_user_season(stats, key_to_number),
+            season_final_episode={3: 10, 4: 10},
+        )
+        assert plan.prunable == []
+        assert {p.season_number for p in plan.protected} == {3, 4}
+
 
 class TestFinalEpisodes:
     def test_uses_the_highest_on_disk_episode_ignoring_gaps_and_missing_files(self) -> None:
@@ -2383,7 +2944,7 @@ class TestFinalEpisodes:
 
 
 class TestKeepLastApplies:
-    def _index(self, *, shows: set[str] = frozenset()) -> requested_by.RequestIndex:
+    def _index(self, *, shows: AbstractSet[str] = frozenset()) -> requested_by.RequestIndex:
         return requested_by.RequestIndex(
             available=True,
             movie_keys=frozenset(),

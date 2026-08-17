@@ -23,7 +23,7 @@ confirmation counts and the executor all read it. Pinned here:
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -47,7 +47,6 @@ from reaper.db.models import (
     InstanceKind,
     Snapshot,
 )
-from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 from reaper.services import grace, whitelist
 from reaper.services.condemned import (
@@ -115,7 +114,7 @@ BLOCKED = stored_explanation(
 # so the scan abstains and asks for a look), and `defers_to_owner` marks it as a decision
 # for the owner rather than a source Reaper could not read. A hand reap IS that decision,
 # so it condemns. The flag no longer decides that -- no block holds a hand reap -- but it
-# still picks the operator's chip (`api.routes._chip`), so the shapes below keep varying it.
+# still picks the operator's chip (`api.review._chip`), so the shapes below keep varying it.
 KEEP_RULE_CONFLICT = stored_explanation(
     protections_unknown=[
         {
@@ -221,7 +220,7 @@ class TestReapOverrideVerdict:
         change what a hand reap does. It fails the moment any reader of this key re-appears
         on the decision path.
 
-        The ``is True`` strictness itself is still live one surface over -- ``routes._chip``
+        The ``is True`` strictness itself is still live one surface over -- ``review._chip``
         reads the same key the same way to pick the operator's chip, pinned in
         ``test_review_chips.py`` -- which is why the key is still written and still varied
         here rather than dropped."""
@@ -263,7 +262,7 @@ class TestReapOverrideVerdict:
         of three strings filtered down to an empty one, so ``blocked`` went False and the
         reap condemned a file whose kept-reasons nobody could read. Evidence we cannot see
         must never become evidence that nothing was wrong (rule 96).
-        ``routes._has_blocked_protections`` reads the same block with this posture already;
+        ``simulate._has_blocked_protections`` reads the same block with this posture already;
         the destructive reader was the permissive one.
 
         It survived the reversal for the same reason a bad match did, and the distinction is
@@ -391,16 +390,6 @@ class TestReapOverrideVerdict:
 # --- fixtures over a real database ------------------------------------------
 
 
-@pytest.fixture
-async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
-    engine = create_engine(settings)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield create_session_factory(engine)
-    await engine.dispose()
-
-
 async def _snapshot(session: AsyncSession) -> int:
     snap = Snapshot(
         created_at=NOW, policy_hash="p" * 64, scoring_hash="s" * 64, horizon_at=NOW, item_count=0
@@ -457,9 +446,9 @@ async def _row(
 
 class TestEffectiveCondemned:
     async def test_spares_leave_and_honored_reaps_join(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             await _row(session, snap, "radarr:1:1", verdict="condemn")
             await _row(session, snap, "radarr:1:2", verdict="condemn")
@@ -481,9 +470,9 @@ class TestEffectiveCondemned:
         assert sorted(effective) == ["radarr:1:1", "radarr:1:3"]
 
     async def test_a_show_level_reap_reaches_seasons_but_not_a_spared_one(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             show = "sonarr:1:42"
             await _row(
@@ -511,9 +500,9 @@ class TestEffectiveCondemned:
         assert sorted(effective) == [f"{show}:1"]
 
     async def test_grace_starts_the_moment_the_owner_reaps(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             await _row(session, snap, "radarr:1:5", verdict="protect", explanation=CAUTIOUS)
             await whitelist.set_override(
@@ -525,9 +514,9 @@ class TestEffectiveCondemned:
         assert [i.media_key for i in report.in_grace] == ["radarr:1:5"]
 
     async def test_the_plan_includes_an_honored_reap_and_refuses_a_refused_one(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             await _row(session, snap, "radarr:1:6", verdict="condemn")
             await _row(session, snap, "radarr:1:7", verdict="protect", explanation=CAUTIOUS)
@@ -561,9 +550,9 @@ class TestEffectiveCondemned:
                 )
 
     async def test_reap_is_effective_reads_the_frozen_row(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             await _row(session, snap, "radarr:1:9", verdict="condemn")
             await _row(session, snap, "radarr:1:10", verdict="protect", explanation=STRUCTURAL)
@@ -585,7 +574,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in client over a database seeded with one snapshot and three rows:
     a scan-condemned movie, a cautiously-protected one, and a structurally-protected
     one. Sync seeding, because the app builds its own async engine over the same file."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     with Session(engine) as s:
@@ -630,7 +619,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def _clock_rows(tmp_path: Path) -> dict[str, Any]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with Session(engine) as s:
         rows = {f.media_key: f.first_flagged_at for f in s.query(FirstFlagged).all()}
@@ -647,7 +636,7 @@ def _seed_clock(
 ) -> None:
     """Force a grace clock into a chosen (possibly stale) state, standing in for the scans that
     re-condemned an item while it still showed spared -- the B-2 burn-down."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with Session(engine) as s:
         s.merge(
@@ -748,10 +737,12 @@ class TestOverrideRoutesAndTheGraceClock:
         # A hand reap the engine honors moves the item onto the Condemned lane; one it will not
         # honor yet (a held reap) stays on the Kept lane, its stored verdict pure policy beneath.
         condemned = {
-            r["media_key"]: r for r in client.get("/api/candidates?verdict=condemn&limit=50").json()
+            r["media_key"]: r
+            for r in client.get("/api/candidates?verdict=condemn&limit=50").json()["items"]
         }
         kept = {
-            r["media_key"]: r for r in client.get("/api/candidates?verdict=protect&limit=50").json()
+            r["media_key"]: r
+            for r in client.get("/api/candidates?verdict=protect&limit=50").json()["items"]
         }
 
         assert condemned["radarr:1:22"]["override_effective"] is True
@@ -765,7 +756,7 @@ class TestOverrideRoutesAndTheGraceClock:
 def show_client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in client over one show with two seasons: one the scan condemned, one it
     cautiously kept. Both carry the show's group key, so a whole-show override reaches them."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     show = "sonarr:1:42"
@@ -845,7 +836,7 @@ class TestOverrideViewsInResponses:
 
     def test_a_movie_owns_its_effective_decision(self, client: TestClient) -> None:
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
-        rows = client.get("/api/candidates?verdict=protect&limit=50").json()
+        rows = client.get("/api/candidates?verdict=protect&limit=50").json()["items"]
         movie = {r["media_key"]: r for r in rows}["radarr:1:22"]
         assert movie["override"] == "spare"
         assert movie["override_own"] == "spare"  # no show to inherit from
@@ -894,17 +885,18 @@ class TestAHandDecisionLeavesARecord:
         assert "decision=reap" in new[0]
         assert "prior=None" in new[0]
 
-    @pytest.mark.parametrize("route", ["/api/override", "/api/whitelist"])
-    def test_clearing_one_records_what_it_used_to_be(self, client: TestClient, route: str) -> None:
+    def test_clearing_one_records_what_it_used_to_be(self, client: TestClient) -> None:
         """The row is gone after this, so the log is the only surviving record.
 
-        Both delete routes, because they are line-for-line the same body under two names
-        and only one was driven -- the shape rule 72 exists for. A record that survives an
-        un-spare on one path and not the other is the same silence, reachable from the UI.
+        **One route, and it used to be parametrized over two.** ``DELETE /api/whitelist``
+        was line for line the same body under a second name, so this drove both to keep the
+        record from surviving on one path and not the other (rule 72). That route is gone,
+        and the parametrize went with it rather than staying as a second id driving the same
+        handler, which would read as twice the coverage (rule 118).
         """
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
         before = logbuffer.RING.last_seq()
-        cleared = client.delete(f"{route}/radarr:1:22")
+        cleared = client.delete("/api/override/radarr:1:22")
         assert cleared.json() == {"removed": True}, cleared.text
 
         new = self._overrides(before)
@@ -922,11 +914,10 @@ class TestAHandDecisionLeavesARecord:
         assert "prior=spare" in new[0]
         assert "decision=reap" in new[0]
 
-    @pytest.mark.parametrize("route", ["/api/override", "/api/whitelist"])
-    def test_clearing_nothing_says_nothing(self, client: TestClient, route: str) -> None:
+    def test_clearing_nothing_says_nothing(self, client: TestClient) -> None:
         """No override to remove is not a decision, and a line for it would read as one."""
         before = logbuffer.RING.last_seq()
-        response = client.delete(f"{route}/radarr:1:99")
+        response = client.delete("/api/override/radarr:1:99")
 
         assert response.json() == {"removed": False}
         assert self._overrides(before) == []

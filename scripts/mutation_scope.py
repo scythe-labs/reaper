@@ -66,6 +66,19 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
+class Omission:
+    """Callables in a zone's module that the zone deliberately does not mutate.
+
+    One written reason per group. A name is here or in ``functions``; being in neither is
+    what ``zone_drift`` fails on. Grouped rather than one line each because the reasons
+    genuinely repeat: a zone scoped to two shims omits the rest of its file for one reason.
+    """
+
+    reason: str
+    functions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Zone:
     """What to mutate, what gets to object, and how to tell survivors apart.
 
@@ -73,12 +86,60 @@ class Zone:
     print ``{"cases": {name: answer}}`` as JSON. Whatever an "answer" is, it has to be a value
     the direction of a change is readable from: a returned body for a repair shim, an
     accepted-or-rejected verdict for a validator.
+
+    ``functions`` and ``omits`` together account for every callable in ``module``, checked by
+    ``zone_drift``. A function with no mutable token is declarable and reports zero, which is
+    what ``evaluate_all`` already did; silence is the thing that is not allowed.
     """
 
     module: Path
     functions: tuple[str, ...]
     tests: tuple[str, ...]
     probe: str
+    omits: tuple[Omission, ...] = ()
+
+
+def module_callables(module: Path) -> set[str]:
+    """Every function and method in a module, named the way a zone names one.
+
+    A method is ``Class.method``. Bare method names are deliberately not produced here even
+    though ``func_spans`` accepts them, so a zone's list and this set compare as written.
+    """
+    tree = ast.parse((REPO / module).read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            names.update(
+                f"{node.name}.{child.name}"
+                for child in node.body
+                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+            )
+    names.update(
+        node.name for node in tree.body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    )
+    return names
+
+
+def zone_drift(name: str, zone: Zone) -> list[str]:
+    """Complaints about a zone whose list no longer matches its module, one line each.
+
+    The `engine-gates` zone declared 12 of its module's 22 callables and reported on those, so
+    a run read as a clean sweep of the gate layer while a fifth of its mutable surface was
+    never asked about -- and the undeclared eight held three survivors, one of them live on a
+    default policy (#598). The list is hand-written, so rule 103 applies to it as it does to
+    any other mirror of a declaration.
+    """
+    declared = set(zone.functions)
+    omitted = {f for group in zone.omits for f in group.functions}
+    actual = module_callables(zone.module)
+    complaints = []
+    for missing in sorted(actual - declared - omitted):
+        complaints.append(f"{name}: {zone.module}'s {missing} is in neither functions= nor omits=")
+    for gone in sorted((declared | omitted) - actual):
+        complaints.append(f"{name}: {gone} is declared but no longer exists in {zone.module}")
+    for both in sorted(declared & omitted):
+        complaints.append(f"{name}: {both} is in functions= and omits= at once")
+    return complaints
 
 
 #: Swaps per token. Deliberately small: an operator whose every mutant is caught by the
@@ -345,6 +406,11 @@ def splice(source: str, m: Mutant) -> str:
 WORKER_PATHS = (
     "src",
     "tests",
+    # `tests/test_baseline_capture.py` reads `scripts/baseline_capture.py` and errored at
+    # collection inside a worker without this, which silently capped what any zone's `tests=`
+    # could name: a whole file was uncollectable, so a mutant it would have killed read as a
+    # survivor (#598).
+    "scripts",
     "alembic",
     "alembic.ini",
     "pyproject.toml",
@@ -430,14 +496,10 @@ def run_tests(zone: Zone, workdir: Path, timeout: float) -> str:
 #: on that fixture could not see it either.
 REPAIR_SHIM_PROBE = r"""
 import json
-from reaper.engine.policy import (
-    MAX_SCORE,
-    SCHEMA_VERSION,
-    GateId,
-    RatingSource,
-    rebalance,
-    recover_rating_rules,
-)
+from reaper.engine.gates import GateId
+from reaper.engine.policy import SCHEMA_VERSION
+from reaper.engine.policy_migrations import rebalance, recover_rating_rules
+from reaper.engine.signals import MAX_SCORE
 
 def legacy(threshold=75, secondary=1000, **gate):
     row = {"gate": GateId.RATING_FLOOR.value, "enabled": True,
@@ -648,17 +710,14 @@ print(json.dumps({"order": order, "cases": cases}))
 GATES_PROBE = r"""
 import json
 from reaper.engine.gates import (
-    CuratedListGate,
     DataHorizonGate,
     Facts,
     GateConfig,
-    GateId,
     MinDormancyGate,
     RatingFloorGate,
     RatingRule,
     ServerPopularityGate,
     StreamingNowGate,
-    WhitelistGate,
     history_shortfall,
     lifetime_shortfall,
     progress_is_establishable,
@@ -699,9 +758,6 @@ def gate_case(name, gate, **facts):
         is_whitelisted=Absent(source="x"),
     )
     record(name, verdict(lambda: gate.evaluate(Facts(**(base | facts)))))
-
-def cfg(gate_id, **kw):
-    return GateConfig(gate=gate_id, **kw)
 
 # --- RatingFloorGate: the empty set, the IMDb fail-closed guard, and the bar itself ---
 imdb_bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
@@ -751,7 +807,7 @@ gate_case("rating-any-one-cleared-one-missed",
           **readable)
 
 # --- ServerPopularityGate: the watcher floor, the pluralization, and the reach bound ---
-pop = ServerPopularityGate(cfg(GateId.SERVER_POPULARITY, threshold=3, window_days=365))
+pop = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
 # "well-over" matters as much as "at-floor": every case sitting at or below the floor left
 # `count >= floor` free to become `count == floor`, which stops protecting the most-watched
 # titles on the server and changes nothing a probe can see.
@@ -761,7 +817,7 @@ for label, n in (("at-floor", 3), ("well-over-floor", 10), ("one-under", 2),
               history_reach_days=Known(value=400.0, source="x"))
 # A floor of 1 is the only way to reach the PROTECT arm's singular, and an Absent count is
 # the only way to reach the `else 0` fallback.
-solo = ServerPopularityGate(cfg(GateId.SERVER_POPULARITY, threshold=1, window_days=365))
+solo = ServerPopularityGate(GateConfig(threshold=1, window_days=365))
 gate_case("popularity-single-watcher-protects", solo,
           distinct_watchers=Known(value=1, source="x"),
           history_reach_days=Known(value=400.0, source="x"))
@@ -783,7 +839,7 @@ gate_case("popularity-reach-unreadable", pop,
           history_reach_days=Unknown(reason="r", source="x"))
 
 # --- MinDormancyGate: the floor, at it and either side ---
-dorm = MinDormancyGate(cfg(GateId.MIN_DORMANCY, threshold=1095))
+dorm = MinDormancyGate(GateConfig(threshold=1095))
 for label, days in (("at-floor", 1095.0), ("one-under", 1094.0), ("well-under", 400.0),
                     ("well-over", 1500.0)):
     gate_case(f"dormancy-{label}", dorm, days_observed_unwatched=Known(value=days, source="x"))
@@ -793,17 +849,12 @@ gate_case("dormancy-absent", dorm, days_observed_unwatched=Absent(source="x"))
 
 # --- the three switch-shaped gates ---
 for name, gate, field in (
-    ("streaming", StreamingNowGate(cfg(GateId.STREAMING_NOW)), "is_streaming_now"),
-    ("whitelist", WhitelistGate(cfg(GateId.WHITELISTED)), "is_whitelisted"),
+    ("streaming", StreamingNowGate(GateConfig()), "is_streaming_now"),
 ):
     gate_case(f"{name}-true", gate, **{field: Known(value=True, source="x")})
     gate_case(f"{name}-false", gate, **{field: Known(value=False, source="x")})
     gate_case(f"{name}-unreadable", gate, **{field: Unknown(reason="r", source="x")})
-curated = CuratedListGate(cfg(GateId.CURATED_LIST))
-gate_case("curated-on-a-list", curated, in_curated_list=Known(value="a list", source="x"))
-gate_case("curated-on-no-list", curated, in_curated_list=Absent(source="x"))
-gate_case("curated-unreadable", curated, in_curated_list=Unknown(reason="r", source="x"))
-gate_case("horizon-unreadable", DataHorizonGate(cfg(GateId.DATA_HORIZON)),
+gate_case("horizon-unreadable", DataHorizonGate(GateConfig()),
           days_observed_unwatched=Unknown(reason="r", source="x"))
 
 # --- the three pure span helpers, at and either side of every boundary ---
@@ -1041,8 +1092,8 @@ from reaper.engine.policy import (
     ProfileSettings,
     RatingRuleSpec,
     SignalSetting,
-    inspect,
 )
+from reaper.engine.policy_warnings import inspect
 from reaper.engine.signals import SignalId
 from reaper.ratings import RatingSource
 
@@ -1122,12 +1173,37 @@ print(json.dumps({"order": order, "cases": cases}))
 
 ZONES: dict[str, Zone] = {
     "policy-repair-shims": Zone(
-        module=Path("src/reaper/engine/policy.py"),
+        module=Path("src/reaper/engine/policy_migrations.py"),
         functions=("rebalance", "recover_rating_rules"),
         tests=(
             "tests/test_policy.py::TestRebalancingAnOldPolicy",
             "tests/test_policy.py::TestRestoringALostRatingBar",
             "tests/test_profiles.py",
+        ),
+        omits=(
+            Omission(
+                "The one-way list-protection conversion and its helpers. This zone is the two "
+                "shims that rewrite a stored body on LOAD, and `REPAIR_SHIM_PROBE` reads a "
+                "repaired body back; the conversion runs once per body and answers a different "
+                "question, so it wants its own zone and probe rather than a share of this one. "
+                "`authorable_media_scope` joined them at #549: it decides what the POLICY EDITOR "
+                "offers, which no probe here reads and which gates no deletion.",
+                (
+                    "authorable_media_scope",
+                    "convert_list_protections",
+                    "has_legacy_list_protections",
+                    "conversion_list_names",
+                    "legacy_keep_tags",
+                    "own_list_media_scope",
+                    "library_media_types",
+                    "_config_value",
+                ),
+            ),
+            Omission(
+                "Declared in `policy-save-boundary` instead, as `PolicyBody._drop_retired_gates`, "
+                "which is the validator that calls it and the surface the probe drives.",
+                ("drop_retired_gate_keys",),
+            ),
         ),
         probe=REPAIR_SHIM_PROBE,
     ),
@@ -1143,6 +1219,8 @@ ZONES: dict[str, Zone] = {
             "RatingRuleSpec._vote_floor_matches_the_source",
             "PolicyBody._pin_to_the_running_scorer",
             "PolicyBody._drop_retired_gates",
+            "PolicyBody._rewatch_odds_row",
+            "PolicyBody._returned_row",
             "PolicyBody._weights_total_one_hundred",
             "PolicyBody._no_duplicates",
             "ProfileSettings._run_cap_within_rolling_cap",
@@ -1153,6 +1231,33 @@ ZONES: dict[str, Zone] = {
             "tests/test_signal_quality.py",
             "tests/test_profiles.py",
             "tests/test_policy_permutations.py",
+        ),
+        omits=(
+            Omission(
+                "Translators and hashes, not validators. `SAVE_BOUNDARY_PROBE` offers a body "
+                "and reads back accepted-or-rejected, so a mutant in one of these changes what "
+                "a scan then does with an accepted body rather than what the boundary lets "
+                "through. That is the scan's behavior and wants a probe that runs a scan.",
+                (
+                    "ConditionSpec.to_condition",
+                    "PolicyBody.popularity_window_days",
+                    "PolicyBody.returned_absence_days",
+                    "PolicyBody.rating_rules",
+                    "PolicyBody.keep_configs",
+                    "PolicyBody.custom_signal_configs",
+                    "PolicyBody._gathering_evidence",
+                    "PolicyBody.canonical_json",
+                    "PolicyBody.policy_hash",
+                    "PolicyBody.scoring_hash",
+                    "PolicyBody.evidence_hash",
+                    "combine_hashes",
+                ),
+            ),
+            Omission(
+                "Operator copy, not a decision. Its twin `fields._join_or` sits in another "
+                "module, so a zone over one of them would report on half a pair.",
+                ("join_and",),
+            ),
         ),
         probe=SAVE_BOUNDARY_PROBE,
     ),
@@ -1168,11 +1273,34 @@ ZONES: dict[str, Zone] = {
             "lifetime_shortfall",
             "progress_is_establishable",
             "ServerPopularityGate.evaluate",
-            "WhitelistGate.evaluate",
-            "CuratedListGate.evaluate",
             "MinDormancyGate.evaluate",
+            "RewatchOddsGate.evaluate",
+            "ReturnedGate.evaluate",
+            "wilson_upper",
             "DataHorizonGate.evaluate",
             "evaluate_all",
+            # The eight the zone omitted while reporting a clean sweep of the gate layer
+            # (#598). `_blocked` matters most in principle: it is the one fail-closed helper
+            # every gate routes through, so deleting its `Unknown` guard withdraws the block
+            # from all five at once. `_miss_phrase` matters most in fact -- all three
+            # survivors a supplementary run found were in it, one live on a default policy.
+            # The four `Evaluation` properties carry no mutable token and report zero, which
+            # is the honest answer `evaluate_all` already gave.
+            "_blocked",
+            "GateResult.fired",
+            "RatingFloorGate._miss_phrase",
+            "Evaluation.checked_and_did_not_fire",
+            "Evaluation.protected",
+            "Evaluation.blocked",
+            "Evaluation.protectors",
+            "Evaluation.could_not_be_checked",
+        ),
+        omits=(
+            Omission(
+                "Protocol members. The body is `...`, so there is nothing to mutate and no "
+                "implementation to answer for; the real ones are declared above.",
+                ("Gate.id", "Gate.evaluate"),
+            ),
         ),
         tests=(
             "tests/test_engine_invariants.py",
@@ -1194,6 +1322,11 @@ ZONES: dict[str, Zone] = {
         module=Path("src/reaper/ratings.py"),
         functions=(
             "Rating.meets",
+            # Declared with `meets`, which used to carry this predicate inline. Hoisting a
+            # shared helper out of a zoned function moves its mutants somewhere no zone names
+            # unless the helper is named too -- the gap `describe_votes` opened once already
+            # (docs/LEARNINGS.md, rule 145).
+            "Rating.short_of_vote_floor",
             "Rating.has_meaningful_vote_count",
             "Rating.describe",
             "Rating.describe_for_user",
@@ -1223,8 +1356,11 @@ ZONES: dict[str, Zone] = {
     # the alternative and it would report per-slice kill rates that no longer add up to an
     # answer about the detector, so it is scoped whole.
     "policy-inspect": Zone(
-        module=Path("src/reaper/engine/policy.py"),
-        functions=("inspect",),
+        module=Path("src/reaper/engine/policy_warnings.py"),
+        # `_protect_blocks_on_reach` decides one of `inspect`'s warnings and was undeclared, so
+        # the zone's own "one function" note was true of the list rather than of the module.
+        # `INSPECT_PROBE` reads the warnings out, so its mutants are answerable here.
+        functions=("inspect", "_protect_blocks_on_reach"),
         tests=(
             "tests/test_policy.py",
             "tests/test_custom_condemn.py",
@@ -1306,6 +1442,12 @@ def main() -> int:
 
     name, zone = args.zone, ZONES[args.zone]
     report = args.report or REPO / f"mutation-report-{name}.json"
+
+    # Before anything is copied or run: a zone whose list has drifted reports a clean sweep of
+    # a surface it never asked about (#598). `tests/test_repo_hygiene.py` checks every zone in
+    # CI, which this script is not in; this is the same check for the person running it.
+    if drift := zone_drift(name, zone):
+        raise SystemExit("\n".join(drift))
 
     original = (REPO / zone.module).read_text()
     mutants = generate(original, zone)

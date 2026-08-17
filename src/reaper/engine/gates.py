@@ -28,6 +28,7 @@ Two outcomes, and a third thing that is not an outcome:
 from __future__ import annotations
 
 import enum
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
@@ -37,7 +38,6 @@ from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import (
     Rating,
     RatingSource,
-    describe_votes,
     is_percentage_source,
     source_label,
 )
@@ -94,13 +94,27 @@ class GateId(enum.StrEnum):
     """The most important gate. Nothing under the dormancy floor may be deleted at
     all, whatever else it scores. See MinDormancyGate."""
 
+    REWATCH_ODDS = "rewatch_odds"
+    """Opt-in, movies only: keep anything whose dormancy cohort gets watched again at or
+    above the operator's percentage. See RewatchOddsGate; a TV body never carries the row
+    (``PolicyBody._rewatch_odds_row``)."""
+
+    RETURNED = "returned"
+    """Opt-in, both lanes: hold a title that left the library and came back, because a return
+    is the clearest evidence Reaper can get that removing it was wrong. See ReturnedGate."""
+
     SEASON_PROGRESSION = "season_progression"
     """Not authorable in a policy. The engine emits it from the season judgment
-    (``season_scan.guard_result``); no policy row builds it."""
+    (``season_evidence.guard_result``); no policy row builds it."""
 
     CUSTOM = "custom"
-    """Not authorable in a policy. Tags the result of an operator-authored custom rule,
-    which is configured under ``custom_condemn``, not as a gate."""
+    """Not built from a gate row. Tags an operator-authored protect condition: one
+    ``fields.CustomProtectGate`` per ``protect_conditions`` entry, built in
+    ``scan_runner.build_gates``, and each can only return PROTECT or ABSTAIN.
+    The operator's other two keep kinds carry different ids: ``graded_keeps`` is a
+    score discount through ``keep_configs()`` and builds no gate, and
+    ``keep_rating_rules`` tags ``RATING_FLOOR``.
+    ``custom_condemn`` is the removal side and reaches no gate."""
 
 
 #: The gate ids a policy body may carry: exactly the ones ``scan_runner.build_gates`` can
@@ -120,6 +134,8 @@ POLICY_AUTHORABLE_GATES: frozenset[GateId] = frozenset(
         GateId.SERVER_POPULARITY,
         GateId.DATA_HORIZON,
         GateId.MIN_DORMANCY,
+        GateId.REWATCH_ODDS,
+        GateId.RETURNED,
     }
 )
 
@@ -158,12 +174,12 @@ class GateResult:
     docstring carries why.
 
     What it still does is tell two SHAPES of block apart for the operator's copy, which
-    was always the more honest use of it. ``season_scan.guard_result`` sets it when every
+    was always the more honest use of it. ``season_evidence.guard_result`` sets it when every
     ``season_pruning.PruneConflict`` naming the season was a comparison Reaper could
     actually make: a readable ``kept_watchers`` AND a ``shortfall`` of ``None``. The
     second is not implied by the first -- a count read off a mirror that does not reach
     back to when the season arrived is a number all the same, and settles nothing (#94).
-    ``api.routes._chip`` reads it to choose between "this was watched more than a season
+    ``api.review._chip`` reads it to choose between "this was watched more than a season
     your rule keeps" and "couldn't check who watched these seasons", which are genuinely
     different things to tell someone deciding what to delete.
 
@@ -178,7 +194,7 @@ class GateResult:
     """Only meaningful on a ``blocked`` result: this check never ran, as against one that ran
     and left its answer to the operator.
 
-    Set by the season guard alone (``services.season_scan.guard_result``), the one producer
+    Set by the season guard alone (``services.season_evidence.guard_result``), the one producer
     whose blocked results are not all of a kind, and read by ``WhyPanel.keepRuleConflict``.
     A keep-rule conflict made the comparison and found the rule fighting the evidence, which
     is a decision waiting for a person ("Needs a look"). The same guard on a show Plex never
@@ -210,7 +226,7 @@ class GateResult:
 def thaw_defers_to_owner(value: object) -> bool | None:
     """``defers_to_owner`` as it comes off a stored explanation: three states, no coercion.
 
-    The one derivation, because it had two and they disagreed (rule 104). ``api.routes._chip``
+    The one derivation, because it had two and they disagreed (rule 104). ``api.review._chip``
     read the raw dict with ``is True`` / ``is False``, so anything else fell to its
     vague-but-true chip; ``explanation.GateOutcomeOut`` read the same byte through Pydantic's
     lax bool coercion, which takes ``1`` and ``"true"`` as True, ``0`` as False, and REFUSES
@@ -308,8 +324,8 @@ class Facts:
     retired."""
 
     # --- fields authorable in custom rules (the weighting feature) --------------------
-    # Given fail-safe defaults so the non-production Facts builders (backtest
-    # reconstruction, calibration, test fixtures) need not enumerate them; the live scan
+    # Given fail-safe defaults so a Facts built outside the scan (a test fixture, a thawed
+    # snapshot) need not enumerate them; the live scan
     # builders set them explicitly, which they must -- ``Absent`` is fail-closed on the
     # condemn and gate lanes but not on the keep lane. See ``_UNSET``.
     requested: Observation[bool] = _UNSET
@@ -378,28 +394,126 @@ class Facts:
     ``Known`` is "cannot establish", the keep direction (rule 104).
     """
 
+    # --- rewatch (#554 stage 1) ---------------------------------------------------------
+
+    rewatch_viewings: Observation[int] = _UNSET
+    """How many qualified viewings this title has, all time, any user -- a viewing being a
+    cluster of qualified plays under ``services.rewatch.viewing_count``. Exists for the
+    built-in habitual-rewatch keep and is not offered in the rule-authoring vocabulary.
+    Movies only in v1; the season lane sets it ``Absent`` (``season_scan.build_season_facts``).
+
+    Defaulted like the fields above, and read the same way: anything but ``Known`` never
+    condemns and never argues the keep (rule 104)."""
+
+    rewatch_last_play_days: Observation[float] = _UNSET
+    """Days since the most recent QUALIFIED play, at scan time. A raw, frozen input, not a
+    verdict: whether ``rewatch_viewings`` and this add up to a habitual-rewatch keep is a
+    policy-configurable bar (a viewing floor, a recency window) decided in
+    ``engine/signals.py``, not here, so an operator's threshold edit replays against these
+    frozen facts in the simulator without a re-scan (``docs/history/REWATCH_PLAN.md``, Stage 1).
+    Four states:
+
+    * ``Known(n)`` -- the mirror was read and at least one qualified play exists.
+    * ``Absent`` -- the mirror was read and this movie has no qualified play at all: we
+      looked, there is genuinely nothing to measure from. ``rewatch_viewings`` is
+      ``Known(0)`` alongside it, never ``Unknown``.
+    * ``Unknown`` -- the mirror could not be read for this item (no Plex key, or the item
+      is watch-blind). Never a measured absence (rule 93).
+    * The season lane sets this ``Absent`` too, with its own comment
+      (``season_scan.build_season_facts``): it ships no validated TV rewatch answer yet.
+
+    Defaulted like the fields above; a stored snapshot predating this field thaws as
+    ``Unknown``, never as a false "checked, nothing there" (rule 104)."""
+
+    # --- rewatch cohort (#554 stage 2) ---------------------------------------------------
+
+    rewatch_cohort_n: Observation[int] = _UNSET
+    """How many candidates, in the same dormancy block as this item, were tracked by the
+    Stage 2 rewatch-probability fit -- the block's cohort size.
+
+    Frozen raw, not judged here: the display floor and the withhold are decided by
+    consumers against ``REWATCH_BLOCK_FLOOR_N`` and ``rewatch.cohort_block``, so a thin
+    block freezes ``Known`` at its small ``n`` rather than pretending it was not measured.
+    That is what lets the opt-in protective hold (decided in the engine by the gate that
+    reads it) and the simulator replay exactly against these frozen counts, the same reason
+    ``rewatch_last_play_days`` above is frozen rather than pre-judged
+    (``docs/history/REWATCH_PLAN.md``, Stage 2).
+
+    Known only when the current dormancy is Known AND the fit found a non-withheld block
+    for it; Unknown otherwise (no key, watch-blind, dormancy Unknown, past the fitted range,
+    a dropped bucket, or withheld by reach) -- never Absent, unlike the stage 1 pair above:
+    a candidate this scan measured always has an opinion about its own dormancy block, even
+    when that opinion is "cannot say". Both lanes freeze it -- a movie its own block
+    (``services.snapshot.build_facts``), a season its show's, off the TV curve the season
+    task fits the same way (``services.season_scan._judge_series``). Absent means
+    hand-built Facts that never gathered a curve at all.
+
+    Defaulted like the fields above, and read the same way: anything but ``Known`` never
+    condemns and never argues the hold (rule 104)."""
+
+    rewatch_cohort_k: Observation[int] = _UNSET
+    """How many of ``rewatch_cohort_n`` were watched again inside the fit's outcome window --
+    the block's watched-again count. Same block, same fit, same freeze as
+    ``rewatch_cohort_n`` immediately above, including its Known/Unknown/Absent states; the
+    rate is ``k / n``, derived and never stored separately (``docs/history/REWATCH_PLAN.md``,
+    Stage 2)."""
+
+    # --- a title that came back (#553) ---------------------------------------------------
+
+    returned_days_ago: Observation[float] = _UNSET
+    """Days since Reaper recorded that this title left the library and came back.
+
+    The clock the hold counts down from, frozen at scan time like every other span here. Read
+    off ``db.LibrarySeen.returned_at``, which is written by the scan that DETECTS the return
+    and read back by every scan after it -- a return is visible for one scan only, so the fact
+    has to be stored rather than re-derived (``services.library_seen``).
+
+    Three states, and the third is not "no return":
+
+    * ``Known(n)`` -- the ledger holds a return for this title's external id.
+    * ``Absent`` -- the ledger holds a row for it and no return: we looked, there is genuinely
+      nothing. The ordinary state of a title that has sat in one place.
+    * ``Unknown`` -- there was nothing to look up. No Plex bind, no external id, or a title
+      Reaper is seeing for the first time. Never a measured absence (rule 93).
+
+    Defaulted like the fields above, and a stored snapshot predating it thaws ``Unknown``
+    (rule 104)."""
+
+    returned_by_reaper: Observation[bool] = _UNSET
+    """Whether Reaper's own journal says it removed this title before the return.
+
+    Chooses which sentence the operator reads and nothing else: the hold is the same length
+    either way, because splitting them would mean a second knob for a difference nobody has
+    measured. ``Known(False)`` is a real answer -- Reaper has no record of removing it, so the
+    operator did, or something else did. ``Absent`` beside a ``Known`` ``returned_days_ago``
+    cannot happen; both are written together (``services.library_seen.record``)."""
+
     ratings: tuple[Rating, ...] = ()
     """Every interpretable rating the scan froze for this item, one per source (IMDb,
     TMDb, Rotten Tomatoes critics/audience, Metacritic). Read only by the multi-source
     ``RatingFloorGate``, a protection, so a missing or unreadable source can only ever
-    fail to keep a title, never condemn one. Empty by default and for the historical
-    reconstruction (backtest/calibration have no rating source), which simply means the
+    fail to keep a title, never condemn one. Empty by default, which simply means the
     gate does not fire. Not hashed (Facts is evidence, not policy)."""
 
 
 @dataclass(frozen=True, slots=True)
 class GateConfig:
-    """The user-tunable part of a gate. Integers only -- see ``policy``."""
+    """The user-tunable part of a gate. Integers only -- see ``policy``.
 
-    gate: GateId
-    enabled: bool = True
+    No ``gate`` id and no ``enabled`` flag. Both were written at the one construction site
+    (``services.scan_runner.build_gates``) and read by no gate: each gate class carries its
+    own ``id``, and a gate the operator switched off is never built at all, so the flag was
+    only ever ``True``. A config that could say ``enabled=False`` invites a reader to think
+    something checks it.
+    """
+
     threshold: int = 0
     #: No ``secondary`` here. It carried the rating gate's vote floor until that bar moved to
     #: ``PolicyBody.keep_rating_rules``, where it is now ``RatingRule.min_votes``, read by
     #: ``RatingFloorGate.evaluate`` and the ``_miss_phrase`` helper it calls. After the move no
     #: gate read ``secondary``, and ``scan_runner`` was copying a dead number into every gate it
     #: built. The policy body has since dropped it too, via migration ``e6f708192a3b`` -- see
-    #: ``policy.drop_retired_gate_keys`` for the stored bodies that still carry the key.
+    #: ``policy_migrations.drop_retired_gate_keys`` for the stored bodies that still carry the key.
 
     window_days: int = 365
     """How far back "recently" reaches, for gates that count activity.
@@ -446,15 +560,21 @@ class RatingRule:
 
     def describe_bar(self) -> str:
         """The full bar, for the why-panel and the checked line: the number, the source, and
-        the vote floor where the source has one (``7.5 on IMDb from 1,000 votes``)."""
+        the vote floor where the source has one (``7.5 on IMDb from 1,000+ votes``)."""
         if is_percentage_source(self.source):
             return f"{source_label(self.source)} {self.floor}%"
-        # `describe_votes` is the one derivation of this clause (rule 104); it also renders a
-        # count of 1 as "vote", which all three copies of the phrase used to get wrong.
-        return (
-            f"{self.threshold_text()} on {source_label(self.source)}"
-            f"{describe_votes(self.min_votes)}"
-        )
+        # The floor gets its own clause rather than `ratings.describe_votes`, which renders
+        # a count a title really has. The why-panel prints both one line apart -- the bar
+        # under "you keep", the item's own count under "too few to trust" -- so sharing the
+        # wording made "from 1,000 votes" a floor in one sentence and a measurement in the
+        # next (#623). The "+" is the whole difference, and it is why this cannot call the
+        # helper and append one: at a floor of 1 the clause reads "from 1+ votes", where a
+        # real count of 1 correctly reads "from 1 vote".
+        # `PolicyEditor.tsx`'s `describeBar` renders this same clause for the same rule and
+        # already spells it with the "+"; the two are pinned together in
+        # `test_the_bar_names_its_vote_floor_as_a_floor`.
+        floor = f" from {self.min_votes:,}+ votes" if self.min_votes > 0 else ""
+        return f"{self.threshold_text()} on {source_label(self.source)}{floor}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -485,12 +605,9 @@ class RatingFloorGate:
         the "checked and did not fire, with the numbers" explainability the panel needs."""
         if rating is None:
             return f"no rating on {source_label(rule.source)} (you keep {rule.describe_bar()})"
-        too_few_votes = (
-            rule.min_votes > 0
-            and rating.has_meaningful_vote_count
-            and (rating.votes is None or rating.votes < rule.min_votes)
-        )
-        if too_few_votes:
+        # The same predicate `evaluate` decides the bar on, so the sentence cannot claim a
+        # vote floor was missed on a count `Rating.meets` counted as enough (rule 104).
+        if rating.short_of_vote_floor(rule.min_votes):
             return f"{rating.describe_for_user()}, too few to trust (you need {rule.min_votes:,})"
         return f"{rating.describe_for_user()}, below the {rule.threshold_text()} you keep"
 
@@ -643,7 +760,7 @@ def progress_is_establishable(*, reach_days: int, hold_days: int) -> bool:
 
     It lives here beside :func:`history_shortfall` and :func:`lifetime_shortfall` because it is
     the third member of one family -- a span the mirror is asked to cover, and what it means
-    when it cannot -- and because ``policy.inspect`` has to ask it to warn about this one
+    when it cannot -- and because ``policy_warnings.inspect`` has to ask it to warn about this one
     before a scan runs into it. An engine module may not import a service, and reimplementing
     the two-line predicate at the second caller is exactly what rule 104 forbids.
 
@@ -712,7 +829,7 @@ class ServerPopularityGate:
                 # reaps library-wide. It still forces ABSTAIN, which is its real job.
                 #
                 # The "could not check ..." prefix IS still load-bearing, for the two
-                # surfaces that read it: ``api.routes._chip`` sends a detail starting
+                # surfaces that read it: ``api.review._chip`` sends a detail starting
                 # with it to "Some checks couldn't run" instead of "left for you to
                 # decide", and ``WhyPanel`` splits it into check and cause. Reword it and a
                 # plumbing failure starts reading to the operator as their own decision.
@@ -740,8 +857,8 @@ class ServerPopularityGate:
 # never firing they were not simply retired: every list -- tag, collection, watchlist, IMDb
 # -- now protects through the operator's own keep rules on the ``on_list`` field, evaluated
 # by ``fields.CustomProtectGate``, so each list's strength is a per-list choice on Policy.
-# ``policy.convert_list_protections`` rewrites a stored body's gate rows into the equivalent
-# rules, and their `GateId`s survive above so a stored explanation still decodes.
+# ``policy_migrations.convert_list_protections`` rewrites a stored body's gate rows into the
+# equivalent rules, and their `GateId`s survive above so a stored explanation still decodes.
 
 
 @dataclass(frozen=True, slots=True)
@@ -755,22 +872,20 @@ class MinDormancyGate:
     The default threshold is not a guess; it comes from the shape of the rewatch
     curve. That probability **roughly halves at the one-year mark, then decays only
     slowly, and its tail never reaches zero** -- see ``docs/SIGNALS.md``, "There is no
-    cliff. Nothing is ever free to delete." Measured on one real library
-    (``backtest.FALLBACK_REWATCH_PRIOR``) it runs about 61% inside the first year, about
-    30% between two and three years, about 19% from three to five, and about 13% beyond
-    five. So a title one to three years dormant still has close to a one-in-three chance
-    of being played again within the year, and past 1,095 days the odds improve but never
-    reach free. Dormancy of a year or two means very little -- people circle back to
-    films on that timescale all the time.
+    cliff. Nothing is ever free to delete." Measured on one real library and tabulated
+    there under "Ground truth: rewatch probability by dormancy", it runs about 61% inside
+    the first year, about 30% between two and three years, about 19% from three to five,
+    and about 13% beyond five. So a title one to three years dormant still has close to a
+    one-in-three chance of being played again within the year, and past 1,095 days the odds
+    improve but never reach free. Dormancy of a year or two means very little -- people
+    circle back to films on that timescale all the time.
 
     That curve is a *property of an audience*, not a universal constant, and the figures
     above are documented defaults measured on one real library, not figures fitted to
-    this server. **The threshold this gate enforces is the operator's own stored number**
-    (``config.threshold``), read straight off the policy: nothing adjusts it.
-    ``engine.calibration`` derives a bucketed rewatch prior, which is the backtest's lift
-    baseline and not this threshold, and it has no caller in ``src/`` in any case (see the
-    note at the top of that module). The gate exists either way: the shallow tail is the
-    invariant, and the threshold is a default the operator may move.
+    this server. Nothing in Reaper fits one: **the threshold this gate enforces is the
+    operator's own stored number** (``config.threshold``), read straight off the policy,
+    and nothing adjusts it. The gate exists either way: the shallow tail is the invariant,
+    and the threshold is a default the operator may move.
     """
 
     config: GateConfig
@@ -819,6 +934,154 @@ class MinDormancyGate:
         )
 
 
+#: The cohort size under which a fitted rewatch block displays no number and can never fire
+#: the hold (``docs/history/REWATCH_PLAN.md``, stage 2). It lives here rather than in
+#: ``services/rewatch.py`` because ``RewatchOddsGate`` below reads it and an engine module
+#: may not import a service.
+REWATCH_BLOCK_FLOOR_N = 30
+
+
+def wilson_upper(k: int, n: int) -> float:
+    """The Wilson 95% upper bound of ``k/n``, as a fraction.
+
+    The hold compares this rather than the point rate so a small library never loses
+    protection to sampling noise; it converges to ``k/n`` as ``n`` grows. One derivation,
+    read by the gate below and by the policy page's consequence echo (``api.policy``)."""
+    if n <= 0:
+        return 0.0
+    z = 1.96
+    p = k / n
+    denom = 1 + z * z / n
+    center = p + z * z / (2 * n)
+    spread = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (center + spread) / denom
+
+
+@dataclass(frozen=True, slots=True)
+class RewatchOddsGate:
+    """Keep anything whose kind gets watched again at or above the operator's percentage.
+
+    Opt-in on both lanes, and the one gate that reads the fitted rewatch curve: the item's
+    frozen cohort (``Facts.rewatch_cohort_n`` / ``rewatch_cohort_k``) is its merged dormancy
+    block from the per-scan fit -- a movie's own, a season's the show's
+    (``docs/LEARNINGS.md``, the TV fit entry) -- and the comparison is the Wilson 95% upper
+    bound of that block's rate against ``config.threshold`` percent.
+
+    **An unreadable cohort abstains without blocking, and that is a documented deviation**
+    from the fail-closed ``_blocked`` arm every other gate takes (rule 143's corollary,
+    owned here in writing): the plan states a withheld block never blocks and never
+    condemns, because on a shallow mirror most of the library has no measurable cohort and
+    an opt-in extra protection must not amber-flag all of it. The items whose history is
+    genuinely unreadable are already blocked by the dormancy and popularity gates reading
+    the same sources, so failing quiet here withdraws no cover (``docs/history/REWATCH_PLAN.md``,
+    stage 2, "The hold").
+    """
+
+    config: GateConfig
+    id: GateId = GateId.REWATCH_ODDS
+
+    def evaluate(self, facts: Facts) -> GateResult:
+        n_obs = facts.rewatch_cohort_n
+        k_obs = facts.rewatch_cohort_k
+        if isinstance(n_obs, Unknown) or isinstance(k_obs, Unknown):
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                detail="Not enough watch history to say how often titles like this get watched.",
+            )
+        if not (isinstance(n_obs, Known) and isinstance(k_obs, Known)):
+            # Hand-built Facts that never gathered a curve: both live lanes freeze a
+            # cohort now, so a genuine Absent means nothing to compare (rule 93's Absent,
+            # not a failed read).
+            return GateResult(self.id, ABSTAIN, detail="Does not apply here.")
+        n = int(n_obs.value)
+        k = int(k_obs.value)
+        if n < REWATCH_BLOCK_FLOOR_N:
+            return GateResult(self.id, ABSTAIN, detail="Too few titles like this to say.")
+        floor = self.config.threshold
+        if wilson_upper(k, n) * 100 >= floor:
+            # Lowercase fragment: it renders in the "Protections that fired" list.
+            return GateResult(
+                self.id,
+                PROTECT,
+                detail=f"titles like this keep getting watched: {k} of {n} within a year",
+            )
+        return GateResult(
+            self.id,
+            ABSTAIN,
+            detail=(
+                f"Of {n} titles like this, {k} were watched again within a year, "
+                f"under the {floor}% you keep."
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReturnedGate:
+    """Hold a title that left the library and came back.
+
+    A return is the clearest evidence Reaper can get that removing something was wrong:
+    somebody went and fetched it again. What counts as one is decided in the scan, not here --
+    four conditions over Plex rating keys, a minimum absence and a count of the scans that ran
+    during it (``services.library_seen``) -- and this gate reads the one number that came out
+    of it. That split is what lets an operator move the hold's length and have the simulator
+    replay it exactly, the same reason ``Facts.rewatch_last_play_days`` is frozen raw.
+
+    ``config.threshold`` is how long the hold lasts, in days. ``config.window_days`` is the
+    minimum absence, read by the scan rather than by this gate.
+
+    **An unreadable return abstains without blocking, and that is a documented deviation**
+    from the fail-closed ``_blocked`` arm every other gate takes (rule 143's corollary, owned
+    here in writing, exactly as ``RewatchOddsGate`` owns its own). The ledger is EMPTY on a
+    fresh install and on every install the scan after this ships, so blocking on ``Unknown``
+    would amber-flag the entire library and abstain every verdict in it until the ledger
+    filled -- months, during which Reaper could condemn nothing at all. The items whose Plex
+    bind genuinely failed are already blocked by the four Plex-dependent gates reading the same
+    resolution, so failing quiet here withdraws no cover.
+    """
+
+    config: GateConfig
+    id: GateId = GateId.RETURNED
+
+    def evaluate(self, facts: Facts) -> GateResult:
+        returned = facts.returned_days_ago
+        if isinstance(returned, Unknown):
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                detail="Reaper has nothing on record about this title leaving and coming back.",
+            )
+        if not isinstance(returned, Known):
+            return GateResult(
+                self.id, ABSTAIN, detail="It has not left your library and come back."
+            )
+
+        hold = self.config.threshold
+        # Rounded UP, so a hold with any of itself left never reads as spent. Rule 31: the
+        # bound that produces less deletion pressure is the one that keeps the file.
+        left = math.ceil(hold - returned.value)
+        if left <= 0:
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                detail=(
+                    f"It came back {humanize_days(returned.value)} ago, past the "
+                    f"{humanize_window(hold)} you keep a title that came back."
+                ),
+            )
+        by_reaper = facts.returned_by_reaper
+        removed_by_us = isinstance(by_reaper, Known) and by_reaper.value
+        # The journal's one job. Same hold either way: splitting the length would mean a
+        # second knob for a difference nobody has measured. A lowercase fragment, because it
+        # renders in the "What spared it" list beside "someone is watching it right now".
+        lead = (
+            "you removed this before and it came back"
+            if removed_by_us
+            else "this left your library and came back"
+        )
+        return GateResult(self.id, PROTECT, detail=f"{lead}, {humanize_days(left)} left")
+
+
 @dataclass(frozen=True, slots=True)
 class DataHorizonGate:
     """Fail closed when we cannot say how long an item has gone unwatched.
@@ -829,8 +1092,8 @@ class DataHorizonGate:
     lane, ``ServerPopularityGate`` refuses to report a protection as checked over a window
     its history does not span (``Facts.history_reach_days``). On the dormancy lane, which is
     the rest of this docstring, the defense lives in fact *derivation*:
-    dormancy is measured from ``max(added_at, horizon)`` (see ``services.snapshot.build_facts``,
-    ``engine.backtest.facts_as_of`` and ``engine.calibration.derive``), so a pre-horizon item
+    dormancy is measured from ``max(added_at, horizon)`` (``engine.dormancy.reference_instant``,
+    through ``services.snapshot.build_facts`` and its season twin), so a pre-horizon item
     is clamped to the horizon rather than read as decades dormant.
 
     This gate's only independent job, therefore, is to fail closed when dormancy is
@@ -857,10 +1120,12 @@ class DataHorizonGate:
 # An `UnmanagedGate` ("if no *arr owns it, Reaper cannot delete it") lived here, enabled by
 # default in both shipped policies. It could not fire. Reaper builds its candidate list BY
 # asking Sonarr and Radarr what they hold, so a file neither owns can never reach the set this
-# gate filtered: every builder of ``Facts.is_managed`` writes a hardcoded ``Known(True)``
-# (`snapshot`, `season_scan`, `backtest`), and the only other place a `Facts` is constructed
-# is `facts_codec.facts_from_dict`, which can thaw only what a builder already wrote. The
-# PROTECT branch
+# gate filtered: both evidence builders of ``Facts.is_managed`` write a hardcoded ``Known(True)``
+# (`snapshot`, `season_scan`), and neither of the two other `Facts` constructors can reach a gate
+# with anything else -- `facts_codec.facts_from_dict` thaws only what a builder already wrote, and
+# `preview._bare_facts` does write ``Unknown`` here but is handed to `evaluate_signal` alone,
+# never to `evaluate_all`. That last one is the load-bearing half, so it is stated rather than
+# left to a count of construction sites. The PROTECT branch
 # and the gate's half of ``verdict.STRUCTURAL_GATES`` were both unreachable while the operator
 # saw a switch, on by default, warned in red if they turned it off (rule 38/117).
 #
@@ -875,15 +1140,15 @@ class DataHorizonGate:
 # path that can find media NO *arr manages -- reading Plex directly rather than the *arrs --
 # so that the fact can be something other than True. Gate, builders and tests return together.
 # ``GateId.UNMANAGED`` survives so a stored explanation still decodes. Four surfaces read one
-# back, and all four stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.routes`' chip
+# back, and all four stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.review`' chip
 # phrasing, `WhyPanel.tsx`'s held-reap line, and `WhyPanel.tsx`'s ``CHECK_COPY`` entry for
 # "which *arr owns this", which was this gate's blocked branch and whose only producer was the
 # code deleted here.
 
 
 # An `OthersWatchingGate` ("the requester ignored it, but other people did not") lived here.
-# No fact builder ever produced a Known ``others_watching`` -- snapshot, season_scan and
-# backtest all wrote Absent -- so the count was always 0 against a floor of at least 1 and
+# No fact builder ever produced a Known ``others_watching`` -- every one wrote Absent -- so
+# the count was always 0 against a floor of at least 1 and
 # the gate could not PROTECT anything, while its ABSTAIN line read to the owner like a check
 # that ran. A protection that cannot fire is deleted, not stockpiled (rule 38): the evidence
 # it needs (per-user plays excluding the requester) is not gathered anywhere in the scan.
@@ -940,6 +1205,7 @@ def evaluate_all(gates: Sequence[Gate], facts: Facts) -> Evaluation:
 __all__ = [
     "ABSTAIN",
     "PROTECT",
+    "REWATCH_BLOCK_FLOOR_N",
     "DataHorizonGate",
     "Evaluation",
     "Facts",
@@ -951,7 +1217,10 @@ __all__ = [
     "MinDormancyGate",
     "RatingFloorGate",
     "RatingRule",
+    "ReturnedGate",
+    "RewatchOddsGate",
     "ServerPopularityGate",
     "StreamingNowGate",
     "evaluate_all",
+    "wilson_upper",
 ]

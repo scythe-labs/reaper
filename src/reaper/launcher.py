@@ -41,17 +41,17 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
 
-from reaper.buildinfo import frozen_bundle, install_root
+from reaper.buildinfo import env_flag, frozen_bundle, install_root, project_root
+from reaper.config import LAUNCHER_CONF_NAME, Settings, configured_env
 
 if TYPE_CHECKING:
     import uvicorn
 
-_TRUE = {"1", "true", "yes", "on"}
 
 #: buildinfo.json key -> the environment value it seeds. Operator-set values win:
 #: everything is ``setdefault``, so an env override behaves exactly as in the container.
@@ -66,10 +66,6 @@ _BUILDINFO_KEYS = {
 def _bundle_root() -> Path | None:
     """The unpacked PyInstaller bundle, or ``None`` when running from source."""
     return frozen_bundle()
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent.parent
 
 
 def export_buildinfo(env: MutableMapping[str, str], path: Path | None) -> None:
@@ -126,12 +122,6 @@ def _resolve_data_dir(env: MutableMapping[str, str], *, frozen: bool) -> None:
     if frozen and not env.get("REAPER_DATA_DIR", "").strip():
         env["REAPER_DATA_DIR"] = str(default_data_dir(sys.platform, env))
 
-
-#: The file an install that cannot receive environment variables is configured through.
-#: Declared here because the launcher owns it, and read from here by the backup (which
-#: carries it) and the restore (which puts it back and disarms recovery inside it), so the
-#: three cannot drift onto different spellings of one filename (rule 104).
-LAUNCHER_CONF_NAME = "launcher.conf"
 
 #: What the template written on first run offers. Only REAPER_ keys are honored on
 #: read, so the file cannot reach PATH or anything else the process inherits.
@@ -223,14 +213,6 @@ def desktop_platform(platform: str | None = None, *, frozen: bool | None = None)
     return None
 
 
-def desktop_flag(key: str, *, default: bool) -> bool:
-    """The value the launcher resolved this boot. ``load_launcher_conf`` seeded the
-    file into the environment before serving, so the environment is the effective
-    record; the file only matters again at the next start."""
-    raw = os.environ.get(key, "").strip().lower()
-    return raw in _TRUE if raw else default
-
-
 def write_conf_values(data_dir: Path, values: MutableMapping[str, str]) -> None:
     """Set keys in ``launcher.conf``, preserving everything else the operator wrote.
 
@@ -272,13 +254,34 @@ def _migrate(root: Path) -> None:
     command.upgrade(config, "head")
 
 
-def _port(env: MutableMapping[str, str]) -> int:
-    raw = env.get("REAPER_PORT", "").strip() or "8420"
+def _settings_default(field: str) -> str:
+    """One declared default, read off the model rather than spelled a second time.
+
+    The launcher used to carry its own `8420` and `0.0.0.0` beside `config.Settings`'s, so
+    the port it bound and the port `main.py` printed in the anti-lockout recovery link were
+    two values that merely happened to agree (#558). They are one value now.
+    """
+    return str(Settings.model_fields[field].default)
+
+
+def _port(env: Mapping[str, str], *, frozen: bool) -> int:
+    """The port to bind, refusing a value that is not one.
+
+    Through ``_say``, not ``sys.stderr``: on a desktop build this value comes from
+    ``launcher.conf``, the one file that shape is configured through, and a stderr-only
+    refusal there is written to the null device (#622). ``frozen`` is required rather than
+    defaulted so a call site cannot silently take the console-only path.
+    """
+    raw = env.get("REAPER_PORT", "").strip() or _settings_default("port")
     try:
         return int(raw)
     except ValueError:
-        sys.stderr.write(f"REAPER_PORT must be a port number; it is set to {raw!r}.\n")
+        _say(f"REAPER_PORT must be a port number; it is set to {raw!r}.", frozen=frozen)
         raise SystemExit(2) from None
+
+
+def _host(env: Mapping[str, str]) -> str:
+    return env.get("REAPER_HOST", "").strip() or _settings_default("host")
 
 
 def _loopback_occupied(port: int) -> bool:
@@ -318,14 +321,11 @@ def _say(message: str, *, frozen: bool) -> None:
             ctypes.windll.user32.MessageBoxW(None, message, "Reaper", 0x10)
 
 
-def _browser_wanted(env: MutableMapping[str, str], *, frozen: bool) -> bool:
+def _browser_wanted(env: Mapping[str, str], *, frozen: bool) -> bool:
     """Open the operator's browser once the server is up? On for a frozen binary
     (a double-click gives no other signal it worked), off everywhere else; the
     ``REAPER_LAUNCH_BROWSER`` env value overrides either default."""
-    configured = env.get("REAPER_LAUNCH_BROWSER", "").strip().lower()
-    if configured:
-        return configured in _TRUE
-    return frozen
+    return env_flag("REAPER_LAUNCH_BROWSER", default=frozen, env=env)
 
 
 def _open_browser_when_up(port: int) -> None:
@@ -344,7 +344,7 @@ def _open_browser_when_up(port: int) -> None:
         url = f"http://127.0.0.1:{port}/api/health"
         while time.monotonic() < deadline:
             try:
-                with urllib.request.urlopen(url, timeout=3) as response:  # noqa: S310
+                with urllib.request.urlopen(url, timeout=3) as response:
                     if response.status == 200:
                         webbrowser.open(f"http://127.0.0.1:{port}")
                         return
@@ -367,17 +367,14 @@ def _serve_kwargs(host: str, port: int) -> dict[str, Any]:
     return {"factory": True, "host": host, "port": port, "proxy_headers": False}
 
 
-def _tray_wanted(platform: str, env: MutableMapping[str, str], *, frozen: bool) -> bool:
+def _tray_wanted(platform: str, env: Mapping[str, str], *, frozen: bool) -> bool:
     """An icon whenever this install would otherwise be invisible: the frozen
     desktop builds. ``REAPER_TRAY`` overrides either way (a source run can opt in
     while testing); platforms without a tray to sit in never get one -- the snap is
     a service snapd already shows."""
     if platform not in ("win32", "darwin"):
         return False
-    configured = env.get("REAPER_TRAY", "").strip().lower()
-    if configured:
-        return configured in _TRUE
-    return frozen
+    return env_flag(DESKTOP_TRAY_KEY, default=frozen, env=env)
 
 
 def _tray_backend() -> ModuleType | None:
@@ -399,7 +396,7 @@ def _tray_image() -> Any | None:
         from PIL import Image
     except ImportError:
         return None
-    root = install_root() or _repo_root()
+    root = project_root()
     for candidate in (
         root / "frontend" / "dist" / "icon-512.png",
         root / "frontend" / "public" / "icon-512.png",
@@ -517,7 +514,7 @@ def main() -> None:
     # Before anything touches the disk: a plain `pip install reaper` puts this script
     # on PATH with no migrations beside it (site-packages has no alembic/), and
     # continuing would create a data folder that can never be brought current.
-    root = install_root() or _repo_root()
+    root = project_root()
     if not (root / "alembic").is_dir():
         sys.stderr.write(
             "Reaper can't find its database migrations next to this install. Run the "
@@ -530,8 +527,15 @@ def main() -> None:
     # renames succeed under a running server's open handles — a doubled launch (the exact
     # event this refusal exists for) would swap the data out from under the copy that
     # keeps serving. A launch that will not serve must mutate nothing.
-    host = os.environ.get("REAPER_HOST", "").strip() or "0.0.0.0"
-    port = _port(os.environ)
+    # `configured_env`, not `os.environ`: a source checkout's `.env.local` is what
+    # `Settings` reads, so the launcher binding the process-environment value alone bound
+    # 8420 while `main.py` printed the dotenv port in the anti-lockout recovery link. That
+    # link is the way back in for a locked-out operator (#558). `load_launcher_conf` above
+    # has already `setdefault`-ed the desktop conf into `os.environ`, which wins here the
+    # same way a real environment variable wins inside `Settings`.
+    settled = configured_env()
+    host = _host(settled)
+    port = _port(settled, frozen=frozen)
     if _loopback_occupied(port):
         move = (
             f"add a line like REAPER_PORT=8421 to {conf}"
@@ -550,12 +554,24 @@ def main() -> None:
     # and that first call must see the data dir chosen above.
     from reaper.preflight import main as preflight
 
-    code = preflight()
+    # `_say`, not preflight's own stderr write: its four fatal sentences are the ones a
+    # double-clicked build has to see, and a windowed PyInstaller build's stderr is
+    # `os.devnull` (#622). The branch's schema-gate refusal is the third of them, and it is
+    # the one a `dev`-side fix would have left invisible; the fourth is a pre-migration
+    # snapshot that could not be written (#566).
+    code = preflight(lambda message: _say(message, frozen=frozen))
     if code:
         raise SystemExit(code)
 
+    # Preflight above is also what refuses a database this build cannot serve
+    # (``reaper.db.schema_gate.refusal``, called at the end of ``preflight.main``). It has
+    # to be that call and not one here: it runs after preflight's staged-restore swap, and
+    # restoring a backup is one of the two ways out the refusal names. The snapshot the
+    # line below may need is taken there too, for the same reason and one line later
+    # (``backup.snapshot_before_migration``, #566) -- so this call site needs nothing, and
+    # the container entrypoint and ``scripts/dev-local.sh`` need nothing either.
     _migrate(root)
-    if _browser_wanted(os.environ, frozen=frozen):
+    if _browser_wanted(settled, frozen=frozen):
         _open_browser_when_up(port)
 
     data_dir = os.environ.get("REAPER_DATA_DIR", "").strip() or "data"
@@ -566,17 +582,20 @@ def main() -> None:
     # The factory is passed as an object, not the usual "reaper.main:create_app"
     # string: uvicorn's string import fails under a frozen bundle and masks the
     # underlying error as "could not import module".
+    #
+    # The import stays in the function because ``reaper.main`` mounts every router and
+    # ``api/settings.py`` imports this module. Promoted to module level it is fatal, not
+    # slow: ``main``, ``api.settings`` and ``api.plex`` all raise ImportError on a circular
+    # import. Those are the two cycles ``_KNOWN_IMPORT_CYCLES`` declares in
+    # ``tests/test_repo_hygiene.py``, and this edge is what closes both.
     from reaper.main import create_app
 
-    if _tray_wanted(sys.platform, os.environ, frozen=frozen):
+    if _tray_wanted(sys.platform, settled, frozen=frozen):
         backend = _tray_backend()
         image = _tray_image() if backend is not None else None
         if backend is not None and image is not None:
             server = uvicorn.Server(uvicorn.Config(create_app, **_serve_kwargs(host, port)))
-            dock = (
-                sys.platform == "darwin"
-                and os.environ.get("REAPER_DOCK_ICON", "").strip().lower() in _TRUE
-            )
+            dock = sys.platform == "darwin" and env_flag(DESKTOP_DOCK_KEY, default=False)
             error = _serve_with_tray(backend, server, port, image, dock_icon=dock)
             if error is not None:
                 _say("Reaper stopped unexpectedly. Open it again to restart.", frozen=frozen)

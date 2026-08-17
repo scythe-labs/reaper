@@ -3,7 +3,7 @@
 
 ``GateSetting.secondary`` held the rating gate's vote floor until that bar moved to
 ``PolicyBody.keep_rating_rules``. Nothing has read the number since except the loader shim
-``engine.policy.recover_rating_rules``, which reads it off the raw stored dict. The field
+``engine.policy_migrations.recover_rating_rules``, which reads it off the raw stored dict. The field
 cannot simply be deleted from the model: ``PolicyBody`` is ``extra="forbid"`` and every
 stored body was serialized *with* this key, so a bare deletion turns each saved policy into a
 ``ValidationError`` and falls the operator back to shipped defaults, silently replacing their
@@ -74,7 +74,7 @@ _FIELD = "secondary"
 def bar_is_still_recoverable(raw: object) -> bool:
     """Whether ``secondary`` is the last copy of a rating bar nothing else records.
 
-    A hand copy of ``engine.policy.recover_rating_rules``'s trigger, kept true by
+    A hand copy of ``engine.policy_migrations.recover_rating_rules``'s trigger, kept true by
     ``tests.test_migrations.test_the_migration_reads_a_recoverable_bar_exactly_as_the_shim_does``.
     True means leave the row alone.
     """

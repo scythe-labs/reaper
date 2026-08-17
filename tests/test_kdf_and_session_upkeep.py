@@ -8,9 +8,11 @@ the expired-session sweep (PR-13) and the sign-in poll's deadline (S2-2).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from reaper import crypto
@@ -26,12 +28,42 @@ from reaper.db.models import AppUser, AuthProvider, AuthSession
 SALT = b"0123456789abcdef"
 
 
+def _record(seen: list[int], cost: int, derived: bytes) -> bytes:
+    """Note the scrypt cost that was used, and hand the key straight back.
+
+    `(seen.append(n), derived)[1]` said the same thing, but `append` returns None and mypy
+    reads the tuple's first element as that -- so the expression only looked like it had a
+    value. A named function says which half is the record and which is the answer.
+    """
+    seen.append(cost)
+    return derived
+
+
 def _legacy_box(n: int, *, salt: bytes | None) -> object:
     """A SecretBox pinned to an older scrypt cost, standing in for an older Reaper."""
     from cryptography.fernet import Fernet, MultiFernet
 
     write_salt = salt if salt is not None else crypto._DEFAULT_KDF_SALT
     return MultiFernet([Fernet(crypto._derive_fernet_key("the-key", write_salt, n))])
+
+
+def test_the_cheap_kdf_derives_a_different_key_per_cost() -> None:
+    """The class below is vacuous unless two costs derive two keys, and cannot notice.
+
+    ``tests/conftest.py`` replaces ``_derive_fernet_key`` with a cheap one for the session, so
+    everything here runs against the wrapper rather than against scrypt at 64 MiB. Every test
+    below reads "data written at the old cost still opens under the new one" -- which a wrapper
+    mapping every cost to ONE key satisfies by making the two costs the same key, silently.
+    Measured on a deliberately collapsing wrapper: 30 tests pass, and four of the six
+    compatibility tests prove nothing.
+
+    So the wrapper's injectivity is pinned here, beside the suite that leans on it (rule 145).
+    Against the real derivation this holds trivially, which is the point: it can only fail for
+    a harness that stopped standing in for it.
+    """
+    assert crypto._derive_fernet_key("the-key", SALT) != crypto._derive_fernet_key(
+        "the-key", SALT, 2**14
+    )
 
 
 class TestTheRaisedCostStillOpensEverything:
@@ -101,7 +133,7 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
         monkeypatch.setattr(
             crypto,
             "_derive_fernet_key",
-            lambda secret, salt, n=crypto._SCRYPT_N: (calls.append(n), real(secret, salt, n))[1],
+            lambda secret, salt, n=crypto._SCRYPT_N: _record(calls, n, real(secret, salt, n)),
         )
 
         SecretBox("the-key", salt=SALT)
@@ -118,13 +150,16 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
         monkeypatch.setattr(
             crypto,
             "_derive_fernet_key",
-            lambda secret, salt, n=crypto._SCRYPT_N: (built.append(n), real(secret, salt, n))[1],
+            lambda secret, salt, n=crypto._SCRYPT_N: _record(built, n, real(secret, salt, n)),
         )
 
         assert box.decrypt(fresh) == "x"
         assert built == [], "a token the current derivation opens must cost nothing extra"
 
         old = _legacy_box(2**14, salt=SALT)
+        # Building the old box derives a key of its own, under the same patch, so the
+        # assertion below reads the fixture rather than the miss unless this is cleared.
+        built.clear()
         assert box.decrypt(old.encrypt(b"y").decode("ascii")) == "y"  # type: ignore[attr-defined]
         assert built, "a miss must build the superseded set"
 
@@ -135,14 +170,22 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
 
 
 @pytest.fixture
-async def session() -> AsyncSession:
+async def factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """A throwaway database and the factory over it, which is what the scheduler's jobs
+    take. ``session`` below is one session out of the same factory."""
     engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    factory: async_sessionmaker[AsyncSession] = async_sessionmaker(engine, expire_on_commit=False)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+@pytest.fixture
+async def session(
+    factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
     async with factory() as s:
         yield s
-    await engine.dispose()
 
 
 class TestExpiredSessionsAreSwept:
@@ -208,13 +251,78 @@ class TestExpiredSessionsAreSwept:
         assert scheduler.SESSION_SWEEP_JOB_ID not in scheduler.SCHEDULABLE_JOB_IDS
         assert scheduler.SESSION_SWEEP_JOB_ID not in scheduler.DEFAULT_MAINTENANCE_CRONS
 
+    async def test_the_one_firing_sweeps_both_tables(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """`pending_plex_login` was the one table with a TTL and no scheduled sweeper.
+
+        Its rows were dropped only inside `plex_link.start_pin`, which runs when somebody
+        starts ANOTHER PIN, so an abandoned sign-in on an install where nobody starts one
+        again sat there indefinitely. Its sibling `AuthSession` is the same shape and got a
+        job with the reasoning written down (#710, rule 129).
+
+        Driven through the scheduler's job rather than through the two sweep functions:
+        those are already covered above and separately, and what this pins is that the ONE
+        firing reaches both, which is the thing the fix is. Both tables carry a live row
+        beside the expired one, so a job that emptied them wholesale would fail here.
+        """
+        from reaper.db.models import PendingPlexLogin
+        from reaper.services import scheduler
+
+        now = utcnow()
+        async with factory() as session:
+            session.add(
+                AuthSession(
+                    token_hash="dead",
+                    user_id=1,
+                    created_at=now - timedelta(days=40),
+                    expires_at=now - timedelta(days=10),
+                )
+            )
+            session.add(
+                AuthSession(
+                    token_hash="live",
+                    user_id=1,
+                    created_at=now,
+                    expires_at=now + timedelta(days=10),
+                )
+            )
+            session.add(
+                PendingPlexLogin(
+                    pin_id=101,
+                    purpose="link",
+                    created_at=now - timedelta(hours=2),
+                    expires_at=now - timedelta(hours=1),
+                )
+            )
+            session.add(
+                PendingPlexLogin(
+                    pin_id=102,
+                    purpose="login",
+                    created_at=now,
+                    expires_at=now + timedelta(minutes=10),
+                )
+            )
+            await session.commit()
+
+        await scheduler.sweep_expired_sessions(factory)
+
+        async with factory() as session:
+            tokens = (await session.execute(select(AuthSession.token_hash))).scalars().all()
+            pins = (await session.execute(select(PendingPlexLogin.pin_id))).scalars().all()
+        assert sorted(tokens) == ["live"]
+        assert sorted(pins) == [102]
+
 
 class TestTheSignInPollHonorsItsDeadline:
     """``wait_for_pin`` checked its deadline only at the top of the loop, then slept for
     whatever a 429 named. A ``Retry-After`` of hours parked ``reaper-admin link-plex`` on a
     sleep with the terminal stuck on "Waiting..." (S2-2)."""
 
-    class _Client:
+    class _Client(plextv.PlexTvClient):
+        """Inherits the real client so an override that stops matching it fails the build,
+        and never calls its `__init__`, so it owns no HTTP client and cannot reach out."""
+
         def __init__(self, retry_after: float | None) -> None:
             self.calls = 0
             self._retry_after = retry_after
@@ -229,7 +337,7 @@ class TestTheSignInPollHonorsItsDeadline:
         self, retry_after: float | None, timeout: float
     ) -> tuple[object, TestTheSignInPollHonorsItsDeadline._Client]:
         client = self._Client(retry_after)
-        token = await plextv.PlexTvClient.wait_for_pin(client, 1, timeout=timeout)  # type: ignore[arg-type]
+        token = await plextv.PlexTvClient.wait_for_pin(client, 1, timeout=timeout)
         return token, client
 
     async def test_an_outrageous_retry_after_does_not_outlive_the_deadline(

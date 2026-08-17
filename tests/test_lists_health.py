@@ -28,6 +28,7 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.main import create_app
+from reaper.services import app_settings
 from reaper.services.lists import ConfiguredList, ListHealth, ListKind, ListMode
 from reaper.services.snapshot import WHITELIST_STALE_AFTER
 from tests._auth import login
@@ -98,7 +99,7 @@ class TestHealth:
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -284,4 +285,56 @@ class TestRoute:
         assert row["server"] is None
 
     def test_the_route_needs_a_session(self, client: TestClient) -> None:
-        assert TestClient(client.app).get("/api/lists").status_code == 401  # type: ignore[arg-type]
+        assert TestClient(client.app).get("/api/lists").status_code == 401
+
+
+class TestAuthorableMedia:
+    """The media types the Policy picker offers each list on (``authorable_media``, #549). The
+    scope function is unit-tested in ``test_policy``; these pin the endpoint WIRING -- the join by
+    ``list_id``, the synced flag off ``last_synced_at``, and the Plex library read."""
+
+    @staticmethod
+    def _tag(client: TestClient) -> dict[str, Any]:
+        return next(
+            d for d in client.get("/api/lists/configured").json() if d["source"] == "arr_tag"
+        )
+
+    def test_an_unsynced_tag_is_offered_on_neither(self, client: TestClient) -> None:
+        """A fresh install's keep-tag list has no membership yet: no sync has read what media it
+        holds, so a rule on it could keep nothing. Offered on neither, not silently on both."""
+        assert self._tag(client)["authorable_media"] == []
+
+    def test_a_synced_but_empty_tag_is_offered_on_both(
+        self, client: TestClient, store: Any
+    ) -> None:
+        """A sync landed and found nothing protectable: verified but empty, offered on both so a
+        list the operator means to fill is protectable now. Exercises the list_id join and the
+        synced flag through the real endpoint."""
+        tag_id = self._tag(client)["id"]
+        store(
+            slug=f"sonarr-1-keeptags-any-list{tag_id}",
+            display_name="Tagged titles",
+            last_synced_at=int(NOW.timestamp()),
+        )
+        assert sorted(self._tag(client)["authorable_media"]) == ["movie", "tv"]
+
+    def test_a_collection_takes_its_library_kind_without_a_sync(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The Plex exception: a collection lives in one library, whose kind gives the type
+        before any sync. A movie library scopes the collection's rule to the Movies policy."""
+
+        async def _libs(_session: Any) -> list[dict[str, Any]]:
+            return [{"title": "Films", "kind": "movie"}]
+
+        monkeypatch.setattr(app_settings, "get_plex_libraries", _libs)
+        created = client.post(
+            "/api/lists/configured",
+            json={
+                "name": "Keep Films",
+                "source": "plex_collection",
+                "config": {"library": "Films", "collection": "Keep"},
+            },
+        )
+        assert created.status_code == 201
+        assert created.json()["authorable_media"] == ["movie"]

@@ -67,7 +67,7 @@ from reaper.ratings import _PERCENTAGE_SOURCES, _PLEX_IMAGE_PREFIXES, RatingSour
 #: The ``SCORER_VERSION`` the surface below was recorded against. Both move together or
 #: neither does -- re-recording the list without touching this leaves every operator's
 #: pending approval bound to a scorer that no longer exists.
-_RECORDED_AT_SCORER_VERSION = 2
+_RECORDED_AT_SCORER_VERSION = 5
 
 #: Every declaration below is one a stored policy body dereferences without carrying, so a
 #: change to it re-interprets that body while ``policy_hash`` holds still. Spelled by
@@ -90,6 +90,12 @@ _RECORDED_SURFACE: tuple[str, ...] = (
     "facts.ratings: tuple[Rating, ...] = ()",
     "facts.release_age_days: Observation[float] = Absent(unset)",
     "facts.requested: Observation[bool] = Absent(unset)",
+    "facts.returned_by_reaper: Observation[bool] = Absent(unset)",
+    "facts.returned_days_ago: Observation[float] = Absent(unset)",
+    "facts.rewatch_cohort_k: Observation[int] = Absent(unset)",
+    "facts.rewatch_cohort_n: Observation[int] = Absent(unset)",
+    "facts.rewatch_last_play_days: Observation[float] = Absent(unset)",
+    "facts.rewatch_viewings: Observation[int] = Absent(unset)",
     "facts.season_rank: Observation[int] = required",
     "facts.show_ended: Observation[bool] = Absent(unset)",
     "facts.size_bytes: Observation[int] = required",
@@ -130,6 +136,8 @@ _RECORDED_SURFACE: tuple[str, ...] = (
     "gate.min_dormancy: authorable",
     "gate.others_watching: not-authorable",
     "gate.rating_floor: authorable",
+    "gate.returned: authorable",
+    "gate.rewatch_odds: authorable",
     "gate.season_progression: not-authorable",
     "gate.server_popularity: authorable",
     "gate.streaming_now: authorable",
@@ -218,7 +226,7 @@ _DISPLAY_ONLY_SPEC_ATTRS = frozenset(
 _PROBE_FACTS = Facts(
     title="probe",
     ratings=(),
-    **{
+    **{  # type: ignore[arg-type]
         field.name: Known(value=field.name, source="probe")
         for field in dataclasses.fields(Facts)
         if field.name not in ("title", "ratings")
@@ -351,7 +359,9 @@ class TestTheWalkSeesWhatItClaimsTo:
         assert surface != _RECORDED_SURFACE
 
     def test_a_signal_this_commit_has_never_seen_reaches_the_surface(self) -> None:
-        future = enum.StrEnum(
+        # The functional StrEnum form builds a member list mypy cannot read, which is exactly
+        # why it is used here: a signal id the enum does NOT ship yet.
+        future = enum.StrEnum(  # type: ignore[misc]
             "SignalId", {m.name: m.value for m in SignalId} | {"PROBE": "surface_walk_probe"}
         )
 
@@ -360,11 +370,13 @@ class TestTheWalkSeesWhatItClaimsTo:
         assert "signal.surface_walk_probe" in surface
 
     def test_a_gate_this_commit_has_never_seen_reaches_the_surface(self) -> None:
-        future = enum.StrEnum(
+        # The functional StrEnum form builds a member list mypy cannot read, which is exactly
+        # why it is used here: a signal id the enum does NOT ship yet.
+        future = enum.StrEnum(  # type: ignore[misc]
             "GateId", {m.name: m.value for m in GateId} | {"PROBE": "surface_walk_probe"}
         )
 
-        surface = _scoring_surface(gate_ids=tuple(future))  # type: ignore[arg-type]
+        surface = _scoring_surface(gate_ids=tuple(future))
 
         # Not in POLICY_AUTHORABLE_GATES, so the role resolves without a second declaration.
         assert "gate.surface_walk_probe: not-authorable" in surface
@@ -390,7 +402,9 @@ class TestTheWalkSeesWhatItClaimsTo:
         assert "field.surface_walk_probe: count, lanes=condemn, ops=gte, media=movie/tv" in surface
 
     def test_a_rating_source_this_commit_has_never_seen_reaches_the_surface(self) -> None:
-        future = enum.StrEnum(
+        # The functional StrEnum form builds a member list mypy cannot read, which is exactly
+        # why it is used here: a signal id the enum does NOT ship yet.
+        future = enum.StrEnum(  # type: ignore[misc]
             "RatingSource",
             {m.name: m.value for m in RatingSource} | {"PROBE": "surface_walk_probe"},
         )

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 // One invariant, held over the whole stylesheet: viewport heights are `dvh`, never `vh`, `lvh`
 // or `svh`.
 //

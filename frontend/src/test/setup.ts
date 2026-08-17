@@ -4,17 +4,27 @@ import "@testing-library/jest-dom/vitest";
 
 import { afterEach } from "vitest";
 
-// jsdom has no layout, so window.scrollTo is unimplemented and logs a noisy "Not
-// implemented" on every call. ModalShell restores the scroll offset with it when a modal
-// closes, so make it a quiet no-op here -- nothing in the tests reads a real scroll.
-window.scrollTo = () => {};
+import { forgetWrittenUrl } from "../navUrl";
 
-// Same reason, one layer down: jsdom does not implement Element.scrollIntoView AT ALL, so the
-// property is `undefined` rather than a no-op and calling it throws. Four components scroll a
-// keyboard target into view (the suggester's active option, the docs anchor, the policy
-// warning anchors), and each would take its whole test file down with a TypeError. Assigned
-// rather than spied, because `vi.spyOn` cannot wrap a method that does not exist.
-Element.prototype.scrollIntoView = () => {};
+// This file is `setupFiles`, so it runs for EVERY test file, including the twelve carrying an
+// `@vitest-environment node` docblock. Those have no DOM at all rather than an empty one, so
+// the three writes below are guarded. The console guards further down are not: rule 135's mock
+// gap and rule 136's stray update are as real without a DOM as with one.
+const hasDom = typeof document !== "undefined";
+
+if (hasDom) {
+  // jsdom has no layout, so window.scrollTo is unimplemented and logs a noisy "Not
+  // implemented" on every call. ModalShell restores the scroll offset with it when a modal
+  // closes, so make it a quiet no-op here -- nothing in the tests reads a real scroll.
+  window.scrollTo = () => {};
+
+  // Same reason, one layer down: jsdom does not implement Element.scrollIntoView AT ALL, so
+  // the property is `undefined` rather than a no-op and calling it throws. Four components
+  // scroll a keyboard target into view (the suggester's active option, the docs anchor, the
+  // policy warning anchors), and each would take its whole test file down with a TypeError.
+  // Assigned rather than spied, because `vi.spyOn` cannot wrap a method that does not exist.
+  Element.prototype.scrollIntoView = () => {};
+}
 
 // Pay jsdom's first `getComputedStyle` here, where nothing is timing it.
 //
@@ -35,16 +45,18 @@ Element.prototype.scrollIntoView = () => {};
 // The property is read, not just the call made, because jsdom builds the CSSOM on first
 // access rather than on the call -- and the value is then asserted, so a jsdom that stops
 // answering fails here loudly instead of leaving this line silently warming nothing.
-const warm = document.createElement("div");
-document.body.appendChild(warm);
-const warmedVisibility = window.getComputedStyle(warm).visibility;
-warm.remove();
-if (warmedVisibility === "") {
-  throw new Error(
-    "jsdom returned no computed visibility for a plain div, so this file is no longer " +
-      "paying the first-getComputedStyle cost it exists to pay. Every test file's first " +
-      "*ByRole query is back to spending ~52ms of its findBy budget on it.",
-  );
+if (hasDom) {
+  const warm = document.createElement("div");
+  document.body.appendChild(warm);
+  const warmedVisibility = window.getComputedStyle(warm).visibility;
+  warm.remove();
+  if (warmedVisibility === "") {
+    throw new Error(
+      "jsdom returned no computed visibility for a plain div, so this file is no longer " +
+        "paying the first-getComputedStyle cost it exists to pay. Every test file's first " +
+        "*ByRole query is back to spending ~52ms of its findBy budget on it.",
+    );
+  }
 }
 
 // A query with no queryFn FAILS the test rather than warning (rule 135).
@@ -73,12 +85,20 @@ if (warmedVisibility === "") {
 // on -- the same "warning nobody reads" this file exists to delete, now with the gate's own
 // blessing. Nothing here warns: it fails, or it has nothing to say.
 let missingQueryFn: string[] = [];
+let undefinedData: string[] = [];
 let outsideAct: string[] = [];
 let duplicateKeys: string[] = [];
 const forwardError = console.error.bind(console);
 console.error = (...args: unknown[]) => {
   if (typeof args[0] === "string") {
     if (args[0].includes("No queryFn was passed")) missingQueryFn.push(args[0]);
+    // The same failure reached through an arrow, which is why the collector above cannot see
+    // it: `queryFn: () => api.vocabularyValues(f)` HAS a queryFn, and the mock gap is inside
+    // it. React Query files that as an ordinary rejection, the tree paints its could-not-read
+    // branch, and the test asserts against that branch believing it is the app. Twenty of
+    // these sat behind a green suite, in two files (#704). Rule 135 named this as its own
+    // blind spot and nothing enforced it.
+    if (args[0].includes("Query data cannot be undefined")) undefinedData.push(args[0]);
     // "An update to %s inside a test was not wrapped in act(...)", the component name second.
     if (args[0].includes("was not wrapped in act(")) {
       outsideAct.push(String(args[1] ?? "a component"));
@@ -95,10 +115,22 @@ console.error = (...args: unknown[]) => {
 };
 
 afterEach(() => {
+  // The address bar is app state now (navUrl.ts): `App` reads its section from the path and the
+  // queue seeds its filters from the query string, both at mount. jsdom carries one location
+  // across a whole file, so a test that leaves `/review/limbo?genre=…` behind would silently
+  // open the next test's queue on that lane, filtered. Replaced, never pushed, so the file's
+  // session history is left as it was found (rule 133).
+  if (hasDom) history.replaceState(null, "", "/");
+  // ...and the module-level record of what was last written, or a pop in the next test
+  // re-asserts this one's URL over it (rule 133).
+  forgetWrittenUrl();
+
   const queries = missingQueryFn;
+  const undefineds = undefinedData;
   const unacted = outsideAct;
   const dupes = duplicateKeys;
   missingQueryFn = [];
+  undefinedData = [];
   outsideAct = [];
   duplicateKeys = [];
   if (queries.length > 0) {
@@ -108,6 +140,16 @@ afterEach(() => {
       `Ran a query with no queryFn: ${keys.join(", ")}. The mock for "../api" is missing a ` +
         `function a hook in this tree reads, so that query rendered as a failed read. Add it to ` +
         `the mock; src/test/apiFixtures.ts holds the payloads. See rule 135.`,
+    );
+  }
+  if (undefineds.length > 0) {
+    // "... Affected query key: [\"vocabulary-values\",\"genre\"]" is how the message ends.
+    const keys = [...new Set(undefineds.map((m) => m.slice(m.indexOf("Affected query key:"))))];
+    throw new Error(
+      `A query function resolved to undefined: ${keys.join(", ")}. The mock for "../api" ` +
+        `answers nothing for a read this tree makes through an arrow, so that query rendered ` +
+        `as a failed read and the assertions above ran against the could-not-read branch. ` +
+        `Answer it; src/test/apiFixtures.ts holds the payloads. See rule 135.`,
     );
   }
   if (unacted.length > 0) {

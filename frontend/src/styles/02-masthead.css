@@ -125,9 +125,11 @@
     transition: none;
   }
 }
-/* Reserve the active (650) width at every weight, so marking a section never widens it and
-   shoves its neighbors sideways -- the same strut, and the same reason, as .tab[data-label]
-   further down. The phone bar drops it along with the labels. */
+/* Reserve the active (600) width at every weight, so marking a section never widens it and
+   shoves its neighbors sideways -- the same strut, and the same reason, as `.tab[data-label]`
+   in `04-buttons.css`, whose comment enumerates every control carrying one. Byte-identical to
+   it on purpose, so keep the two in step. The phone bar drops it along with the labels
+   (`10-layout.css`). */
 .view-tab[data-label]::after {
   content: attr(data-label);
   display: block;
@@ -153,7 +155,7 @@
   height: 24px;
 }
 /* Deletion armed, said as a mark on the one section that does it. `SafetyBanner` states the
-   same fact in words on every view, which is why this is aria-hidden in App.tsx. Amber is the
+   same fact in words on every view, which is why this is aria-hidden in SectionNav.tsx. Amber is the
    app's "we could not look" tone (--unknown), so a failed read never reads as disarmed. */
 .view-armed {
   position: absolute;

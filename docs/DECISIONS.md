@@ -14,6 +14,46 @@ everything here is doctrine still in force. The story of how a fix was chosen is
 `docs/history/`; measured findings are `docs/LEARNINGS.md`.
 
 
+## Condemn logic
+
+**Choice: One typed condition per rule, weighted. No OR, no nesting, no NOT.**
+
+A removal rule the operator authors is exactly one condition — `field op value`, or a numeric
+field ramped between a floor and a saturation point — carrying a weight
+(`policy.BooleanCondemnSpec`, `policy.GradedCondemnSpec`). There is no combinator: no `AND`
+between conditions inside a rule, and so no `OR` and no nesting either. Several rules compose
+through the *score*, not through boolean logic, and the score is unsigned, so a rule that cannot
+be evaluated withdraws pressure rather than adding it.
+
+**The AND was the original design, and the AND is the half that never shipped.**
+`engine.fields` carried a `RuleSet` holding a lane's conditions and an `evaluate_rules` that
+joined the condemn lane with a flat `AND` and the protect lane with an `OR`. The protect half did
+run: `engine/custom_gate.py` called it for every user-authored protection until `bb33045`
+replaced that gate with today's one-per-condition `CustomProtectGate`. The condemn half never
+ran at all, and provably so rather than by inspection: that gate raised in `__post_init__` for
+any lane but `PROTECT`, so nothing could reach the `Lane.CONDEMN` arm. `evaluate_rules` then sat
+callerless for a further release and was deleted with the rest of wave 1.1; the reasoning is
+recorded here because deleting the code deleted its last written trace.
+
+**Why the language stays flat.** An `OR` inside a removal rule is expressible by writing a
+second rule, and that forces the operator to *name* the second thing they mean. A named rule is
+one the editor can show, weigh, warn about and switch off on its own terms; a nested boolean is
+none of those, and it is read wrong by whoever inherits the server. Nesting also has no failure
+mode that resolves toward keeping: a condition that could not be evaluated has an obvious answer
+inside one rule (no pressure, weight retained) and no obvious answer inside a tree.
+
+**And the case that looked like it needed composition did not.** "Keep the last two seasons" reads
+like `season_number >= total - 2`, which is a boolean problem; it is expressed as `season_rank >=
+3` against a derived field, which is one condition. The pattern held every time it came up: what
+looked like missing logic was a missing *field*. `tests/test_fields.py`'s
+`TestSeasonPruningNeedsNoBooleanCleverness` is that case, pinned.
+
+**The protect lane is an `OR`, and it is enforced somewhere else.** Each operator-authored
+protection is its own `fields.CustomProtectGate`, one gate per condition, and `evaluate_all`
+protects when any gate fires. That is why the asymmetry is safe rather than merely convenient: a
+protect gate has no CONDEMN constructor to reach, so a badly written protection can at worst fail
+to keep something, while a badly written removal rule deletes a file.
+
 ## What a hand reap may overrule
 
 **Choice: Everything except a structural stop.**
@@ -73,7 +113,7 @@ open. `Resolution.candidate_rating_keys` carries the rows it was choosing betwee
 `LinksOut.match_candidates`, and the notice offers a Plex and a Tautulli pill per row.
 `GateResult.defers_to_owner` survives the change but no longer decides anything about a reap: it
 tells the operator whether Reaper actually made the comparison, and **both surfaces that speak for
-a conflict now read it** — the card's chip (`api.routes._chip`) and the why panel's verdict note,
+a conflict now read it** — the card's chip (`api.review._chip`) and the why panel's verdict note,
 which reaches it through `api.schemas.GateOutcomeOut` → `api.ts` (**#86 closed**). The panel had
 been running the retired wording test, which passes for all three conflict shapes, so it opened
 "This was watched more than a season your keep rule protects" about a comparison nobody made,
@@ -135,16 +175,19 @@ bound on the mirror, so where the reach does not span it — 0 included, an unbo
 finite mirror supports — the viewer set is **un-establishable rather than empty** and every season
 on disk is held ("your watch history is too short to tell who is part-way through") instead of an
 unseeable viewer reading as an absent one. That hold is a **blocked** PROTECT, not a plain one
-(`ProtectedSeason.unestablishable` → `season_scan.guard_result`), because it is a check that could
-not be *answered* rather than a protection that fired, and the operator is entitled to see which
+(`ProtectedSeason.unestablishable` → `season_evidence.guard_result`), because it is a check that
+could not be *answered* rather than a protection that fired, and the operator is entitled to see
+which
 (rule 93). The reason it was ORIGINALLY encoded that way — `blocked` held a hand reap where a
 plain PROTECT on this gate did not, so emptying `prunable` would have retired the keep-rule
 conflict and turned a season a hand reap was refused on into one it deletes — has lapsed with the
 row above: both are overrulable now, so the encoding decides what the panel says, not what a reap
 may do (rule 143). Only the blanket hold carries the flag; a season an actually-visible viewer
-holds stays a definite keep. `season_scan.gather`'s own `in_progress_hold_days` default moved 0 →
-180 to match the policy's, since 0 is a value no shipped policy has and every test omitting it was
-exercising that unbounded claim (rule 141). **There are three causes now, not one**, and they
+holds stays a definite keep. `season_scan.gather` used to carry its own `in_progress_hold_days`
+default, moved 0 → 180 to match the policy's, since 0 is a value no shipped policy has and every
+test omitting it was exercising that unbounded claim (rule 141). That default is gone with the
+other eight: `gather` takes `season_evidence.SeasonPolicy`, which declares no default for any of
+the nine, so there is nothing left to omit. **There are three causes now, not one**, and they
 share the encoding above because they are one question with three answers missing: the reach
 (`progress_established`), a season whose plays stopped being readable (`progress_unreadable`,
 `watch_evidence`), and a season with no Plex rating key at all this scan
@@ -167,8 +210,8 @@ under that floor means the reach already spans any ≤1095-day window; it bites 
 lowered it. It masks nothing on the all-time half, where the span needed is the item's age rather
 than a window, so a long-lived title behind a shorter mirror reads "could not check" on shipped
 defaults. **A popularity window the mirror cannot cover is now named in the editor, before a scan
-runs into it (#85 closed).** `policy.inspect` takes the live reach
-(`api.routes._history_reach_days`, derived through `dormancy.history_reach_days` off
+runs into it (#85 closed).** `policy_warnings.inspect` takes the live reach
+(`api.policy._history_reach_days`, derived through `dormancy.history_reach_days` off
 `history_sync.horizon`, the same derivation `ScanContext` uses) and warns when the window outruns
 it. **The span it measures is `PolicyBody.popularity_window_days()`, not the enabled gate row
 (#133 closed).** That call falls back to 365 with the gate off or absent and `build_gates` hands
@@ -295,7 +338,7 @@ than claiming an empty list**, for the identical reason: the span is each item's
 `inspect` is handed one reach and never a list of arrival dates, so "nothing will be flagged"
 would be false in the reassuring direction for a library the mirror covers outright. It also says
 where those shows go, because they are not lost: every conflict carries `shortfall`, so
-`season_scan.guard_result` marks each as a comparison Reaper did not make and the show waits in
+`season_evidence.guard_result` marks each as a comparison Reaper did not make and the show waits in
 "Needs a look", where a hand reap still condemns it. Beyond the dormancy guard the four share, it
 is silenced by the **mid-binge hold** as well, which is rule 143's shape rather than tidiness:
 where that guard cannot be established `plan_series_prune` holds every season *on disk*, so
@@ -702,6 +745,50 @@ own revision chained onto head: an add, a new table, a backfill, or a guarded re
 always *widening* — the one exception is that same heal migration also dropping a stray server
 default, safe only because the ORM carries the Python-side default. `cache.db` stays disposable.
 
+**Schema still has to be able to leave, and it leaves in two releases** (rule 148). Release M
+removes the reads, the writes and the ORM attribute, and ships whatever the column needs to keep
+working without Python holding it up; release M+1 drops the column. `e6f7a8b9c0d1` is the first
+release M, for six write-only columns. What it taught, none of it visible in the shape of the
+migration:
+
+- **A `NOT NULL` foreign key cannot take a `server_default`.** `PRAGMA foreign_keys` is ON, so
+  defaulting `profile.active_policy_id` to `0` points every new row at a policy that does not
+  exist and the insert fails — the exact first-save break the revision exists to prevent. It went
+  nullable instead. A NULL foreign key is permitted and checks clean.
+- **A batch rebuild silently drops a collation.** SQLite reflection does not report one, so a
+  `batch_alter_table` on `list_config` for an unrelated column recreated `name` case-*sensitive*
+  and two lists differing only in case could both exist. The behavioral test caught it; nothing in
+  the diff would have. Any rebuild of that table restates `COLLATE NOCASE`.
+- **Hiding a retired column from autogenerate does not hide its foreign key.** `include_name`
+  needs a second arm for `foreign_key_constraint`, or `alembic check` — a CI gate — reports
+  `remove_fk` on every commit.
+- **The downgrade rebuilds the same tables and needs the same care, and getting it wrong there is
+  worse.** A rollback that dropped the collation would admit the colliding pair, and the
+  re-upgrade would then die on `UNIQUE constraint failed` with the disambiguation pass already
+  applied and never re-run: the container fails its migration on every restart. Rule 148's
+  assert-the-survivors obligation covers both directions.
+- **Rolling back is two steps, and the migration says so.** `alembic downgrade` from the M image
+  first, *then* start M-1. Starting M-1 against an M database leaves it stamped at a revision that
+  image has never heard of, and its boot migration stops the container. Fail-closed, but the
+  operator needs the recipe rather than the property.
+- **A revision that cannot be undone by its own `downgrade()` gets a copy of the database
+  first.** It sets `needs_snapshot = True` beside `revision`, and preflight writes a normal
+  `.reaper` backup into `data/pre-migration/` before `alembic upgrade head` runs, keeping the
+  newest three. Preflight is where it lives because the container entrypoint, `dev-local.sh` and
+  the packaged launcher all run it immediately before the upgrade, so one call site covers three
+  and none of them can fall out of step. A snapshot that cannot be written stops the boot rather
+  than taking the update unprotected. Release M carries the marker for its four batch rebuilds;
+  release M+1 needs it more, since a recreated column comes back empty (#566).
+- **A column retiring takes the code that existed only to satisfy it.** `active_policy_id` had a
+  writer whose whole job was giving the foreign key something to point at, and it persisted the
+  bare shipped policy — so the first Pace save replaced the wider body `active_policy` computes
+  for an unsaved install, and an operator's Plex keep collection silently stopped protecting.
+  Rule 64's supply chain reaches the thing that *fed* the column, not only the thing that read it.
+
+The exclusion list in `alembic/env.py` is a one-release bridge and empties with the M+1 sweep. A
+column that outlives its sweep is how a dead column becomes permanent behind a growing list of
+silencers, which is the direction rule 148 exists to refuse.
+
 ## Gate retirement
 
 **Choice: the upgrade persists the heal where it can, a load-time shim covers what it cannot,
@@ -721,7 +808,10 @@ persist. **A repair the migration declines is where the shim earns its place**, 
 conversion declines deliberately: it keeps an enabled gate whose replacement list is missing,
 because an `on_list` rule naming no list reads as a green "checked, did not fire", so persisting
 that output would store a body `build_gates` refuses. The row stays legacy, the shim reports it,
-and the editor is where the operator is told.
+and the editor is where the operator is told. That last clause needs the response typed off
+`PolicyBodyOut`, the request model without the authorable check: while `PolicyOut.body` was a
+`PolicyIn`, the row the shim keeps took `GET /api/policy` down with it and the operator was told
+nothing (#627).
 
 Writing it is safe only because the conversion is verdict-preserving: `CustomProtectGate` answers
 an `on_list` match with PROTECT and `decide_verdict` honors it before score or coverage, the same

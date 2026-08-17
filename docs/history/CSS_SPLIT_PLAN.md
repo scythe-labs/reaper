@@ -1,8 +1,25 @@
-# Splitting `index.css`: a stylesheet that outgrew one document
+# Splitting `index.css` — archived narrative
 
-> **LIVE — Stages 1 to 4 and 6 landed. Stage 5 is half done and Stage 7 is untouched, both
-> optional.** The stylesheet is 34 files behind a barrel, and every `font-size` and
-> `font-weight` in it is a token.
+> **FROZEN 2026-08-12. Do not update this file; it is history, not state.**
+>
+> Stages 1 to 4 and 6 landed. Nothing here is outstanding work any more, and the one item that
+> was is now issue #779: `.notice` still declares its base rule inside `16-simulator.css` while
+> rendering at 143 sites. Stage 7 stands as it was written, which is *don't*, and Stage 6's
+> spacing half says in bold that finishing it by sweeping is the wrong move. Section 8's icon
+> vocabulary was filed as #401 and closed `Won't Fix`.
+>
+> **What is load-bearing has already left this document.** The load order and its two cross-file
+> dependencies are written into `frontend/src/index.css`'s own charter. The 800-line cap lives in
+> `styles-barrel.test.ts`, the spacing ratchet in `styles-scales.test.ts`, each with its reasoning
+> attached. Those are the copies to read and to correct.
+>
+> **Read the measurements below as dated, because they are.** Section 1 measures an `index.css`
+> of 9,075 lines; that file is now 67 lines and 35 imports. Section 4's target table names
+> twelve files that were renumbered when the queue was cut into four, and every line count in it
+> has moved. They are kept because the *reasoning* is the point: why each boundary sits where it
+> does, and what was refused.
+>
+> The cuts were proven, not argued, and that record follows.
 >
 > **The cuts are proven, not argued:** built before and after, the emitted CSS is byte-identical
 > both times — Stage 1 at sha `889c45e2…` / 122,006 bytes, and the 2026-08-01 cut of
@@ -240,6 +257,8 @@ than Stage 1 rather than a free rider on it. Both are still worth doing:
 **Landed 2026-08-01**, along with `--radius-pill` (the literal `999px`, 39 sites across 16 files,
 the most-used unnamed value in the tree) and `--radius-xs`. The computed-value check this section
 called for was written rather than done by hand, and is what proves Stage 6 as well.
+`--radius-xs` has since been deleted (`SIMPLIFICATION_PLAN.md`, W1.1-o): it was named on the
+strength of a cluster of bare 1-6px radii and then used by nothing.
 
 One correction to the stacking half, found while doing it: **the ladder is eight values, not
 twelve.** The low four (0,1,2,3) layer a background, a scrim and its content inside a single

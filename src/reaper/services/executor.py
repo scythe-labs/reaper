@@ -106,7 +106,8 @@ import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from itertools import batched
+from typing import Any, Protocol, cast
 
 import structlog
 from sqlalchemy import Update, or_, select, update
@@ -114,9 +115,10 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clients.base import IntegrationError, SafetyViolationError
-from reaper.clients.plex import declared_mutation
+from reaper.clients.plex import ActiveStream, PlexSectionPaths, declared_mutation
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
+from reaper.db import KEY_CHUNK
 from reaper.db.models import (
     ActionStep,
     Candidate,
@@ -132,9 +134,6 @@ from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
 from reaper.services.profiles import live_policy_hash
 
-if TYPE_CHECKING:
-    from reaper.clients.plex import ActiveStream, PlexSectionPaths
-
 log = structlog.get_logger(__name__)
 
 #: The irreversible step of an item's plan -- the one that removes files. A movie has a
@@ -142,6 +141,13 @@ log = structlog.get_logger(__name__)
 #: after its reversible unmonitor and the verification of it. Everything else in a
 #: season plan is a read or a reversible edit.
 _TERMINAL_DELETE_KINDS = frozenset({"radarr_delete", "sonarr_delete_files"})
+
+#: How many times each post-delete settle re-reads before concluding it did not land. Fixed,
+#: not injected: no caller ever passed a count, so both were a constructor argument clamped
+#: by ``max(1, ...)`` against an input that could not arrive. The paired *delays* stay
+#: injectable, which is what a test needs to run these loops at full speed.
+_EXCLUSION_POLL_ATTEMPTS = 5
+_PLEX_SETTLE_ATTEMPTS = 10
 
 #: The two live interlocks every real send passes before it deletes -- shared labels so the
 #: movie and season checklists read the same. Reaching a send means both of these are True.
@@ -198,6 +204,16 @@ _NO_APPROVED_SIZE_REASON = (
     "what you approved. Kept."
 )
 _NO_APPROVED_SIZE_CHECK = "No size was recorded for it at scan time. Kept."
+
+#: The size re-read's two checklist lines. Both send paths reach both, and the sentence an
+#: operator reads must not depend on which one they are looking at, so each is written once
+#: here rather than at each branch (rule 144). Two branches share each: the movie's and the
+#: season's. The season's empty-file-list skip is not one of them and carries its own copy,
+#: nothing about a size being wrong there. The *reason* beside each stays per-path and
+#: inline, naming the item and its numbers, which is what a checklist line this short cannot
+#: carry (rule 21).
+_CHECK_SIZE_UNCONFIRMED = "Couldn't confirm its current size. Kept."
+_CHECK_GREW_SINCE_APPROVED = "It grew since you approved it. Kept."
 
 
 def size_confirmed(candidate: Candidate) -> bool:
@@ -806,9 +822,7 @@ class Executor:
         armed_recheck: Callable[[], Awaitable[bool]] | None = None,
         stop_recheck: Callable[[], Awaitable[bool]] | None = None,
         progress: Callable[[ReapProgress], None] | None = None,
-        exclusion_poll_attempts: int = 5,
         exclusion_poll_delay: float = 1.0,
-        plex_settle_attempts: int = 10,
         plex_settle_delay: float = 2.0,
     ) -> None:
         self._session = session
@@ -836,10 +850,8 @@ class Executor:
         # Radarr adds the import exclusion a beat *after* the delete returns 200, so the
         # verification re-reads the exclusion list a few times before concluding it did not
         # land. Tests pass a zero delay to stay fast.
-        self._exclusion_poll_attempts = max(1, exclusion_poll_attempts)
         self._exclusion_poll_delay = exclusion_poll_delay
         # Plex scans are asynchronous, so the trash purge waits for the refresh to settle.
-        self._plex_settle_attempts = max(1, plex_settle_attempts)
         self._plex_settle_delay = plex_settle_delay
         # Plex movie sections whose path we refreshed this run -- the ones to purge trash
         # from at the end, once, if the mount is confirmed up. Keyed by section KEY, not
@@ -1015,7 +1027,7 @@ class Executor:
         # nobody can name is exactly what must not execute.
         #
         # Checked in the dry run too, so the simulation proves the same refusal.
-        # `api.routes.simulate` makes the same three-way test for the preview panel.
+        # `api.simulate.simulate` makes the same three-way test for the preview panel.
         snapshot = await self._session.get(Snapshot, run.snapshot_id)
         live_lists = await list_config.current_fingerprint(self._session)
         stored_lists = snapshot.list_config_hash if snapshot is not None else None
@@ -1037,13 +1049,19 @@ class Executor:
         candidates_by_key = dict(condemned)
         planned_keys = {s.media_key for s in steps}
         missing = sorted(planned_keys - set(candidates_by_key))
-        if missing:
+        # Chunked (rule 94). `condemned` is the FROZEN scan-condemned set while the steps were
+        # planned from the effective one, so `missing` is exactly the honored hand reaps --
+        # bounded by whitelist rows, one per hand click, the same bound
+        # `condemned._reap_overridden_rows` carries. Chunked anyway because nothing in the type
+        # says so, and a later planner that admits a wider set would find this read already
+        # safe. Merged into a map keyed by media_key, so the chunks cannot reorder it.
+        for chunk in batched(missing, KEY_CHUNK, strict=False):
             extra = (
                 (
                     await self._session.execute(
                         select(Candidate).where(
                             Candidate.snapshot_id == run.snapshot_id,
-                            Candidate.media_key.in_(missing),
+                            Candidate.media_key.in_(chunk),
                         )
                     )
                 )
@@ -1340,7 +1358,7 @@ class Executor:
 
         ``canceled`` is the one case the purge is skipped. A hard cancel is the container
         going down, and the purge polls ``is_refreshing`` for up to
-        ``_plex_settle_attempts * _plex_settle_delay`` PER affected section before it can
+        ``_PLEX_SETTLE_ATTEMPTS * _plex_settle_delay`` PER affected section before it can
         even decide -- so honoring it here would hold shutdown open for tens of seconds
         inside the cancellation, and might empty a section's trash while the process is
         being torn down. The state commit above still runs, so the run ends ABORTED and
@@ -1741,19 +1759,29 @@ class Executor:
                 check="You spared this by hand. Kept.",
             )
 
-        # The mirror case: an item that was in the plan only because of a hand reap, whose
-        # override has since been removed. It is no longer in the effective set, so it is
-        # kept -- visibly, not silently dropped from the report.
+        # An item must pass BOTH halves, and each half is a different fact, so each gets its
+        # own sentence. They were one guard under one sentence until #691: the sentence
+        # belonged to the second half and the first half fired at operators who had just put
+        # a reap back, and at scan-condemned items that never had a hand reap at all.
         #
-        # Both halves are consulted, and an item must pass BOTH. ``_effective_keys`` is the
-        # set as it stood when the run was claimed -- the ceiling, so a reap added mid-run
-        # cannot smuggle in an item outside what the operator confirmed. ``effective_verdict``
-        # is the same production function ``effective_condemned`` decides membership with
-        # (rule 3/22), applied to the freshly re-read decisions, so a reap withdrawn DURING
-        # the run also drops its item. Intersecting the two makes the set only ever shrink.
-        if candidate.media_key not in self._effective_keys or (
-            effective_verdict(candidate, self._decisions) != "condemn"
-        ):
+        # ``_effective_keys`` is the set as it stood when the run was claimed -- the ceiling,
+        # so a reap added mid-run cannot smuggle in an item outside what the operator
+        # confirmed, and an item spared before the claim stays out even if that spare is
+        # withdrawn while the run walks. Neither says anything about a hand reap.
+        if candidate.media_key not in self._effective_keys:
+            return self._mark_skipped(
+                delete,
+                "this was not part of the run you confirmed, so it is kept",
+                check="Not part of the run you confirmed. Kept.",
+            )
+
+        # The mirror case: an item that was in the plan only because of a hand reap, whose
+        # override has since been removed. ``effective_verdict`` is the same production
+        # function ``effective_condemned`` decides membership with (rule 3/22), applied to
+        # the freshly re-read decisions, so a reap withdrawn DURING the run drops its item --
+        # visibly, not silently dropped from the report. A spare added mid-run never reaches
+        # here; the spare check above answers it in its own words.
+        if effective_verdict(candidate, self._decisions) != "condemn":
             return self._mark_skipped(
                 delete,
                 "the hand reap on this was removed, so it is kept",
@@ -2131,7 +2159,7 @@ class Executor:
                 delete,
                 "Radarr did not report this movie's current size, so Reaper cannot "
                 "confirm it is still the file that was approved. Kept.",
-                check="Couldn't confirm its current size. Kept.",
+                check=_CHECK_SIZE_UNCONFIRMED,
             )
         if (
             approved_size is not None
@@ -2143,7 +2171,7 @@ class Executor:
                 f"the file is bigger now ({_gb(live_size)}) than when it was approved "
                 f"({_gb(approved_size)}), so it was likely upgraded since the "
                 "scan. Kept. Run a new scan to review it at its current size.",
-                check="It grew since you approved it. Kept.",
+                check=_CHECK_GREW_SINCE_APPROVED,
             )
 
         # The exclusion decision was frozen into the plan the operator approved
@@ -2291,11 +2319,11 @@ class Executor:
         """
         if tmdb_id == 0:
             return False
-        for attempt in range(self._exclusion_poll_attempts):
+        for attempt in range(_EXCLUSION_POLL_ATTEMPTS):
             exclusions = await radarr.exclusions()
             if any(int(e.get("tmdbId") or 0) == tmdb_id for e in exclusions):
                 return True
-            if attempt < self._exclusion_poll_attempts - 1 and self._exclusion_poll_delay > 0:
+            if attempt < _EXCLUSION_POLL_ATTEMPTS - 1 and self._exclusion_poll_delay > 0:
                 await asyncio.sleep(self._exclusion_poll_delay)
         return False
 
@@ -2356,15 +2384,32 @@ class Executor:
         # growth check below and marks the step verified having proven nothing -- and
         # since the plan is ordered smallest-first, a zero-size season is exactly what
         # the canary lands on. Rule 1: an omitted answer is not an explicit empty one.
-        # An item the allowance admitted has no frozen size to compare against, so the
-        # growth interlock cannot run for it at all. The empty-list guard still applies:
-        # a season with no files is not a season worth sending a delete for.
-        if not live_sizes or (approved_size is not None and any(s is None for s in live_sizes)):
+        # This arm is unconditional, so it also covers an item the allowance admitted,
+        # which has no frozen size and so can never reach the growth check.
+        #
+        # It gets its own sentence because it is its own fact: Sonarr answered, and the
+        # answer was that the season has no files. Sharing the size copy below sent an
+        # operator to look for a file with a missing size when there were no files at all
+        # (issue #682). The checklist line is the post-unmonitor skip's
+        # (`reap.season_files_vanished`) without its unmonitor clause, and the two are
+        # pinned to each other (rule 144). The reasons differ on purpose: that skip listed
+        # files a moment earlier so it says "no longer", where an item the allowance
+        # admitted may never have had one observed.
+        if not live_sizes:
+            return self._mark_skipped(
+                delete,
+                f"Sonarr lists no files for season {ref.season}, so there is nothing to "
+                "delete. Kept.",
+                check="No files left to remove. Kept.",
+            )
+        # Sonarr listed files and would not size one of them. Only reachable with a frozen
+        # size to compare against, the allowance's items having no comparison to make.
+        if approved_size is not None and any(s is None for s in live_sizes):
             return self._mark_skipped(
                 delete,
                 "Sonarr did not report a size for every file in this season, so Reaper "
                 "cannot confirm it is still what was approved. Kept.",
-                check="Couldn't confirm its current size. Kept.",
+                check=_CHECK_SIZE_UNCONFIRMED,
             )
         live_total = sum(size for size in live_sizes if size is not None)
         if approved_size is not None and _grew_materially(approved_size, live_total):
@@ -2373,7 +2418,7 @@ class Executor:
                 f"this season is bigger now ({_gb(live_total)}) than when it was approved "
                 f"({_gb(approved_size)}), so its files likely changed since "
                 "the scan. Kept. Run a new scan to review it at its current size.",
-                check="It grew since you approved it. Kept.",
+                check=_CHECK_GREW_SINCE_APPROVED,
             )
 
         # 1. Unmonitor (reversible), then VERIFY it actually took before any file is touched.
@@ -2700,7 +2745,7 @@ class Executor:
                 # Declined here rather than inside the gate, so a section whose count this
                 # run cannot move does not first pay the settle wait. A TV-only run reaches
                 # this for every section it touched (a TV section counts shows), and waiting
-                # up to _plex_settle_attempts x _plex_settle_delay apiece for a purge that
+                # up to _PLEX_SETTLE_ATTEMPTS x _plex_settle_delay apiece for a purge that
                 # can never pass the gate is time the operator waits for nothing.
                 log.info(
                     "reap.trash_purge_declined",
@@ -2820,10 +2865,10 @@ class Executor:
         deleted file would purge nothing. Polls ``is_refreshing`` a few times; gives up after
         the window either way, since the purge is best-effort.
         """
-        for attempt in range(self._plex_settle_attempts):
+        for attempt in range(_PLEX_SETTLE_ATTEMPTS):
             if not await plex.is_refreshing(section_key):
                 return
-            if attempt < self._plex_settle_attempts - 1 and self._plex_settle_delay > 0:
+            if attempt < _PLEX_SETTLE_ATTEMPTS - 1 and self._plex_settle_delay > 0:
                 await asyncio.sleep(self._plex_settle_delay)
 
     # -- journal state transitions -----------------------------------------

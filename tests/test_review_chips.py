@@ -18,13 +18,14 @@ from collections.abc import Iterator
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import (
+from reaper.api.review import (
     _chip,
     _decode_explanation,
     _explanation_out,
@@ -47,6 +48,7 @@ from reaper.engine.gates import (
     GateId,
     GateResult,
     MinDormancyGate,
+    ReturnedGate,
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
@@ -58,9 +60,9 @@ from reaper.services.condemned import (
     MATCH_UNREADABLE,
     reap_override_verdict_decoded,
 )
+from reaper.services.season_evidence import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
+from reaper.services.season_evidence import guard_result
 from reaper.services.season_pruning import PruneConflict, SeriesPrunePlan
-from reaper.services.season_scan import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
-from reaper.services.season_scan import guard_result
 from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
 from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
 
@@ -98,6 +100,18 @@ _NO_PANEL_ROUTE = {
         "the facts a policy probe leaves out. probe_signal answers one route with a number "
         "and a detail string and builds no candidate, stores no Explanation and touches no "
         "snapshot, so nothing carries this reason to a panel"
+    ),
+    "library_seen.NO_RETURN_RECORD_REASON": (
+        "returned_days_ago/returned_by_reaper (#553) are read only by ReturnedGate, which "
+        "abstains on Unknown without blocking -- the deviation its own docstring owns -- so "
+        "this reason never reaches a 'could not check {what}: {reason}' detail. No signal and "
+        "no rule-authoring field reads either observation either"
+    ),
+    "rewatch.NO_REWATCH_ESTIMATE_REASON": (
+        "rewatch_cohort_n/rewatch_cohort_k (#554 stage 2) feed only the stored explanation's "
+        "rewatch_odds context block, read by its typed `state` in "
+        "{measured, thin, no_history}; no gate reads either field, so this reason never "
+        "reaches a 'could not check {what}: {reason}' detail"
     ),
 }
 
@@ -238,11 +252,11 @@ def _exp(
     score: float,
     *,
     threshold: int = 70,
-    fired: list[dict[str, str]] | None = None,
-    unknown: list[dict[str, str]] | None = None,
+    fired: list[dict[str, Any]] | None = None,
+    unknown: list[dict[str, Any]] | None = None,
     match_status: str | None = None,
-) -> dict[str, object]:
-    body: dict[str, object] = {
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
         "score": score,
         "threshold": threshold,
         "coverage": 1.0,
@@ -394,10 +408,9 @@ class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
             # horizon is not what is being measured here -- the arrival date is.
             horizon=now - timedelta(days=400),
         )
+        assert reference is not None
         facts = _never_played_facts(dormancy_days(reference, now=now))
-        result = MinDormancyGate(
-            GateConfig(GateId.MIN_DORMANCY, threshold=self.WAITS_DAYS)
-        ).evaluate(facts)
+        result = MinDormancyGate(GateConfig(threshold=self.WAITS_DAYS)).evaluate(facts)
 
         assert result.outcome == PROTECT, "the gate must fire for this chip to exist at all"
         return _kept_phrase("min_dormancy", result.detail)
@@ -715,7 +728,7 @@ class TestChip:
     def test_a_match_block_of_the_wrong_shape_reads_as_absent(self, junk: str) -> None:
         """The other twin on the same model, and the same trade (rule 72).
 
-        ``routes._match_status`` reads the stored match off the raw dict and copes with any
+        ``review._match_status`` reads the stored match off the raw dict and copes with any
         shape. Refusing it at the wire boundary took every other block on the panel with it.
         ``None`` is a shape the panel already renders: it is what a row scanned before the
         match block existed carries.
@@ -952,9 +965,9 @@ class TestChip:
         by the gate id -- so this chip and ``WhyPanel``'s check/cause split are the only
         places a reword shows up, which is why the assertion lives here.
         """
-        result = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-        ).evaluate(_popularity_short_history_facts())
+        result = ServerPopularityGate(GateConfig(threshold=3, window_days=365)).evaluate(
+            _popularity_short_history_facts()
+        )
         assert result.blocked is True
 
         chip = _chip(
@@ -974,6 +987,88 @@ class TestChip:
         assert chip is not None
         assert (chip.tone, chip.text) == ("quiet", "Too little of it could be checked")
 
+    @pytest.mark.parametrize("stored_floor", [6000, 3000])
+    def test_explain_freezes_the_coverage_floor_the_panel_restates(self, stored_floor: int) -> None:
+        """The floor is the threshold's twin: a policy number the verdict is decided against,
+        frozen so the panel restates the line coverage fell under rather than reading the live
+        policy, which may have moved since the scan (rule 113).
+
+        Through the REAL writer (``_explain``) and read back through the panel's own
+        ``Explanation``, so the freeze cannot silently stop (rule 132). Both floors differ from
+        the 5000 default, so an omission that let the panel read a constant fails here (rule
+        141).
+        """
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"coverage_floor_bp": stored_floor})
+        frozen = _explain(
+            Evaluation(results=[]),
+            Score(value=82.0, coverage=0.4, results=[]),
+            policy,
+        )
+        row = Candidate(
+            media_key="sonarr:1:2:3",
+            explanation_json=frozen,
+            score=82,
+            coverage_bp=4000,
+        )
+
+        panel = _explanation_out(row)
+
+        assert not panel.unreadable
+        assert panel.body.coverage_floor_bp == stored_floor
+
+    @pytest.mark.parametrize("junk", ["70.5", '"abc"', "true", "[]", '{"a": 1}'])
+    def test_an_illegible_coverage_floor_thaws_to_absent_and_nothing_else(self, junk: str) -> None:
+        """``coverage_floor_bp`` is ``threshold``'s twin, thawed by the same helper (rule 72).
+
+        ``true`` is in the sweep because Python calls a ``bool`` an ``int``: a floor of ``True``
+        is not 1 bp, it is a row nobody can read. An illegible byte costs its own clause -- the
+        panel drops the floor sentence -- never the whole panel, and never its twin's clause.
+        """
+        exp = json.loads(
+            f'{{"coverage_floor_bp": {junk}, "threshold": 70, "score": 82, "coverage": 1.0, '
+            '"signals": [], "protections_fired": [], "protections_checked": [], '
+            '"protections_unknown": []}'
+        )
+        row = Candidate(
+            media_key="sonarr:1:2:3",
+            explanation_json=json.dumps(exp),
+            score=82,
+            coverage_bp=4000,
+        )
+
+        panel = _explanation_out(row)
+
+        assert not panel.unreadable
+        assert panel.body.coverage_floor_bp is None
+        assert panel.body.threshold == 70
+
+    def test_a_row_frozen_before_the_floor_shipped_reads_as_absent(self) -> None:
+        """A row scanned before this field existed carries no key, and the panel drops the floor
+        clause rather than invent a line -- the three-state a null threshold already has. Built
+        by dropping the key from a real frozen row, so the "the writer emits it" half cannot
+        drift from the shape the reader is handed (rule 142).
+        """
+        frozen = json.loads(
+            _explain(
+                Evaluation(results=[]),
+                Score(value=82.0, coverage=1.0, results=[]),
+                DEFAULT_MOVIE_POLICY,
+            )
+        )
+        assert "coverage_floor_bp" in frozen  # the writer emits it...
+        del frozen["coverage_floor_bp"]  # ...and this is what an older scan left on disk
+        row = Candidate(
+            media_key="sonarr:1:2:3",
+            explanation_json=json.dumps(frozen),
+            score=82,
+            coverage_bp=10_000,
+        )
+
+        panel = _explanation_out(row)
+
+        assert not panel.unreadable
+        assert panel.body.coverage_floor_bp is None
+
     def test_below_threshold_names_both_numbers(self) -> None:
         chip = _chip(_exp(42), "abstain", 42)
         assert chip is not None
@@ -988,6 +1083,101 @@ class TestChip:
             assert _chip(_decode_explanation(raw), "abstain", 50) is None
             assert _chip(_decode_explanation(raw), "protect", 50) is None
         assert _chip(None, "abstain", 50) is None
+
+
+class TestTheCameBackChip:
+    """The countdown chip a returned title wears (#553).
+
+    The hold runs in months against a date the operator cannot see, so the queue row states
+    how long is left without anything being opened. Every case here drives the real ``_chip``
+    over a real ``ReturnedGate`` result, never a transcribed detail string (rule 119), so a
+    reworded gate fails these rather than silently dropping the chip to its fallback.
+    """
+
+    def _fired(self, *, days_ago: float, by_reaper: bool, hold: int = 400) -> dict[str, Any]:
+        """One PROTECT result off the real gate, in the shape ``_explain`` freezes."""
+        facts = Facts(
+            title="x",
+            days_observed_unwatched=Known(value=5000.0, source="t"),
+            distinct_watchers=Known(value=0, source="t"),
+            distinct_watchers_all_time=Known(value=0, source="t"),
+            size_bytes=Known(value=1, source="t"),
+            imdb_rating_tenths=Absent(source="t"),
+            imdb_votes=Absent(source="t"),
+            season_rank=Absent(source="t"),
+            is_streaming_now=Known(value=False, source="t"),
+            is_managed=Known(value=True, source="t"),
+            in_curated_list=Absent(source="t"),
+            is_whitelisted=Known(value=False, source="t"),
+            returned_days_ago=Known(value=days_ago, source="reaper"),
+            returned_by_reaper=Known(value=by_reaper, source="reaper"),
+        )
+        result = ReturnedGate(config=GateConfig(threshold=hold)).evaluate(facts)
+        assert result.outcome == PROTECT
+        return {"gate": result.gate.value, "detail": result.detail}
+
+    def test_the_chip_states_how_long_is_left(self) -> None:
+        chip = _chip(_exp(20, fired=[self._fired(days_ago=35, by_reaper=True)]), "protect", 20)
+        assert chip is not None
+        assert chip.text.startswith("Came back, ")
+        assert chip.text.endswith(" left")
+
+    def test_it_is_the_outlined_tone_and_not_the_filled_one(self) -> None:
+        # Filled means the owner decided; this is Reaper's decision, and it expires.
+        chip = _chip(_exp(20, fired=[self._fired(days_ago=35, by_reaper=False)]), "protect", 20)
+        assert chip is not None
+        assert chip.tone == "held"
+
+    def test_it_takes_the_chip_from_a_protection_that_fired_first(self) -> None:
+        """The one protection with an expiry wins the slot, wherever it sits in the list.
+
+        Every other protection is re-decided next scan and has nothing to count down, so a
+        card led by one of those would never tell the operator when this hold ends.
+        """
+        streaming = {"gate": "streaming_now", "detail": "someone is watching it right now"}
+        chip = _chip(
+            _exp(20, fired=[streaming, self._fired(days_ago=35, by_reaper=True)]), "protect", 20
+        )
+        assert chip is not None
+        assert chip.tone == "held"
+
+    def test_a_hand_spare_still_wins(self) -> None:
+        # The owner's own decision, and it carries its own countdown already.
+        spare = {"gate": "whitelisted", "detail": HAND_SPARE_DETAIL}
+        chip = _chip(
+            _exp(20, fired=[spare, self._fired(days_ago=35, by_reaper=True)]), "protect", 20
+        )
+        assert chip is not None
+        assert chip.tone == "kept"
+        assert chip.text == "Kept, you spared it"
+
+    def test_an_unparseable_detail_costs_the_number_and_not_the_chip(self) -> None:
+        # A stored row from a build that worded the detail differently. Vague but true, and
+        # the next scan restores the countdown (the fallback every parser here has).
+        chip = _chip(
+            _exp(20, fired=[{"gate": "returned", "detail": "something else entirely"}]),
+            "protect",
+            20,
+        )
+        assert chip is not None
+        assert chip.tone == "held"
+        assert chip.text == "Came back"
+
+    def test_the_why_clause_reads_as_a_held_reap_sentence(self) -> None:
+        # It is spoken after "Reap requested, kept for now:", so it has to be a lowercase
+        # clause that finishes that sentence.
+        chip = _chip(_exp(20, fired=[self._fired(days_ago=35, by_reaper=True)]), "protect", 20)
+        assert chip is not None
+        assert chip.why is not None
+        assert chip.why[0].islower()
+        assert f"Reap requested, kept for now: {chip.why}".endswith("came back")
+
+    def test_the_phrase_helper_words_it_too(self) -> None:
+        # Rule 66: a member with no arm falls to "a protection applies", which is what makes
+        # a missing one silent.
+        assert _kept_phrase("returned", "this left your library and came back, 1 year left") != (
+            "a protection applies"
+        )
 
 
 class TestTheReasonLineAgreesWithTheChip:
@@ -1107,7 +1297,7 @@ class TestChipWhy:
         ],
     )
     def test_every_blocked_lane_words_its_own_clause(
-        self, explanation: str, verdict: str, score: int, why: str
+        self, explanation: dict[str, Any], verdict: str, score: int, why: str
     ) -> None:
         chip = _chip(explanation, verdict, score)
         assert chip is not None
@@ -1121,7 +1311,7 @@ class TestChipWhy:
         ],
     )
     def test_a_chip_about_the_score_names_no_refusal(
-        self, explanation: str, verdict: str, score: int
+        self, explanation: dict[str, Any], verdict: str, score: int
     ) -> None:
         """None is a real answer, not a gap. An item that merely scored low is reaped
         when the owner asks; nothing is holding it, so there is no clause to say."""
@@ -1169,7 +1359,9 @@ class TestChipWhy:
             ),
         ],
     )
-    def test_a_clause_reads_mid_sentence(self, explanation: str, verdict: str, score: int) -> None:
+    def test_a_clause_reads_mid_sentence(
+        self, explanation: dict[str, Any], verdict: str, score: int
+    ) -> None:
         """It follows a colon, so it starts lowercase and carries no chip furniture: no
         capital lead, and none of the chip's own lead riding along inside the clause.
 
@@ -1204,7 +1396,7 @@ class TestSeasonNumber:
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot holding one show whose three seasons landed in three different
     lanes, plus a movie -- the shape the group view exists to show whole."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 
@@ -1305,7 +1497,8 @@ class TestCandidatesCarryTheGroupShape:
         """A row in one lane still describes the WHOLE show's shape: its strip marks
         every season across every lane, so the card can show kept and condemned
         side by side."""
-        rows = client.get("/api/candidates", params={"verdict": "abstain"}).json()
+        page = client.get("/api/candidates", params={"verdict": "abstain"}).json()
+        rows = page["items"]
         assert len(rows) == 1
         row = rows[0]
         assert row["season_number"] == 3
@@ -1316,7 +1509,10 @@ class TestCandidatesCarryTheGroupShape:
             # without the frontend parsing the text back apart (H-1).
             "why": "watched more than a season your rule keeps",
         }
-        marks = row["group_seasons"]
+        # The strip rides the show's own rollup, sent once beside the rows rather than
+        # copied onto each of them.
+        rollup = next(g for g in page["groups"] if g["group_key"] == row["group_key"])
+        marks = rollup["seasons"]
         assert [(m["season"], m["verdict"]) for m in marks] == [
             (1, "protect"),
             (2, "condemn"),
@@ -1328,12 +1524,16 @@ class TestCandidatesCarryTheGroupShape:
         assert all(isinstance(m["id"], int) for m in marks)
         assert next(m["id"] for m in marks if m["season"] == 3) == row["id"]
 
-    def test_movie_rows_carry_no_strip(self, client: TestClient) -> None:
-        rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()
-        movie = next(r for r in rows if r["media_type"] == "movie")
-        assert movie["group_seasons"] is None
+    def test_movie_rows_bring_no_rollup(self, client: TestClient) -> None:
+        page = client.get("/api/candidates", params={"verdict": "condemn"}).json()
+        movie = next(r for r in page["items"] if r["media_type"] == "movie")
+        assert movie["group_key"] is None
         assert movie["season_number"] is None
         assert movie["chip"] is None  # condemned cards keep the amber pill instead
+        # No show, so nothing to roll up. Asserted as the exact set the page carries: the
+        # rollup's own key is a required string, so "no entry is null" holds however many
+        # entries a movie contributed.
+        assert {g["group_key"] for g in page["groups"]} == {"sonarr:5:42"}
 
 
 class TestGroupDetail:
@@ -1360,7 +1560,7 @@ class TestGroupDetail:
     def test_the_group_view_is_behind_auth(self, tmp_path: Path) -> None:
         authless_dir = tmp_path / "authless"
         authless_dir.mkdir()
-        settings = Settings(data_dir=authless_dir, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=authless_dir, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()
@@ -1490,7 +1690,34 @@ class TestTheMatchStatusVocabulary:
         # assertion cannot tell that from a tree that complies. Bump it deliberately.
         # 42 -> 43: the placeholder a policy probe fills every unprobed fact with, so a
         # preview cannot quietly inherit a number from a fact it is not about.
-        assert walked == 43, (
+        # 43 -> 39: the retired replay engine's four, three of them its own copy of the
+        # watch-blind reason and one its no-arrival-date placeholder. Both reasons survive
+        # on the live lanes, so nothing lost its coverage with them.
+        # 39 -> 43: the rewatch fields (#554 stage 1) in snapshot.build_facts. Both new
+        # observations take the no-Plex-key and watch-blind arms `days_observed_unwatched`
+        # and the popularity counts already take, so all four reuse `no_key_reason` and
+        # `watch_blind_reason` rather than naming a new constant -- no new coverage gap,
+        # just two more call sites reading the same two named reasons.
+        # 43 -> 45: the rewatch cohort fields (#554 stage 2) in snapshot.build_facts. Both
+        # take a single Unknown arm covering every other reason at once (no fit, dormancy
+        # Unknown, past the fitted range, a dropped bucket, withheld by reach), named
+        # `NO_REWATCH_ESTIMATE_REASON` -- two new call sites, one new reason constant,
+        # exempted from CAUSE_COPY in `_NO_PANEL_ROUTE` above (it feeds only the
+        # `rewatch_odds` context block's typed `state`, never a gate's blocked detail).
+        # 45 -> 47: the rewatch observations on the season lane (#554 TV) in
+        # season_scan._judge_series. Both take the unresolved-show arm through the same
+        # `season_evidence.no_key_reason` reader the mid-binge hold already reads, so no
+        # new reason constant and no new coverage gap -- two more call sites on a named,
+        # already-covered reason.
+        # 47 -> 49: the rewatch cohort pair on the season lane (#554 TV hold), same
+        # season_scan._judge_series block. Both read `rewatch.NO_REWATCH_ESTIMATE_REASON`,
+        # the constant the movie lane's pair already reads (moved to rewatch.py so both
+        # lanes import one definition) -- two more call sites, no new reason.
+        # 49 -> 51: the came-back pair (#553), both in `library_seen.observations` -- the one
+        # derivation both fact builders call, so the two lanes cannot disagree about what a
+        # missing ledger row means (rules 35, 104). Two call sites, one new reason constant,
+        # exempted from CAUSE_COPY in `_NO_PANEL_ROUTE` above.
+        assert walked == 51, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."
@@ -1552,9 +1779,12 @@ class TestTheMatchStatusVocabulary:
             for name, value in sorted(
                 {
                     **checked,
-                    **{f"_NO_KEY_REASONS[{s.name}]": r for s, r in MOVIE_NO_KEY_REASONS.items()},
                     **{
-                        f"season _NO_KEY_REASONS[{s.name}]": r
+                        f"_NO_KEY_REASONS[{s.name if s else None}]": r
+                        for s, r in MOVIE_NO_KEY_REASONS.items()
+                    },
+                    **{
+                        f"season _NO_KEY_REASONS[{s.name if s else None}]": r
                         for s, r in SEASON_NO_KEY_REASONS.items()
                     },
                 }.items()

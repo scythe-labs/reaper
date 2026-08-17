@@ -5,27 +5,19 @@
 // in flight the sheet shows live progress and a graceful Stop -- and, because the run is
 // now detached on the server, the sheet closes freely (the app-wide bar keeps the count
 // and Stop), and reopening shows the report.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type ReapStatus, type Run, type RunReport } from "../api";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { expectNoA11yViolations } from "../test/a11y";
 import { Announcer } from "../announce";
 import { ReapConfirm } from "./ReapConfirm";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    safety: vi.fn(),
-    run: vi.fn(),
-    dryRun: vi.fn(),
-    executeRun: vi.fn(),
-    reapStatus: vi.fn(),
-    stopRun: vi.fn(),
-    plexTrash: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 // Everything but `api` is real -- the sheet reads `ApiError` to tell a moved phrase (409)
@@ -38,15 +30,12 @@ vi.mock("../api", async (importOriginal) => ({
 const run = {
   id: 7,
   snapshot_id: 1,
-  policy_hash: "p",
   state: "planned",
   item_count: 1,
   total_bytes: 1024 ** 3,
   held_back_unknown_size: 0,
   confirmation_phrase: "REAP 1 SOUL 1 GB",
-  approved_manifest_hash: "m",
-  approved_by: "admin",
-  approved_at: "2026-01-01T00:00:00+00:00",
+  step_count: 0,
   steps: [],
 } as Run;
 
@@ -90,11 +79,9 @@ function renderSheet(onClose: () => void = () => {}, seedStatus?: ReapStatus) {
   // The status cache is shared with the app-wide bar and is already warm when this sheet is
   // opened from it. Seeding it reproduces that, which is what the dry-run skip reads.
   if (seedStatus) queryClient.setQueryData(["reapStatus"], seedStatus);
-  const utils = render(
-    <QueryClientProvider client={queryClient}>
-      <ReapConfirm run={run} onClose={onClose} />
-    </QueryClientProvider>,
-  );
+  const utils = renderWithProviders(<ReapConfirm run={run} onClose={onClose} />, {
+    client: queryClient,
+  });
   return { ...utils, queryClient };
 }
 
@@ -189,6 +176,53 @@ describe("the execute gate", () => {
     await screen.findByText(/Practice run passed/);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.queryByText(/Plex/i)).not.toBeInTheDocument();
+  });
+
+  it("stays silent when Plex empties its own trash and there is nothing in it", async () => {
+    // Plex ships this preference ON and most servers never change it, so on its own it is not
+    // a warning: it would stand in front of every reap and train the operator past the one
+    // that matters. It only ever rides on a trash that already warrants telling them.
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 0,
+      sections_unreadable: 0,
+      empties_after_scan: true,
+    });
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByText(/empties its own trash/i)).not.toBeInTheDocument();
+  });
+
+  it("says who does the emptying when the trash already holds records", async () => {
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 40,
+      sections_unreadable: 0,
+      empties_after_scan: true,
+    });
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
+    expect(screen.getByText(/empties its own trash after every scan/i)).toBeInTheDocument();
+  });
+
+  it("says nothing about auto-emptying when the preference could not be read", async () => {
+    // `null` is Unknown. Reading it as "Plex does not empty its own trash" would be the
+    // reassuring direction over a preference nobody checked (rule 93).
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 40,
+      sections_unreadable: 0,
+      empties_after_scan: null,
+    });
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
+    expect(screen.queryByText(/empties its own trash/i)).not.toBeInTheDocument();
   });
 
   it("offers no phrase input at all while deletion is off", async () => {
@@ -423,11 +457,12 @@ describe("what a screen reader hears while a reap runs", () => {
   function renderWithAnnouncer(seedStatus?: ReapStatus) {
     const queryClient = testQueryClient();
     if (seedStatus) queryClient.setQueryData(["reapStatus"], seedStatus);
-    const utils = render(
-      <QueryClientProvider client={queryClient}>
+    const utils = renderWithProviders(
+      <>
         <Announcer />
         <ReapConfirm run={run} onClose={() => {}} />
-      </QueryClientProvider>,
+      </>,
+      { client: queryClient },
     );
     return { ...utils, queryClient };
   }

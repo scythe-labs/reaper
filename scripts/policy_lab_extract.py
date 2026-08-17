@@ -55,7 +55,13 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "src"))
 
-from tests._policy_lab import judge, lane_gates, lane_policy, reach_of  # noqa: E402
+from tests._policy_lab import (  # noqa: E402
+    baseline_differences,
+    lane_gates,
+    lane_policy,
+    pinned_baseline,
+    reach_of,
+)
 
 from reaper.engine.policy import (  # noqa: E402
     DEFAULT_MOVIE_POLICY,
@@ -153,7 +159,7 @@ def write_fixture(fixture: dict[str, Any]) -> None:
     because a second writer would restore the split this exists to remove.
     """
     fixture["scorer_version"] = SCORER_VERSION
-    OUT.write_text(json.dumps(fixture, indent=1, sort_keys=True) + "\n")
+    OUT.write_text(json.dumps(fixture, separators=(",", ":"), sort_keys=True) + "\n")
 
 
 def stamped_scorer(fixture: dict[str, Any]) -> int | None:
@@ -195,6 +201,13 @@ def rejudge(fixture: dict[str, Any]) -> int:
 
     Shared by both regeneration paths so the comparison cannot exist on one and not the
     other, which is exactly the split that let the full extract launder an engine change.
+
+    A baseline is the whole block ``_policy_lab.pinned_baseline`` builds -- the decision, the
+    three gate lists, and the arithmetic the panel states -- so "moved" now covers a refactor
+    that changed which protections were checked or what a signal contributed while the rounded
+    score held still. Adding a field to that block moves every baseline at once, which is the
+    refusal's fourth named case rather than an engine change: re-run with
+    ``--unbumped="<why>"``.
     """
     default_gates = {
         "movie": build_gates(DEFAULT_MOVIE_POLICY),
@@ -216,8 +229,7 @@ def rejudge(fixture: dict[str, Any]) -> int:
         for key, policy_for, gates_for in BASELINES:
             policy = policy_for(media_type)
             gates = gates_for(media_type) if gates_for else default_gates[media_type]
-            verdict, score_value, coverage_bp = judge(v, policy, gates, reach=reach)[:3]
-            fresh = {"verdict": verdict, "score": score_value, "coverage_bp": coverage_bp}
+            fresh = pinned_baseline(v, policy, gates, reach=reach)
             was = v.get(key)
             # A key the fixture never carried has not MOVED -- there was no number to move
             # from. Counting it as movement makes every added baseline trip the refusal for
@@ -229,7 +241,11 @@ def rejudge(fixture: dict[str, Any]) -> int:
             if was is None:
                 first_pinned += 1
             elif fresh != was:
-                print(f"{v['id']} {key}: {was} -> {fresh}")
+                # Leaf by leaf, not block by block: at this size a whole-block dump scrolls
+                # past and hides which of twelve signals moved, and the author reads this
+                # output to decide whether the change was the one they meant to make.
+                for line in baseline_differences(was, fresh):
+                    print(f"{v['id']} {key}.{line}")
                 moved += 1
             v[key] = fresh
     if first_pinned:
@@ -315,7 +331,10 @@ def rebaseline(unbumped: str | None = None) -> None:
     elif moved:
         fixture.pop("scorer_note", None)
     write_fixture(fixture)
-    print(f"re-pinned {shown(OUT)}: {moved} of {len(fixture['vectors'])} vectors moved")
+    # Baselines, not vectors: each vector carries one per entry in ``BASELINES``, so a run
+    # where both moved printed "880 of 440 vectors moved" and read as a broken counter.
+    total = len(fixture["vectors"]) * len(BASELINES)
+    print(f"re-pinned {shown(OUT)}: {moved} of {total} baselines moved")
 
 
 #: What a ``--unbumped`` reason may contain. Letters, spaces and light punctuation -- no

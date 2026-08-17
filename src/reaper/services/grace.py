@@ -27,12 +27,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import batched
 
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
+from reaper.db import KEY_CHUNK
 from reaper.db.models import FirstFlagged, Snapshot
 from reaper.services import whitelist
 from reaper.services.condemned import effective_condemned
@@ -74,14 +76,10 @@ class GraceReport:
     """The countdown has run out. **No more deletable than** ``in_grace`` -- the planner
     takes both -- so the split says who has had their notice, not what has unlocked."""
     total_bytes_in_grace: int
-    total_bytes_ready: int
-    unknown_size_in_grace: int = 0
-    """How many of the above could not be measured. The totals are sums of what IS known,
-    with this count carried beside them rather than folded in as zeros. One unmeasured
-    item in a sum makes the total quietly low; a total plus a count says the same thing
-    honestly, and both surfaces hide the count at zero."""
+    """A sum of what IS known. An item the *arr could not size is left out rather than folded
+    in as zero, so a total sitting beside an unmeasured item is low by that item."""
 
-    unknown_size_ready: int = 0
+    total_bytes_ready: int
 
 
 async def grace_report(
@@ -108,16 +106,18 @@ async def grace_report(
     # decision starts the same grace window and Leaving Soon warning a scan condemn gets.
     decisions = await whitelist.overrides(session)
     condemned = list((await effective_condemned(session, latest.id, decisions)).values())
-    flagged = {
-        f.media_key: f.first_flagged_at
-        for f in (
-            await session.execute(
-                select(FirstFlagged).where(
-                    FirstFlagged.media_key.in_([c.media_key for c in condemned] or [""])
-                )
-            )
+    # One statement per KEY_CHUNK keys, never one holding the whole condemned set: the
+    # expanding IN binds a variable per key, and a library that condemns more of them than
+    # SQLite will bind raised OperationalError -- which is not an IntegrationError, so it
+    # was caught nowhere and took the report down entirely (rule 94, #556). Chunks are
+    # disjoint keys merged into a map keyed by media_key, so the merge is exact; nothing
+    # below reads this in row order, and the two output lists are sorted explicitly.
+    flagged: dict[str, datetime] = {}
+    for chunk in batched(sorted(c.media_key for c in condemned), KEY_CHUNK, strict=False):
+        rows = (
+            await session.execute(select(FirstFlagged).where(FirstFlagged.media_key.in_(chunk)))
         ).scalars()
-    }
+        flagged.update({f.media_key: f.first_flagged_at for f in rows})
 
     in_grace: list[GraceItem] = []
     ready: list[GraceItem] = []
@@ -162,6 +162,4 @@ async def grace_report(
         ready=ready,
         total_bytes_in_grace=sum(i.size_bytes for i in in_grace if i.size_bytes is not None),
         total_bytes_ready=sum(i.size_bytes for i in ready if i.size_bytes is not None),
-        unknown_size_in_grace=sum(1 for i in in_grace if i.size_bytes is None),
-        unknown_size_ready=sum(1 for i in ready if i.size_bytes is None),
     )

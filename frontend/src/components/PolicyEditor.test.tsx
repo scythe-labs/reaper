@@ -5,38 +5,27 @@
 // to fix them: a policy that could not be read showed no way to replace it, and a preset
 // click left the removal lane over budget with Save disabled. Each test here fails if
 // either fix is reverted.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  CustomCondemn,
+  Policy,
+  PolicyBody,
+  PolicyWarning,
+  ProfileSettings,
+  RewatchOddsBlock,
+  RewatchOddsFit,
+} from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
-import type { WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
+import { renderWithProviders } from "../test/renderWithProviders";
+import { useState } from "react";
+import type { PolicySectionId, WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
 import { PolicyEditor, REPAIR_NOTICES, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    policy: vi.fn(),
-    probePolicy: vi.fn(),
-    profile: vi.fn(),
-    safety: vi.fn(),
-    scanStatus: vi.fn(),
-    seasonShape: vi.fn(),
-    simulate: vi.fn(),
-    validatePolicy: vi.fn(),
-    vocabulary: vi.fn(),
-    vocabularyValues: vi.fn(),
-    // Read by the keep-rules composer's list picker, but only while the protect vocabulary
-    // offers `on_list`; answered anyway so a fixture that adds the field cannot render a
-    // failed read (rule 135).
-    listConfigs: vi.fn(),
-    savePolicy: vi.fn(),
-    saveProfile: vi.fn(),
-    setDeletion: vi.fn(),
-    startScan: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => {
@@ -49,7 +38,7 @@ vi.mock("../api", async (importOriginal) => {
 // an unmocked one would sit silent until the first test that waits long enough. Seeded HERE
 // rather than inside `renderEditor`, which runs after a test's own mock and would overwrite it.
 beforeEach(() => {
-  apiMock.probePolicy.mockResolvedValue({ points: 0.8, detail: "a value" });
+  apiMock.probePolicy.mockResolvedValue({ points: 0.8 });
 });
 
 function body(custom: CustomCondemn[] = []): PolicyBody {
@@ -84,6 +73,12 @@ function body(custom: CustomCondemn[] = []): PolicyBody {
     protect_conditions: [],
     custom_condemn: custom,
     graded_keeps: [],
+    // Off the server defaults (rule 141): a fixture pinning 20/10/730 could not prove the
+    // editor passed anything.
+    rewatch_keep_enabled: true,
+    rewatch_keep_discount: 15,
+    rewatch_min_viewings: 8,
+    rewatch_recent_days: 365,
     keep_rating_rules: [],
     keep_rating_match: "any",
   };
@@ -127,6 +122,14 @@ function renderEditor(
   /** What /policy/validate answers with. The GET's warnings are never rendered, so this
    *  is the only way a warning reaches the page. */
   validationWarnings: PolicyWarning[] = [],
+  /** Where the page opens, as a cold load on `/policy/<media>/<section>` does. */
+  openAt: PolicySectionId = "flags",
+  openMedia: "movie" | "tv" = "movie",
+  /** What GET /api/policy/rewatch-odds answers, or an Error for a failed read. Defaults to
+   *  the "no scan yet" shape (empty blocks, zero total) so a test that does not care about
+   *  the hold still gets a quiet card; the rewatch-odds hold's own describe block below
+   *  passes a seeded fit. */
+  rewatchFit: RewatchOddsFit | Error = { blocks: [], total_items: 0 },
 ) {
   apiMock.policy.mockResolvedValue({
     policy_hash: "hash",
@@ -154,6 +157,8 @@ function renderEditor(
     followup_queued: false,
   });
   apiMock.seasonShape.mockResolvedValue({ total_shows: 0, season_counts: {} });
+  if (rewatchFit instanceof Error) apiMock.rewatchOddsFit.mockRejectedValue(rewatchFit);
+  else apiMock.rewatchOddsFit.mockResolvedValue(rewatchFit);
   if (vocabulary) apiMock.vocabulary.mockImplementation(() => Promise.reject(vocabulary));
   else apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [] });
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
@@ -180,13 +185,27 @@ function renderEditor(
     examples_newly_condemned: [],
     protected_by: [],
   });
-  const queryClient = testQueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <DocsProvider>
-        <PolicyEditor />
-      </DocsProvider>
-    </QueryClientProvider>,
+  return renderWithProviders(
+    <DocsProvider>
+      <EditorAt open={openAt} media={openMedia} />
+    </DocsProvider>,
+  );
+}
+
+/** `App` owns both halves of where the operator is, so the address bar can name them
+ *  (`/policy/tv/deletion`, navUrl.ts). This is that owner, so a rail click and the Movies/TV
+ *  switch move the page here the way they do in the app. Fixed props would sit still through
+ *  every click and prove nothing. */
+function EditorAt({ open, media }: { open: PolicySectionId; media: "movie" | "tv" }) {
+  const [section, setSection] = useState(open);
+  const [mediaType, setMediaType] = useState(media);
+  return (
+    <PolicyEditor
+      mediaType={mediaType}
+      onMediaTypeChange={setMediaType}
+      section={section}
+      onSectionChange={setSection}
+    />
   );
 }
 
@@ -608,6 +627,341 @@ describe("the keep-last advisory", () => {
   });
 });
 
+describe("the rewatch keep card", () => {
+  const SWITCH_NAME = "Keep titles most likely to be rewatched";
+
+  it("renders on the movie policy", async () => {
+    renderEditor({ body: body() });
+    expect(await screen.findByRole("switch", { name: SWITCH_NAME })).toBeInTheDocument();
+  });
+
+  it("renders on the TV policy too, with TV wording, the hold half, and a tv-scoped fetch", async () => {
+    // `apiMock` is module-level, so its call counts carry across this file. Counted from zero
+    // here, or the premise below reads whatever the preceding tests happened to leave.
+    apiMock.rewatchOddsFit.mockClear();
+    const fit: RewatchOddsFit = {
+      blocks: [{ lo_days: 0, hi_days: 365, n: 20, k: 10, upper_bound_pct: 50, items: 40 }],
+      total_items: 40,
+    };
+    renderEditor(
+      {
+        body: tvBody({
+          gates: [{ gate: "rewatch_odds", enabled: true, threshold: 30, window_days: 0 }],
+        }),
+      },
+      pace,
+      null,
+      [],
+      "flags",
+      "tv",
+      fit,
+    );
+
+    expect(
+      await screen.findByRole("switch", { name: "Keep shows most likely to be rewatched" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Watched again by anyone at least")).toBeInTheDocument();
+    // Same grammar as movies (#554): a TV body carries its own rewatch_odds gate row now,
+    // so the hold half renders and fetches the TV lane's own fit.
+    expect(
+      await screen.findByRole("switch", {
+        name: "Keep shows most likely to be rewatched above a percentage",
+      }),
+    ).toBeInTheDocument();
+    expect(apiMock.rewatchOddsFit).toHaveBeenCalledWith("tv");
+    expect(
+      await screen.findByText(
+        "At 30%, this protects shows unwatched under about 1 year, 40 of 40.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("hides its three controls while the switch is off, like every other settings card", async () => {
+    const user = userEvent.setup();
+    renderEditor({ body: body() });
+    const toggle = await screen.findByRole("switch", { name: SWITCH_NAME });
+
+    expect(screen.getByLabelText("Watched by anyone at least")).toBeInTheDocument();
+    expect(screen.getByLabelText("Most recently within")).toBeInTheDocument();
+    expect(screen.getByLabelText("Lowers the score by")).toBeInTheDocument();
+
+    await user.click(toggle);
+
+    expect(screen.queryByLabelText("Watched by anyone at least")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Most recently within")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Lowers the score by")).not.toBeInTheDocument();
+  });
+
+  it("writes each control's edit into the draft, read off the same body the Save button posts", async () => {
+    // `body()` seeds 15/8/365 -- off the server defaults (rule 141) -- so a box merely
+    // echoing the default back could not be told apart from one wired to nothing. Each
+    // assertion below picks a THIRD value, different again, and reads it back through
+    // `validatePolicy`'s own argument rather than assuming the write landed.
+    const user = userEvent.setup();
+    renderEditor({ body: body() });
+    await screen.findByRole("switch", { name: SWITCH_NAME });
+
+    const viewings = screen.getByLabelText("Watched by anyone at least");
+    await user.clear(viewings);
+    await user.type(viewings, "42");
+    await waitFor(() =>
+      expect(apiMock.validatePolicy.mock.calls.at(-1)?.[0].rewatch_min_viewings).toBe(42),
+    );
+
+    const discount = screen.getByLabelText("Lowers the score by");
+    await user.clear(discount);
+    await user.type(discount, "33");
+    await waitFor(() =>
+      expect(apiMock.validatePolicy.mock.calls.at(-1)?.[0].rewatch_keep_discount).toBe(33),
+    );
+
+    // The recency box is a unit picker seeded at 365 days, which draws as "1 year" (the
+    // friendliest unit `bestUnit` finds) -- so typing "9" here writes 9 years, not 9 days.
+    const recent = screen.getByLabelText("Most recently within");
+    await user.clear(recent);
+    await user.type(recent, "9");
+    await waitFor(() =>
+      expect(apiMock.validatePolicy.mock.calls.at(-1)?.[0].rewatch_recent_days).toBe(9 * 365),
+    );
+  });
+});
+
+describe("the rewatch-odds hold, the grouped card's second half (#554 stage 2)", () => {
+  const HOLD_SWITCH_NAME = "Keep titles most likely to be rewatched above a percentage";
+  const PERCENT_LABEL = "Kept when the chance is at least";
+
+  // Off the server default (25, rule 141): a fixture pinning 25 could not prove an edit
+  // reaches the draft.
+  function holdGate(over: Partial<PolicyBody["gates"][number]> = {}) {
+    return { gate: "rewatch_odds", enabled: true, threshold: 30, window_days: 0, ...over };
+  }
+
+  // Three rungs, monotone decreasing, chosen so the cleared set actually changes between
+  // the two thresholds the recompute test drives.
+  const RUNGS: RewatchOddsBlock[] = [
+    { lo_days: 0, hi_days: 365, n: 200, k: 122, upper_bound_pct: 68, items: 900 },
+    { lo_days: 365, hi_days: 1095, n: 150, k: 45, upper_bound_pct: 38, items: 600 },
+    { lo_days: 1095, hi_days: null, n: 100, k: 13, upper_bound_pct: 20, items: 500 },
+  ];
+
+  function measuredFit(over: Partial<RewatchOddsFit> = {}): RewatchOddsFit {
+    return { blocks: RUNGS, total_items: 2500, ...over };
+  }
+
+  it("renders the hold's toggle and the fitted ladder from a seeded fit", async () => {
+    renderEditor(
+      { body: { ...body(), gates: [holdGate()] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      measuredFit(),
+    );
+
+    expect(await screen.findByRole("switch", { name: HOLD_SWITCH_NAME })).toBeInTheDocument();
+    // Rate is round(100*k/n), and the range is plain words off lo/hi -- not the raw days.
+    expect(await screen.findByText("sat under 1 year")).toBeInTheDocument();
+    expect(screen.getByText("61%")).toBeInTheDocument();
+    expect(screen.getByText("1 to 3 years")).toBeInTheDocument();
+    expect(screen.getByText("30%")).toBeInTheDocument();
+    expect(screen.getByText("over 3 years")).toBeInTheDocument();
+    expect(screen.getByText("13%")).toBeInTheDocument();
+  });
+
+  it("recomputes the echo when the threshold edit lands", async () => {
+    const user = userEvent.setup();
+    renderEditor(
+      { body: { ...body(), gates: [holdGate({ threshold: 30 })] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      measuredFit(),
+    );
+
+    // At 30%, the first two rungs clear (68 and 38 both >= 30): 900 + 600 of 2,500, and the
+    // range takes the second rung's upper edge.
+    expect(
+      await screen.findByText(
+        "At 30%, this protects titles unwatched under about 3 years, 1,500 of 2,500.",
+      ),
+    ).toBeInTheDocument();
+
+    const percent = screen.getByLabelText(PERCENT_LABEL);
+    await user.clear(percent);
+    await user.type(percent, "50");
+
+    // At 50%, only the first rung clears (68 >= 50, 38 does not): the sentence AND the
+    // draft the Save button would post both move off the initial value.
+    expect(
+      await screen.findByText(
+        "At 50%, this protects titles unwatched under about 1 year, 900 of 2,500.",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      const gates = apiMock.validatePolicy.mock.calls.at(-1)?.[0].gates as PolicyBody["gates"];
+      expect(gates.find((g) => g.gate === "rewatch_odds")?.threshold).toBe(50);
+    });
+  });
+
+  it("hides the percentage control while the switch is off, but keeps the ladder", async () => {
+    const user = userEvent.setup();
+    renderEditor(
+      { body: { ...body(), gates: [holdGate({ enabled: false })] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      measuredFit(),
+    );
+
+    const toggle = await screen.findByRole("switch", { name: HOLD_SWITCH_NAME });
+    expect(await screen.findByText("sat under 1 year")).toBeInTheDocument();
+    expect(screen.queryByLabelText(PERCENT_LABEL)).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(await screen.findByLabelText(PERCENT_LABEL)).toBeInTheDocument();
+  });
+
+  it("says the fit could not be read, beside the control, rather than nothing", async () => {
+    renderEditor(
+      { body: { ...body(), gates: [holdGate({ enabled: false })] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      new Error("network error"),
+    );
+
+    expect(
+      await screen.findByText("Couldn't read your library's rewatch numbers."),
+    ).toBeInTheDocument();
+    // No reload advice (#195): the savebar elsewhere on this page can be holding unsaved edits.
+    expect(screen.queryByText(/reload/i)).not.toBeInTheDocument();
+  });
+
+  it("says to run a scan first when no scan has ever populated the fit", async () => {
+    renderEditor(
+      { body: { ...body(), gates: [holdGate({ enabled: false })] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      { blocks: [], total_items: 0 },
+    );
+
+    expect(
+      await screen.findByText("Run a scan first to see your library's own numbers."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render the rewatch-odds row a second time through the plain protections list", async () => {
+    renderEditor(
+      { body: { ...body(), gates: [holdGate()] } },
+      pace,
+      null,
+      [],
+      "flags",
+      "movie",
+      measuredFit(),
+    );
+
+    expect(await screen.findAllByRole("switch", { name: HOLD_SWITCH_NAME })).toHaveLength(1);
+  });
+});
+
+describe("a protection this build has no copy for", () => {
+  it("gives each unknown gate a switch the operator can tell apart", async () => {
+    // The simulator's fallback is one shared string, and there it is right: an id appears
+    // once in a tally, where "Another protection, 7" reads correctly. A switch is the other
+    // case. Two unknown ids sharing that string would draw two controls with one name and no
+    // help, and turning a protection off is not a choice anyone can make blind.
+    //
+    // This is the assertion that fails on reverting to the shared constant (rule 118): the
+    // labels have to differ from EACH OTHER, so a per-id fallback is the only thing that
+    // satisfies it. Reachable only from a stale bundle -- the SPA ships inside the server's
+    // own image -- which is why the bar is "distinguishable", not rule 21's nicer sentence.
+    renderEditor({
+      body: {
+        ...body(),
+        gates: [
+          { gate: "brand_new_gate", enabled: true, threshold: 1, window_days: 30 },
+          { gate: "another_new_gate", enabled: false, threshold: 1, window_days: 30 },
+        ],
+      },
+    });
+
+    const first = await screen.findByLabelText("Brand New Gate");
+    const second = await screen.findByLabelText("Another New Gate");
+    expect(first).not.toBe(second);
+    expect(screen.queryAllByLabelText("Another protection")).toHaveLength(0);
+  });
+});
+
+describe("the hold on a title that came back (#553)", () => {
+  const returnedBody = {
+    ...body(),
+    gates: [{ gate: "returned" as const, enabled: true, threshold: 548, window_days: 7 }],
+  };
+
+  it("offers both durations, each on the shared picker", async () => {
+    // Rule 40: a number with a changeable unit is `QuantityInput`, never a bare number box
+    // beside loose unit text. Both knobs are durations, so both take it and neither is new
+    // control code.
+    renderEditor({ body: returnedBody });
+
+    const hold = await screen.findByLabelText("Keep a title that came back threshold");
+    const absence = screen.getByLabelText("How long an absence counts");
+    // The picker draws each number in the largest unit that divides it cleanly and hands the
+    // parent days either way: 548 reads "1.5 years", 7 reads "1 week". Both assertions are on
+    // the DRAWN value, which is what an operator sees.
+    expect(hold).toHaveValue(1.5);
+    expect(absence).toHaveValue(1);
+    const holdUnit = screen.getByLabelText("Keep a title that came back threshold unit");
+    const absenceUnit = screen.getByLabelText("How long an absence counts unit");
+    expect(holdUnit).toHaveValue("years");
+    expect(absenceUnit).toHaveValue("weeks");
+  });
+
+  it("says keep it FOR, not at least", async () => {
+    // The hold is exactly this long, not a minimum of it. "at least 1.5 years" is the wrong
+    // sentence and it is the one every other days-unit row wants.
+    renderEditor({ body: returnedBody });
+
+    await screen.findByLabelText("Keep a title that came back threshold");
+    expect(screen.getByText("keep it for")).toBeInTheDocument();
+    expect(screen.queryByText("at least")).not.toBeInTheDocument();
+  });
+
+  it("binds the absence help to the control it explains, not to the row", async () => {
+    // Rule 45: help text binds to exactly one control, directly beneath it. The row's own
+    // help is about the hold; the absence needs its own or the operator reads one paragraph
+    // covering two numbers.
+    renderEditor({ body: returnedBody });
+
+    await screen.findByLabelText("How long an absence counts");
+    expect(screen.getByText(/left your library and was fetched again/)).toBeInTheDocument();
+    expect(screen.getByText(/A file swapped for a better copy is back within hours/)).toBeVisible();
+  });
+
+  it("hides both durations while the protection is off", async () => {
+    // Rule 41: a settings-bearing group's sub-controls render only while its toggle is on,
+    // hidden rather than disabled.
+    renderEditor({
+      body: { ...returnedBody, gates: [{ ...returnedBody.gates[0]!, enabled: false }] },
+    });
+
+    await screen.findByText("Keep a title that came back");
+    expect(screen.queryByLabelText("Keep a title that came back threshold")).toBeNull();
+    expect(screen.queryByLabelText("How long an absence counts")).toBeNull();
+  });
+});
+
 describe("the gate that counts recent watchers", () => {
   it("offers the window its own warning tells the operator to change", async () => {
     // The server warns on gates.server_popularity.window_days and advises a year; until
@@ -720,7 +1074,7 @@ describe("the gate that counts recent watchers", () => {
         {
           field: "protect_conditions",
           severity: "warn",
-          // Verbatim from `policy.inspect`'s gate-off arm (rule 144): this is a payload the
+          // Verbatim from `policy_warnings.inspect`'s gate-off arm (rule 144): this is a payload the
           // anchor test hands in, so a drifted copy here reads as the shipped sentence
           // without failing anything.
           message:
@@ -959,7 +1313,7 @@ describe("PolicyEditor warning anchors", () => {
     { anchor: "condemn_at", controls: { condemn_at: "Put a title on the list once it scores" } },
     {
       anchor: "gates",
-      // The four the server sends today, each named by `engine/policy.py` as
+      // The four the server sends today, each named by `engine/policy_warnings.py` as
       // `gates.<protection>.<setting>`. `PolicyEditor` binds them generically off the gate id
       // in the served body, so a fifth protection warning about one of these three settings
       // binds with no frontend change -- which is also why this list cannot prove the binding
@@ -1329,7 +1683,9 @@ describe("the controls a screen reader has to tell apart", () => {
   // protecting through an `on_list` keep rule. A stored draft can still carry the retired
   // gate, though -- the loader keeps an enabled row whose target list could not be created
   // rather than silently withdrawing cover -- so the editor renders it as a plain protection
-  // row by the `titleCase` fallback (rule 66) instead of dropping it or crashing.
+  // row from its `GATE_META` copy instead of dropping it or crashing. Rule 66's fallback
+  // beneath that no longer title-cases the id (#551): an id this build has no copy for reads
+  // "Another protection", never a slug.
   it("tolerates a stored draft still carrying the retired whitelisted gate", async () => {
     renderEditor({
       body: {
@@ -1352,6 +1708,42 @@ describe("the controls a screen reader has to tell apart", () => {
     // The card, its tag boxes and its own copy are gone with the feature.
     expect(screen.queryByText("Spare titles you've tagged")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Add a keep tag")).not.toBeInTheDocument();
+  });
+
+  // The other half of #627. The notice on that row tells the operator to turn the leftover
+  // off, and turning it off has to produce a body a save accepts -- the boundary refuses the
+  // id in EITHER switch position (`GateSettingIn._must_be_authorable`), so storing
+  // `enabled: false` would leave every validate, simulate and save 422-ing with the page
+  // still saying the switch is the way out. Off means the row leaves the body.
+  it("takes a leftover protection out of the body when it is turned off", async () => {
+    const user = userEvent.setup();
+    renderEditor({
+      body: {
+        ...body(),
+        gates: [{ gate: "whitelisted", enabled: true, threshold: 0, window_days: 0 }],
+      },
+    });
+
+    const leftover = await screen.findByRole("switch", { name: "On a list you curate yourself" });
+    expect(screen.getByText(/A leftover from an older version/)).toBeInTheDocument();
+
+    await user.click(leftover);
+
+    // The whole row goes, not just the switch: there is no such protection to show off.
+    expect(
+      screen.queryByRole("switch", { name: "On a list you curate yourself" }),
+    ).not.toBeInTheDocument();
+    // The control that was pressed went with the row, so focus has to be put somewhere or it
+    // falls to `<body>` and the next Tab restarts at the top of a ~1,900-line form (#173).
+    // Save, because the removal is a draft edit and pressing it is what makes it real.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Save changes" }));
+    });
+    // ...and the draft the page is now working against is one the server accepts. Read off
+    // the validate call because that is the same body the Save button posts.
+    await waitFor(() => {
+      expect(apiMock.validatePolicy.mock.calls.at(-1)?.[0].gates).toEqual([]);
+    });
   });
 
   it("gives two lean keep rules on one field Remove buttons that answer to different names", async () => {
@@ -1587,7 +1979,7 @@ describe("where a signal starts earning", () => {
 // only ever shows what the server said, and says so plainly when it has not said it yet.
 describe("trying a value against a signal's range", () => {
   it("shows what the engine answered, not a number worked out here", async () => {
-    apiMock.probePolicy.mockResolvedValue({ points: 3.5, detail: "IMDb 3.0" });
+    apiMock.probePolicy.mockResolvedValue({ points: 3.5 });
     renderEditor({ body: body() });
 
     await screen.findByText("How low it's rated");
@@ -1647,7 +2039,7 @@ describe("what the dormancy ramp can actually reach", () => {
   it("describes a title the history caps, when the history is the shorter of the two", async () => {
     // 200 days of history against a far end of 365: nothing can present more than 200, so
     // that is both a moving example and the ceiling the mirror imposes.
-    apiMock.probePolicy.mockResolvedValue({ points: 38.4, detail: "not watched in 6 months" });
+    apiMock.probePolicy.mockResolvedValue({ points: 38.4 });
     renderEditor({ body: body(), history_reach_days: 200 });
 
     await waitFor(() =>
@@ -1834,5 +2226,159 @@ describe("the panel's verdict on an edit it has not simulated yet", () => {
       target: { value: "42" },
     });
     expect(await screen.findByText(INERT)).toBeInTheDocument();
+  });
+});
+
+describe("the section rail", () => {
+  // Which section is being read is `App` state now, so the address bar can name it
+  // (`/policy/tv/deletion`, navUrl.ts). What this page owes that owner is a click reported
+  // upward, and a rail drawn from what it is handed back rather than from a second copy of its
+  // own.
+  //
+  // Scrolling is measured from four rects and the document's height, and jsdom answers 0 for
+  // both, so the three tests below STATE a geometry rather than read one (rule 119). The numbers
+  // are the shape #795 reproduces at in Chromium: a click on "Pace and limits" scrolls to the end
+  // of the document, so the page is bottomed out with all four headings on screen. That is the
+  // same position scrolling down to read Deletion leaves you in, which is why no rule reading
+  // rects can separate the two, and why the click has to be remembered rather than re-measured.
+  // `AppUrl.test.tsx` carries the shell's half.
+  const VIEWPORT = 900;
+  const PAGE = 3000;
+  const BOTTOM = PAGE - VIEWPORT;
+  /** Each heading's top, in the order they sit on the page: flags, kept, pace, deletion. */
+  const LAST_SCREENFUL = [-2000, -1000, 0, 400];
+  const MIDWAY = [-2000, 0, 400, 890];
+
+  // Rule 133: `innerHeight` and `scrollY` outlive a render tree, so every stub is handed back.
+  // All three are configurable accessors under jsdom, which is what lets a getter spy stand in.
+  afterEach(() => vi.restoreAllMocks());
+
+  function state(scrollY: number, tops: number[]) {
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(VIEWPORT);
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(scrollY);
+    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(PAGE);
+    document.querySelectorAll("h3.policy-section").forEach((heading, i) => {
+      vi.spyOn(heading, "getBoundingClientRect").mockReturnValue({ top: tops[i] } as DOMRect);
+    });
+  }
+
+  /** One scroll event, and the frame the listener coalesces it into. */
+  const scrolled = async () =>
+    await act(async () => {
+      window.dispatchEvent(new Event("scroll"));
+      await new Promise((settle) => requestAnimationFrame(() => settle(null)));
+    });
+
+  const railTab = (name: string) =>
+    within(document.querySelector(".policy-rail") as HTMLElement).getByRole("button", { name });
+
+  it("keeps the section a click asked for, where the click bottoms the page out", async () => {
+    const person = userEvent.setup();
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    state(BOTTOM, LAST_SCREENFUL);
+
+    await person.click(railTab("Pace and limits"));
+    await scrolled();
+
+    expect(railTab("Pace and limits")).toHaveAttribute("aria-current", "page");
+    expect(railTab("Deletion")).not.toHaveAttribute("aria-current");
+  });
+
+  it("hands the rail back to the scroll once the operator moves the page", async () => {
+    const person = userEvent.setup();
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    state(BOTTOM, LAST_SCREENFUL);
+    await person.click(railTab("Pace and limits"));
+    await scrolled();
+
+    state(500, MIDWAY);
+    await scrolled();
+
+    expect(railTab("What's always kept")).toHaveAttribute("aria-current", "page");
+    expect(railTab("Pace and limits")).not.toHaveAttribute("aria-current");
+  });
+
+  it("still marks the last section for someone who scrolls to the end", async () => {
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    state(BOTTOM, LAST_SCREENFUL);
+
+    await scrolled();
+
+    expect(railTab("Deletion")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("reports the section a click asks for, and marks what it is handed back", async () => {
+    const person = userEvent.setup();
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+
+    const rail = document.querySelector(".policy-rail");
+    expect(rail, "the policy rail is not on the page").not.toBeNull();
+    const deletion = within(rail as HTMLElement).getByRole("button", { name: "Deletion" });
+    expect(deletion).not.toHaveAttribute("aria-current");
+
+    await person.click(deletion);
+    expect(deletion).toHaveAttribute("aria-current", "page");
+    expect(
+      within(rail as HTMLElement).getByRole("button", { name: "What flags a title" }),
+    ).not.toHaveAttribute("aria-current");
+  });
+});
+
+describe("the policy the URL names", () => {
+  // The other half of where the operator is, and the one that used to be lost. The Movies/TV
+  // switch lived here, unpersisted, so a reload on a policy link reopened the right section with
+  // the other media type's caps, budget and weights under it. `App` owns it now and hands it
+  // down, the way it hands down the section.
+  it("opens on the policy it is handed, with no click to get there", async () => {
+    renderEditor({ body: tvBody() }, pace, null, [], "deletion", "tv");
+
+    expect(await screen.findByText("TV policy")).toBeInTheDocument();
+    // The read that decides every number on the page. `api.policy` defaults to "movie", so a
+    // call carrying "tv" is the prop arriving and cannot be an omission (rule 141).
+    expect(apiMock.policy).toHaveBeenCalledWith("tv");
+    // ...and the controls only the TV policy draws.
+    expect(
+      await screen.findByRole("heading", { name: "TV season protection" }),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the switch until the operator says the unsaved edits can go", async () => {
+    // The confirm stays in this component while the value it commits lives in `App`, because
+    // `dirty` and the draft it is about are both here. So the press must not reach the owner
+    // ahead of the answer: the address bar would then name a policy that is not on screen, over
+    // edits that are. Switching discards the draft, which is what the confirm says out loud and
+    // what it is for.
+    const person = userEvent.setup();
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    // The other policy, for the fetch the switch starts. Set after the mount fetch has gone, as
+    // `renderTvEditor` sets the season shape.
+    apiMock.policy.mockResolvedValue({
+      policy_hash: "hash",
+      name: "default",
+      warnings: [],
+      body: tvBody(),
+    });
+
+    fireEvent.change(screen.getByLabelText("Put a title on the list once it scores"), {
+      target: { value: "42" },
+    });
+    await waitFor(() => expect(document.querySelector(".savebar")).not.toBeNull());
+
+    await person.click(screen.getByRole("button", { name: "TV" }));
+    expect(document.querySelector(".notice-warn")!.textContent).toContain(
+      "You have unsaved movie policy changes. Switching to TV discards them.",
+    );
+    expect(screen.getByText("Movies policy")).toBeInTheDocument();
+
+    await person.click(screen.getByRole("button", { name: "Discard and switch" }));
+    expect(await screen.findByText("TV policy")).toBeInTheDocument();
+    // The edits went with it: the draft re-seeded from the TV policy, so there is nothing left
+    // to save and no bar offering to.
+    await waitFor(() => expect(document.querySelector(".savebar")).toBeNull());
   });
 });

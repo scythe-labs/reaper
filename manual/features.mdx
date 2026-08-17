@@ -31,7 +31,8 @@ episode counts. Two details that matter in a real library:
 
 By default the hold is one season: where each viewer is now. Set **"also keep N seasons ahead
 of where they are"** and Reaper holds that many more in front of every viewer, so someone on
-season 1 with a cushion of 2 keeps seasons 1, 2 and 3.
+season 1 with a cushion of 2 keeps seasons 1, 2 and 3. The cushion counts seasons that are on
+disk, so it steps over gaps the same way the hold does.
 
 <Callout tone="note">
   **The cushion starts at 0.** Raise it if your users binge faster than you scan, so Reaper is
@@ -80,8 +81,9 @@ These are always on, with no setting to get wrong:
 - **A phrase bound to the plan.** You type `REAP 7 SOULS 214 GB`, recomputed on the server, so
   a stale tab and muscle memory both fail.
 - **A practice run** that walks every interlock and sends nothing.
-- **Unknown sizes are kept.** An item Reaper could not measure is never removed, and can never
-  be the test item.
+- **Unknown sizes never go first.** An item Reaper could not measure can never be the test
+  item, and it is also held back from the run entirely. The unknown-size allowance on Policy
+  is the one setting that lets any of them through, and it starts at 0.
 - **The scheduler never deletes.** Scans are automatic; removals are not.
 
 ## What protects a title

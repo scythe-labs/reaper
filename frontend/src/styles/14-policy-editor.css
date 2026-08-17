@@ -373,6 +373,13 @@
 .bar-x {
   width: var(--tap-min);
   height: var(--tap-min);
+  /* Without this the width declaration above does nothing (#736). `04-buttons.css`'s
+     `button { padding: 0.42rem 0.85rem }` applies here, and under the global
+     `box-sizing: border-box` a specified width smaller than padding plus border floors at
+     padding plus border: 29.2px against the 24px it names. Height was already under the
+     floor, so only the width was wrong, which is why it read as a pill rather than the
+     circle every other chip dismiss draws. */
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -464,6 +471,34 @@
   display: flex;
   align-items: center;
   gap: var(--space-lg);
+}
+/* The rewatch hold's fitted ladder (#554 stage 2, PolicyEditor.tsx's RewatchLadder): the
+   library's own measured rate by dormancy range, read before the operator decides where to
+   set the percentage below it. One column, unlike the simulator's two-column .sim-delta
+   (16-simulator.css) -- that class is simulator chrome, and the mockup borrowed it only for
+   the picture (docs/history/REWATCH_PLAN.md, Stage 2). */
+.rewatch-ladder {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-xs);
+  max-width: 20rem;
+  margin: var(--space-md) 0;
+}
+.rewatch-ladder div {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2rem;
+}
+.rewatch-ladder dt {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.rewatch-ladder dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-md);
 }
 .rules-table {
   border: 1px solid var(--border);

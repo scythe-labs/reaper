@@ -2,27 +2,23 @@
 // The admin password arms deletion and is the anti-lockout fallback, so the form must not let
 // a typo through: it confirms the new password, and it says out loud why Save is off (too
 // short, with a live count; or the two entries disagree) instead of a silently gray button.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
 import { SIGNED_IN_USER } from "../test/apiFixtures";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
-import { SecurityPanel } from "./Settings";
+import { renderWithProviders } from "../test/renderWithProviders";
+import { SecurityPanel } from "./SecurityPanel";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    safety: vi.fn(),
-    setAdminPassword: vi.fn(async () => ({ ok: true })),
-    // The form reads ["me"] to learn whether a recovery code opened this session, which is the
-    // one case the server takes a new password without the current one. Omitting it would hand
-    // the query `undefined`, and the form would render its strict branch off a FAILED read
-    // rather than off a real answer -- the shape rule 135 exists to fail the run on.
-    me: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
+
+// A save that succeeds is what every case that is not about failure assumes, so it is the
+// default here rather than a line in each of them.
+apiMock.setAdminPassword.mockResolvedValue({ ok: true });
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
@@ -35,11 +31,7 @@ function renderPanel(
   /** Passed in only when the test needs to drive a refetch itself. */
   queryClient = testQueryClient(),
 ) {
-  render(
-    <QueryClientProvider client={queryClient}>
-      <SecurityPanel onDirtyChange={onDirtyChange} />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<SecurityPanel onDirtyChange={onDirtyChange} />, { client: queryClient });
   return userEvent.setup();
 }
 

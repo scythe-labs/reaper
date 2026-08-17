@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -33,12 +35,13 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     create_engine,
+    event,
     inspect,
     select,
     text,
 )
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, NoSuchTableError
 from sqlalchemy.orm import Session
 
 from reaper.config import Settings
@@ -46,12 +49,8 @@ from reaper.db.base import NAMING_CONVENTION
 from reaper.db.models import ListConfig
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.gates import GateId
-from reaper.engine.policy import (
-    DEFAULT_MOVIE_POLICY,
-    PolicyBody,
-    has_legacy_list_protections,
-    recover_rating_rules,
-)
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
+from reaper.engine.policy_migrations import has_legacy_list_protections, recover_rating_rules
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -124,20 +123,17 @@ class _ConfigureCalled(Exception):  # noqa: N818 -- a control-flow signal, not a
         self.kwargs = kwargs
 
 
-def _env_py_configure_kwargs(
-    *, as_sql: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> dict[str, Any]:
+def _env_py_configure_kwargs(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Run the real ``alembic/env.py`` and return what it passed to ``context.configure()``.
 
     env.py cannot be imported -- Alembic execs it by path -- so this drives it the
-    way Alembic itself does and intercepts the one call that matters. ``as_sql``
-    picks the branch: True runs ``run_migrations_offline``, False the online one.
+    way Alembic itself does and intercepts the one call that matters.
 
     Nothing is migrated: ``configure`` raises as soon as it has the keyword
     arguments, which also means a future env.py that never calls it fails here
     rather than passing on an empty result.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     monkeypatch.setattr("reaper.config.get_settings", lambda: settings)
 
     # env.py replays alembic.ini's logging config, and fileConfig() disables every
@@ -153,17 +149,14 @@ def _env_py_configure_kwargs(
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
     with (
-        EnvironmentContext(config, script, as_sql=as_sql),
+        EnvironmentContext(config, script),
         pytest.raises(_ConfigureCalled) as caught,
     ):
         script.run_env()
     return caught.value.kwargs
 
 
-@pytest.mark.parametrize("as_sql", [True, False], ids=["offline", "online"])
-def test_env_py_configures_batch_mode(
-    as_sql: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_env_py_configures_batch_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """What alembic/env.py actually passes -- not what a test hand-configures.
 
     ``test_batch_mode_can_drop_a_named_constraint`` proves batch mode plus the
@@ -171,10 +164,14 @@ def test_env_py_configures_batch_mode(
     This one reads the shipped env.py, so flipping ``render_as_batch`` to False
     fails here instead of years later, in the first migration that needs it.
 
-    Both call sites are covered: env.py configures once per branch, and only the
-    branch under test runs.
+    **One call site, and it used to be parametrized over two.** env.py had an offline
+    (``--sql``) branch with no invoker anywhere in the tree, and it could not have run:
+    9 revisions call ``op.get_bind()``, so ``alembic upgrade head --sql`` exits 1 at
+    revision 3. It is gone. The parametrize went with it rather than staying as a
+    second id driving the same branch, which would have read as twice the coverage
+    (rule 118).
     """
-    kwargs = _env_py_configure_kwargs(as_sql=as_sql, tmp_path=tmp_path, monkeypatch=monkeypatch)
+    kwargs = _env_py_configure_kwargs(tmp_path=tmp_path, monkeypatch=monkeypatch)
 
     assert kwargs.get("render_as_batch") is True, (
         "alembic/env.py must pass render_as_batch=True. Without it SQLite cannot "
@@ -187,7 +184,7 @@ def test_env_py_configures_batch_mode(
 
 def _alembic_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     """An alembic Config whose env.py resolves the DB URL to ``tmp_path/reaper.db``."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     monkeypatch.setattr("reaper.config.get_settings", lambda: settings)
     monkeypatch.setattr("logging.config.fileConfig", lambda *a, **kw: None)
     return Config(str(PROJECT_ROOT / "alembic.ini"))
@@ -214,6 +211,138 @@ def _instance_has_import_exclusion(engine: Engine) -> bool:
 # carries it, so the additive migration's add_column must be guarded, not plain (B-8, rule 81).
 _BEFORE_IMPORT_EXCLUSION = "1f2a3b4c5d6e"
 _IMPORT_EXCLUSION = "2b3c4d5e6f70"
+
+
+def _table_names(engine: Engine) -> list[str]:
+    with engine.connect() as conn:
+        rows = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table'")
+        return sorted(str(name) for name in rows.scalars().all())
+
+
+@contextmanager
+def _recorded_statements() -> Iterator[list[str]]:
+    """Every statement any engine emits, for the duration of the block.
+
+    Class-level on ``Engine`` because the engine under test is the one alembic/env.py
+    builds internally and never hands back. Removed on the way out (rule 133).
+    """
+    seen: list[str] = []
+
+    def _record(
+        conn: Any, cursor: Any, statement: str, parameters: Any, ctx: Any, executemany: bool
+    ) -> None:
+        seen.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", _record)
+    try:
+        yield seen
+    finally:
+        event.remove(Engine, "before_cursor_execute", _record)
+
+
+def _built_a_temp_table_for(statements: list[str], table: str) -> bool:
+    return any(
+        s.lstrip().upper().startswith("CREATE TABLE") and f"_alembic_tmp_{table}" in s
+        for s in statements
+    )
+
+
+def test_a_failed_migration_strands_no_temp_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A migration that raises after a batch recreate leaves an install that still boots (#564).
+
+    pysqlite opens no transaction for DDL, so a batch recreate's ``CREATE TABLE
+    _alembic_tmp_X`` is autocommitted on the spot and the ``INSERT INTO ... SELECT``
+    after it opens the implicit transaction. Everything from the INSERT onward rolls
+    back; the temp table does not. No rows are lost, but the next boot re-runs the same
+    migration and dies on "table _alembic_tmp_candidate already exists" -- and migrations
+    run at container start, so it dies there every time after that too. Deleting
+    ``env.py``'s ``keep_ddl_in_the_transaction`` strands the temp table and fails the
+    first assertion after the precondition; the precondition itself still passes, since
+    the recreate runs either way and only its rollback is at issue.
+
+    Driven through the real runner over a real shipped migration, because the
+    transaction under test is one alembic opens per migration and nothing else opens it:
+    ``begin_transaction`` is a no-op on SQLite at env.py's outer call site
+    (``SQLiteImpl.transactional_ddl`` is False), so a test that stands in for a migration
+    body rather than being one probes no transaction at all and passes on a wedged tree.
+
+    The heal migration is made to raise the way an authoring mistake does, by handing it
+    a database with no ``reap_run`` -- its second guard reflects that table, after the
+    first recreate has already run. That "after" is the whole test, so it is proven and
+    not assumed: the recorded statements must show the temp table being built.
+    """
+    config = _alembic_config(tmp_path, monkeypatch)
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    # The pre-freeze shape, minus reap_run. Same database as
+    # test_heal_migration_relaxes_old_not_null_size_bytes builds, so the recreate the
+    # heal performs here is the one that test proves reshapes the table.
+    md = MetaData(naming_convention=NAMING_CONVENTION)
+    Table("snapshot", md, Column("id", Integer, primary_key=True))
+    Table(
+        "candidate",
+        md,
+        Column("id", Integer, primary_key=True),
+        Column(
+            "snapshot_id", Integer, ForeignKey("snapshot.id", ondelete="CASCADE"), nullable=False
+        ),
+        Column("media_key", String(100), nullable=False),
+        Column("size_bytes", Integer, nullable=False),  # the old, un-healed shape
+        UniqueConstraint("snapshot_id", "media_key"),
+    )
+    md.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO snapshot (id) VALUES (1)"))
+        conn.execute(
+            text(
+                "INSERT INTO candidate (id, snapshot_id, media_key, size_bytes) VALUES "
+                "(1, 1, 'k1', 123)"
+            )
+        )
+    command.stamp(config, _PRIOR_HEAD)
+
+    with (
+        _recorded_statements() as statements,
+        pytest.raises(NoSuchTableError, match="reap_run"),
+    ):
+        command.upgrade(config, _HEAL_HEAD)
+
+    assert _built_a_temp_table_for(statements, "candidate"), (
+        "the migration never reached its first batch recreate, so this test proves nothing "
+        "about what a failure after one leaves behind"
+    )
+
+    # Nothing stranded, and the rollback was total rather than partial: the row is intact
+    # and the column is back to the shape it had before the recreate.
+    assert "_alembic_tmp_candidate" not in _table_names(engine)
+    assert _size_bytes_nullable(engine) is False
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT size_bytes FROM candidate WHERE id = 1")).scalar() == 123
+
+    # The half the operator feels: correcting the real cause is enough, where before the
+    # retry died on the leftover from the first attempt instead.
+    Table(
+        "reap_run",
+        md,
+        Column("id", Integer, primary_key=True),
+        Column(
+            "snapshot_id", Integer, ForeignKey("snapshot.id", ondelete="RESTRICT"), nullable=False
+        ),
+        Column("held_back_unknown_size", Integer, nullable=False, server_default="0"),
+    )
+    md.tables["reap_run"].create(engine)
+
+    command.upgrade(config, _HEAL_HEAD)
+
+    assert "_alembic_tmp_candidate" not in _table_names(engine)
+    assert _size_bytes_nullable(engine) is True
+    assert _held_back_default(engine) is None
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT size_bytes FROM candidate WHERE id = 1")).scalar() == 123
+
+    engine.dispose()
 
 
 def test_add_import_exclusion_upgrades_an_in_window_database(
@@ -255,6 +384,36 @@ def test_add_import_exclusion_still_adds_the_column_when_missing(
 
     command.upgrade(config, _IMPORT_EXCLUSION)
     assert _instance_has_import_exclusion(engine) is True
+
+    engine.dispose()
+
+
+def test_a_runs_journal_read_searches_an_index_rather_than_scanning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading one run's journal uses ``ix_action_step_run_id``. Revision ``f7a8b9c0d1e2``
+    says why the table needs it.
+
+    Asserted on the query plan of the executor's own filter, not on the index appearing in
+    the schema, so an index that exists but is not chosen still fails.
+    """
+    config = _alembic_config(tmp_path, monkeypatch)
+    command.upgrade(config, "head")
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    with engine.connect() as conn:
+        plan = " ".join(
+            str(row[3])
+            for row in conn.execute(
+                text(
+                    "EXPLAIN QUERY PLAN SELECT * FROM action_step "
+                    "WHERE run_id = 1 ORDER BY ordinal, id"
+                )
+            )
+        )
+
+    assert "SCAN action_step" not in plan, plan
+    assert "ix_action_step_run_id" in plan, plan
 
     engine.dispose()
 
@@ -514,7 +673,7 @@ def test_the_migration_reads_a_recoverable_bar_exactly_as_the_shim_does() -> Non
     base = _legacy_body(recoverable=True)
 
     def variant(**gate_patch: Any) -> dict[str, Any]:
-        body = json.loads(json.dumps(base))
+        body: dict[str, Any] = json.loads(json.dumps(base))
         for gate in body["gates"]:
             if gate["gate"] == GateId.RATING_FLOOR.value:
                 gate.update(gate_patch)
@@ -926,15 +1085,25 @@ class TestTheListConfigShapeHeal:
     ) -> None:
         """Every fresh install takes the guard's other arm: nothing to rebuild, and the
         shape at head is already the model's -- which is also what keeps ``alembic check``
-        green in CI."""
+        green in CI.
+
+        ``built_in`` is excluded from the stray-default sweep, and the exclusion is the point
+        rather than an escape: release M gave it ``server_default=false()`` deliberately
+        (``e6f7a8b9c0d1``) so an INSERT can omit a column whose ORM attribute has retired.
+        That is a default this heal is not allowed to remove, unlike the three it was written
+        for -- which is exactly the distinction a blanket loop cannot make."""
         config = _alembic_config(tmp_path, monkeypatch)
         command.upgrade(config, "head")
         engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
 
         columns = {c["name"]: c for c in inspect(engine).get_columns("list_config")}
         assert isinstance(columns["created_at"]["type"], Integer)
-        for name in ("config_json", "enabled", "built_in"):
+        for name in ("config_json", "enabled"):
             assert columns[name]["default"] is None, name
+        assert columns["built_in"]["default"] is not None, (
+            "release M's server default for built_in is gone, so a fresh install's first "
+            "list save will fail on a NOT NULL column nothing writes any more"
+        )
         engine.dispose()
 
 
@@ -1127,7 +1296,7 @@ def _only_these_lists(engine: Engine, *sources: str) -> None:
 
     Each row carries a real config, because that is what identifies it: the conversion finds
     the tag list by the tags it holds and the IMDb list by its preset, never by spelling and
-    never by age (``policy.conversion_list_names``).
+    never by age (``policy_migrations.conversion_list_names``).
     """
     rows = {
         "arr_tag": ("My tagged titles", {"tags": ["reaper-keep"], "match": "any"}),
@@ -1229,7 +1398,10 @@ class TestPersistingTheListConversion:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Movies and TV are tuned separately and BOTH degrade the scan, so converting one
-        leaves the banner exactly as unclearable as before (rule 72)."""
+        leaves the banner exactly as unclearable as before (rule 72).
+
+        Scoped by media type on the way through: the IMDb chart is movies only, so the TV row
+        converts to the tag list alone while the movie row keeps both (#539)."""
         config, engine = self._upgraded(tmp_path, monkeypatch)
         _only_these_lists(engine, "arr_tag", "imdb")
         _seed_policy_of(engine, "movie", _legacy_list_body())
@@ -1241,6 +1413,57 @@ class TestPersistingTheListConversion:
 
         newest = {r[1]: r[3] for r in _all_policy_rows(engine)}
         assert set(newest) == {"movie", "tv"}
+        for body_json in newest.values():
+            assert has_legacy_list_protections(json.loads(body_json)) is False
+
+        def _lists(body_json: str) -> set[str]:
+            body = json.loads(body_json)
+            return {c["value"] for c in body["protect_conditions"] if c["field"] == "on_list"}
+
+        assert _lists(newest["movie"]) == {"My tagged titles", "Films worth keeping"}
+        assert _lists(newest["tv"]) == {"My tagged titles"}
+        engine.dispose()
+
+    def test_a_single_library_collection_scopes_to_its_media_type(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#545: a collection in a movie library holds movies only, so the whitelisted gate's
+        rule for it lands on the movie body and not the TV one. The library's type comes from
+        the synced ``plex_libraries`` setting, so the upgrade heals without a Policy-page visit.
+        A watchlist would stay on both; an unsynced library keeps both, fail-open."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO list_config (name, source, config_json, enabled, built_in,"
+                    " created_at) VALUES ('Never Reap', 'plex_collection', :c, 1, 0, 1750000000)"
+                ),
+                {"c": json.dumps({"library": "Films", "collection": "Never Reap"})},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO app_setting (key, value_json, updated_at)"
+                    " VALUES ('plex_libraries', :v, 1750000000)"
+                ),
+                {"v": json.dumps([{"key": 1, "title": "Films", "kind": "movie", "enabled": True}])},
+            )
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+        tv = _legacy_list_body()
+        tv["media_type"] = "tv"
+        _seed_policy_of(engine, "tv", tv)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        newest = {r[1]: r[3] for r in _all_policy_rows(engine)}
+
+        def _lists(body_json: str) -> set[str]:
+            body = json.loads(body_json)
+            return {c["value"] for c in body["protect_conditions"] if c["field"] == "on_list"}
+
+        assert "Never Reap" in _lists(newest["movie"])
+        assert "Never Reap" not in _lists(newest["tv"])
+        # Both rows still fully converted, so the scan does not degrade on either (#516).
         for body_json in newest.values():
             assert has_legacy_list_protections(json.loads(body_json)) is False
         engine.dispose()
@@ -1387,3 +1610,254 @@ class TestPersistingTheListConversion:
             rows = session.execute(select(PolicyModel).order_by(PolicyModel.id)).scalars().all()
         assert isinstance(rows[-1].created_at, datetime)
         engine.dispose()
+
+
+# Release M for six write-only columns, and the revision just before it.
+_PRIOR_RELEASE_M = "d5e6f7a8b9c0"
+_RELEASE_M = "e6f7a8b9c0d1"
+
+#: What ``e6f7a8b9c0d1`` gives each column so a fresh install's first INSERT can omit it, now
+#: that its ORM attribute has retired (rule 148, release M). Written from the revision's own
+#: contract rather than transcribed from a shape read back, so a change to either side shows up
+#: here: ``True`` means the column must carry a server default, ``False`` means it must be
+#: nullable and carry none. Five entries, one per column the revision alters; the sixth
+#: retiring attribute, ``candidate.poster_url``, was already nullable and is asserted below
+#: beside them so the population is the six and not the five that needed DDL.
+_RELEASE_M_COLUMNS: dict[tuple[str, str], bool] = {
+    ("profile", "enabled"): True,
+    ("list_config", "built_in"): True,
+    ("profile", "active_policy_id"): False,
+    ("pending_plex_login", "pin_code"): False,
+    ("plex_server", "owner_plex_account_id"): False,
+}
+
+
+class TestReleaseMLetsTheRetiredColumnsBeOmitted:
+    """Six columns lost their ORM attributes, so nothing in Python writes them any more. Five
+    were ``NOT NULL`` with no server default, and this revision is the only thing standing
+    between that and a fresh install failing its first Plex link or its first settings save.
+
+    **Nothing else can catch a missing ``alter_column`` here.** ``conftest.py`` builds every
+    test schema from ``Base.metadata``, which no longer declares these columns, so no
+    functional test ever inserts against the production shape -- that comes only from
+    ``docker-entrypoint.sh``'s ``alembic upgrade head``. And ``alembic check`` is blind to them
+    by construction: ``RETIRED_COLUMNS`` hides them from both sides of the comparison. Delete
+    any one of the five ``alter_column`` calls and the suite stayed green while the app broke
+    on first use (rules 118, 145, 148).
+    """
+
+    @staticmethod
+    def _at_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Engine:
+        command.upgrade(_alembic_config(tmp_path, monkeypatch), "head")
+        return create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    def test_every_retired_column_can_be_omitted_by_an_insert(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shape, per column, against the contract table rather than against itself."""
+        engine = self._at_head(tmp_path, monkeypatch)
+        inspector = inspect(engine)
+
+        for (table, column), wants_default in _RELEASE_M_COLUMNS.items():
+            found = {c["name"]: c for c in inspector.get_columns(table)}[column]
+            if wants_default:
+                assert found["default"] is not None, (
+                    f"{table}.{column} lost its server default, so a fresh install's first "
+                    f"write to {table} fails on a NOT NULL column nothing writes any more"
+                )
+            else:
+                assert found["nullable"], (
+                    f"{table}.{column} is NOT NULL again, so a fresh install's first write "
+                    f"to {table} fails on a column nothing writes any more"
+                )
+        # The sixth retiring attribute needed no DDL, and this is what says so out loud.
+        poster = {c["name"]: c for c in inspector.get_columns("candidate")}["poster_url"]
+        assert poster["nullable"]
+        engine.dispose()
+
+    def test_the_foreign_key_hidden_from_autogenerate_is_still_on_the_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``RETIRED_CONSTRAINTS`` hides ``fk_profile_active_policy_id_policy`` from
+        ``alembic check``, which is the only reason the check passes with the attribute gone.
+        Hiding it must not mean dropping it: ``PRAGMA foreign_keys`` is ON, and the previous
+        image still inserts a real policy id here."""
+        engine = self._at_head(tmp_path, monkeypatch)
+
+        names = {fk["name"] for fk in inspect(engine).get_foreign_keys("profile")}
+
+        assert "fk_profile_active_policy_id_policy" in names
+        engine.dispose()
+
+    def test_the_previous_image_can_still_write_every_column(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The half of rule 148 that makes a rollback survivable: release M-1 carries every
+        attribute and writes every column, and it keeps working against this database. Raw
+        SQL, because the ORM in this tree is release M's and cannot express the writes."""
+        engine = self._at_head(tmp_path, monkeypatch)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                    " VALUES ('h', '{}', 'movie', 'mine', 1750000000)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO profile (name, settings_json, enabled, active_policy_id,"
+                    " created_at, updated_at) VALUES ('default', '{}', 1,"
+                    " (SELECT MIN(id) FROM policy), 1750000000, 1750000000)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO pending_plex_login (pin_id, pin_code, purpose, created_at,"
+                    " expires_at) VALUES (1, 'ABCD', 'login', 1750000000, 1750003600)"
+                )
+            )
+        with engine.begin() as conn:
+            enabled = conn.execute(text("SELECT enabled FROM profile")).scalar_one()
+            pin = conn.execute(text("SELECT pin_code FROM pending_plex_login")).scalar_one()
+        assert (enabled, pin) == (1, "ABCD")
+        engine.dispose()
+
+    def test_a_rollback_leaves_the_case_insensitive_name_constraint_standing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A batch rebuild copies the table from SQLite's reflection, and reflection does not
+        report collations -- so the ``built_in`` rebuild in ``downgrade()`` silently recreated
+        ``list_config.name`` case-SENSITIVE until it restated the collation too.
+
+        The damage compounds rather than merely reverting #508. Two rows differing only in case
+        get in, and the re-upgrade's rebuild then dies on ``UNIQUE constraint failed`` with
+        ``e5f6a7b8c9d0``'s disambiguation pass long since applied and never re-run, so the
+        container fails its migration on every restart. Rule 148 asks for a surviving
+        constraint to be asserted rather than eyeballed; this is the downgrade half of it
+        (rule 72).
+        """
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+        command.downgrade(config, _PRIOR_RELEASE_M)
+
+        with pytest.raises(IntegrityError):
+            TestAListNameIsUniqueWithoutRegardToCase._add(engine, "Keepers", "keepers")
+        engine.dispose()
+
+    def test_the_named_constraints_and_indexes_survive_both_directions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Four batch rebuilds up and four back down, each a full copy of its table from
+        reflection. Rule 148's third obligation asks for the survivors to be asserted rather
+        than eyeballed, and the collation this class already pins is the proof that eyeballing
+        misses one: reflection reports these four and does not report that."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+        def present() -> set[str]:
+            inspector = inspect(engine)
+            found = {fk["name"] for fk in inspector.get_foreign_keys("profile")}
+            for table in ("profile", "pending_plex_login", "plex_server", "list_config"):
+                found |= {ix["name"] for ix in inspector.get_indexes(table)}
+                found |= {u["name"] for u in inspector.get_unique_constraints(table)}
+            return {name for name in found if name}
+
+        expected = {
+            "fk_profile_active_policy_id_policy",
+            "ix_pending_plex_login_pin_id",
+            "uq_profile_name",
+            "uq_plex_server_machine_identifier",
+        }
+        assert expected <= present(), "an upgrade rebuild dropped one"
+
+        command.downgrade(config, _PRIOR_RELEASE_M)
+
+        assert expected <= present(), "a downgrade rebuild dropped one"
+        engine.dispose()
+
+    def test_a_rollback_restores_the_not_null_columns_over_a_backfill(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A row release M wrote holds NULLs the old shape forbids, so the downgrade backfills
+        before it re-imposes ``NOT NULL``. Without that it raises and the operator is stranded
+        on an image they were trying to leave."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                    " VALUES ('h', '{}', 'movie', 'mine', 1750000000)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO profile (name, settings_json, created_at, updated_at)"
+                    " VALUES ('default', '{}', 1750000000, 1750000000)"
+                )
+            )
+
+        command.downgrade(config, _PRIOR_RELEASE_M)
+
+        with engine.begin() as conn:
+            pointed_at = conn.execute(text("SELECT active_policy_id FROM profile")).scalar_one()
+            oldest = conn.execute(text("SELECT MIN(id) FROM policy")).scalar_one()
+        assert pointed_at == oldest
+        engine.dispose()
+
+
+#: Every LIVE file stating how many revisions call ``op.get_bind()``. The sentence is the reason
+#: ``run_migrations_offline`` was deleted rather than kept, and it is written in three places by
+#: three different authors reading each other -- so it was already off by one the moment this
+#: file added a revision, in all three at once, in the direction that reads as measured
+#: (rule 144). Removing a copy means removing it from this tuple, which is a deliberate edit.
+#: ``docs/history/SIMPLIFICATION_PLAN.md`` carries a fourth copy and is deliberately NOT here
+#: (#813). That file is frozen, so a revision added today would fail this gate against a
+#: sentence nobody may correct, and correcting it anyway makes a measurement at a named commit
+#: false.
+_GET_BIND_CLAIM_SITES = (
+    "alembic/env.py",
+    "CONTRIBUTING.md",
+    "tests/test_migrations.py",
+)
+
+#: Matches the claim in every spelling these files use, anchored on the words rather than on
+#: a delimiter only one spelling puts there (rule 147): one backtick pair in markdown, two in
+#: reStructuredText, and a line break anywhere in the sentence -- which is not hypothetical.
+#: Every one of them is hard-wrapped and one sits behind a comment marker, so the first version
+#: of this matcher read three sites and silently skipped a fourth, the archived copy behind a
+#: blockquote marker. That spelling stays accepted, since a live copy can move into a
+#: blockquote without anyone thinking about this matcher.
+_GET_BIND_CLAIM = re.compile(r"(\d+)[\s>#]+revisions call[\s>#]+`+op\.get_bind\(\)`+")
+
+
+def test_every_statement_of_the_get_bind_count_is_the_count_the_revisions_have() -> None:
+    """One measured fact, three live prose copies, none generated from the other.
+
+    ``alembic upgrade head --sql`` cannot work because these revisions ask for a connection
+    offline mode does not have, and each file states the count as evidence. A revision added
+    anywhere makes every copy wrong at once, and a wrong count still reads as measured, which
+    is what makes this worth a gate rather than a comment.
+    """
+    versions = sorted((PROJECT_ROOT / "alembic" / "versions").glob("*.py"))
+    measured = sum(1 for p in versions if "op.get_bind()" in p.read_text(encoding="utf-8"))
+    assert measured, "no revision calls op.get_bind(), so the claim itself no longer holds"
+
+    for site in _GET_BIND_CLAIM_SITES:
+        text_of = (PROJECT_ROOT / site).read_text(encoding="utf-8")
+        found = _GET_BIND_CLAIM.search(text_of)
+        assert found is not None, (
+            f"{site} no longer states how many revisions call op.get_bind(). If the sentence "
+            f"was removed on purpose, remove {site} from _GET_BIND_CLAIM_SITES in "
+            "tests/test_migrations.py; the other copies still say it."
+        )
+        assert int(found.group(1)) == measured, (
+            f"{site} says {found.group(1)} revisions call op.get_bind(); "
+            f"alembic/versions/ has {measured} of {len(versions)}. The same sentence is in "
+            f"{', '.join(s for s in _GET_BIND_CLAIM_SITES if s != site)} -- correct every one, "
+            "not just this file."
+        )

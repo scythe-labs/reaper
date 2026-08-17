@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import func, select
@@ -21,13 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
+from reaper.db.models import AppSetting, Profile
 from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
-from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyRepair, ProfileSettings
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, ProfileSettings
+from reaper.engine.policy_migrations import PolicyRepair
 from reaper.ratings import RatingSource
-from reaper.services import list_config, list_rules, profiles
+from reaper.services import app_settings, list_config, list_rules, profiles
 from reaper.services.profiles import (
     active_policy,
     active_profile,
@@ -39,7 +41,7 @@ from reaper.services.scan_runner import ScanConfigError, build_gates
 
 @pytest.fixture
 async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -141,17 +143,22 @@ class TestActiveProfileSettings:
         assert active.settings.grace_days == 30  # the operator's real value survived
 
 
-class TestSavingCreatesTheBackingPolicyRow:
-    async def test_the_first_save_persists_the_default_policy(self, session: AsyncSession) -> None:
-        """The profile's FK needs a policy row; a fresh install has none, so saving must
-        create one from the in-code default."""
-        assert (await session.execute(select(func.count()).select_from(PolicyModel))).scalar() == 0
+class TestSavingWritesNoPolicyRow:
+    async def test_the_first_save_leaves_the_policy_table_empty(
+        self, session: AsyncSession
+    ) -> None:
+        """Saving Pace settings is not saving a policy, and it must not write one.
 
+        It did, to satisfy the foreign key that retired in release M (rule 148,
+        ``Profile.active_policy_id``), and the body it wrote was bare
+        ``DEFAULT_MOVIE_POLICY``. Recency then returned that row forever, so an operator's
+        Plex keep collection lost its rule the first time they touched Pace
+        (``TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds`` drives that end). An empty
+        table is what keeps ``active_policy`` computing the wider body on every read."""
         await save_profile_settings(session, ProfileSettings())
 
-        assert (await session.execute(select(func.count()).select_from(PolicyModel))).scalar() == 1
-        profile = (await session.execute(select(Profile))).scalar_one()
-        assert profile.active_policy_id is not None
+        assert (await session.execute(select(func.count()).select_from(PolicyModel))).scalar() == 0
+        assert (await session.execute(select(func.count()).select_from(Profile))).scalar() == 1
 
     async def test_saving_twice_does_not_fork_the_profile(self, session: AsyncSession) -> None:
         await save_profile_settings(session, ProfileSettings(max_items_per_run=5))
@@ -161,28 +168,10 @@ class TestSavingCreatesTheBackingPolicyRow:
         assert count == 1  # updated in place, not duplicated
         assert (await active_profile_settings(session)).max_items_per_run == 7
 
-    async def test_the_unread_enabled_column_keeps_its_shipped_value(
-        self, session: AsyncSession
-    ) -> None:
-        """`Profile.enabled` is written False at creation, and that is ALL this pins (#271).
 
-        It used to claim this was what stopped a starter template deleting a library. Nothing
-        in `src/` reads the column, so a profile written `enabled=True` would scan and reap
-        identically, and a test asserting a safeguard nobody implemented is rule 7/24's
-        failure. What actually keeps a fresh install from acting is the master switch shipping
-        off (`test_app.test_destructive_actions_are_off_by_default`,
-        `test_settings_api.TestSafety.test_it_starts_read_only`) and the content-bound typed
-        phrase on `api.runs.execute_run`.
-
-        Kept rather than deleted because the attribute cannot go: `db.models.Profile.enabled`
-        records why `alembic check` blocks that.
-        """
-        await save_profile_settings(session, ProfileSettings())
-        profile = (await session.execute(select(Profile))).scalar_one()
-        assert profile.enabled is False
-
-
-async def _store_policy(session: AsyncSession, body_json: str) -> None:
+async def _store_policy(
+    session: AsyncSession, body_json: str, *, media_type: str = "movie"
+) -> None:
     """Put a raw body straight into the table, bypassing every in-app writer.
 
     Only an externally edited, truncated or restored row can hold something
@@ -192,7 +181,7 @@ async def _store_policy(session: AsyncSession, body_json: str) -> None:
         PolicyModel(
             policy_hash="h",
             body_json=body_json,
-            media_type="movie",
+            media_type=media_type,
             name="stored",
             created_at=utcnow(),
         )
@@ -350,10 +339,10 @@ class TestACorruptPolicyBodyNeverRaises:
         assert active.body.keep_rating_rules == ()
 
 
-def _legacy_list_body() -> dict[str, object]:
+def _legacy_list_body() -> dict[str, Any]:
     """A stored body from before every list protected through its own keep rule: the keep
     tags on the policy, plus the two retired list gates, both enabled."""
-    body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+    body: dict[str, Any] = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
     body["protect_conditions"] = []
     body["keep_tags"] = ["reaper-keep"]
     body["keep_tags_match"] = "any"
@@ -376,7 +365,6 @@ async def _add_list(
             source=source,
             config_json=json.dumps(config),
             enabled=True,
-            built_in=False,
             created_at=utcnow(),
         )
     )
@@ -429,6 +417,33 @@ class TestALegacyListBodyIsConvertedOnLoad:
         assert active.repairs == ()
         assert active.repaired is False
         assert active.body == DEFAULT_MOVIE_POLICY
+
+    async def test_a_migrated_tv_body_does_not_gain_the_imdb_rule(
+        self, session: AsyncSession
+    ) -> None:
+        """#539: the IMDb chart is movies only, so migrating a TV body carries over the tag
+        list but not the IMDb list -- a TV rule naming it can never match a season (rule 38).
+        The curated_list gate strips clean on the TV body, its protection was never live
+        there."""
+        await _seed_list_rows(session)
+        body = json.loads(DEFAULT_TV_POLICY.model_dump_json())
+        body["protect_conditions"] = []
+        body["keep_tags"] = ["reaper-keep"]
+        body["keep_tags_match"] = "any"
+        body["gates"] = [
+            {"gate": "whitelisted", "enabled": True},
+            {"gate": "curated_list", "enabled": True},
+            *body["gates"],
+        ]
+        await _store_policy(session, json.dumps(body), media_type="tv")
+
+        active = await active_policy(session, "tv")
+
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert values == {"My tagged titles"}
+        assert "Films worth keeping" not in values
+        # Both retired gate rows left, so the TV scan is not refused over a movies-only list.
+        assert not {g.gate.value for g in active.body.gates} & {"whitelisted", "curated_list"}
 
 
 class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
@@ -531,30 +546,46 @@ class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
 
 
 class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
-    """``DEFAULT_LIST_CONDITIONS`` names the two lists ``list_config.DEFAULT_LISTS`` seeds. A
-    Plex keep collection arrives by migration instead, and an install that has never saved a
-    policy returns before ``convert_list_protections`` can run -- so nothing pointed a rule at
-    it, while the WHITELISTED gate that used to spare its titles is retired. A protection that
+    """The shipped conditions name the lists ``list_config.DEFAULT_LISTS`` seeds. A Plex keep
+    collection arrives by migration instead, and an install that has never saved a policy
+    returns before ``convert_list_protections`` can run -- so nothing pointed a rule at it,
+    while the WHITELISTED gate that used to spare its titles is retired. A protection that
     fired on the previous release and cannot fire on this one, silently."""
 
     @staticmethod
-    async def _seed_plex_collection(session: AsyncSession, name: str = "Never Reap") -> None:
+    async def _seed_plex_collection(
+        session: AsyncSession, name: str = "Never Reap", library: str = "Films"
+    ) -> None:
         session.add(
             ListConfigModel(
                 name=name,
                 source="plex_collection",
-                config_json=json.dumps({"library": "Films", "collection": name}),
+                config_json=json.dumps({"library": library, "collection": name}),
                 enabled=True,
-                built_in=False,
                 created_at=utcnow(),
             )
         )
         await session.commit()
 
+    @staticmethod
+    async def _seed_libraries(session: AsyncSession, *libraries: tuple[str, str]) -> None:
+        """Store synced Plex libraries as ``(title, kind)`` pairs, the shape a library sync
+        writes (``app_settings.set_plex_libraries``). ``kind`` is Plex's own ``movie``/``show``."""
+        await app_settings.set_plex_libraries(
+            session,
+            [
+                {"key": i, "title": title, "kind": kind, "enabled": True}
+                for i, (title, kind) in enumerate(libraries)
+            ],
+        )
+        await session.commit()
+
     @pytest.mark.parametrize("media_type", ["movie", "tv"])
-    async def test_a_seeded_collection_is_kept_outright(
+    async def test_an_unsynced_collection_is_kept_outright_on_both(
         self, session: AsyncSession, media_type: str
     ) -> None:
+        """No library synced, so a collection's media type is unknown: it stays on both policies,
+        fail-open (#545, rules 65/91). The narrowed cases are the two below."""
         await self._seed_plex_collection(session)
 
         active = await active_policy(session, media_type)
@@ -562,10 +593,101 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
         assert "Never Reap" in values
         # Additive: the shipped conditions are still there, and nothing is flagged, because
-        # putting the rule back removes the loss rather than announcing it.
-        assert {"IMDb Top 250", "Titles you've tagged"} <= values
+        # putting the rule back removes the loss rather than announcing it. The shipped set is
+        # the media type's own -- the IMDb chart is on the movie default alone (#539).
+        default = DEFAULT_MOVIE_POLICY if media_type == "movie" else DEFAULT_TV_POLICY
+        shipped = {str(c.value) for c in default.protect_conditions if c.field == "on_list"}
+        assert shipped <= values
         assert active.repaired is False
         assert active.name == "default"
+
+    async def test_saving_the_pace_settings_does_not_take_the_collections_rule_away(
+        self, session: AsyncSession
+    ) -> None:
+        """The rule above is computed on the way out, so anything that WRITES a policy row has
+        to write the computed body and not the shipped one. ``save_profile_settings`` used to
+        persist bare ``DEFAULT_MOVIE_POLICY`` to satisfy a foreign key, and from that save on
+        recency returned the stored row: the operator's keep collection stopped protecting the
+        first time they touched Pace, with ``repaired`` still False, so nothing degraded and no
+        notice fired. The pointer retired in release M and the write went with it.
+        """
+        await self._seed_plex_collection(session)
+
+        await save_profile_settings(session, ProfileSettings(grace_days=21))
+
+        active = await active_policy(session, "movie")
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert "Never Reap" in values
+        assert active.repaired is False
+
+    async def test_a_collection_in_a_movie_library_lands_on_the_movie_policy_alone(
+        self, session: AsyncSession
+    ) -> None:
+        """#545: the library is synced as a movie library, so the collection holds movies only.
+        Its keep rule seeds on the movie policy and not the TV one, where it could never match a
+        season and would read as a protection the operator never chose (rule 38)."""
+        await self._seed_libraries(session, ("Films", "movie"))
+        await self._seed_plex_collection(session, library="Films")
+
+        movie = {
+            str(c.value)
+            for c in (await active_policy(session, "movie")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        tv = {
+            str(c.value)
+            for c in (await active_policy(session, "tv")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        assert "Never Reap" in movie
+        assert "Never Reap" not in tv
+
+    async def test_a_collection_in_a_show_library_lands_on_the_tv_policy_alone(
+        self, session: AsyncSession
+    ) -> None:
+        """The mirror: a collection in a show library seeds on the TV policy alone."""
+        await self._seed_libraries(session, ("Shows", "show"))
+        await self._seed_plex_collection(session, library="Shows")
+
+        movie = {
+            str(c.value)
+            for c in (await active_policy(session, "movie")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        tv = {
+            str(c.value)
+            for c in (await active_policy(session, "tv")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        assert "Never Reap" not in movie
+        assert "Never Reap" in tv
+
+    @pytest.mark.parametrize("blob", ["123", "null", "not json at all"])
+    async def test_a_corrupt_plex_libraries_setting_does_not_crash_the_load(
+        self, session: AsyncSession, blob: str
+    ) -> None:
+        """``active_policy`` is contractually total. A malformed or non-list ``plex_libraries``
+        value (a restored backup, a hand-edit) makes ``get_plex_libraries`` raise
+        ``ValueError``/``TypeError`` inside the scope read, which must not escape. It falls back
+        to no scoping, so the collection keeps both policies, fail-open, exactly as the migration
+        does on the same value (rule 104). Each blob is a real crash trigger: ``123``/``null``
+        parse to a non-iterable, and ``not json`` fails to parse at all."""
+        await self._seed_plex_collection(session)  # "Never Reap" in "Films"
+        session.add(AppSetting(key="plex_libraries", value_json=blob, updated_at=utcnow()))
+        await session.commit()
+
+        movie = {
+            str(c.value)
+            for c in (await active_policy(session, "movie")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        tv = {
+            str(c.value)
+            for c in (await active_policy(session, "tv")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        assert "Never Reap" in movie
+        assert "Never Reap" in tv
 
     async def test_a_registry_it_cannot_read_leaves_the_shipped_rules_alone(
         self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
@@ -580,7 +702,7 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
 
         async def unreadable(
             _session: AsyncSession, *, keep_tags: tuple[str, ...]
-        ) -> tuple[str | None, str | None, tuple[str, ...]]:
+        ) -> tuple[str | None, str | None, tuple[str, ...], dict[str, frozenset[str]]]:
             raise SQLAlchemyError("the registry could not be read")
 
         monkeypatch.setattr(profiles, "_conversion_list_names", unreadable)
@@ -611,7 +733,7 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
 
         async def unreadable(
             _session: AsyncSession, *, keep_tags: tuple[str, ...]
-        ) -> tuple[str | None, str | None, tuple[str, ...]]:
+        ) -> tuple[str | None, str | None, tuple[str, ...], dict[str, frozenset[str]]]:
             raise SQLAlchemyError("the registry could not be read")
 
         monkeypatch.setattr(profiles, "_conversion_list_names", unreadable)
@@ -632,24 +754,33 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         assert active.repaired is False
 
     async def test_a_watchlist_definition_is_kept_too(self, session: AsyncSession) -> None:
-        """The other source ``_conversion_list_names`` returns as the operator's own."""
+        """The other source ``_conversion_list_names`` returns as the operator's own. A
+        watchlist spans the account and can hold both types, so its rule stays on both policies
+        even with libraries synced -- the scoping is a collection concern (#545)."""
         session.add(
             ListConfigModel(
                 name="My watchlist",
                 source="plex_watchlist",
                 config_json="{}",
                 enabled=True,
-                built_in=False,
                 created_at=utcnow(),
             )
         )
         await session.commit()
+        await self._seed_libraries(session, ("Films", "movie"), ("Shows", "show"))
 
-        active = await active_policy(session, "movie")
-
-        assert "My watchlist" in {
-            str(c.value) for c in active.body.protect_conditions if c.field == "on_list"
+        movie = {
+            str(c.value)
+            for c in (await active_policy(session, "movie")).body.protect_conditions
+            if c.field == "on_list"
         }
+        tv = {
+            str(c.value)
+            for c in (await active_policy(session, "tv")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        assert "My watchlist" in movie
+        assert "My watchlist" in tv
 
     async def test_an_empty_registry_leaves_the_shipped_conditions_alone(
         self, session: AsyncSession

@@ -22,10 +22,11 @@ Validated against a large, active, multi-instance production setup. The findings
 recorded as shapes and ratios — see `docs/LEARNINGS.md` and `docs/SIGNALS.md` for the
 detail.
 
-- **An active library is not mostly dead weight.** The share of films *never* played at
-  all was under one percent. A film watched in the past year is more likely than not to
-  be watched again within the next one. This is the finding that most contradicts the
-  intuition a pruning tool gets built on.
+- **An active library is not mostly dead weight, and how active it is varies by server.**
+  The share of films *never* played at all was under one percent on the first library and
+  24% on a second one. Neither share is dead weight: on the second, 7.4% of the
+  never-played films were watched in the following year. This is the finding that most
+  contradicts the intuition a pruning tool gets built on.
 - **There is no cliff, and nothing is ever free to delete.** A film dormant for five
   years still has a double-digit chance of being watched next year. There is only
   *cheaper* and *dearer*.
@@ -96,15 +97,16 @@ been watched by *someone*, eventually; only a fraction still have watchers this 
 A play shortly after condemnation is often a rescue rather than a failure, and counting
 rescues as failures slanders the policy.
 
-⇒ In `engine/backtest.py`, regrets and rescues are split at the grace boundary.
+⇒ The replay split regrets from rescues at the grace boundary.
 
-**Superseded in reasoning, not in split.** The justification above ("still in quarantine")
-described a hold that does not exist: nothing on the deletion path reads the grace window,
-so an item is deletable from the moment it is condemned. What actually spares a late play
-is the executor's live per-item vetoes, which fire on a play *after the plan was approved* —
-not on a boundary N days out. The backtest still splits on the boundary, so its `rescued`
-count is a best case; `BacktestResult.rescued` says so, and M3c must fix or label it before
-any of these figures reach an operator.
+**Superseded in reasoning, and the code is gone.** The justification above ("still in
+quarantine") described a hold that does not exist: nothing on the deletion path reads the
+grace window, so an item is deletable from the moment it is condemned. What actually spares
+a late play is the executor's live per-item vetoes, which fire on a play *after the plan was
+approved* — not on a boundary N days out. The replay never stopped splitting on the boundary,
+so every `rescued` figure it produced was a best case. It was deleted rather than corrected
+(M3c, dropped), so **the rescue split is not a number Reaper reports anywhere**; #553 is the
+successor and it weighs a returned title down instead of counting it.
 
 ### 6. SQLite stores timezones — **it does not**
 
@@ -117,11 +119,11 @@ any of these figures reach an operator.
 Shipping one library's rewatch rates as a hardcoded prior makes every lift number on
 every *other* library meaningless.
 
-⇒ **Intended, not shipped.** `engine/calibration.derive` can fit the prior from the
-operator's own history and `backtest.prior_is_derived` can label which prior was used, but
-neither has a caller in `src/`: every number in use is `backtest.FALLBACK_REWATCH_PRIOR`,
-one library's curve. Tracked as M3g in `docs/STATUS.md`, blocked behind the unwired
-backtest (M3c).
+⇒ **Intended, never shipped, and now not planned.** A module existed that could fit the
+prior from the operator's own history, and another that could label which prior was used;
+neither ever had a caller in `src/`, and both were deleted rather than wired (M3c and M3g,
+dropped). Every number in use is the one library's curve tabulated in `docs/SIGNALS.md`, and
+nothing in the app can tell you it is borrowed. #554 is the successor.
 
 ### 8. The simulator can re-decide a snapshot under any policy — **only what the frozen evidence still answers**
 
@@ -139,7 +141,7 @@ snapshot records it, and while it matches, re-comparing stored scores is exact.
 stale number was the danger, not re-scoring itself: once a scan froze each item's
 evidence (`Candidate.facts_json`), a weight edit could be answered *exactly* by replaying
 the real `score` / `evaluate_all` / `decide_verdict` over that frozen evidence, still with
-zero API calls. So `simulate` is now three tiers (`api.routes.simulate`): stored-score
+zero API calls. So `simulate` is now three tiers (`api.simulate.simulate`): stored-score
 re-compare while `scoring_hash` matches; **replay** while `evidence_hash` matches, which
 covers weights, rating bars, custom condemn rules, graded keeps and protect conditions —
 `PolicyBody._EVIDENCE_REPLAYABLE_FIELDS` is the authority, not this sentence; and only then
@@ -238,10 +240,14 @@ one; a combined edit was the first draft and it proved three of the nine, becaus
 mask each other (keep-last already holds the season `protect_incomplete_seasons` would).
 
 **23 mutations were re-run mechanically, and 22 of them failed.** Eighteen are one per setting
-on each of the two roads a `PolicyBody` takes to the planner — `SeasonPolicy.from_body` and
-`season_scan.gather`'s carrier — each pinned to its shipped default, which is exactly "this road
-drops the operator's edit". Every one reds its OWN parametrization, so the sweep discriminates
-all nine settings rather than catching them in a bundle. **Comparing guard reasons rather than
+on each of the two roads a `PolicyBody` then took to the planner, `SeasonPolicy.from_body` and
+`season_scan.gather`'s own repack of nine loose parameters, each pinned to its shipped default,
+which is exactly "this road drops the operator's edit". Every one reds its OWN parametrization,
+so the sweep discriminates all nine settings rather than catching them in a bundle. The repack
+is gone since and `gather` takes the carrier, so nine of the eighteen have no site left to
+mutate. What that costs the sweep is worth writing down: with one road, a value dropped in
+`from_body` is dropped on the scan and the replay alike, so the replay still reproduces the
+scan and the *scan-against-scan* assertion is the one that reds. **Comparing guard reasons rather than
 verdict tallies is what made that possible**: a setting routinely changes why a season is kept
 without changing whether it is. Four more fail too — restoring the skip, collapsing the
 three-state to `{}`, returning the frozen guard instead of re-deriving it, and dropping the
@@ -327,7 +333,7 @@ doc change.**
 
 Found on a live install, not in a test (measured 2026-07-26). Every policy edit showed
 "Needs a fresh scan", and **scanning did not clear it**. Both fast tiers of
-`api.routes.simulate` were unreachable, so the panel an operator tunes a deletion threshold
+`api.simulate.simulate` were unreachable, so the panel an operator tunes a deletion threshold
 with had been dead since the last `SCHEMA_VERSION` bump.
 
 `schema_version` is the *storage shape* of a policy body, and the wire schema does not carry
@@ -476,6 +482,47 @@ opener's handle, and the fix was to stop needing one. This one had been settled 
 commit message for months, and it took an operator asking "we opened it, why can we not close
 it?" to get it tested.
 
+### 16. An external id names one copy. **It names one or two** (measured 2026-08-14)
+
+Roughly one movie entry in 150 shares its TMDb id with a second entry on the measured library,
+one per copy, each binding a different Plex listing. A 4K alongside an HD, or two instances
+managing the same title. Seasons do it too, at a lower rate.
+
+**Counting it has its own trap, and the measuring script hit it first.** A show's TVDb id is
+shared by every season the show has, so grouping season rows on the id alone counts the season
+structure and reports a duplicate for almost every multi-season show. The season's identity is
+the show id **plus the season number**. The first run of the script reported that wrong number by
+two orders of magnitude, which is the argument for the script existing rather than the query
+living in a transcript.
+
+This was found while designing #553, whose first shape was a ledger keyed on external id
+recording the Plex rating key last seen for that id. Keyed that way, the two copies overwrite
+each other every scan, so the ledger reads a changed key forever and every one of those titles
+takes a permanent hold nothing can clear.
+
+It is worth being precise about why the code review would not have caught it. `identity.py`
+already documents that one id can name several Plex items, at length, and narrows among them
+with four corroborators. The mistake was on the other side: assuming the **\*arr** holds one
+entry per id. Nothing said otherwise, and nothing was wrong, so there was nothing to read.
+
+⇒ A ledger keyed on an id holds a **set**, and identity churn is only real when the keys it
+displaced are gone from the index too. More generally: an id-keyed store wants its cardinality
+measured against real data before it is keyed, not reasoned about from the code that produces
+the ids.
+
+**It came back one layer up, in the build, and the first fix is what hid it.** The stored row was
+a set from the start, because of the finding above. The per-scan BATCH feeding it was a
+`dict[id_key, one sighting]`, so of two copies sharing an id the scan simply kept whichever it
+judged second, and the losing copy's Plex key was never written on any scan while its sibling
+existed. A key never recorded can never later be noticed as gone, so those titles silently had
+none of the coverage the feature exists to give them, on exactly the population the finding named.
+The measuring script prints the size of it: 21 movie ids and 6 season ids on the validation
+library, in one scan.
+
+⇒ **A cardinality finding binds every layer that holds the value, not the one that stores it.**
+Fixing the row and leaving the accumulator is the same defect with a correct comment above it,
+and it reads as done because the field it names is genuinely a set.
+
 ---
 
 
@@ -528,6 +575,154 @@ Dormancy alone scores marginally *better* lift than the full four-signal set.
 Most of the apparent sophistication of a weighted scorer is usually one variable
 wearing a hat. Measure each one's marginal lift or you will carry four signals'-worth
 of complexity and bug surface for one signal's-worth of skill.
+
+### A regular-gap "rewatch cycle" does not exist here (measured 2026-08-12)
+
+The tempting protect signal, and the one #554 originally asked for: a title played at steady
+intervals (every October, every ~12 months) is due again. Backtested out-of-sample at three
+cutoffs over 8+ years of history, it is chance, and the eyeballed examples that motivated it
+(a horror film landing in the same month several years running) are what chance produces
+across a few thousand titles.
+
+- With exactly two gaps, max-deviation, MAD, and CV all reduce to the same statistic, and
+  random play times pass a spread threshold `t` with probability exactly `t`. Three-viewing
+  titles were ~3/4 of everything the detector found.
+- The ablation: titles passing the regularity test replayed **no more often** than titles
+  failing it, matched on dormancy and viewing count. Every lift CI straddled 1, at every
+  parameter setting tried, including the annual-cycle subcase.
+- The phase test: among detected titles the next play landed around 1.3x the supposed period,
+  with only a minority inside a generous window. There is no phase structure to detect.
+- A positive control on the same harness (a heavy viewing count) showed strong lift, so the
+  null is the data's answer, not the harness's.
+
+What does carry signal is **frequency plus recency, with no periodicity claim**: many
+qualified viewings plus a recent play replays at roughly 1.5-2x the dormancy-matched base
+rate, across hundreds of titles and all three cutoffs. And the count must be of *qualified*
+plays: unfiltered, over half of the apparently cyclic titles owed their pattern to abandoned
+sub-50%-complete plays.
+
+⇒ Reaper's rewatch protection says "watched again and again, and recently," never "on a
+cycle, due again." The first sentence is plainly true; the second is unsupported. Measured on
+one heavy-rewatch library, so the constants ship as starting values (`docs/history/REWATCH_PLAN.md`).
+Re-opening periodicity means clearing the lift bar in `docs/SIGNALS.md` first.
+
+### Stage 1 implementation verification: an exact reproduction (measured 2026-08-13)
+
+Read-only pass against the live mirror, independent of the committed module: an outside
+reimplementation of the play filter and viewing clustering was compared against
+`services.rewatch`, and the shipped module's qualified-viewing count and last-play date
+matched it exactly on every movie key checked.
+
+- The play filter is not a rounding error: it excluded about a third of raw movie
+  `watch_event` rows, in line with the abandoned-play finding above.
+- About 7% of played movies carried no qualified play at all -- the never-watched shape
+  (`Known(0)` viewings paired with an `Absent` last play).
+- Of movies with at least one qualified play, roughly one in six cleared the shipped
+  10-viewing default bar, and about four in five of those also cleared the 730-day
+  recency window.
+- `watched_status` was never `NULL` anywhere on this source, so the play filter's
+  `percent_complete` fallback arms are exercised by the unit suite alone here, not by any
+  live data seen so far.
+
+⇒ Stage 2 must not assume `percent_complete` is a well-populated input before leaning on it
+in any fit: on this source it has never been the deciding field, and its coverage on a
+library where `watched_status` is sometimes unset is still unmeasured.
+
+### Stage 2: the fitted curve tracks the borrowed one (measured 2026-08-13)
+
+Read-only pass against the live mirror after the stage 2 estimator landed: an independent
+reimplementation of the bucketing, eligibility, and monotone merge agreed with the shipped
+`fit_blocks` exactly, block for block, over the current candidate population.
+
+- **The library's own curve is nearly the borrowed default.** Every band's fitted rate sits
+  within about 3 points of the `docs/SIGNALS.md` ground-truth table, in both directions.
+  The display is honest and the shipped scoring defaults were never far off here.
+- **The merge earns its keep on real data**: the raw curve inverted once (the one-to-one-
+  and-a-half-year band sat just under the band after it), and pool-adjacent-violators pooled
+  exactly that pair. Nothing else moved.
+- **The floor and the withhold never fired on this population**: the thinnest block held
+  a couple hundred titles, and the mirror reaches far past the deepest bucket. Both arms
+  live on unit coverage here, like the play filter's fallback arms.
+- **The hold is coarse by construction and the echo matters**: at a 25% threshold about four
+  in five movie candidates are protected; at 40%, about half. A percentage without the
+  consequence echo would read as a fine-grained dial while acting as a dormancy cliff.
+- A title played the day of the scan has dormancy exactly 0 and fell through the strict
+  first bucket edge (a fraction of a percent of candidates, live). The first bucket is
+  closed at zero now, in the fit and the lookup both.
+
+⇒ Stage 2 ships as designed. The named limit from the TV backtest below (matched-control
+lift compresses near a shared ceiling) does not arise here: the estimator states cohort
+rates, never lift.
+
+### TV: the replay-period formulation clears the lift bar (measured 2026-08-13)
+
+Read-only, the plan's TV harness exactly: detection from pre-cutoff plays only, qualified
+plays through the shipped filter, 30-day show-level periods, the quarter-replayed
+discriminator, controls matched half-to-double on dormancy and period count, bootstrap CIs.
+Four cutoffs: three a year apart plus one interleaved six months before the newest, added
+after the first pass to widen the newest leg's support.
+
+- **Two or more replay periods, plus a qualified play inside two years, cleared the bar at
+  every cutoff** (lifts about 1.13 to 1.28, every CI clear of 1), and three replay periods
+  cleared it too. One replay period alone failed at half the cutoffs: the two-period
+  threshold carries the signal, not replay activity as such.
+- **The discriminator separates rewatching from following**: about three fifths of the
+  qualifying shows' outcome-window plays were replays of already-seen episodes, rising
+  toward seven tenths as the bar tightens. The keep would protect actual rewatching.
+- **A named harness limit**: the frequency-plus-recency positive control failed at the
+  cutoff nearest the data's edge, and diagnosis showed a ceiling, not thin pools. Tripling
+  the matched-control pool barely moved its lift (still astride 1) while both arms sat
+  around two and a half times the population base rate. Matched-control lift compresses
+  when both arms share a ceiling; the formulation's own pools at that cutoff stayed
+  healthy, and its pass stands on the other three legs regardless.
+- Episode rows lacking a show key were under 2% and excluded. The episode-identity
+  fallback (parent key plus index) was never needed on this mirror: every episode row
+  carried its own key.
+
+⇒ A TV keep is unblocked per `docs/SIGNALS.md`'s bar, as a period-based, replay-discriminated
+condition, never a play count alone. It ships as its own stage with its own mockups, and
+nothing in the movie lane moves for it.
+
+### TV: the shipped derivation reproduces the validated formulation (measured 2026-08-14)
+
+Read-only, after the TV stage was implemented: `services.rewatch.show_rewatch_stats` over
+every show in the mirror, cross-checked by an independent SQL pull through the same play
+filter fed to the pure `replay_period_count`. Five of five sampled shows agree, spread from
+a zero-replay show to the sample's heaviest rewatcher. Episode rows lacking a show key held
+under the validation's 2% figure.
+
+- Half of watched shows never clear one replay period, and roughly a fifth sit at exactly
+  one: a single burst of activity, the release-following the discriminator is there to
+  exclude.
+- The shipped bar (2 re-watches, last qualified play inside 2 years) covers about a fifth
+  of watched shows on this heavy-rewatch library, the top of the plausible band; a bar of
+  3 covers about a sixth.
+- A TV body stored before this stage keeps the class default of 10, and that bar fires for
+  under 4% of watched shows here. Conservative, visible on the policy card, and not inert.
+
+### TV: the fitted curve clears its own bar, with a cliff movies do not have (measured 2026-08-14)
+
+Read-only, the movie stage-2 fit's exact semantics applied to shows (any-play outcome
+within 365 days, dormancy at cutoff, the shipped `fit_blocks`), at four cutoffs a year
+apart on the same mirror. Run before wiring the TV percent hold, per `docs/SIGNALS.md`'s
+bar for any new displayed figure.
+
+- **Fittable and monotone at every cutoff**: one pool-adjacent-violators merge fired across
+  all four fits, on a pair of thin deep buckets; everything else was monotone raw.
+- **Strongly discriminating**: the least-dormant block's Wilson lower bound sat far above
+  the deepest block's upper bound at every cutoff, roughly 55 to 60 points against 3 to 4.
+- **Stable within sampling noise**: per-band rates spread 2.5 to 6.9 points across
+  cutoffs, about double the movie fit's spread on the middle bands, within the bands' own
+  confidence widths. Thinnest block 76, against the floor of 30.
+- **The finding: TV rewatch cliffs where movies plateau.** Shows dormant under a year got
+  watched again at rates around three in five; by two years the rate is near one in ten,
+  and past three years low single digits, where the movie curve stays double-digit past
+  five years. The added-date fallback arm was unmeasurable from the mirror alone (no added
+  dates there); the shipped fit anchors it on the scan's own added dates.
+
+⇒ The TV hold ships with the same grammar as movies, and the same threshold protects a
+shorter dormancy range on TV. The ladder and the consequence echo carry that difference to
+the operator; nothing in the copy needs to.
 
 ### Unknown must be structurally incapable of condemning
 
@@ -692,7 +887,7 @@ the new test does.
 ### An unused argument is invisible to the type checker
 
 `run(..., prior=prior)` accepted the argument and then never passed it into the result.
-`mypy --strict` was perfectly happy — an unused parameter is legal — and the backtest
+`mypy --strict` was perfectly happy — an unused parameter is legal — and the replay engine
 quietly kept using the hardcoded fallback while reporting a lift number that *looked*
 fine.
 
@@ -791,10 +986,69 @@ library looks like, and it is why the grace period and the human approval gate a
 decoration.
 
 ⇒ This curve is a property of *an audience*, not a constant, so never ship someone else's
-rewatch curve as if it were physics. **Reaper still does**: `engine/calibration.derive`
-exists to fit the curve per operator but has no caller in `src/`, so the hardcoded
-`backtest.FALLBACK_REWATCH_PRIOR` is what every number reads today. Wiring it is M3g in
-`docs/STATUS.md`.
+rewatch curve as if it were physics. **Reaper still does, and now deliberately**: the module
+that could have fitted one per operator never had a caller and was deleted with the replay it
+served (M3g, dropped). The curve in `docs/SIGNALS.md` is what every default reads, it is one
+library's, and #554 is the successor if a fitted answer is ever wanted.
+
+### A title does not leave an active library by accident (measured 2026-08-14)
+
+Over 35 snapshots spanning 24 days, across roughly 3,500 movies and 2,500 seasons, **nothing
+disappeared and came back**. One movie and two seasons left and stayed gone. The library only
+grew, every scan.
+
+A **negative result, and the one that sizes #553.** Its whole worry was that an innocent cause
+would drag a title back, an import list or a pack, and produce a false regret. On an active
+library the base rate for a title leaving at all is near zero, so a return is not something that
+happens by mistake. It is also why the design needs no exclusion-list round trip to prove a
+re-add was deliberate: there is nothing to tell it apart from.
+
+A floor, not a proof. One library, 24 days, an operator who adds rather than removes.
+
+### The Plex rating key is stable enough to detect a return (measured 2026-08-14)
+
+Same window. Holding the \*arr entry fixed, roughly **one movie entry in a thousand** changed the
+Plex rating key it was bound to, and **no season did**.
+
+**Every one of those changes was fast.** Between the last scan showing the old key and the first
+showing the new one: 2.5, 4.2, 18 and 30 hours. Each is an upper bound on the true absence.
+
+⇒ Mechanical churn and a regret are separable **by duration**, and they are not close. A file
+replaced in place, or a title deleted by mistake and put straight back, resolves in hours. A
+regret takes as long as it takes someone to notice they miss it. So a detector for "this left and
+came back" earns its precision from a **minimum absence**, not from working out what caused the
+change, and a multi-day bar removes the whole measured noise floor without trading away
+sensitivity.
+
+**A clock alone does not survive an irregular scan cadence**, and the same library shows it. The
+interval between scans averaged 17 hours and reached **202**. A last sighting records when Reaper
+last *looked*, not when a title left, so a measured absence overstates the real one by up to one
+scan interval, and an eight-day pause turns a minutes-long file swap into an eight-day absence.
+The fix is to require that Reaper actually **ran** while the title was missing, by counting the
+scans between the two timestamps. It costs nothing, needs no per-item state, and holds at both
+extremes: a dense cadence leans on the clock, a sparse one leans on the count.
+
+**Measured with a query, not a rebuild**: `candidate` keeps `plex_rating_key` and the external
+ids per scan, and `snapshot` keeps the timings, so any install with snapshot history can re-run
+all of this against itself before trusting the detector.
+
+### The shipped default that changed nothing, and the one number that proved it (2026-08-14)
+
+#553's hold ships **off**, and the evidence for that being free is a count rather than an
+argument. `policy_lab_extract.py --rebaseline` re-judges 440 de-identified fact vectors against
+the shipped defaults and reports how many verdicts moved: with the gate enabled by default,
+**880 of 880 baselines moved**; with it disabled, **0 of 880**. Both runs, same commit, one
+boolean apart.
+
+Not because the hold fires on those vectors, which it cannot: none of them carries a return.
+The gate merely being BUILT puts a row in every item's checked-and-did-not-fire list, which is
+frozen into the stored explanation, so every one of those 880 records changed shape while no
+file's fate did. That is what a default costs even when it protects nothing yet.
+
+⇒ **A new protection's default is a measurement, not a preference.** The lab's move count
+prices it in one run, and it is the same run that decides whether `SCORER_VERSION` owes every
+operator a re-scan. Ship a protection whose LENGTH is a judgment call opt-in, and the count is
+zero: nobody's stored policy, stored explanation or pending approval changes under them.
 
 ---
 
@@ -991,8 +1245,10 @@ The probe that *discovered* this was itself bitten by it — its cleanup step ma
 tags case-sensitively, found nothing, and left two labels on a real item.
 
 ⇒ Casefold every label comparison. `normalize_label()` in `clients/plex.py` is the only
-comparison form, and removal re-reads the item to remove the tag under the exact
-spelling Plex is using.
+comparison form for a label, and removal re-reads the item to remove the tag under the
+exact spelling Plex is using. It delegates to `reaper.text.fold` now, which is the same
+derivation for every name comparison in the tree and keeps its own docstring for the
+Plex-specific reason.
 
 ### `batchMultiEdits().addLabel()` PRESERVES existing labels (verified)
 
@@ -1335,7 +1591,8 @@ unnamed constraint; Alembic rebuilds the table but can only drop a constraint it
 
 ### Alembic will silently produce a migration that creates nothing
 
-Autogenerate rendered a custom type as `reaper.db.types.TZDateTime()` **without emitting
+Autogenerate rendered a custom type as `reaper.db.types.EpochDateTime()`, named `TZDateTime`
+at the time, **without emitting
 the import**. `alembic upgrade head` reported success and created **zero tables**. Use a
 `render_item` hook to emit a stdlib type.
 
@@ -1803,10 +2060,11 @@ it survives until you ask what `reference_instant` does with the horizon.
 
 ## A span passed to one consumer and defaulted at the next (2026-07-27)
 
-Measured while reviewing the rule 140 sweep. `backtest.run` computes the operator's popularity
-window once, hands it to `facts_as_of` to count `distinct_watchers` over, and then called
-`score()` without it — so the count was built over the operator's span and validated against
-the shipped 365-day default. On a 730-day window over a 400-day mirror:
+Measured while reviewing the rule 140 sweep, in the replay engine since deleted. It computed
+the operator's popularity window once, handed it to the fact builder to count
+`distinct_watchers` over, and then called `score()` without it — so the count was built over
+the operator's span and validated against the shipped 365-day default. The shape is what
+survives, and rule 141 is where it lives. On a 730-day window over a 400-day mirror:
 
 | policy weights | window passed | window defaulted |
 | --- | --- | --- |
@@ -1824,8 +2082,8 @@ withholding. A reviewer caught it by sweeping the value instead of reading the s
 Two general forms, both cheap to check and both missed by a green suite of 2,578 tests:
 
 - **A fixture that pins the same value as the production default cannot prove the value was
-  passed.** Every backtest fixture used 365, which is exactly `score()`'s default, so an omitted
-  argument and a correct one produced identical output. Now rule 141.
+  passed.** Every fixture on that path used 365, which is exactly `score()`'s default, so an
+  omitted argument and a correct one produced identical output. Now rule 141.
 - **One span with two consumers needs both pinned.** The first fix spied on `score` alone, which
   proved the repaired line and nothing about the sibling call four lines above it: hardcoding
   `facts_as_of(popularity_window_days=365)` left the entire suite green while withdrawing a
@@ -2044,7 +2302,7 @@ the wrong shape for this: it helps at most one site per file, the ~40 others are
 
 ## Mutation testing the two policy repair shims (2026-07-29)
 
-Sixty mutants over `policy.rebalance` and `policy.recover_rating_rules` — operator flips, ±1
+Sixty mutants over `policy_migrations.rebalance` and `policy_migrations.recover_rating_rules` — operator flips, ±1
 constants, dropped `not`s, `and`/`or` swaps, and ten single-statement deletions — run against
 `tests/test_policy.py` plus `tests/test_profiles.py`. Baseline 2.6 s, whole sweep about three
 minutes. **48 killed, 10 survived, 2 unparseable.** Scoping by *function* rather than by file
@@ -2942,6 +3200,1057 @@ stacking `reaper-keep` into an eleven-row-tall cell.
   `a11y-scroll-reachable.test.ts`). And a cell reached by horizontal scroll is not clipped, so its
   `nowrap` is a recorded rule-139 exemption in `index-outside-text.test.ts`, not a violation:
   scrolling is the remedy, where for a clipped container it would be the bug.
+
+## A verdict triple is a coarse reading of the conclusion it pins (2026-08-07)
+
+The policy lab pinned `(verdict, score, coverage_bp)` per vector, which reads as a complete
+engine trip-wire and is not: a great deal of what the scan concludes rounds away before it
+reaches those three numbers. Measured by mutating production and running the other 4,035 tests
+with the pinned baseline deselected:
+
+| mutation | what the triple saw | what the rest of the suite saw |
+| --- | --- | --- |
+| `checked_and_did_not_fire` truncated to one entry | **0 of 440 vectors moved** | one invariant test |
+| a below-floor `ARGUES_KEEP` folded to `NOT_APPLICABLE` | no move | one state test |
+| `checked_and_did_not_fire` **reordered**, membership identical | no move | **nothing** |
+
+The third is the one worth keeping. It is a legal-looking refactor, it changes the order the
+operator reads their protections in, and 4,035 tests are green through it. The first is worse in
+what it removes and only survived because a separate invariant happens to count gate reports:
+the block that carries the product promise — every protection that was checked and did *not*
+fire — is downstream of the why-panel, and nothing else asserted on it per real shape.
+
+⇒ **Pin the conclusion, not the decision.** The baseline block now carries the three gate lists
+by gate id, the explanation's `base_score`, `keep_discount`, `threshold`, `coverage_floor_bp`
+and `watch_blind`, and per signal its `id`, `contribution`, `state` and `evaluated`. 27 pinned
+leaves per block where there were 3.
+
+- **Read it off the serialized explanation, never off the score object.** Every number above
+  also exists on `Score` and the policy, and recomputing them in the lab would be a second
+  implementation of `_explain`'s rounding whose output the fixture then pins as ground truth
+  (rule 119). Reading production's own payload also makes the pin cover the serialization: a key
+  dropped from `_explain` raises rather than thawing to `None` and comparing equal.
+- **`detail` is deliberately not pinned, and that is a cost accepted.** It is roughly 60% of the
+  payload by bytes and it is rule 21 operator copy, so pinning it turns every wording edit into a
+  baseline stop — and a stop that fires on rewording is one that stops being read. The fixture
+  grew 754 KB → 1,574 KB without it.
+- **Report the diff leaf by leaf.** Twelve signal rows compared as one blob say only that
+  `signals` moved. The failure a reader can act on is
+  `v0007 baseline.signals[2].contribution: 12.0 -> 9.0`, and the comparison that produces it is
+  shared by the test and the regeneration script so the two cannot disagree about what a
+  baseline is.
+- **One field cannot move and is pinned anyway.** `watch_blind` comes from the watch mirror
+  going blind between scans, which is not a property of a fact vector — every replayed value is
+  `None`. It is pinned for the key's presence and nothing else; rule 141 governs the rest.
+
+## A plan is larger than the condemned set, and a real database is behind head (2026-08-07)
+
+Two findings from building the whole-library capture, which reads one stored snapshot and runs
+`build_plan` against a throwaway copy of it.
+
+- **The plan covered more items than the scan condemned**: 543 condemned, 592 planned. Not a
+  bug, and the direction is the surprising part. `effective_condemned` applies the operator's
+  overrides on top of the frozen verdicts, so hand reaps *add* to the set while spares subtract,
+  and on this library the reaps outnumbered the spares. ⇒ A baseline that pinned only the
+  scan's verdicts would miss the whole override layer, which is a live input to what gets
+  deleted. Capture the plan, not just the verdicts.
+- **The operator's own database was three migrations behind head**, because it was last written
+  by a build older than the checkout. Anything reading a real library through the ORM fails
+  outright on that — one missing column fails the whole select, since SQLAlchemy names every
+  mapped column. Raw SQL naming its own columns survives it, which is why the policy-lab
+  extractor never hit this. ⇒ A tool that reads a tester's database through models migrates its
+  own copy first and records the revision it reached, or it is answering under a schema it
+  cannot name.
+
+Also recorded: **`build_plan` writes**, so a read-only capture cannot call it in place. The
+source is opened `mode=ro` and `sqlite3`-backed up to a temp directory; the plan is built
+against the copy and rolled back on top of that. Verified by digesting the source file before
+and after — unchanged. A rollback alone would have been enough in theory and is not the trade
+to make here: a bug in a capture script must not be able to leave an approved run in the
+operator's database.
+
+## On SQLite, the transaction a migration runs in is not the one env.py opens (2026-08-07)
+
+Fixing #564 (a failed batch recreate strands `_alembic_tmp_<table>` and wedges every later
+boot) is two lines of SQLAlchemy's documented pysqlite recipe. Proving it was the part with a
+trap in it.
+
+- **`context.begin_transaction()` at env.py's call site is a no-op on SQLite.**
+  `SQLiteImpl.transactional_ddl` is `False`, and Alembic reads that to mean "wrap each
+  migration, not the whole run": the outer call returns a `nullcontext()` and the real
+  transaction is opened per migration, inside `run_migrations`. So the obvious test shape —
+  patch `context.run_migrations` and do a batch recreate where a migration body would run —
+  probes **no transaction at all**. It went green on the unfixed tree by committing the whole
+  recreate, and the assertion that caught it was not "nothing was stranded" (that passes too,
+  since a completed recreate renames the temp table away) but the one checking the rollback was
+  total. ⇒ A test standing in for a migration body is not a migration. Drive the real runner
+  over a real migration, or the transaction under test is one nothing opened.
+- **Only the FIRST recreate in a migration is exposed**: pysqlite opens no transaction for DDL,
+  so the first `CREATE TABLE _alembic_tmp_X` autocommits and the `INSERT INTO … SELECT` after it
+  opens the implicit transaction that every later statement joins.
+- **A migration does not have to look like it recreates, and counting the ones that do by eye
+  undercounts.** Recorded off the live statement stream, a fresh `alembic upgrade head` performs
+  **three** batch recreates, each the first in its own migration and so each exposed — and
+  **two of the three are `add_column` calls**. Alembic rebuilds the table for an `add_column`
+  whose `server_default` is a ClauseElement, and `sa.false()` is one where `"0"` would not be.
+  The issue's hand-written list of exposed sites named neither, and named only the three
+  migrations that visibly `alter_column`. ⇒ Ask the statement stream which migrations recreate;
+  reading `batch_op.` calls answers a different question.
+- **The failure needs no crash.** Any exception does it, and the one to expect is the ordinary
+  authoring slip rule 148 now warns about: dropping a column before the index sitting on it,
+  which raises *after* the temp table is committed and is invisible against a fresh database,
+  because a fresh database has no index to trip over.
+
+## Three survivors on one predicate, and not one of them a defect (2026-08-09)
+
+The `engine-gates` zone does not declare `RatingFloorGate._miss_phrase` (#598), so reaching it
+took a supplementary invocation of the same runner. It left **3 survivors out of 14 mutants**,
+all on one three-clause predicate: `min_votes > 0` widened to `>= 0`, the same token narrowed to
+`> 1`, and `votes < min_votes` widened to `<=`.
+
+**All three read as live operator-copy defects, and not one of them was.** Under the mutants the
+why-panel prints "too few to trust (you need 0)" for a bar with no vote floor, and drops the "too
+few" clause entirely under a floor of 1. Driven at those three states the shipped code prints
+neither: it returns the right sentence every time. A survivor describes what the *mutant* does,
+and where the mutated function returns an operator string, that string is unusually easy to read
+as a bug report about the original — it is fluent, specific, and exactly the kind of sentence
+rule 21 exists to stop. All three were carried into a fix task as defects to fix, and all three
+were cases to write. **Read a survivor as a missing case until the original has been driven and
+its output printed.**
+
+**The finding underneath was real, and it was rule 104.** `Rating.meets` decides whether a bar
+clears; `_miss_phrase` tells the operator why it did not. Each spelled out the same three clauses
+in a different clause order, and they agree on all 288 source/votes/floor combinations — which is
+the state the rule is about, because two copies that agree are not one derivation, and the next
+edit to either is what makes the panel contradict the decision. Hoisting both onto one
+`Rating.short_of_vote_floor` took `_miss_phrase` from 14 mutants to 2 and killed the three
+survivors by **deleting** them, the same trade `describe_bar` made against this zone in July.
+
+**Which re-opens the gap that trade opened last time.** Mutants hoisted out of a declared function
+land in a helper no zone names, so the `ratings` zone declares `short_of_vote_floor` beside
+`meets`. The general form is worth stating once: **a rule 104 hoist moves mutable surface, so the
+zone that owned it owes the helper a declaration in the same change.**
+
+**One of the three states cannot be reached from a saved policy at all.** `RatingRuleSpec` refuses
+a vote floor below 1 on a source that counts votes, so `min_votes=0` on an IMDb bar exists only as
+the `RatingRule` dataclass's own default. That argues for pinning the boundary rather than against
+it: the dataclass default is 0, every percentage bar carries 0, and one validator is the only
+thing standing between them.
+
+## Two frontend extractions saved no lines, and were worth building anyway (2026-08-10)
+
+Wave 11's W11-22 and W11-24 were both scoped as duplications with a line saving. Measured across
+the built diff, splitting comment lines from code: **W11-22 is code +29 / -29, W11-24 is
++54 / -52.** The plan's `-23` for W11-24 is wrong. W11-22 never carried a figure. Both were built
+regardless, for the same reason in each case: **what came out was a divergence.**
+
+W11-22 is three modals mirroring their `canClose` into a ref their parent's Back guard reads.
+Two mirrored the whole predicate. `ScheduleModal` mirrored one term of it, `save.isPending`,
+against a shell handed `!save.isPending`. Those agree, and agree only while `canClose` has one
+term. A second reason to stay open leaves browser Back the one dismissal ignoring a guard every
+other dismissal honors, which is rule 80. `ServiceModal` already has two reasons, having grown
+its second at this same shape once before. `useBackCloseMirror` takes the whole predicate as an
+argument, so the one-term spelling has nowhere to live.
+
+W11-24 is two panel fallbacks that were the same component twice, with three comments saying as
+much. The structure was identical and one string was not: the why panel's failure added "The item
+itself is unaffected" and the Scales panel's did not. Neither copy was wrong on its own, which is
+why it survived three passes.
+
+**The generalizable part is the search, not the two results.** A duplication found by counting
+lines is scored on the lines. A duplication found by *diffing the copies against each other*
+tells you which of them is wrong, and that is a defect whatever the extraction costs. Both of
+these came out of the second reading. So a wave row's line estimate is a locator, and a zero-net
+extraction is a kill only when the copies also agree.
+
+**W11-3's type found a fixture nobody had read.** `VocabField.type` was a bare `string`; it is now
+a six-member union in `api.ts`, pinned against `engine.fields.FieldType`. Typing it failed the
+build on `StaleReadSweep.test.tsx`, which composed a rule on a `runtime_minutes` field of type
+`"int"`. The server can serve neither. It compiled for as long as the field was a `string`, which
+is rule 119's invented expectation caught by the type system rather than by a test.
+
+## What the callee already enforces is not what the duplication costs (2026-08-10)
+
+Six hand-written `PlexClient(...)` constructions, four of them passing the same four arguments
+in the same order. The finding proposing a helper had already answered itself. `safety` is
+keyword-only and required, so no copy can drop the transport guard. Measured, the helper takes
+20 lines out and costs about 14, and it reaches four of the six sites. Six net lines against a
+new indirection on the client that reads a stored credential is the wrong trade.
+
+**The argument the signature cannot enforce is the one worth a gate.** `verify` carries the
+operator's per-instance TLS switch and defaults to `True`. An omission there widens nothing, so
+it reads as harmless. The cost is agreement: an operator whose server carries a self-signed
+certificate gets one surface that cannot reach it while every other surface can, with nothing
+announcing the difference. The same shape had already happened once in this tree with
+`api_path_prefix` on the *arr clients. **So when judging a "written N times" finding, sort the
+repeated arguments by what the callee can refuse on its own.** The required ones are already
+bound; the defaulted ones are the population a gate has to cover, and it should cover every class
+with that parameter, not the one class the finding named.
+
+## A module at 93% can have every failure arm of a safety step unreached (2026-08-10)
+
+`services/restore.py`'s arm step runs three prepare functions before it writes the marker that
+lets the next boot swap. Each maps its failure to one operator sentence. Behind 4,283 passing
+tests and 93% line coverage for the module, **no test drove any of the three**, and no test
+anywhere asserted the sentence. Line coverage said so plainly and nobody had read it: the three
+`except` bodies were sitting in the missing-line list.
+
+The reason generalizes past this file. A staging flow's happy path is heavily tested because
+every other test needs it as setup, and the happy path is what the percentage is measuring. The
+arms that only a failure reaches are cheap to leave, and they are also where the operator-facing
+sentence lives, so a reword lands with nothing to catch it. **Read the missing-line list, not the
+percentage, on any module whose job is to refuse.**
+
+The reword is also what found a second thing the arms were hiding. Saying "nothing was restored"
+forces the question of whether that is true at every raise, and at one of them it was not: a
+confirm retried after a client-side timeout re-ran the prepare steps over a staging that was
+already armed. **A claim about state is a cheap way to audit the states a function can be called
+in**, and it fails toward reassurance if nobody checks.
+
+## A staleness comparison is satisfied at either end, and only one of them is honest (2026-08-10)
+
+Four surfaces show a connection-test badge only while the result still describes what is on
+screen. Each stores `{ result, of }`, where `of` is a fingerprint of everything the test was sent,
+and each renders the badge on `test.of === testedWith()`. That is one derivation written four
+times, and it was measured for a dedup. The dedup is a kill. What the measurement found instead
+is that **three of the four computed the fingerprint at the wrong end, and the comparison cannot
+tell.**
+
+`testedWith()` called inside `onSuccess` runs after the response lands. It fingerprints whatever
+the operator typed while the request was out. The stored `of` and the live `testedWith()` then
+match **by construction**, whatever moved, and the badge vouches for an address that was never
+tried. Computed at issuance instead (React Query's `onMutate`, whose return reaches `onSuccess` as
+context) the two disagree and the badge withdraws, which is the honest answer.
+
+**The comparison is what made this invisible.** Three tests already drove the staleness direction
+at the one site that had it right. Two edit the host and the key after a pass and assert the badge
+goes; the third types back to the tested value and asserts it returns. All three pass with the
+fingerprint computed at either end, because they change the boxes while nothing is in flight. The
+discriminating case is the retype *during* the request, and no test in the suite drove it. So the
+one site written correctly was correct by its author's reasoning alone, and its three siblings
+copied the shape without it.
+
+**A gate over the family took three drafts, and the first two were fail-open.** The obvious
+question is "was a call evaluated here", and it is the wrong one twice over. A regex bounded at
+the first comma reads `of: [kind, baseUrl()].join(" ")` as innocent. Bounding it properly by
+bracket depth fixes that case and still passes the same fingerprint inlined as a template literal,
+which is the identical defect with no call in it at all. Both drafts read green over a working
+demonstration of the bug. The version that holds inverts the question: `of:` may be handed a name
+or a path of names, and everything else fails. **A gate that hunts for the shape of the defect is
+open by omission; one that allows the shape of the fix is closed by default.**
+
+## The five-times duplication with nothing behind it (2026-08-10)
+
+Five surfaces report a draft upward through the same four lines, three settings panels and two
+children of panels, and rule 146 is written about exactly that signal. The count was the only
+figure in its finding that needed no correction, and it was the sub-item worth the least: 20 lines
+out against 29 back, and what the rule asks is per-site anyway. The signal must be declared above
+every early return, and every early-return state re-read as one the report still fires in, which
+is a claim about each surface's own branches. All five satisfy it, and the five answers differ:
+two name the branches their report survives, two say they have no early return above it, and one
+has three returns that all sit below. **A hook cannot carry an obligation whose subject is the
+call site**, so the shared four lines are the part with no leverage in them.
+
+## A line count and a drift surface are two measurements, and a dedup usually pays in the second (2026-08-10)
+
+Phase 8 of the simplification plan killed fifteen findings. Ten of the kills rested on a line
+count, seven of them citing the plan's S5 ("a parameter object that nets to zero") by name. The
+arithmetic held everywhere it was re-measured. A dedup's usual payoff is that one declaration
+cannot drift from itself, and a line count does not measure that. The same phase found five fresh
+drifts inside the code those extractions would have covered.
+
+Thirteen of the fifteen were re-read with the second question added. Two moved and eleven stood,
+so the line test is incomplete rather than wrong. The two that moved:
+
+- **The measured shape was the wrong shape.** Two components carried the same image-fallback
+  ladder, and the kill measured extracting a shared *component*: 33 lines out, 35 back, because
+  the two sites share the ladder and share none of their markup, so a component takes the markup
+  as props. A **hook** takes the ladder alone and leaves the markup where it is: about zero on
+  total lines, about -8 on code lines, and two comments pointing at each other retired. Same
+  duplication, same arithmetic, different answer.
+- **The hazard survives the kill.** Collapsing two hand-written record packs into one carrier
+  removed no parameter and no line, which is a correct kill. Every field of the record defaults
+  to `None`, so a field packed on one lane and forgotten on the other raises nothing and the type
+  checker sees nothing. Three of the fifteen are cross-system join keys. A gate over the two packs
+  costs 60 test lines and no production risk, and closes what the carrier would have closed by
+  construction.
+
+**Two rejections, both measured.** Shared `Annotated` bound aliases would state a wire model's and
+its domain twin's seven validation bounds once. Rejected: these are the deletion caps, and moving
+a bound off the line that declares it costs a reader more than the second spelling costs an
+author. A test holding both to one answer and naming both files when they disagree was already
+there. The second image ladder of two lines per site stayed two lines per site, because a two-line
+ladder does not pay for a module.
+
+**A kill also has to ask whether the divergence it preserves is correct.** Measuring two copies to
+decide they are cheaper apart reads each copy for its size and neither for its behavior. One kill
+recorded a pair as "one with a reset effect and one with neither" and did not ask whether the
+absence is right. It is, and only because of a list key nothing had written down.
+
+## A cap on the work is not a bound on the burst (2026-08-10)
+
+`fairness._enrich_titles` looks bounded and is not. `_TITLE_LOOKUP_CAP = 80` caps how many
+not-in-scan titles get a live name lookup per Scales load, and the docstring said the calls were
+therefore bounded. They were bounded in total and unbounded in parallel: nothing bounded the
+burst. httpx2's default connection pool holds 100, which sits above the cap, so one page load
+could open 80 sockets to one portal.
+
+**The cap reads as the safeguard, which is why nobody looked.** A cap answers "how much". A
+semaphore answers "how much at once". A comment saying "bounded" without saying which one is
+what let this sit. Measured with a portal that counts what is in flight: 24 targets peaked at
+24 concurrent, and at 8 under `asyncio.Semaphore(8)`.
+
+**Bounding the burst lengthens the tail, and that needed fixing in the same change.** A portal
+that accepts connections and never answers costs one read timeout per wave. Unbounded that was
+one wave; at 8 it is ten, so the bound multiplied a stalled page load by ten. The enrichment had
+no deadline of its own because one wave never needed one. **A concurrency bound is a latency
+change, so the wave count is part of the fix.**
+
+**The load-shedder was the wrong tool, twice over.** The finding proposed reusing
+`auth/ratelimit.ConcurrencyGate` and called it unused. It has three production callers, and its
+`acquire` returns 0 when full so the caller sheds load rather than waiting, which for a page
+enriching titles would drop names instead of pacing the reads.
+
+## Removing a redundant parameter removes what its test could distinguish (2026-08-10)
+
+Five scheduler functions took `data_dir` beside the `settings` it came from, and every production
+call site passed `settings.data_dir`. Deleting the parameter is -14 lines for the parameter and
+-10 landed, and it leaves one source for the folder. It also costs a test its distinguishing
+power, and that is the part worth writing down.
+
+`test_the_snapshot_sweep_is_handed_the_folder_the_database_is_in` handed `build_scheduler` a
+folder that was *not* the engine's, on purpose, because the compaction opens
+`data_dir / "reaper.db"` with a raw sqlite3 connection: a wrong folder creates an empty second
+database and vacuums that while the real one is never compacted. Its docstring named rule 141
+outright, saying that pinning the engine's own path "would hold just as well if the job derived
+its own". Removing the parameter is exactly the change that makes the job derive its own, so the
+divergent value the test relied on stops existing.
+
+**The test's question was retired, not answered.** With one source the two cannot diverge. What
+is left to pin is what the old assertion took on trust: that the folder the sweep vacuums is the
+folder the engine opened. It is read back off the engine's own URL rather than recomputed from
+`settings`, which would only restate the derivation under test.
+
+**A test that pins a value's provenance is worth reading as an argument about the design.** The
+intermediate option here kept the parameter on `build_scheduler` alone, at -13 lines, and
+preserved the test verbatim. It was the worst of the three. It leaves the ratings download
+reading `settings.data_dir` while the sweep reads the argument: two sources for one folder, with
+a test proving only that one of them arrives.
+
+## An extraction can be larger than the duplication it removes (2026-08-10)
+
+`whitelist.overrides()` and `spare_expiries()` are two scans of one table, and a third function
+in the same file already reads all three columns in one statement, so folding the pair into one
+read looks like free subtraction. Built and measured: `whitelist.py` +14/-7, `review.py` +2/-4, a
+**net +5**.
+
+**The arithmetic is structural.** Each read being replaced is two statements, a `select` and a
+`dict()`. What replaces them is a loop that splits one result set into two maps, which is ten
+lines. Any extraction whose replacement must reshape data pays that. Collapsing N cheap reads
+into one richer read adds the projection code the cheap reads did not need.
+
+Two further figures in the finding were wrong. Only two of its four call sites are adjacent
+pairs; the other two sit 40 and about 150 lines apart, so collapsing them relocates a read
+instead of removing one. And one caller comes out worse, `spare_expiries` alone going from a
+filtered two-column select to an unfiltered three-column one.
+
+## A form control does not inherit its font, so five of six fields right looks right (2026-08-10)
+
+Rule 40's control standard is six declarations, and ten CSS blocks type them out. Two blocks set
+`font-size` and no `font: inherit`. A browser gives `<input>` and `<select>` their own
+font-family in its UA stylesheet, and that beats inheritance, so those boxes rendered in the
+browser's form font while every label beside them rendered in the app's. Measured in Chromium:
+15px Arial at the Logs search box, 13.76px Arial at every box and dropdown in the Settings
+control column, against system-ui everywhere else. On `dev` too.
+
+**The shape is what makes it survive review.** The block declares five of the six fields
+correctly, so a reader checking it against the standard finds four matches and a fifth line that
+mentions the right property. And the symptom is a typeface, which reads at a glance as a size
+difference and gets attributed to the `font-size` that IS there. Neither the diff nor the screen
+says the word "family".
+
+**The other five fields would have failed loudly, which is why only this one drifted.** A missing
+border, radius, fill or padding is visible in one look. A missing focus ring falls back to
+`01-base.css`'s `:focus-visible`, which draws a slightly different ring rather than none. The
+font is the only field in the standard whose absence is silent, and it is the one that drifted at
+two of ten sites.
+
+**The extraction the finding asked for was killed on measurement.** Hoisting the six declarations
+into one grouped base rule in `01-base.css` nets about -56 lines of 10,614, and it moves
+`.set-row .set-control input` (specificity 0,2,1) from file 27 to file 1, which inverts its tie
+with `.swatch-wrap input[type="color"]` at 27-settings-rows.css:218. That tie is decided by
+source order today and the later rule wins; the evidence is `:271`, a third rule written to
+re-override the pair inside `.hex-join`. Reachable only through one DOM shape at this tip, so
+latent. A gate landed instead, and it caught the drift the extraction was supposed to prevent.
+
+**Putting the standard back costs more than the family, because `font` is a shorthand.** A
+CSS-wide keyword sets every longhand it owns, so `font: inherit` also took the inherited 1.55
+line height, where those controls had the UA's `normal`. The boxes grew about 6px. That one is
+the standard arriving rather than a side effect: in a cluster row the box had been sitting
+8.25px shorter than the button beside it, and it now sits 1.92px off. The other two were
+regressions, and both were controls whose own rule declared one font detail at (0,1,0) under a
+(0,2,1) `font: inherit`: the API key's monospace and the accent hex field's tabular figures. A
+revealed API key came out in the app's sans, against a comment on its own rule saying monospace
+is there so the key reads unambiguously.
+
+**A block declaring only `font-size` hides that hazard, which is why the repair is the risky
+half.** The old block set no family, so nothing it could outrank was at stake, and the two
+lower-specificity rules had been correct for as long as the drift existed. The fix is what put
+them under a shorthand. So the sweep after adding a CSS-wide keyword is not "what did this
+element look like before", it is **"what other rule declares any longhand this keyword owns, at
+lower specificity, on anything this selector matches"**. That is `font-family`,
+`font-variant-numeric`, `font-weight`, `font-style`, `font-stretch` and `line-height`, and a
+computed-style dump over the real markup is the only way to see it: the diff shows one added
+line and the failure is two files away.
+
+## Two counts of one diff, and only one of them belongs in the table (2026-08-10)
+
+**`SIMPLIFICATION_PLAN.md`'s line figures are code net: non-comment, non-blank, docstrings
+excluded.** That is the unit in every verdict cell and every *Landed* row. A total-line count put
+in the same column is not a rougher measurement of the same thing. It is a different quantity in
+the same units, and it is normally larger, because what a dedup adds back is mostly the docstring
+or comment carrying the rule the copies had split between them.
+
+Six wave 11 backend rows, measured both ways. **Total lines: -2, -2, +2, -1, +4 with a 42-line
+revision, +7. Code net: -3, -5, -3, -3, +4 with an 11-line revision, -2.** Stated in the plan:
+-3, -7, -5, -3, index-only, +2.
+
+**The two readings disagree about the outcome, not about the size.** On total lines, five of the
+six cost more than stated and none cost less, which reads as a systematic optimism in how the wave
+estimates. On code net, two are exact, two are short in the same direction, and one beats its
+estimate. The first reading was published, with a general claim built on it about estimates
+counting the deletion and never the declaration. **The claim was an artifact of the unit.**
+
+**This is the second time the same confusion moved a verdict, in the opposite direction.** One
+pull request earlier a getters row read at +2 by scoring a helper's docstring as code and was
+corrected to -6, which flipped it from a marginal build to a clear one. Here the flip ran the
+other way: W11-43 read as +7 against a stated +2, which is a row that overran, and it is actually
+-2, a row that beat its estimate.
+
+**So print the unit next to the number, and check the unit before writing the lesson.** A figure
+disagreeing with a document is the moment to ask what the document is counting, not the moment to
+explain why the document was optimistic. The write-up is the expensive half to get wrong: the six
+numbers are an instance a later reader can re-derive in a minute, and a wrong general claim about
+how the wave estimates is what they will take as settled and never re-measure.
+
+**The row that moved most is the one whose verdict depended on it.** W11-43 was offered as "build
+at +2, or write the gate", with the gate the better answer if the consolidation cost lines. It
+costs -2, so there was no trade. The gate loses on its own merits anyway: after the consolidation
+`src/` holds one multi-parent walk, so a ban would scan a population of one, and before it the
+ban would have to exempt the two sites it exists to catch.
+
+**The one item decided by something other than a line count was the only defect in the six.**
+`ActionStep.run_id` was unindexed and `EXPLAIN QUERY PLAN` returned `SCAN action_step` for the
+executor's own filter, against a table retention never sweeps. Its test asserts the query plan
+rather than the index's presence, so an index that exists and is not chosen still fails.
+
+## A rendering test cannot see a duplicate that renders identically (2026-08-10)
+
+A dedup replaced two byte-identical copies of one operator sentence with a declaration, and
+shipped a test asserting both routes answer with that declaration's halves. **The test cannot
+fail for the thing it was written to prevent.** The copies it replaced produced identical output,
+so an arm that re-inlines the sentence renders exactly what the declaration renders, and every
+assertion over the two responses stays green. Rule 144's gap is a source-text question, and only
+a source-text assertion closes it.
+
+**The same test was fail-open a second way, found by driving it rather than reading it.** Raising
+the template unformatted passes every check: the raw string starts with the prefix and ends with
+the suffix being compared, because those are literally its own halves, and the eight characters of
+`{reason}` satisfy a "longer than prefix plus suffix" bound. That ships `{reason}` to the operator,
+which is a rule 21 defect the gate was standing in front of.
+
+**Neither hole is visible from the assertions; both are visible from a mutation.** Three mutations
+were needed to cover one three-line change: reword an arm, re-inline an arm verbatim, drop the
+`.format()`. No single assertion catches more than one of them. **When a test's expectation is
+derived from the declaration it is testing, ask what the declaration and the code under test can
+be wrong about together** — a derived expectation moves with the thing it should be pinning.
+
+## A prop hand-off is not drift if the type checker sees it (2026-08-10)
+
+A finding said six navigation callbacks were drilled three to four levels through the React tree
+over a destination type that is already one value. Re-derived from `App.tsx`: **nine distinct
+prop names over ten hand-offs, seven consumed by `App`'s own child and three going exactly one
+level further.** Nothing goes past depth 2. The six was the `onGoTo*`-prefixed subset, and the
+plan leaves out the three cross-page jumps named `onOpen*`.
+
+**Depth is what the finding rested on, and it decides the answer.** A prop that stops being
+forwarded is a TypeScript error at the intermediary and again at the leaf, so the hand-off has no
+drift surface: it fails at build time or it is correct. Bundling the three depth-2 props into one
+destination prop trades about nine lines of pass-through for a bundle type and a second
+indirection, and removes no place a future author has to remember something. The part that could
+drift had already been fixed, in `navIntent.ts`: `goTo` is one entry point over one `NavIntent`
+union, replacing four per-destination setters that each had their own idea of what to reset.
+
+**The measurement that mattered was not the count.** Two earlier passes both got the count
+roughly right and neither wrote down the depth, which is the only figure the row's argument uses.
+
+## The cascade moves when a declaration moves to an earlier file (2026-08-10)
+
+Five controls draw one bare, pill-shaped ✕, and three of them carried the same thirteen
+declarations in three stylesheets. Sharing them means moving the declarations to a file that loads
+**earlier**, which is a cascade change: any rule of equal specificity in between now wins where it
+used to lose. Nothing in the diff shows it and no existing test reads it.
+
+**Read the shape back off the cascade rather than arguing it.** jsdom parses the concatenated
+stylesheet and does the cascade, so `getComputedStyle` on each control, rendered in the ancestry
+it really has, answers which declaration won. The values were captured **before** the shared rule
+existed, so a green run is the claim that nothing moved. Two limits are worth knowing: `var()` is
+left unresolved, which is what a test like this wants because it is asking which declaration won
+rather than what pixels it became; and `border-width` is reported from the keyword rather than
+from `border-style: none`, so `border: none` and `border: 0` disagree there and agree on screen.
+
+**Doing it found a control that was not the shape it claimed.** One of the five sizes itself
+`width: var(--tap-min)` and never resets the global `button` padding, so under `box-sizing:
+border-box` its used width is 29.2px against the 24px token it names. The `width` declaration does
+nothing. It was left as it renders and the shared rule excludes it, since folding it in would have
+needed a `padding` declaration whose only job was to cancel a shared one.
+
+## A shell gate can be green because the page is small (2026-08-10)
+
+`binaries.yml`'s boot probes check the packaged build serves the SPA and not a JSON 404:
+
+```
+if curl -s http://127.0.0.1:8461/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
+```
+
+Under `set -o pipefail` a pipeline reports its rightmost failing command. `head -c 200` exits
+after 200 bytes and `grep -q` exits on the first match, so curl can take SIGPIPE and the pipeline
+is non-zero with `grep` having matched. **Whether that happens depends on the page size.**
+Measured with the same one-liner: a 4 KB body passes, a 200 KB body fails. Under the pipe buffer
+curl writes the whole response and exits 0 before either reader closes.
+
+The page the probe reads is the BUILT `index.html`, not the source one, and today it is under
+5 KB. So all three copies of that line are green on a margin nobody chose, and it moves with
+every build. The build that trips it is a healthy one whose page grew, and the log says the
+bundle lost its SPA. Redirecting to a file and grepping the file removes the pipeline.
+
+`tests/test_repo_hygiene.py` now bans the shape in any pipefail'd workflow step, so this cannot
+come back in a workflow nobody thought to re-read.
+
+The general shape: **`| head` inside a pipefail gate makes the verdict a function of how much the
+writer produced**, not of what it produced. CLAUDE.md's rule 134 names `| head` for the sibling
+case, a command dying partway and reporting that as its own result; this is the same mechanism
+reaching the opposite conclusion, a command that succeeded reported as failed.
+
+## Four dedups, and the line count answered four different ways (2026-08-10)
+
+Wave 11's W11-42, W11-19, W11-18 and W11-10, built and measured in one pass. Code net,
+non-comment and non-blank: **-8, -8, -3 and -6**, so **-25** over the four. Stated: ~85 (~16
+believed removable), ~15, ~25, ~45. Only W11-19's -8 held exactly.
+
+**The raw diff over the same files is +21.** Two copies each carry half an explanation, or one
+carries it and the other carries a pointer to it; one shared declaration carries the whole
+thing, and this repository writes that out. So the code falls and the file grows, and which of
+those two numbers you quote decides the verdict.
+
+**Counting is where this went wrong first, and the error inverted a verdict.** W11-10 was first
+reported at **+2** because the counter scored the new helper's docstring body as code. Docstring
+lines are the one prose form with no comment marker on them, so a diff filter written for `#`,
+`//` and `*` reads them as source. It measures -6. The row would have concluded that the item
+buys nothing on lines when it is in fact the second-largest saver of the four.
+
+**What each one bought is a rule that had already been forgotten once.**
+
+- **W11-10**: "no `await` between the read and the write" stops two requests installing two
+  different per-app objects. It was written at one of four copies and depended on at three. A
+  plain `def` cannot acquire an await without every call site turning async first.
+- **W11-19**'s two copies had already cost a bug: one surface found that the notice must clear on
+  a Save and not only on Discard, and the other then carried a comment *pointing at* that fix
+  rather than sharing it. The extraction also found a fourth caller nobody had counted, by
+  breaking it.
+- **W11-18**'s no-clobber rule was unpinned across the whole suite, behind rule 141: the test set
+  the saved value and the suggested value both to the same string.
+- **W11-42**'s two copies shared the line above, so the defect would have had to be found and
+  fixed twice.
+
+The plan's S5 already carries the standing form, that a kill needs both halves said. What these
+four add is that the line half is not one number: it is -25 or +21 on the same change, and the
+question that did the work every time was **"is there a rule here that only one copy states"**.
+
+## A helper measured at zero lines was measured in the wrong shape (2026-08-10)
+
+Two settings findings were killed on "an extraction that nets to zero lines is not worth its
+risk". Both were re-measured. One was killed on the wrong shape and is now built. The other loses on
+every reading, including the partial nobody had priced.
+
+**The shape decides the arithmetic, and the first shape measured was the expensive one.** The
+helper priced for `app_settings.py`'s three identical switch getters swallowed the `await _get(...)`
+call, which is what put `leaving_soon_unarmed`'s call at 104 columns against a 100-column limit
+and made it wrap to three lines. A helper taking the value `_get` already returned is pure,
+synchronous, typed `-> bool`, and leaves every call site between 76 and 79 columns. Measured
+across both helpers: **+13 total lines, -9 code lines**, the difference being 18 docstring
+lines and six blanks. The rule those docstrings hold used to be implied at three sites and
+stated as prose at two of them.
+
+**A test walk that matches on a call stops seeing any function that hands that call to a
+helper.** `tests/test_app_settings_precedence.py` derives its population by AST: a function
+that calls `_get` and takes a `Settings`. The swallowing helper would have dropped all three
+switch getters out of it, leaving the count at four and the gate green while three sites went
+uncovered. The value-taking helper keeps every `_get` call where the walk can see it. **Before
+extracting anything, grep the tests for a walk that matches on the call you are about to move.**
+
+**One declaration turns three mutations into one, and that is the payoff a line count cannot
+show.** Swapping `stored is None` for `not stored` inside the shared helper fails three named
+cases at once; before, the same defect had to be introduced three times to be caught three times.
+The credential helper reaches a third caller the finding never counted, `get_api_key`, whose own
+decrypt-failure path is pinned by nothing of its own: it stayed green under the mutation across
+296 tests in `test_settings_api.py`, `test_general_and_logs.py`, `test_foundations.py` and
+`test_api.py`. It is covered transitively now, by the one Discord case that drives the shared
+declaration.
+
+**The scheduler decorator loses even as a partial, and the partial had never been priced.** The
+kill judged it over all seven jobs. Decorating only the four that fit was built for real,
+formatted, mypy-clean and green on every scheduler test, 37 of them at the commit it was measured on: **+21 total lines, +13 non-comment
+lines, +5 statements**, against an estimate of about zero. `inspect.signature().bind()` is still needed after the
+narrowing, because three distinct argument positions survive it. And the drift question answers the
+same way the line count does: each of the four still declares its own job id, log event and
+result string at the decoration, so the only thing centralized is `ok=False`.
+
+**Writing the rule down is what found the site that broke it.** The credential helper's docstring
+says every caller has to agree that an undecryptable credential is absent. A review lane checked
+that claim against the tree and found `GeneralSettingsOut.api_key_set` computing presence from row
+existence, so a key written under a rotated secret reported as set while the reveal route 404s and
+the header lane refuses it. Rule 76's shape, one level up from a file check, and it was on `dev`.
+Fixed rather than filed, because the claim is this branch's. **The sweep found no second site**:
+instance credentials have no absent-on-broken posture at all, every `decrypt` of one letting the
+`ValueError` propagate, so `InstanceView.has_key` reading `bool(row.api_key_enc)` agrees with its
+own runtime and is not the same defect.
+
+**The general form is now in the plan's S5.** "Nets to zero" is a line test. How many places a
+future author has to keep in step is a different question, and a kill that answers only the
+first one is not finished.
+
+## A gate's unit has to be the invariant's unit, and two gates got it wrong in opposite directions (2026-08-10)
+
+Two wave 11 kills each said "no shape rescues this, write the gate instead". Building both found
+the same mistake twice, from either side.
+
+**Counting a word cannot see the sentence around it.**
+`test_the_reload_advice_population_is_pinned_per_file` matches the bare word `reload`, case
+insensitively, per shipped `.tsx`. Its subject is the advice "Reload to try again.", which four
+panels print verbatim after a read never lands. Measured: rewriting one of the four as "Couldn't
+load your settings. Reload to try again." leaves the word count identical and the gate green.
+The word survives every rewording of its sentence, so a copy can leave the family and still
+reconcile. A per-sentence pin over the same walk fails on that mutation. It also surfaced what the
+finding had missed: the family is **25 distinct sentences at 32 sites**, five of them duplicated,
+where the finding named two.
+
+**Counting elements reads a ternary and a `.map()` backwards.** The rule behind `.field-sm` is
+runtime cardinality: a `<label>` names exactly one control, so it wraps one, and anything else is
+a `<div>`. Source text cannot answer that. Of 26 boxes, one holds a `<select>` and an `<input>` in
+the two arms of a ternary and renders **one**, and two hold a single `<select>` inside a `.map()`
+and render **many**. A gate counting control tags calls all three wrong, and each failure would be
+against correct code. So the gate pins the population per file and per tag and leaves the
+cardinality to the author, with the reason for each `<div>` written beside the pin.
+
+The general shape: **a text gate can only assert over the unit its matcher collects.** Pick the
+unit the invariant is stated in, or pin the population and say plainly what the walk cannot see.
+Rule 147 says a matcher is bounded by the syntax it can parse; this is the same bound one level
+up, at what the matcher is a matcher *of*.
+
+**A count is only an independent half of a ban while the two read different populations.** Both
+gates walked shipped `.tsx` and reconciled the members they read against the mentions they found
+in the same files. A class name or an operator sentence exported from a `.ts` module and used
+from a component is outside that walk, so it left the matcher and the count together and the two
+figures still agreed. Measured: a 27th `.field-sm` box with two controls and no name read green,
+and so did a 26th never-loaded sentence. Rule 145's failure with the count already in place.
+Two more from the same review pass, both about where a run of text begins. Matching forward from
+`could` left the front of the sentence open, so prepending a clause to one of a pinned pair moved
+nothing. And splitting a line at the first `//` truncated it at any URL, taking the rest of that
+line out of every walk in the file.
+
+## A committed fixture's indent is 34% of its bytes and 100% of its lines (2026-08-11)
+
+`policy_lab_vectors.json` and `whole_library_baseline.json` are written by their generators with
+`json.dumps(..., indent=1)`, which puts every scalar of every nested array on its own line. A
+season pair reads as four lines. Measured across both files: 133,690 lines and 748 KB of
+whitespace, against 1.55 MB of content.
+
+`separators=(",", ":")` in each generator and one re-dump of the files on disk. Both drop to a
+single line, the suite is unaffected because every reader parses rather than reads text, and
+`sort_keys=True` stays so a regenerated fixture still diffs deterministically.
+
+**What the indent was buying was not review.** A 42,000-line fixture diff is not read either
+way, and the two files are regenerated by a script rather than hand-edited, so the readable form
+is `git show <rev>:<path> | python -m json.tool` on the rare occasion someone wants one. The
+cost was carried by every clone, every checkout and every PR that touched a vector.
+
+## A mirror can be complete, stale, or short, and only two of those were asked about (2026-08-11)
+
+The scan tested the watch mirror for EMPTY (`horizon is None`) and for STALE (`last_synced_at`
+past `MIRROR_STALE_AFTER`). A mirror that is populated, synced an hour ago, and holding a third
+less than the source passed both and produced a snapshot marked `degraded = 0`.
+
+Measured on a 425,604-row history restored from another instance: the mirror held 274,992 rows,
+65%, and the missing rows were a clean cut at the old end rather than scattered gaps. Against the
+previous scan, with `policy_hash`, `scoring_hash` and `evidence_hash` all identical, 245 titles
+came off the condemned list, 2.17 TB. Coverage on them fell from 10000 bp to 1137 and 6408.
+
+**The engine was right and the snapshot was wrong.** An unsigned score over a fixed denominator
+can only fall as evidence goes missing, so a shorter mirror produces a smaller condemned set by
+construction. Nothing in the scoring needed fixing. What was missing was the snapshot saying it
+had judged on partial evidence.
+
+**Three things conspire, and each is individually correct.** Backups exclude the mirror on
+purpose (`backup.py` writes `"cache_db": False`), so a restore leaves it behind. Every sync after
+that is incremental, and an incremental walk's paging total is the size of its own increment, so
+it completes correctly against `of=266` while 150,604 older rows are absent. And `synced_at` is
+stamped by `_check_regression` BEFORE the walk, so the staleness clock reads fresh the whole
+time. No single component is at fault, which is why nothing caught it.
+
+**The tolerance is measured, not guessed, and an equality would have been wrong.** A play in
+progress is counted by the source and deliberately skipped by the ingest, so the mirror can never
+equal the total: the full sweep ended `inserted=425596` against `of=425604`, with
+`history.rows_skipped live=8`. The legitimate gap was 0.002% and the defect was 35%, three
+orders of magnitude apart. A percent with an absolute floor sits between them, and the floor is
+what keeps a handful of live plays from degrading a scan on a small history.
+
+## A page is not free, and a bound in pages is not a bound in rows (2026-08-11)
+
+The history walk asked Tautulli for 25,000 rows a page on a written claim that a 25k page costs
+about what a 1k page costs, so large pages were strictly better: 17 requests instead of 422. The
+claim is false. On a six-figure history each 25k page spent 60-80% of the client's 30s read
+budget, and the same instance answering roughly 1.8x slower timed out on the first page. The
+walk then aborted, and since nothing retries before the next cron slot, a persistently slower
+instance never completed another sweep (#780).
+
+**The request count was the wrong thing to optimize.** What a page costs is time, and the budget
+it is spent against is fixed. Trading 422 cheap requests for 17 expensive ones bought nothing
+measurable and spent the entire margin, so the sweep's survival came to rest on the source never
+getting slower. `transient_retry` cannot help: it re-sends the identical oversized request
+against the same budget.
+
+**The second half only appeared after the fix.** A hard stop of 1,000 pages was written as "far
+past any real library's history," which was true at 25k rows a page and is a different number at
+every other page size. Adding a shrink-on-timeout floor of 1k rows silently moved that ceiling
+to a million rows, roughly one to ten times a mature install, and the walk that reaches the
+floor is by construction the slow one against the deepest history. A bound expressed in one unit
+and read as a claim about another goes stale the moment either factor moves, and nothing in the
+type system or the tests notices. State the reach at the SMALLEST page the code can choose.
+
+## What a Tautulli-only dump can and cannot feed the engine (2026-08-14)
+
+Measured against a live instance while building `scripts/tautulli_anon_dump.py`, which asks
+other operators for a de-identified copy of their watch history so the scoring is tuned
+against more than one library.
+
+**Nine of the engine's facts come free, and they are the ones that needed real data.**
+`days_observed_unwatched`, `distinct_watchers`, `distinct_watchers_all_time`, `size_bytes`,
+`days_since_added`, `history_reach_days`, `season_rank`, `rewatch_viewings` and
+`rewatch_last_play_days` are all derivable from `get_library_media_info` plus `get_history`.
+So `MIN_DORMANCY`, `SERVER_POPULARITY`, `DATA_HORIZON`, `REWATCH_ODDS`, the rewatch fit and
+the whole of season pruning are testable from a foreign library. `services/rewatch.py` reads
+four columns, and a history dump carries all four.
+
+**The rating facts need a second source, and that source is free.**
+`imdb_rating_tenths` and `imdb_votes` are not in Tautulli, but `get_metadata` returns
+`guids` as `["imdb://tt...", "tmdb://...", "tvdb://..."]`, and the IMDb ratings dataset the
+app already uses needs no key. Joining locally and discarding the id is what keeps the dump
+from being reversible by whoever receives it: the id IS the title.
+
+**No show status anywhere.** `get_metadata` has no continuing-or-ended field on a show, so
+`show_ended` stays Sonarr-only. `release_age_days` does come back, as
+`originally_available_at`, and `quality` has a near-equivalent in `video_resolution`
+(a different vocabulary: "1080" where Sonarr says "Bluray-1080p").
+
+**A TV section's sweep reports no size at all.** 0 of 200 rows carried a `file_size`,
+against 200 of 200 in a movie section, and re-ordering the sweep by `file_size` did not
+change that. An episode's size lives only in `get_metadata(episode)`, under
+`media_info[0].parts[0].file_size`; `get_children_metadata` returns neither `media_info` nor
+`file_size` on its children. Totalling seasons that way costs one call per episode, roughly
+25,000 for a 990-show section. So the dump carries a null season size, which reads as
+"could not measure" rather than as zero, and TV size signals stay untestable from it.
+
+**Season structure is cheap by comparison.** One call per show for its seasons, one per
+season for the episode count that tells "part-way through" from "finished". Measured at 2.1
+seasons per show, that is about 3,000 calls for the same 990-show section, a few minutes.
+
+**The endpoints volunteer far more identity than the field names suggest.** A `get_history`
+row carries `ip_address`, `user`, `friendly_name`, `machine_id`, `platform`, `player`,
+`location`, `guid` and `full_title`. A `get_users` row carries `email` and `username`. An
+episode's `media_info` carries the full file path. None of that is needed by anything, and
+a dump tool written as a denylist would have shipped the IP addresses, because nobody
+looking at "watch history" expects them to be in it. `tautulli_anon_dump.py` copies named
+fields onto fresh dicts instead, and its test asserts the absent values rather than the
+present keys: a right-keys test passes just as well when a future Tautulli adds a field.
+
+**A history page costs the same at 25,000 rows as at 1,000, so the page size sets the whole
+runtime.** Measured against a live instance holding 425,983 rows: a page of 1,000 took 14.7s
+and one of 50,000 took 20.7s. Nearly all of that is fixed per request. At 1,000 the walk is
+426 requests and 105 minutes; at 25,000 it is 18 requests and 4 minutes. Deep offsets are
+NOT the cause, which was the obvious guess and was measured too: offset 400,000 cost 14.5s
+against 12.3s at offset 0.
+
+**That does not mean `history_sync.PAGE_SIZE` should be raised on its own, and the difference
+is the read budget, not the row count.** The sweep sat at 5,000 with a 30s client budget,
+where a 25k page spent 60-80% of it and a slower instance timed out (#780, and the entry above
+on pages versus rows). The dump tool allows 120s per request, which is what let it afford
+25,000. Raise one number without the other and the timeout comes back. Both shrink by half on
+a timeout, which is the part that actually makes either safe.
+
+## The sweep's read budget, bought per call rather than per client (2026-08-14)
+
+The paragraph above was the whole of what was known, and the missing half was that the budget
+did not have to be a property of the client. `BaseClient` built one `httpx2.Timeout` at
+construction and every method shared it, so the sweep's minute-long page and the artwork proxy's
+answer to a browser were bound to one number. That is why #780 could only be fixed from the page
+side. `_request` now takes an optional `read_timeout` that widens the read leg for one call, the
+sweep passes 60s, and `PAGE_SIZE` is back at 25,000.
+
+**Re-measured through Reaper's own client against a live instance at 426,018 rows**, which is
+the same instance the dump tool measured through stdlib `urllib` and roughly the same shape:
+1,000 rows 4.4s, 5,000 6.5s, 25,000 8.4s, 50,000 12.9s. Deep offsets cost nothing extra here
+either: 25,000 rows at offset 401,017 took 8.6s against 8.4s at offset 0.
+
+**Driven end to end rather than extrapolated**, a real `sync(full=True)` into a throwaway mirror,
+the two page sizes run back to back against the same instance: **704s at 5,000 and 237s at
+25,000**, 86 requests against 18, both landing the same 426,021 rows with no shrink. Worth
+measuring rather than adding up per-request costs, which the ingest of 426k rows sits underneath
+and which put the estimate out by a third in both directions.
+
+**The 60-80%-of-30s figure from #780 did not reproduce, and the number was not raised on that
+basis.** A 25k page measures at 28% of a 30s budget on this instance today. Something differed
+then, most likely load, and the incident is not in doubt: it is the reason the budget is now 7x
+the measured cost instead of 3.5x. A measurement that contradicts a recorded incident does not
+retire it.
+
+**The library sweep is not the same question, measured rather than assumed** (rule 72).
+`get_library_media_info` returns a whole section in one page well under a second: the largest
+section on that instance is 3,430 rows at 0.2s, where the history table is six figures. Its
+1,000-row page costs 4 requests, so `library_index._SPINE_PAGE_SIZE` is left alone.
+
+## A faster page made an overlap worse, not better (2026-08-15)
+
+`history_sync.sync` has two callers on independent schedules, the scan's incremental sync and
+the full sweep, and nothing serialized them. The page-size change above is what made that
+matter: one page's `INSERT OR REPLACE` holds the cache write lock **129ms at 5,000 rows and
+1,876ms at 25,000**, against the 5s `busy_timeout` every app connection carries. The margin went
+from 39x to 2.7x on an SSD, and a data directory that refuses WAL has readers waiting on that
+write too. A change measured as 3x faster moved a second number 14x the wrong way, and only
+looking for it found it.
+
+**The fix is a lock, and the alternative was worse in a way that is easy to miss.** Skipping the
+sweep while a scan runs is the obvious shape, and one maintenance job already does it. But the
+sweep is the thing that catches a backdated play, the scan cron belongs to the operator, and a
+job that yields whenever another is running can silently yield forever. That is #780's loss
+reached from the other side. So the second caller waits instead, bounded by a sweep that is now
+237s rather than 704s: the perf change is what makes waiting cheap enough to choose.
+
+**Cadence: every three days, not nightly.** A backdated row needs someone to import or edit
+history inside Tautulli, which is not something that happens on a schedule, and the incremental
+sync already re-asks the last two days, so only a row backdated FURTHER than that ever waits for
+a sweep. Run now covers the operator who did just import something.
+
+**Deriving a label is not free, and the count of things depending on it is the cost.** Moving one
+default cron off "daily" broke a preset labeled `Every day` that took its value from that same
+constant, so the option would have said one thing and done another (rule 144). Describing the
+label from the cron fixes it for every job at once, and immediately creates a second hazard the
+written label never had: a described label can now equal one of the fixed presets beside it, two
+identical options sharing a React key (rule 19). No shipped default collides, and the filter is
+there so the next one cannot.
+
+**A concurrency test that never proves its own pump proves nothing.** "The second sync had not
+reached Tautulli" only means the lock held it if it would otherwise have arrived, and every await
+before that first request is an executor hop, so a loop yielding only to itself leaves the waiter
+parked either way. This test passed with the lock deleted until it ran the same pump once with
+nothing in flight and asserted arrival first (rule 119).
+
+**`get_history` groups consecutive plays unless told not to, and the default is what a
+caller that says nothing gets.** Asking without `grouping=0` returned 309,013 rows on an
+instance holding 425,983: a quarter of the history folded away, with the run reporting
+success and no other sign. The folded rows are exactly the ones a rewatch is counted from,
+so a grouped dump does not merely lose rows, it reports a habitual rewatcher as a single
+viewing, which is the one signal this dump exists to validate. `clients/tautulli.py` passes
+`grouping=0` and always has; the dump tool did not, and nothing caught it until the row
+count was compared with the mirror by hand. It now asks the server for its own total first
+and records both numbers in the dump, because no test against a fake can find the next
+member of this class.
+
+**Roughly two fifths of a mature library's watch history is about media it no longer
+holds.** On the first real library this ran against: 2,240 of 5,792 distinct watched movies
+(39%) and 813 of 1,752 watched shows (46%) had no current item to join to. Tautulli keeps a
+play after the file goes, and a re-added file gets a new key while its old plays stay under
+the old one, and from a dump those two are indistinguishable. This is not a fault and it is
+not the 1.5% to 4.5% figure recorded elsewhere here, which counts something narrower
+(mid-history titles whose plays are unreachable *while the title is still on disk*).
+
+It decides what a dump can be asked. Any signal measured over items still present is
+answering a question about the survivors, and on a library that has been reaped for years
+the survivors are the minority of what was watched. `played_but_gone` is in every dump's
+summary for that reason.
+
+**Rating keys churn, so a repeat dump needs a stored salt.** The high-water check exists
+because a re-added file gets a new key while its plays stay under the old one, and it can
+only be exercised by two dumps months apart that agree on which item is which. The tool
+therefore derives its tokens from a saved salt rather than drawing one per run, and shifts
+every timestamp by one stored whole-day offset so intervals survive while the wall clock
+does not.
+
+## A card's own `overflow: hidden` clips a popover before position is the problem (2026-08-15)
+
+`.card` sets `overflow: hidden` to crop its backdrop art. A `position: absolute` popover
+anchored inside a card is clipped to the card's own box, not the viewport: past two or three
+collections, most of the collection picker's list rendered unreachable. Caught in the mockup,
+on the first render, before any code shipped.
+
+**The fix is the one `OverrideControls`' Spare length menu already used, and it generalizes.**
+Portal the popover to `<body>` and render it `position: fixed`, at coordinates clamped to the
+viewport and measured before it draws (rule 138). `CollectionChip`'s picker and the Spare menu
+now share that math in one hook, `useFixedMenu` (`popoverFit.ts`), instead of each carrying its
+own copy.
+
+⇒ A card-shaped ancestor's `overflow: hidden` is a standing hazard for any `position: absolute`
+menu anchored inside it, independent of what the menu holds. Reach for the portaled, clamped
+`position: fixed` pattern from the first render, not after a clip gets reported.
+
+## A title is in one collection, but a library holds hundreds of them (2026-08-15)
+
+Measured on one real library of 5,984 scanned items, which #816's plan asked for before
+committing to the chip's shape:
+
+| | |
+|---|---|
+| Titles in at least one collection | 994, 16.6% |
+| Collections per such title | median 1, mean 1.04, max 4 |
+| Titles in exactly one | 967 of 994, 97.3% |
+| Distinct collections | 387 |
+| Members per collection, as Plex reports it | median 2, max 25 |
+
+**The chip's design holds.** It renders one collection and hides the rest behind a caret, on the
+assumption of "usually one, sometimes a few". 97% of covered titles never draw a caret at all,
+and the worst case is four. The plan said that a median of five would earn the picker its own
+search; at a median of one it does not.
+
+**The distribution is the opposite of what the suggestion list assumed.** Few collections per
+title, but 387 distinct ones against tens of genres, so a shared 200-value cap on
+`vocabulary_values` would have dropped roughly half the collection set. The list is ranked by how
+many titles carry a value, so a truncation takes the rarest, which is the specific shelf someone
+goes looking for.
+
+⇒ Per-item and per-library counts of the same relation size very differently, and a ceiling
+picked from one of them is wrong about the other. The number that sizes a *card* is not the
+number that sizes a *picker*.
+
+**Reaper's own "Leaving Soon" shelf appears as a collection**, at 18 members here, because it is
+a Plex collection like any other. That is left as-is: it is a real shelf, and one chip covering
+every library's leaving-soon titles is arguably useful. Whether a shelf Reaper itself maintains
+should be offered as navigation is still open.
+
+## A Plex read costs a request, not a payload (2026-08-15)
+
+The collections pass asked each collection for its children. On one live library that was 397
+requests, 667 seconds of Plex time and 93% of everything the scan asked Plex for, running 8 at a
+time beside the GUID sweep, which is why a 126 ms read was taking 7 seconds mid-scan.
+
+| Read | Cost |
+|---|---|
+| `/library/collections/{key}/children`, 20 of them holding 41 members between them | 1,013 ms each |
+| the same 20 with `excludeElements` stripping the payload | 960 ms each |
+| `/library/metadata/<400 ids>` | 4,546 ms |
+| the same 400 ids with `excludeElements` | 2,648 ms |
+
+**A near-empty response costs about what a full one does, so the cure for N requests is never a
+smaller N-th response.** Stripping a children read saved 5%; asking a different question saved
+99%. Membership lives on each member as a `collection` tag, so one batched metadata read per 400
+items answers a whole library: 10 requests against 395. Payload trimming is worth something only
+where the request count is already floored, which is where the 42% above lands.
+
+**The section listing carries the same tags and drops most of them.** `/library/sections/{k}/all`
+reported 8 of the 105 tags the metadata read returned for the same 400 items, and 96 tagged rows
+of 3,461 against a true 1,012 memberships. Never a wrong tag, only a missing one, so a sweep that
+parsed the listing for free would have shipped as "some titles lost their chip" and read as a
+Plex quirk rather than as a read that cannot answer this.
+
+**What the tags cannot see, `childCount` gives away.** Item tags accounted for 1,020 of 1,029
+declared memberships. The gap was one collection holding objects the section listing never lists;
+a smart collection is a saved filter and leaves no tag either. Comparing each collection's tag
+count against Plex's own `childCount` finds both without asking which it is, and 2 collections of
+397 fell back to their own read. The `smart` attribute could not have done it: it is absent from
+the listing on a server with no smart collection, so a pass keyed on it could not be shown to
+work at all.
+
+⇒ Before optimizing a read, measure whether its cost tracks what it returns. Where it does not,
+the only lever is asking fewer times.
+
+## What the shipped defaults do on somebody else's library (2026-08-16)
+
+The first foreign dump, 1,904 movies, 729 shows, 2,397 seasons, 84,235 plays, 52 users and
+ten and a half years of watch history. Run through `judge_facts` and `plan_series_prune`
+themselves rather than a copy of them, under `DEFAULT_MOVIE_POLICY` and `DEFAULT_TV_POLICY`.
+The rewatch curve is in `docs/SIGNALS.md`. What follows is everything else.
+
+**The engine held. 621 of 1,904 movies condemned, 73 of 2,397 seasons.** No season came from
+a show anyone had watched in the past year, and the condemned seasons had a median dormancy
+of seven years. Nothing crashed, no dormancy came out negative, and no item past the dormancy
+floor still had a watcher inside the popularity window.
+
+**Coverage read 1.0 for every single item, so the coverage floor never decided anything.**
+That is what a ten-year mirror does. It also means this library exercised none of the reach
+code that a shallow Tautulli would, so `history_shortfall` and `lifetime_shortfall` stayed
+almost silent. The keep-rule conflict detector was the exception, holding 343 of 779 prunable
+seasons across 126 shows for a human, and only 126 of those conflicts came from the reach.
+
+**The popularity gate protected 34 of 1,904 movies.** Its floor is three distinct watchers in
+a year, and 30 of the 52 users watched anything at all in that window, so the bar asks for a
+tenth of the active audience on one title. On this server it is close to inert. The bar is an
+absolute count and nothing scales it to how many people are actually watching, which is worth
+knowing before reading a why-panel that reports it as checked.
+
+**The score has little room left once dormancy saturates.** `UNWATCHED` tops out at 1,825
+days, and 642 of these films are past that, so 430 of the 537 condemned in the backtest sat
+in a single five-point band. Moving `condemn_at` from 70 to 90 drops the condemned set from
+537 to 434. An operator on a deep history is tuning a much blunter control than the slider
+suggests.
+
+**Regret concentrates at the threshold, not across it.** In the backtest the films scoring 70
+to 79 were played again 16.7% of the time, against 7.2% for the bulk at 90 and above. The
+score is ordering correctly, and the default cut admits its worst cohort. 48 films, so this
+is a direction rather than a number.
+
+⇒ The defaults are safe on a second library and they are not tuned for it. Read every
+absolute threshold in the shipped policy as one server's number.
+
+## `watched_status` has five values, and two of them were the whole model (2026-08-16)
+
+Measured on the first foreign library to reach us, a `tautulli_anon_dump.py` dump of 2,633
+titles and 84,235 plays. Tautulli's `watched_status` is a quantized fraction of the operator's
+own watched-percent threshold, so a row arrives as 0, 0.25, 0.5, 0.75 or 1. Cross-tabbed
+against `percent_complete` on 63,103 episode rows, the quantization is what it looks like: 0.75
+sits at 70-90% watched, 0.5 at 40-60%, 0 at 0-20%. **8,997 rows, 14.3%, carried one of the
+three middle values.**
+
+`season_scan.season_watch_stats` modeled two of the five. Its position query bucketed a play as
+completed (`= 1`) or unreported (`IS NULL`), and the middle three raised neither column, so a
+viewer whose finale stopped at 0.75 recorded a confident position one episode short. The
+fail-closed skip that exists for exactly that case reads `max_unfinished > max_ep` and never
+fired, because the row was invisible to both sides of the comparison. 212 of 3,691 positions
+read low on that library, 50 of them viewers who had reached the season's last episode (#825).
+
+**The harm is not a protection that fails to fire, it is one aimed at the wrong season.**
+`sequential_protections` reads "finished season m" as ready-for-m+1 and anything less as
+still-on-m, so an under-read position holds the season the viewer has just finished and
+releases the one they are about to start. The released season is by construction the one with
+old or no plays of its own, which is the one that scores high enough to be reaped. Re-run over
+the same dump the fix holds 4 more seasons and moves no verdict, because keep-last-2 and the
+dormancy floor happened to cover them there.
+
+**The same failure had already been fixed here once, for a different value.** 0c87f28 closed it
+for the unreported rows and its message names the fraction outright, so the values were known
+and the reasoning was traced rather than assumed. What it weighed was precision: reading a
+non-complete status as unknown "would blind the guard on every partially-watched episode." That
+is true, and blinding it means holding the anchor season AND the next one, which is more
+protection rather than less. An understated position is the only reading that holds the wrong
+season, so coarse beats wrong and the middle three moved across. A genuine `0` did not: Tautulli
+saying "they did not watch this" is an answer, and the test pinning it stays green.
+
+**Two readers, two readings, and the tree only had one test.** `rewatch.qualifies` already read
+this column at `>= 0.5`. Nothing in `tests/` wrote a partial value except one `qualifies` case,
+so every season-lane row the suite ever wrote was 1, 0 or NULL, and a column with five values
+was pinned at three.
+
+⇒ A quantized field is not a boolean with a null. Enumerate what the source actually emits
+before writing a `CASE` over it, and where a dump is available, count the values. A prior fix
+that names the other values is not the same as one that covers them.
 
 ## Prior art
 

@@ -239,17 +239,6 @@ async def override_for(session: AsyncSession, media_key: str) -> str | None:
     return entry.decision if entry is not None else None
 
 
-async def is_spared(session: AsyncSession, media_key: str) -> bool:
-    """Whether one media_key has been hand-spared -- a targeted check for a single item."""
-    return await override_for(session, media_key) == "spare"
-
-
-async def list_spared(session: AsyncSession) -> list[WhitelistEntry]:
-    """The overridden items, newest first, for the "Spared" view."""
-    rows = await session.execute(select(WhitelistEntry).order_by(WhitelistEntry.created_at.desc()))
-    return list(rows.scalars().all())
-
-
 async def set_override(
     session: AsyncSession,
     *,
@@ -296,30 +285,6 @@ async def set_override(
     return entry
 
 
-async def spare(
-    session: AsyncSession,
-    *,
-    media_key: str,
-    title: str,
-    note: str | None,
-    spare_days: int = 0,
-    now: datetime | None = None,
-) -> WhitelistEntry:
-    """Record a spare -- a ``"spare"`` override. Kept as the common-case shorthand.
-
-    ``spare_days`` is the keep length (``0`` = forever); see :func:`set_override`.
-    """
-    return await set_override(
-        session,
-        media_key=media_key,
-        title=title,
-        decision="spare",
-        note=note,
-        spare_days=spare_days,
-        now=now,
-    )
-
-
 async def remove_override(session: AsyncSession, *, media_key: str) -> bool:
     """Remove any override (spare or reap). Returns whether a row existed to remove.
 
@@ -332,8 +297,3 @@ async def remove_override(session: AsyncSession, *, media_key: str) -> bool:
     await session.delete(entry)
     await session.flush()
     return True
-
-
-async def unspare(session: AsyncSession, *, media_key: str) -> bool:
-    """Backwards-compatible alias for :func:`remove_override`."""
-    return await remove_override(session, media_key=media_key)

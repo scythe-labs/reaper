@@ -255,9 +255,12 @@ describe("the protections tables", () => {
   it.each(tables.map((t) => [t.docId, t.table] as const))(
     "%s lists every protection, and only real ones",
     (docId, table) => {
-      // A retired gate keeps its copy so a stored explanation still reads in plain language,
-      // but it is not a protection that ships, so a table listing one would be rule 25's
-      // failure in the other direction.
+      // A `retired` id keeps its copy so a stored explanation still reads in plain language,
+      // but no switch a policy can carry sits behind it, so a table of the protections an
+      // operator sets must not list one: that would be rule 25's failure in the other
+      // direction. It does NOT mean the id is inert -- `season_progression` and `custom` both
+      // fire on ordinary scans and are excluded here because there is no switch to document,
+      // not because nothing reaches them.
       const known = Object.values(GATE_META)
         .filter((m) => !m.retired)
         .map((m) => m.label);

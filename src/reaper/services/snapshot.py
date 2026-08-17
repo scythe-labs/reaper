@@ -45,9 +45,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from reaper.aio import gather_reaped, reap
 from reaper.clients.arr import RadarrClient
 from reaper.clients.base import IntegrationError
-from reaper.clients.plex import PlexClient
+from reaper.clients.plex import PlexClient, PlexCollectionRow, PlexError
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
+from reaper.db import KEY_CHUNK
 from reaper.db.models import (
     Candidate,
     FirstFlagged,
@@ -57,7 +58,14 @@ from reaper.db.models import (
 )
 from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import dormancy_days, history_reach_days, reference_instant
-from reaper.engine.gates import Evaluation, Facts, Gate, GateResult, evaluate_all
+from reaper.engine.gates import (
+    REWATCH_BLOCK_FLOOR_N,
+    Evaluation,
+    Facts,
+    Gate,
+    GateResult,
+    evaluate_all,
+)
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
 from reaper.engine.signals import (
@@ -68,11 +76,13 @@ from reaper.engine.signals import (
     SignalId,
     score,
 )
-from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
+from reaper.engine.verdict import decide_verdict
 from reaper.ratings import Rating, RatingSource, from_radarr, merge_by_source
 from reaper.services import (
     history_sync,
+    identity_churn,
     library_index,
+    library_seen,
     list_config,
     lists,
     requested_by,
@@ -91,8 +101,25 @@ from reaper.services.display_meta import (
     normalize_resolution,
 )
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
+from reaper.services.rewatch import (
+    NO_REWATCH_ESTIMATE_REASON,
+    RewatchBlock,
+    RewatchCurve,
+    RewatchStats,
+    cohort_block,
+    fit_blocks,
+    movie_rewatch_outcomes,
+    movie_rewatch_stats,
+    training_pair,
+)
+from reaper.text import fold
 
 log = structlog.get_logger(__name__)
+
+#: Default for a caller (mainly a test) that does not pass rewatch stats: every item reads
+#: as zero qualified viewings rather than an unreadable mirror. ``scan`` always passes the
+#: real map, gathered beside ``_watch_stats`` over the same candidate key set.
+_NO_REWATCH_STATS: Mapping[int, RewatchStats] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,12 +226,12 @@ class RawItem:
     tmdb_id: int | None
     plex_rating_key: int | None
     added_at: datetime | None
-    has_file: bool
-    # Display fields, carried onto the candidate so the review queue can show a poster and
-    # a blurb without a second data source. None of them influence the verdict.
+    # Display fields, carried onto the candidate so the review queue can show a blurb
+    # without a second data source. None of them influence the verdict. No poster: it is
+    # derived from the Plex rating key at read time (`api/review._candidate_out`), which is
+    # why the stored column carried a NULL for its whole life and retired in release M.
     year: int | None = None
     summary: str | None = None
-    poster_url: str | None = None
     requested_by: str | None = None
     # How this item was bound to its Plex row (and why, if it was not) -- for the why-panel.
     matched_by: identity.MatchedBy | None = None
@@ -271,6 +298,9 @@ def build_facts(
     whitelisted: set[str],
     request_index: requested_by.RequestIndex | None = None,
     watch_blind_reason: str | None = None,
+    rewatch: Mapping[int, RewatchStats] = _NO_REWATCH_STATS,
+    rewatch_curve: RewatchCurve | None = None,
+    seen: library_seen.Seen | None = None,
 ) -> Facts:
     """Assemble one item's evidence.
 
@@ -285,6 +315,10 @@ def build_facts(
     earlier plays stay filed under the old, so "no rows" is ambiguous between churn and a
     genuinely unwatched item. When it is set, dormancy and both watcher counts are Unknown
     rather than a measured zero.
+
+    ``rewatch_curve`` is ``scan``'s Stage 2 fit (#554), refit once per scan and shared by
+    every item; ``None`` for a caller that has not fit one (a test fixture, or before the
+    scan's own fit runs), which reads the same as "no usable block" below.
     """
     rating_key = item.plex_rating_key
     # The three no-key states are DIFFERENT stories and the why-panel must not conflate
@@ -312,8 +346,8 @@ def build_facts(
         # input that still looks readable when the plays behind it are not.
         dormancy = Unknown(reason=watch_blind_reason, source="tautulli")
     else:
-        # Through the one shared derivation (engine/dormancy.py), so the season scan, the
-        # backtest and the prior calibration all measure this the same way (rule 3) -- and
+        # Through the one shared derivation (engine/dormancy.py), so the season scan
+        # measures this the same way (rule 3) -- and
         # since #272 the *thaw* is shared too, so a missing arrival date resolves identically
         # on both lanes. A play alone is enough: `reference_instant` measures from it, and
         # only an item with neither a play nor an arrival date comes back with nothing to
@@ -361,6 +395,57 @@ def build_facts(
     else:
         recent = Known(value=watchers_window.get(rating_key, 0), source="tautulli")
         all_time = Known(value=watchers_all_time.get(rating_key, 0), source="tautulli")
+
+    # --- rewatch (#554 stage 1) ----------------------------------------------
+    # `rewatch` is already folded over any merged Plex listings: `scan` gathers it via
+    # `services.rewatch.movie_rewatch_stats` with the same `groups` mapping
+    # `_fold_merged_watch_stats` uses, so a lookup by the canonical `rating_key` alone is
+    # correct here, exactly as it is for `watchers_window`/`watchers_all_time` above.
+    viewings_obs: Observation[int]
+    last_play_days_obs: Observation[float]
+    if rating_key is None:
+        viewings_obs = Unknown(reason=no_key_reason, source="plex")
+        last_play_days_obs = Unknown(reason=no_key_reason, source="plex")
+    elif watch_blind_reason is not None:
+        viewings_obs = Unknown(reason=watch_blind_reason, source="tautulli")
+        last_play_days_obs = Unknown(reason=watch_blind_reason, source="tautulli")
+    else:
+        # The mirror was read either way, so viewings is Known even at 0. Recency is
+        # Absent (not Unknown) when this movie has no qualified play at all: we looked,
+        # and there is genuinely nothing to measure the last one from (rule 93).
+        rewatch_stats = rewatch.get(rating_key)
+        viewings_obs = Known(
+            value=rewatch_stats.viewings if rewatch_stats is not None else 0, source="tautulli"
+        )
+        last_play_days_obs = (
+            Known(value=dormancy_days(rewatch_stats.last_play, now=utcnow()), source="tautulli")
+            if rewatch_stats is not None and rewatch_stats.last_play is not None
+            else Absent(source="tautulli")
+        )
+
+    # --- rewatch cohort (#554 stage 2) ---------------------------------------
+    # Known only when the current dormancy is Known AND the fit found a non-withheld block
+    # for it; Unknown for every other reason at once (no fit, dormancy Unknown, past the
+    # fitted range, a dropped bucket, withheld by reach) -- one reason constant, since the
+    # operator's takeaway is the same either way (docs/history/REWATCH_PLAN.md, Stage 2).
+    #
+    # `cohort_block` is the one place the lookup and the withhold combine (rule 104):
+    # `scan`'s per-item judge call re-derives the identical block off this same dormancy
+    # value (read back from the Facts this call returns) and the same curve, so the stored
+    # explanation's rewatch_odds context can never disagree with these two fields.
+    cohort_n_obs: Observation[int]
+    cohort_k_obs: Observation[int]
+    block = (
+        cohort_block(rewatch_curve, dormancy.value, reach_days=context.reach_days)
+        if rewatch_curve is not None and isinstance(dormancy, Known)
+        else None
+    )
+    if block is not None:
+        cohort_n_obs = Known(value=block.n, source="tautulli")
+        cohort_k_obs = Known(value=block.k, source="tautulli")
+    else:
+        cohort_n_obs = Unknown(reason=NO_REWATCH_ESTIMATE_REASON, source="tautulli")
+        cohort_k_obs = Unknown(reason=NO_REWATCH_ESTIMATE_REASON, source="tautulli")
 
     # --- ratings ------------------------------------------------------------
     rating: Observation[int]
@@ -479,6 +564,8 @@ def build_facts(
                 source="tautulli",
             )
 
+    returned_days_ago, returned_by_reaper = library_seen.observations(seen, now=utcnow())
+
     return Facts(
         title=item.title,
         days_observed_unwatched=dormancy,
@@ -510,6 +597,10 @@ def build_facts(
         in_curated_list=curated,
         is_whitelisted=is_whitelisted,
         on_lists=on_lists,
+        rewatch_viewings=viewings_obs,
+        rewatch_last_play_days=last_play_days_obs,
+        rewatch_cohort_n=cohort_n_obs,
+        rewatch_cohort_k=cohort_k_obs,
         # Not applicable outside the requester rule: with no requester, "others" is
         # everyone, and the gate would protect anything ever played.
         # --- fields authorable in custom rules ---------------------------------
@@ -528,6 +619,11 @@ def build_facts(
             Known(value=item.quality, source="radarr") if item.quality else Absent(source="radarr")
         ),
         show_ended=Absent(source="radarr"),  # a movie is not a series
+        # Whether this title left the library and came back (#553). Read off the ledger row
+        # the scan looked up before judging, never re-derived here: the detection is visible
+        # for one scan and the hold runs for months. One helper for both lanes (rule 35).
+        returned_days_ago=returned_days_ago,
+        returned_by_reaper=returned_by_reaper,
         ratings=rating_set,
     )
 
@@ -565,6 +661,145 @@ def _size_bucket(source: str | None) -> str:
     be read by an operator pasting a log into an issue.
     """
     return str(source) if source else _UNMEASURED
+
+
+#: Bounds concurrent `collection_children` reads within one snapshot's collection pass --
+#: now only the collections the item tags could not account for, which is usually a handful.
+#: Kept bounded anyway: nothing caps how many collections a library keeps its membership
+#: elsewhere for. Separate from leaving_soon.SHELF_CONCURRENCY, which bounds a different
+#: fan-out (whole libraries, not collections within one).
+_COLLECTION_CHILDREN_CONCURRENCY = 8
+
+
+async def _collection_membership(
+    plex: PlexClient | None, *, allowed_sections: set[int] | None
+) -> tuple[dict[int, list[str]], dict[str, int]]:
+    """Every Plex item's collection names, and every collection's Plex-reported size.
+
+    Collections are navigation, never protection (the fence in docs/history/COLLECTIONS_PLAN.md):
+    a read failure here -- no Plex configured, a section listing that raises, one bad
+    collection -- returns whatever was gathered so far and never more, rather than raising
+    into the scan or degrading it. Rule 28 binds *evidence* sources, and a collection is not
+    evidence, so the compensating cost of a failed read is a missing chip, nothing else.
+
+    The collection NAME is the identity. Reaper's own Leaving Soon shelf creates a
+    same-named collection in every section, so an operator with two libraries hits that
+    case by default, and one "Leaving Soon" chip covering both is what they mean.
+    Same-named collections in different sections merge into one membership entry, and
+    their known sizes are summed rather than the later section overwriting the earlier
+    one's count (rule 6).
+
+    A collection whose child count Plex never reported is a different fact from one Plex
+    reported as empty, so it is left out of the returned size map rather than folded to
+    0 -- the sort below would otherwise read it as the smallest collection and hand it the
+    chip's element-0 slot ahead of a genuinely small one. Each item's list is sorted
+    smallest known collection first (Plex's own child count), a collection with no known
+    size sorting last, ties broken alphabetically -- the plan's tie-break, so the chip
+    renders the same collection scan to scan instead of flipping with dict-iteration
+    order.
+
+    **Membership comes from the items, not from the collections** (``plex.collection_tags``,
+    one read per ~400 items). Asking each collection for its children cost one read per
+    collection, which on a library holding hundreds of them was most of what a scan asked
+    Plex for, and it starved the GUID sweep running beside it.
+
+    A collection Plex reports more members for than the tags showed is read the old way,
+    per collection. That covers the two kinds whose membership is not a tag: a smart
+    collection is a saved filter, and a collection of seasons or episodes holds objects the
+    section-level listing never lists. Comparing against ``child_count`` finds both without
+    asking Plex which kind it is, where the ``smart`` flag cannot: it is absent from the
+    listing on a server that has none, so a pass keyed on it could not be shown to work.
+
+    A tag naming no collection in the section's own listing is dropped, since Plex leaves
+    one behind when a collection is deleted and a chip for a shelf nobody can open is worse
+    than no chip. Tags are matched to the listing casefolded and the LISTING's spelling is
+    stored (rule 88), so a chip's name is the name the size map is keyed by.
+
+    The fallback reads run concurrently, bounded by ``_COLLECTION_CHILDREN_CONCURRENCY``;
+    one collection's failure is caught inside its own task and logged rather than raised
+    into the fan-out, so it can never cancel a sibling read or degrade the snapshot. A
+    collection read both ways lands on one chip, since the per-item names are a set.
+    """
+    if plex is None:
+        return {}, {}
+    try:
+        sections = await plex.video_sections()
+    except PlexError as exc:
+        log.warning("snapshot.collections_unreadable", error=str(exc))
+        return {}, {}
+
+    # A SET per item: a collection the tags covered AND the fallback read returns arrives
+    # twice, and the sort below is a total order, so nothing depends on insertion order.
+    membership: dict[int, set[str]] = {}
+    sizes: dict[str, int] = {}
+    bound = asyncio.Semaphore(_COLLECTION_CHILDREN_CONCURRENCY)
+
+    async def _children(row: PlexCollectionRow) -> tuple[str, set[int] | None]:
+        try:
+            async with bound:
+                return row.title, await plex.collection_children(row.rating_key)
+        except PlexError as exc:
+            log.warning(
+                "snapshot.collection_children_unreadable",
+                collection=row.rating_key,
+                error=str(exc),
+            )
+            return row.title, None
+
+    for section in sections:
+        if allowed_sections is not None and section.key not in allowed_sections:
+            continue
+        try:
+            rows = await plex.list_collections(section.key)
+        except PlexError as exc:
+            log.warning("snapshot.collections_unreadable", section=section.key, error=str(exc))
+            continue
+
+        for row in rows:
+            if row.child_count is not None:
+                sizes[row.title] = sizes.get(row.title, 0) + row.child_count
+
+        try:
+            tags = await plex.collection_tags(section.key, kind=section.kind)
+        except PlexError as exc:
+            # The section's own listing already succeeded, so its sizes stand and every
+            # collection in it falls to the per-collection read below (rule 28 does not
+            # bind here: a collection is not evidence).
+            log.warning("snapshot.collection_tags_unreadable", section=section.key, error=str(exc))
+            tags = {}
+
+        by_fold = {fold(row.title): row.title for row in rows}
+        seen: Counter[str] = Counter()
+        for key, names in tags.items():
+            for name in names:
+                stored = by_fold.get(fold(name))
+                if stored is None:
+                    continue
+                seen[stored] += 1
+                membership.setdefault(key, set()).add(stored)
+
+        unexplained = [row for row in rows if row.child_count and seen[row.title] < row.child_count]
+        if unexplained:
+            log.info(
+                "snapshot.collection_children_fallback",
+                section=section.key,
+                collections=len(unexplained),
+                of=len(rows),
+            )
+        # Argument order, not completion order (reaper.aio.gather_reaped), so the merge
+        # below is deterministic run to run even though the reads race.
+        for title, children in await gather_reaped(*(_children(row) for row in unexplained)):
+            if children is None:
+                continue
+            for key in children:
+                membership.setdefault(key, set()).add(title)
+
+    def _size_key(name: str) -> tuple[int, int, str]:
+        size = sizes.get(name)
+        return (0, size, name) if size is not None else (1, 0, name)
+
+    sorted_membership = {key: sorted(names, key=_size_key) for key, names in membership.items()}
+    return sorted_membership, sizes
 
 
 async def scan(
@@ -643,6 +878,35 @@ async def scan(
             context.degrade(
                 "watch history has not updated recently, so nothing can be judged on how "
                 "long it has gone unwatched"
+            )
+        # The third state, and the one both tests above call healthy: populated, synced an
+        # hour ago, and holding a fraction of what the source has. It is reachable by the
+        # ordinary route rather than a broken one -- a restore leaves the mirror behind
+        # (`services/backup.py` excludes it deliberately), and every sync from then until the
+        # first full sweep is INCREMENTAL, so each one completes correctly against a paging
+        # total that is the size of its own increment and never notices the hole underneath.
+        # `synced_at` is stamped by `_check_regression` BEFORE the walk, so the clock above
+        # reads fresh throughout.
+        #
+        # Measured: a scan in that window moved 245 titles off the condemned list, 2.17 TB,
+        # on a mirror at 65% -- with an identical policy, scorer and evidence hash, and
+        # `degraded = 0`. Coverage collapsing is the engine working (an unsigned score can
+        # only fall as evidence goes missing); presenting the result as executable is not.
+        #
+        # It is not only the keep direction, which is why this degrades rather than warns.
+        # A short mirror caps dormancy, lowering pressure, AND reports fewer distinct
+        # watchers, raising it. `history_sync` already calls a truncated mirror the largest
+        # mass-deletion vector here (rule 56).
+        elif (shortfall := mirror.shortfall) is not None and (
+            shortfall > MIRROR_SHORTFALL_FLOOR
+            and shortfall > (mirror.source_total or 0) * MIRROR_SHORTFALL_FRACTION
+        ):
+            # `shortfall is None` means no sync ever recorded a source total: "we were not
+            # told", which is rule 93's Unknown and not a clean bill of health. It is left to
+            # the staleness guard above, which a mirror nobody has ever synced already fails.
+            context.degrade(
+                "watch history is still catching up, so nothing can be judged on how long "
+                "it has gone unwatched. Let it finish, then scan again"
             )
 
     # Failures the caller detected BEFORE the gather (an unreachable Plex, a protection list
@@ -739,11 +1003,19 @@ async def scan(
     # Read before the TV task is spawned, because that task holds no session of its own and
     # its season keys do not exist yet. Serves both lanes: one read per scan, not per item.
     watch_marks = await watch_evidence.recall_all(session)
+    # Read here for the same reason, and handed to the season task the same way (#553): the
+    # ledger is keyed on external ids that lane resolves inside `gather`, and the scan
+    # timings answer "did Reaper run while this was missing" for both lanes at once.
+    seen_marks = await library_seen.recall_all(session)
+    seen_scans = await library_seen.scan_instants(session)
     if sonarrs:
         season_task = _spawn(
             season_scan.gather(
                 engine,
                 watch_marks=watch_marks,
+                seen_marks=seen_marks,
+                seen_scans=seen_scans,
+                seen_absence_days=tv_policy.returned_absence_days(),
                 sonarrs=sonarrs,
                 tautulli=tautulli,
                 plex=plex,
@@ -751,20 +1023,16 @@ async def scan(
                 reach_days=context.reach_days,
                 active_rating_keys=context.active_rating_keys,
                 activity_degraded=context.activity_degraded,
-                keep_last_seasons=tv_policy.keep_last_seasons,
-                keep_first_season=tv_policy.keep_first_season,
+                # The scan and the simulator now reach the planner's nine season settings
+                # through one road, ``SeasonPolicy.from_body``. Unpacking the body into nine
+                # keywords here was the second road, and a field added to the season card
+                # had to be written onto both (rule 144).
+                season_policy=season_evidence.SeasonPolicy.from_body(tv_policy),
                 window_days=tv_policy.popularity_window_days(),
                 whitelisted=tag_only_whitelist,
                 degrade=context.degrade,
                 requested=requested,
                 request_index=request_index,
-                keep_last_scope=tv_policy.keep_last_scope,
-                season_lookahead=tv_policy.season_lookahead,
-                keep_in_progress=tv_policy.keep_in_progress,
-                in_progress_hold_days=tv_policy.in_progress_hold_days,
-                keep_specials=tv_policy.keep_specials,
-                protect_incomplete_seasons=tv_policy.protect_incomplete_seasons,
-                flag_keep_conflicts=tv_policy.flag_keep_conflicts,
                 membership_index=membership_index,
                 allowed_sections=allowed_sections,
             ),
@@ -809,6 +1077,12 @@ async def scan(
         ),
         name="plex_index",
     )
+    # A read-only extension of the same gather (#816 phase 2). Never raises -- see the
+    # function's own docstring -- so it needs no place in the except below: there is
+    # nothing for it to leave half-done that a reap would need to clean up.
+    collections_task = _spawn(
+        _collection_membership(plex, allowed_sections=allowed_sections), name="collections"
+    )
     movie_tasks = [_spawn(_movies_from(source), name="radarr") for source in radarrs]
     roots_tasks = [_spawn(_roots_from(source)) for source in radarrs]
 
@@ -818,6 +1092,7 @@ async def scan(
         # Awaited in the sequential code's order, so the first failure to surface is the
         # same one it would have raised then; the except below reaps every other task.
         plex_index = await index_task
+        collection_membership, collection_sizes = await collections_task
         for source, movie_task, roots_task in zip(radarrs, movie_tasks, roots_tasks, strict=True):
             movies = await movie_task
             roots = await roots_task
@@ -857,9 +1132,18 @@ async def scan(
             context.degrade(str(exc))
             imdb = {}
             context.imdb_degraded = True
+        movie_candidate_keys = {i.plex_rating_key for i in items if i.plex_rating_key}
+        # Every merged bind's listing keys, by its canonical key -- shared below by the
+        # popularity fold and the rewatch gather, so a file listed twice in Plex is
+        # clustered over the same union of listings for both (rule 72).
+        merged_groups = {
+            i.plex_rating_key: i.merged_rating_keys
+            for i in items
+            if i.plex_rating_key is not None and i.merged_rating_keys
+        }
         last_played, watchers_window, watchers_all_time = await _watch_stats(
             engine,
-            rating_keys={i.plex_rating_key for i in items if i.plex_rating_key},
+            rating_keys=movie_candidate_keys,
             window_days=movie_policy.popularity_window_days(),
         )
         # A merged bind is one file listed several times in Plex; its plays are split
@@ -868,16 +1152,43 @@ async def scan(
         # condemns.
         await _fold_merged_watch_stats(
             engine,
-            groups={
-                i.plex_rating_key: i.merged_rating_keys
-                for i in items
-                if i.plex_rating_key is not None and i.merged_rating_keys
-            },
+            groups=merged_groups,
             window_days=movie_policy.popularity_window_days(),
             last_played=last_played,
             watchers_window=watchers_window,
             watchers_all_time=watchers_all_time,
         )
+        # Qualified viewing stats for the habitual-rewatch keep (#554 stage 1), over the
+        # same candidate set and the same merged-listing fold as the popularity counts
+        # above.
+        rewatch_stats = await movie_rewatch_stats(
+            engine, movie_candidate_keys, groups=merged_groups
+        )
+        # The Stage 2 rewatch-probability fit (#554), refit every scan -- the movie lane's
+        # fit, over exactly the candidate set the scorer scores below (the same
+        # movie_candidate_keys and merged_groups the stats gather above uses, rule 72). The
+        # season task fits the TV curve the same way, in season_scan.gather, over its own
+        # candidate set. Cutoff is a year back from scan time (docs/history/REWATCH_PLAN.md,
+        # Stage 2 Fit); added dates for the fallback training-pair route come off the scan's
+        # own items, never a second read.
+        rewatch_cutoff = utcnow() - timedelta(days=365)
+        rewatch_outcomes = await movie_rewatch_outcomes(
+            engine, movie_candidate_keys, cutoff=rewatch_cutoff, groups=merged_groups
+        )
+        rewatch_pairs = [
+            pair
+            for item in items
+            if item.plex_rating_key is not None
+            and (
+                pair := training_pair(
+                    rewatch_outcomes.get(item.plex_rating_key),
+                    added_at=item.added_at,
+                    cutoff=rewatch_cutoff,
+                )
+            )
+            is not None
+        ]
+        rewatch_curve = fit_blocks(rewatch_pairs)
         if season_task is not None:
             emit(Progress("gathering", 4, 5, "TV seasons from Sonarr"))
             season_judgments = await season_task
@@ -915,6 +1226,11 @@ async def scan(
         # A space, not "; ": `degrade` terminates every reason, so these are whole sentences
         # now and a semicolon between them would read "...this scan.; radarr 'x' unreachable".
         degraded_reason=" ".join(context.degraded_reasons) or None,
+        # Every collection this scan saw, name to Plex's own member count (#816 phase 2).
+        # NULL when none were read, whether none exist or the read failed -- the two are
+        # indistinguishable on purpose (docs/history/COLLECTIONS_PLAN.md's fence): this is
+        # navigation, never protection, so it never degrades the snapshot either way.
+        collection_sizes_json=(json.dumps(collection_sizes) if collection_sizes else None),
     )
     session.add(snapshot)
     await session.flush()
@@ -955,9 +1271,9 @@ async def scan(
     expired_spares = await whitelist.purge_expired_spares(session, now)
     if expired_spares:
         log.info("scan.spares_expired", snapshot=snapshot.id, count=len(expired_spares))
-    condemned = 0
     total = len(items) + len(season_judgments)
 
+    # Both lanes append here, and every count of the condemned set is this list's length.
     condemned_keys: list[str] = []
     # Which rung of the size ladder actually fired, counted across the whole scan. This
     # answers a question nothing in Reaper has ever measured: how often is a size simply
@@ -976,6 +1292,13 @@ async def scan(
     score_started = time.monotonic()
     watch_readings: dict[str, watch_evidence.Reading] = {}
     watch_blind = 0
+    # This scan's ledger work (#553), accumulated in memory and flushed once after both lanes,
+    # exactly as `watch_readings` is. `seen_returns` maps an id key to whether Reaper's own
+    # journal claims the removal, which is filled in after the loop by one query rather than
+    # per item.
+    seen_keys: dict[str, set[int]] = {}
+    seen_returned: set[str] = set()
+    movie_absence_days = movie_policy.returned_absence_days()
     for index, item in enumerate(items):
         if index % 100 == 0:
             emit(Progress("scoring", index, total, item.title))
@@ -1000,6 +1323,42 @@ async def scan(
                     media_type=item.media_type,
                 )
 
+        # The ledger read, and the detection off it (#553). Both need only values already in
+        # hand, so this stays inside the pure loop and the write is deferred with the rest.
+        # A key is built for every item that HAS one, but a sighting is recorded only on a
+        # confident bind: no bind, no write, so a Plex outage records nothing rather than
+        # recording an absence (`services.library_seen`).
+        item_id_key = library_seen.id_key(
+            media_type="movie",
+            tmdb=item.tmdb_id,
+            # Both spellings, the movie path exactly as the TV path (rule 29/106).
+            imdb=item.imdb_id or item.plex_imdb_id,
+        )
+        seen = seen_marks.get(item_id_key) if item_id_key is not None else None
+        if (
+            item_id_key is not None
+            and item.plex_rating_key is not None
+            and item.match_status is identity.MatchStatus.MATCHED
+        ):
+            sighting = library_seen.Sighting(
+                id_key=item_id_key,
+                rating_key=item.plex_rating_key,
+                added_at=item.added_at,
+            )
+            library_seen.note_sighting(seen_keys, sighting)
+            if seen is not None and library_seen.is_return(
+                seen,
+                sighting,
+                # The whole Plex index: an earlier key for this id could have been any
+                # listing, and the index is the only complete answer to "does it still
+                # exist". A dict lookup per recorded key, and a title has one or two.
+                live_keys=plex_index.by_rating_key,
+                scan_instants=seen_scans,
+                cooling_off_days=movie_absence_days,
+                now=now,
+            ):
+                seen_returned.add(item_id_key)
+
         facts = build_facts(
             item,
             context,
@@ -1011,6 +1370,21 @@ async def scan(
             whitelisted=tag_only_whitelist,
             request_index=request_index,
             watch_blind_reason=blind_reason,
+            rewatch=rewatch_stats,
+            rewatch_curve=rewatch_curve,
+            seen=seen,
+        )
+        # The same cohort_block decision build_facts made internally, re-derived off the
+        # dormancy value it froze onto `facts` (rule 104: one derivation, two call sites,
+        # so the two can never disagree) -- carried to `_judge_item` separately because
+        # `Facts` does not hold a block's dormancy bounds. `_rewatch_odds_context` reads
+        # this for the stored explanation's rewatch_odds block (#554 stage 2).
+        rewatch_block = (
+            cohort_block(
+                rewatch_curve, facts.days_observed_unwatched.value, reach_days=context.reach_days
+            )
+            if isinstance(facts.days_observed_unwatched, Known)
+            else None
         )
         movie_size_source = SizeSource.RADARR if item.size_bytes is not None else None
         size_sources[_size_bucket(movie_size_source)] += 1
@@ -1053,11 +1427,9 @@ async def scan(
             policy=movie_policy,
             now=now,
             window_days=movie_window,
-            grace_days=grace_days,
             display=Display(
                 year=item.year,
                 summary=item.summary,
-                poster_url=item.poster_url,
                 requested_by=item.requested_by,
                 tmdb_id=item.tmdb_id,
                 # Radarr's id first, the Plex-matched one as fallback -- the same
@@ -1090,9 +1462,16 @@ async def scan(
             # reading and it was honest. None is reserved for a row scanned before the key
             # existed, and for an item that had no reading to judge at all.
             watch_blind=blind_reason is not None if reading is not None else None,
+            rewatch_block=rewatch_block,
+            # A movie's own rating key is what a movie-library collection lists (#816
+            # phase 2). None when unmatched -- an unresolved item was never looked up.
+            collections=(
+                collection_membership.get(item.plex_rating_key)
+                if item.plex_rating_key is not None
+                else None
+            ),
         )
         if verdict == "condemn":
-            condemned += 1
             condemned_keys.append(item.media_key)
 
     # What each show's season plan was decided from, frozen once per show. Every season of a
@@ -1129,6 +1508,14 @@ async def scan(
         if judgment.watch_blind_reason is not None:
             # Counted from the decision the TV lane already made, never re-derived here.
             watch_blind += 1
+        if judgment.seen_sighting is not None:
+            # Same shape, same reason (#553): the TV lane decided this against the same marks
+            # and already put the result on its facts, and the sighting rides out here only so
+            # both lanes are written in one statement below. The population cap therefore reads
+            # a whole scan rather than one lane.
+            library_seen.note_sighting(seen_keys, judgment.seen_sighting)
+            if judgment.seen_returned:
+                seen_returned.add(judgment.seen_sighting.id_key)
         size_sources[_size_bucket(judgment.size_source)] += 1
         if judgment.size_source is None:
             log.info(
@@ -1156,11 +1543,9 @@ async def scan(
             policy=tv_policy,
             now=now,
             window_days=tv_window,
-            grace_days=grace_days,
             display=Display(
                 year=judgment.year,
                 summary=judgment.summary,
-                poster_url=judgment.poster_url,
                 requested_by=judgment.requested_by,
                 group_key=judgment.group_key,
                 group_title=judgment.group_title,
@@ -1189,10 +1574,42 @@ async def scan(
                 if judgment.watch_reading is not None
                 else None
             ),
+            # The show's Stage 2 rewatch cohort block (#554 TV), the same one that fed
+            # `judgment.facts.rewatch_cohort_n`/`rewatch_cohort_k` -- the movie call above
+            # passes its own the same way, for the same reason (`_rewatch_odds_context`).
+            rewatch_block=judgment.rewatch_block,
+            # A TV collection lists SHOWS, not seasons (#816 phase 2) -- the same key the
+            # poster uses, never `plex_rating_key`, which is the season's own.
+            collections=(
+                collection_membership.get(judgment.poster_rating_key)
+                if judgment.poster_rating_key is not None
+                else None
+            ),
         )
         if verdict == "condemn":
-            condemned += 1
             condemned_keys.append(judgment.media_key)
+
+    # A library-wide identity event, which is the Plex-side twin of the Tautulli regression
+    # check (#809). Both lanes have bound by here, so this is the first point the share can be
+    # measured, and it reads evidence already in hand rather than asking anything.
+    #
+    # Above the grace clocks deliberately: rule 116 gates them on `context.degraded`, so a
+    # degradation found after them would leave a countdown running on a scan that just declared
+    # itself untrustworthy.
+    if (identity_moved := identity_churn.wholesale_change(seen_marks, seen_keys)) is not None:
+        context.degrade(identity_moved)
+        # The row took these two off the same context before either lane ran (search
+        # `degraded=context.degraded`), and this is the one degradation that cannot be known by
+        # then. Restated rather than shared because that one is an argument inside the
+        # constructor call; the join is a space for the reason written there.
+        snapshot.degraded = context.degraded
+        snapshot.degraded_reason = " ".join(context.degraded_reasons) or None
+        # The page the notice offers. Set here rather than returned with the sentence because
+        # it belongs to this cause alone: a scan that degraded for an unreachable Radarr as
+        # well still points at the rebuild guide, which is the one thing the operator can act
+        # on, and a later cause with a page of its own would be overwriting a link nobody can
+        # follow twice.
+        snapshot.degraded_doc = identity_churn.HELP_DOC
 
     # Grace clocks for everything condemned this run, in one batched pass -- the
     # _apply_first_flag decision per key, without a database round trip per item.
@@ -1238,6 +1655,34 @@ async def scan(
     # careful. `TestTheWatchBlindnessGuardThroughAWholeScan
     # .test_a_degraded_scan_still_records_what_it_measured` goes red if the gate is added.
     await watch_evidence.record(session, watch_readings, now=now)
+    # The came-back ledger, both lanes in one write (#553). Not gated on `context.degraded`,
+    # for `watch_evidence.record`'s reason two paragraphs up: this is evidence a LATER scan
+    # reads to withhold deletion pressure, and skipping it costs a protection. Degradation
+    # cannot manufacture a sighting either -- one is written only where an item bound to Plex,
+    # so an unreadable source leaves the row untouched rather than recording an absence.
+    #
+    # **The cap is applied here rather than per item**, which is why the detection is
+    # accumulated instead of acted on. A Plex library rebuilt slowly enough to outlast the
+    # minimum absence satisfies every condition for every title at once, and only a whole
+    # scan's count can see that. Refusing the batch costs the memory of any real return inside
+    # it; granting it holds the library. #809 is the general scan-level guard and this stays
+    # after it lands, because it is about what THIS feature will believe.
+    if seen_returned and not library_seen.within_cap(len(seen_returned), len(seen_keys)):
+        log.warning(
+            "scan.returns_refused_population",
+            returned=len(seen_returned),
+            bound=len(seen_keys),
+        )
+        seen_returned = set()
+    seen_by_reaper = await library_seen.removed_by_reaper(session, seen_returned)
+    if seen_returned:
+        log.info("scan.returns_detected", returned=len(seen_returned), ours=len(seen_by_reaper))
+    await library_seen.record(
+        session,
+        seen_keys,
+        returns={key: key in seen_by_reaper for key in seen_returned},
+        now=now,
+    )
     # Stored so Settings can say how many items the last scan held back for this reason,
     # which is the one number that tells an operator whether they need the reset at all.
     # Always written, zero included: a scan that counted none is a different fact from a
@@ -1251,7 +1696,7 @@ async def scan(
         )
 
     score_ms = round((time.monotonic() - score_started) * 1000)
-    emit(Progress("done", total, total, f"{condemned} candidates"))
+    emit(Progress("done", total, total, f"{len(condemned_keys)} candidates"))
 
     log.info(
         "scan.size_source_tally",
@@ -1264,7 +1709,7 @@ async def scan(
         snapshot=snapshot.id,
         items=len(items),
         seasons=len(season_judgments),
-        condemned=condemned,
+        condemned=len(condemned_keys),
         degraded=context.degraded,
     )
     # The intra-gather split scan_runner's scan.completed points at: which source owns the
@@ -1285,12 +1730,20 @@ async def scan(
 
 @dataclass(frozen=True, slots=True)
 class Display:
-    """The presentation fields carried onto a candidate. None of them decide anything --
-    they are what the review queue draws around the verdict."""
+    """The presentation fields carried onto a candidate. None of them feed the verdict.
+
+    Four are load-bearing off that path. ``tmdb_id``, ``imdb_id`` and ``tvdb_id`` go onto the
+    stored row and are what ``services/fairness.py`` joins a request to its candidate on
+    (rules 29/106); ``title_slug`` builds the Sonarr link (``services/deep_links.py``).
+
+    Every field defaults to ``None``, and ``scan`` packs one of these per lane by hand, so a
+    field set in the movie pack and forgotten in the season pack drops that join for TV with
+    nothing raising. ``test_every_display_field_the_source_carries_reaches_its_lanes_pack``
+    is what refuses it, and its ``_DISPLAY_LANE_EXCEPTIONS`` holds the four fields one lane
+    genuinely cannot answer."""
 
     year: int | None = None
     summary: str | None = None
-    poster_url: str | None = None
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
@@ -1314,18 +1767,13 @@ class Display:
     show_status: str | None = None
 
 
-#: How many rating keys go into one expanding ``IN`` against the watch mirror. Well under
-#: SQLite's bound-variable ceiling, and the same 500 the sibling batched reads use
-#: (``record_first_flagged_bulk``, ``season_watch_stats``).
-_WATCH_KEY_CHUNK = 500
-
 #: The "no display fields" default, as a singleton so it is not constructed per call.
 _NO_DISPLAY = Display()
 
 #: What a hand spare reads as in the why-panel's "Protections that fired" list. A lowercase
 #: fragment with no trailing period, matching every gate protection ("someone is watching it
 #: right now", "on your keep list, never reaped"). A hand spare wears the whitelist gate id,
-#: so the review chip (``api.routes._kept_phrase``) tells it apart from a real keep-list
+#: so the review chip (``api.review._kept_phrase``) tells it apart from a real keep-list
 #: entry by this exact string. Every producer and that one reader import this constant;
 #: never re-type the literal.
 HAND_SPARE_DETAIL = "you spared this by hand"
@@ -1370,6 +1818,7 @@ def judge_facts(
     merged_rating_keys: tuple[int, ...] = (),
     match_candidates: tuple[int, ...] = (),
     watch_blind: bool | None = None,
+    rewatch_block: RewatchBlock | None = None,
 ) -> PolicyJudgment:
     """Evaluate, score, round, decide, explain -- the whole judgment, storing nothing.
 
@@ -1383,6 +1832,13 @@ def judge_facts(
     ``extra_results`` (the season-pruning guard's outcome) is merged AHEAD of the ordinary
     gates: a guard PROTECT wins like any protection, and a guard *blocked* ABSTAIN (a
     keep-rule conflict) forces the item to abstain for a human to look at.
+
+    ``rewatch_block`` (#554 stage 2) is the caller's already-derived rewatch cohort block
+    for this item -- the same one that fed ``facts.rewatch_cohort_n``/``rewatch_cohort_k``
+    -- carried separately because ``Facts`` does not hold the block's dormancy bounds.
+    Both live lanes freeze a real block off their own fit; ``None`` means this item's cohort
+    could not be measured, or the caller is hand-built ``Facts`` with no fit to derive one
+    from at all (e.g. a policy-lab or test fixture).
     """
     evaluation = Evaluation(results=[*extra_results, *evaluate_all(gates, facts).results])
     item_score = score(
@@ -1401,7 +1857,7 @@ def judge_facts(
         item_score=item_score,
         score=score_value,
         coverage_bp=coverage_bp,
-        verdict=_verdict(evaluation, score_value, coverage_bp, policy, override=None),
+        verdict=_verdict(evaluation, score_value, coverage_bp, policy),
         # One explanation, two uses: the frozen record stored on the row, and the same string
         # the effective-reap fate is read back from -- so the scan and every read-time
         # consumer replay the identical evidence.
@@ -1416,6 +1872,7 @@ def judge_facts(
             merged_rating_keys=merged_rating_keys,
             match_candidates=match_candidates,
             watch_blind=watch_blind,
+            rewatch_odds=_rewatch_odds_context(facts, rewatch_block),
         ),
     )
 
@@ -1463,7 +1920,6 @@ def _judge_item(
     policy: PolicyBody,
     now: datetime,
     window_days: int = 365,
-    grace_days: int = 14,
     display: Display = _NO_DISPLAY,
     matched_by: identity.MatchedBy | None = None,
     match_detail: str | None = None,
@@ -1473,6 +1929,8 @@ def _judge_item(
     extra_results: Sequence[GateResult] = (),
     override: str | None = None,
     watch_blind: bool | None = None,
+    rewatch_block: RewatchBlock | None = None,
+    collections: list[str] | None = None,
 ) -> str:
     """Evaluate one item's gates and signals, store its candidate, return its EFFECTIVE fate.
 
@@ -1517,6 +1975,7 @@ def _judge_item(
         merged_rating_keys=merged_rating_keys,
         match_candidates=match_candidates,
         watch_blind=watch_blind,
+        rewatch_block=rewatch_block,
     )
 
     session.add(
@@ -1531,7 +1990,6 @@ def _judge_item(
             size_source=size_source,
             year=display.year,
             summary=display.summary,
-            poster_url=display.poster_url,
             requested_by=display.requested_by,
             # Suggestion fields for the rule editors' datalists, from evidence already in
             # hand. Facts carries genres comma-joined (genre names never contain ", ").
@@ -1540,6 +1998,10 @@ def _judge_item(
                 if isinstance(facts.genres, Known)
                 else None
             ),
+            # This item's Plex collections (#816 phase 2), already sorted smallest-first by
+            # the caller (_collection_membership). Navigation only, never a verdict input --
+            # nothing above this line reads `collections`.
+            collections_json=(json.dumps(collections) if collections else None),
             quality=(facts.quality.value if isinstance(facts.quality, Known) else None),
             group_key=display.group_key,
             group_title=display.group_title,
@@ -1578,8 +2040,6 @@ def _verdict(
     score_value: int,
     coverage_bp: int,
     policy: PolicyBody,
-    *,
-    override: str | None = None,
 ) -> str:
     """The scan's adapter onto the ONE decision function, ``engine.verdict``.
 
@@ -1589,30 +2049,49 @@ def _verdict(
     answer the same question must answer it the same way, and the cheapest way to
     guarantee that is to give them the same function and the same inputs.
 
-    A manual ``"reap"`` override forces CONDEMN -- the owner looked and decided -- but never
-    past a hard safety gate (streaming now; also ``unmanaged``, whose gate is retired, so only
-    a stored explanation can still carry one). A protection that could not be *checked* no
-    longer holds it either: a block means Reaper could not answer a question, and the owner
-    reading the panel that names which check came back empty is better placed to answer it
-    than the scan was. The block still does its real job one line down, forcing ABSTAIN so
-    nothing automatic touches the item. A ``"spare"`` override arrives as an extra PROTECT
-    result and so is already handled by ``evaluation.protected``.
+    **No hand override reaches here**, so this passes none of ``decide_verdict``'s reap
+    arguments. A ``"spare"`` arrives as an extra PROTECT result and is already counted by
+    ``evaluation.protected``; a ``"reap"`` is applied after the freeze, by ``effective_fate``
+    off the stored explanation, and re-decided later by
+    ``condemned.reap_override_verdict_decoded`` -- which is the one function that answers what
+    a hand reap may overrule.
     """
     return decide_verdict(
         protected=evaluation.protected,
         blocked=evaluation.blocked,
-        # No gate block holds a hand reap, so there is nothing to compute from the results
-        # here -- the structural stops ride on ``safety_protected`` below, and the scan has
-        # no bad-match or unreadable-explanation case (those exist only on the stored-row
-        # path, ``condemned.reap_override_verdict_decoded``).
-        blocked_holds_reap=False,
-        safety_protected=any(r.fired and r.gate in STRUCTURAL_GATES for r in evaluation.results),
         score=score_value,
         coverage_bp=coverage_bp,
         condemn_at=policy.condemn_at,
         coverage_floor_bp=policy.coverage_floor_bp,
-        override=override,
     )
+
+
+def _rewatch_odds_context(facts: Facts, block: RewatchBlock | None) -> dict[str, Any] | None:
+    """The stored ``rewatch_odds`` context (#554 stage 2), from the same in-memory values
+    the item's ``Facts`` got.
+
+    ``None`` when ``facts.rewatch_cohort_n`` is ``Absent`` -- hand-built ``Facts`` with no
+    fit behind them at all (a policy-lab or test fixture), never a row either live lane
+    froze: both the movie item and the show behind a season row always have an opinion
+    about their own cohort, even when that opinion is Unknown (``services.snapshot
+    .build_facts``, ``services.season_scan.build_season_facts``). Otherwise: the Unknown
+    arms' zeroed placeholder with ``state="no_history"`` when there is no usable block, and
+    the block's own pooled counts and range otherwise -- ``"thin"`` below
+    ``gates.REWATCH_BLOCK_FLOOR_N``, ``"measured"`` at or above it. ``engine.explanation
+    .RewatchOddsOut`` declares this same shape; both are held together by
+    ``test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared``.
+    """
+    if isinstance(facts.rewatch_cohort_n, Absent):
+        return None
+    if block is None:
+        return {"n": 0, "k": 0, "lo_days": 0.0, "hi_days": None, "state": "no_history"}
+    return {
+        "n": block.n,
+        "k": block.k,
+        "lo_days": block.lo_days,
+        "hi_days": block.hi_days,
+        "state": "measured" if block.n >= REWATCH_BLOCK_FLOOR_N else "thin",
+    }
 
 
 def _explain(
@@ -1627,6 +2106,7 @@ def _explain(
     merged_rating_keys: tuple[int, ...] = (),
     match_candidates: tuple[int, ...] = (),
     watch_blind: bool | None = None,
+    rewatch_odds: dict[str, Any] | None = None,
 ) -> str:
     """The why-panel.
 
@@ -1642,7 +2122,20 @@ def _explain(
 
     Plus a ``match`` block that says how (or whether) the item was bound to its Plex row --
     "bound by TMDB id 12345", or "kept: two Plex items share this id" -- so a file that was
-    spared for a *matching* reason is not mistaken for one nobody looked at.
+    spared for a *matching* reason is not mistaken for one nobody looked at. And a
+    ``rewatch_odds`` block (#554 stage 2), display only, written for both live lanes: see
+    ``_rewatch_odds_context``.
+
+    **Hand-typed on purpose, and held to the read side by a test rather than built from it.**
+    ``engine.explanation`` declares what this document is, and
+    ``test_engine_derivations.TestTheStoredExplanationIsWrittenAsItIsDeclared`` fails when a key
+    here is not declared there, or the other way round.
+
+    Building this from that declaration was measured and refused (the simplification plan's
+    W5-1). It is the WIRE model too (``api.schemas.CandidateDetail.explanation``), so an alias
+    or ``exclude_none`` change made for the API would reach disk. And its validators are
+    deliberately lenient about an illegible stored byte, which on this side normalizes a
+    writer's own value to ``None`` where no reader can recover it.
     """
     return json.dumps(
         {
@@ -1654,6 +2147,14 @@ def _explain(
             "base_score": round(item_score.base_value, 1),
             "keep_discount": round(item_score.keep_discount, 1),
             "threshold": policy.condemn_at,
+            # The coverage line the verdict was decided against, frozen beside the threshold
+            # because it is the same class of number: a policy value the score is compared to,
+            # which the panel restates so an abstain forced by too little readable evidence can
+            # name the line it fell under. Read here, never off the live policy, which by the
+            # time anyone opens the panel need not be the one this item was scored under (rule
+            # 113). Additive and nullable: a row frozen before this shipped thaws to None and
+            # the panel drops the floor clause, exactly as threshold does.
+            "coverage_floor_bp": policy.coverage_floor_bp,
             "coverage": round(item_score.coverage, 3),
             # Whether THIS item was held because plays recorded earlier stopped being
             # readable. Typed, because the panel offers the per-title escape (#275) on it and
@@ -1683,6 +2184,15 @@ def _explain(
                 # is, is why there is no rating_key.
                 "candidate_rating_keys": (list(match_candidates) if match_candidates else None),
             },
+            # The Stage 2 rewatch-probability context (#554), written for both live lanes --
+            # see _rewatch_odds_context. None for an item whose own cohort could not be
+            # measured, for hand-built Facts with no fit behind them at all, and for a row
+            # frozen before this field existed, all read by the panel as nothing to show.
+            # Written unconditionally, like every other optional key here: the top-level
+            # document always carries the keys engine.explanation.Explanation declares,
+            # whatever their value (test_engine_derivations
+            # .TestTheStoredExplanationIsWrittenAsItIsDeclared).
+            "rewatch_odds": rewatch_odds,
             "signals": [
                 {
                     # Built-in signals carry a SignalId; a custom rule carries its own name.
@@ -1729,7 +2239,7 @@ def _explain(
             ],
             # ``defers_to_owner`` is written on every entry, never omitted when False, so
             # a row frozen by THIS version is distinguishable from one frozen before the
-            # flag existed (rule 104's explicit thaw). The card's chip (``api.routes._chip``)
+            # flag existed (rule 104's explicit thaw). The card's chip (``api.review._chip``)
             # and the why panel's verdict note both read that difference, the panel through
             # ``api.schemas.GateOutcomeOut``: present-and-True names the comparison Reaper
             # made, present-and-False says it could not make one, and absent names neither,
@@ -1845,8 +2355,8 @@ async def record_first_flagged_bulk(
     if not keys:
         return
     existing: dict[str, FirstFlagged] = {}
-    for start in range(0, len(keys), 500):
-        chunk = keys[start : start + 500]
+    for start in range(0, len(keys), KEY_CHUNK):
+        chunk = keys[start : start + KEY_CHUNK]
         rows = (
             await session.execute(select(FirstFlagged).where(FirstFlagged.media_key.in_(chunk)))
         ).scalars()
@@ -1864,17 +2374,6 @@ async def record_first_flagged_bulk(
 # ---------------------------------------------------------------------------
 # Gathering helpers
 # ---------------------------------------------------------------------------
-
-
-def _as_year(value: Any) -> int | None:
-    """A Plex row's release year, or ``None`` -- used only to disambiguate duplicate titles.
-
-    Mirrors ``season_scan._as_year`` so the movie join reads years exactly as the show join
-    does (Tautulli returns them as ints or numeric strings).
-    """
-    if isinstance(value, int | str) and str(value).isdigit():
-        return int(value)
-    return None
 
 
 async def build_movie_index(
@@ -2010,13 +2509,18 @@ def _log_movie_decision(instance_id: int, movie: Mapping[str, Any], *, outcome: 
     queue" without re-running the scan. Plex match status is logged separately
     (``scan.plex_matched`` / ``scan.plex_unmatched``); an unmatched movie still becomes a
     candidate and is never dropped here.
+
+    The ids are the CLEANED ones (``identity.ExternalIds.of``), not Radarr's raw strings, so
+    the line says what Reaper matched with. A source emitting the ``tt0000000`` sentinel logs
+    it as no id, which is what it was treated as.
     """
+    ids = identity.ExternalIds.of(imdb=movie.get("imdbId"), tmdb=movie.get("tmdbId"))
     log.debug(
         "scan.movie_decision",
         instance_id=instance_id,
         title=str(movie.get("title") or "?"),
-        tmdb_id=movie.get("tmdbId") or None,
-        imdb_id=movie.get("imdbId") or None,
+        tmdb_id=ids.tmdb,
+        imdb_id=ids.imdb,
         year=int(movie["year"]) if movie.get("year") else None,
         outcome=outcome,
         has_file=bool(movie.get("hasFile")),
@@ -2046,8 +2550,14 @@ def _raw_items(
             _log_movie_decision(instance_id, movie, outcome="no_file")
             continue
         _log_movie_decision(instance_id, movie, outcome="candidate")
-        tmdb_id = int(movie["tmdbId"]) if movie.get("tmdbId") else None
+        # THE door in for this movie's ids (identity.ExternalIds.of): the sentinel filter runs
+        # once here, and everything below reads `ids` rather than the raw payload. A raw
+        # `imdbId` of "tt0000000" is truthy, so carrying it onto the RawItem would shadow the
+        # id Plex matched at every `item.imdb_id or item.plex_imdb_id` downstream -- including
+        # the keep-list lookup in `build_facts`, which would then run under an id no list row
+        # carries and condemn a keep-listed film (#709).
         ids = identity.ExternalIds.of(imdb=movie.get("imdbId"), tmdb=movie.get("tmdbId"))
+        tmdb_id = ids.tmdb
         # The Plex library the operator mapped this movie's root folder to, if any. Tried ahead
         # of the folder and size corroborators, but a positive size contradiction still vetoes.
         plex_library = identity.library_for_path(_movie_file_path(movie), library_map)
@@ -2072,7 +2582,7 @@ def _raw_items(
             index=plex_index,
         )
         if plex_library is not None:
-            if plex_library.strip().casefold() in identity.libraries_for_ids(
+            if fold(plex_library) in identity.libraries_for_ids(
                 ids, plex_index, identity.MOVIE_ID_PRIORITY
             ):
                 mapped_lib_hits.add(plex_library)
@@ -2101,7 +2611,7 @@ def _raw_items(
                 instance_id=instance_id,
                 title=str(movie.get("title") or ""),
                 year=int(movie["year"]) if movie.get("year") else None,
-                imdb_id=movie.get("imdbId") or None,
+                imdb_id=ids.imdb,
                 tmdb_id=tmdb_id,
                 match_status=str(resolution.status),
                 detail=resolution.detail,
@@ -2134,21 +2644,18 @@ def _raw_items(
                 media_key=f"radarr:{instance_id}:{movie['id']}",
                 title=str(movie.get("title") or ""),
                 media_type="movie",
-                # `or 0` here would turn a partial payload into a 0-byte file. Radarr
-                # says it holds a file (has_file below), so a missing size means we
-                # could not read it, not that there is nothing to read.
+                # `or 0` here would turn a partial payload into a 0-byte file. Every movie
+                # reaching this loop cleared the `hasFile` filter above, so a missing size
+                # means we could not read it, not that there is nothing to read.
                 size_bytes=_reported_size(movie),
-                imdb_id=movie.get("imdbId") or None,
+                imdb_id=ids.imdb,
                 tmdb_id=tmdb_id,
                 # added_at comes from the matched Plex item (Tautulli spine), preserving the
                 # dormancy floor exactly as before.
                 plex_rating_key=resolution.rating_key,
                 added_at=matched.added_at if matched is not None else None,
-                has_file=True,
                 year=int(movie["year"]) if movie.get("year") else None,
                 summary=_summary(movie.get("overview")),
-                # poster_url is derived from the Plex rating key at read time (api/poster.py),
-                # not stored -- the *arr's art is stale. See routes._candidate_out.
                 # Three tiers, best-first (requested_by.build_map): the exact media_key where the
                 # operator mapped the Seerr service, then this copy's Plex rating key (zero-config,
                 # copy-true when a portal scans only its own library), then the loose tmdb union.
@@ -2309,8 +2816,8 @@ async def _fold_merged_watch_stats(
         # variables in one statement; a library with enough merged listings to pass that
         # cap raised OperationalError, which is not an IntegrationError and so was caught
         # nowhere: the whole scan died rather than one fold being skipped.
-        for start in range(0, len(all_keys), _WATCH_KEY_CHUNK):
-            chunk = all_keys[start : start + _WATCH_KEY_CHUNK]
+        for start in range(0, len(all_keys), KEY_CHUNK):
+            chunk = all_keys[start : start + KEY_CHUNK]
             rows = (
                 await conn.execute(
                     text(
@@ -2425,7 +2932,7 @@ async def sync_protection_lists(
     # Every provider reads a different service, and each one already fails soft on its
     # own, so they refresh concurrently -- the whole pass takes as long as the slowest
     # provider instead of the sum. The database writes inside lists.sync stay atomic per
-    # list; SQLite allows one writer at a time, and the busy_timeout pragma (see
+    # list; SQLite allows one writer at a time, and the 5s busy_timeout pragma (see
     # db/session.py) queues the brief overlapping writes -- each provider's write is a
     # few hundred rows, far inside that budget.
     runs: list[Coroutine[Any, Any, None]] = []
@@ -2595,6 +3102,29 @@ async def sync_protection_lists(
 #: quantity: that one bounds a *failed* sync coasting on stored keep-list membership,
 #: this one bounds a sync that stopped running at all.
 MIRROR_STALE_AFTER = timedelta(hours=48)
+
+
+#: How far short of the source's own count the mirror may sit before the snapshot degrades,
+#: as a fraction of that count. Empty is caught by the horizon test and stale by the clock
+#: above; this is the third state, and the only one of the three that looks healthy from
+#: every angle: populated, freshly synced, and missing a third of the evidence.
+#:
+#: **Both ends of this are measured, on a 425,604-row history.** An incremental sync fetches
+#: only what is new, so its own paging total is the size of the increment (`of=266`) and it
+#: completes correctly while the mirror sits at 274,992 of 425,596. Nothing in that walk is
+#: wrong, and nothing in it can notice. The gap was 35%.
+#:
+#: The *legitimate* gap is far smaller and has a known cause: a play still in progress is
+#: counted by the source and deliberately skipped by the ingest (`history.rows_skipped`),
+#: so the mirror can never equal the total and an equality here would degrade every scan
+#: forever. On the full sweep that gap was 8 rows, 0.002%. A percent leaves that three
+#: orders of magnitude of headroom and still catches a defect 35 times its size.
+#:
+#: The floor is what makes it safe on a SMALL history, where the same handful of live plays
+#: is a large fraction: 50 concurrent streams against 5,000 rows is 1% on the ratio alone.
+#: A scan degrades only when the mirror is short by BOTH.
+MIRROR_SHORTFALL_FRACTION = 0.01
+MIRROR_SHORTFALL_FLOOR = 500
 
 
 #: How long a failed whitelist may coast on its stored membership before the snapshot

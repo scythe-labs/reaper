@@ -57,7 +57,7 @@ export const understandingPolicy: Doc = {
       },
       {
         title: "Run a scan and let it finish.",
-        // "incomplete" is the word the app itself shows (ScanBar, App.tsx). "degraded" is
+        // "incomplete" is the word the app itself shows (ScanBar, ScanFreshness). "degraded" is
         // the internal field name, which rules 21 and 25 both bar from operator copy (U-12).
         text: 'A scan freezes all the evidence, then scores, so a brief timeout can never flip a title’s fate mid-run. If it comes back "incomplete," a source failed, so Reaper marked the run unusable. Fix the source and scan again.',
       },
@@ -176,7 +176,7 @@ export const understandingPolicy: Doc = {
 
     h3("Protections: what's always kept", "protections"),
     p(
-      "All of these are on by default, in both the movie and TV policies. Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file.",
+      "Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file. All of these are on by default, in both the movie and TV policies, except the last two, which are off until you turn them on.",
     ),
     table(
       ["Protection", "What it keeps", "Default"],
@@ -206,10 +206,67 @@ export const understandingPolicy: Doc = {
         // abstain (see `components/policyMeta.ts`). The row has to say what it keeps,
         // because the sentence above this table promises every row keeps something.
         ["Stop if the unwatched time can't be read", "Anything Reaper couldn't measure", "On"],
+        [
+          "Keep titles most likely to be rewatched above a percentage",
+          "Anything whose kind gets watched again above your percentage",
+          "Off by default",
+        ],
+        [
+          "Keep a title that came back",
+          "Anything that left your library and was fetched again",
+          "Off by default",
+        ],
       ],
     ),
     p(
       "Your lists protect through **keep rules**, below: each list on Settings, Lists acts through a rule here naming it. A list you add starts with no rule, so it protects nothing until you give it one here, and you choose whether it keeps every title outright or only leans that way. The lists Reaper ships come with a keep-everything rule already. Removing the list removes its rules with it.",
+    ),
+
+    h3("Titles most likely to be rewatched", "rewatch-keep"),
+    p(
+      "Some titles just get watched over and over. The comfort movie, the show someone binges every winter. This rule picks up on that and lowers the score by up to 20 points, making it harder for a genuine favorite to get flagged.",
+    ),
+    p(
+      "For a movie, that means at least 10 plays by anyone on the server, with at least one in the last 2 years. Getting halfway through counts as a play, and plays within a week of each other collapse into one, so watching something three times over a weekend only registers once.",
+    ),
+    p(
+      "For a show, it means going back to episodes already seen, at least twice. Watching a new season as it airs is a first watch, so it does not count toward a rewatch.",
+    ),
+    p(
+      "Turn the second switch on and Reaper will protect anything that still has a real shot at being watched again, even if the score is high. It figures out that shot by looking at how long a title has gone unwatched, then checking what happened to other titles in your library that sat idle for about the same amount of time. The percentage of those that got watched again within a year is the likelihood. If it meets or beats your threshold, the title stays.",
+    ),
+    p(
+      "Example: a movie hasn't been watched in 2 years. Reaper finds 100 other titles that also sat for 2 years, and 30 of them got watched again within a year. That's a 30% chance. If your threshold is set to 25, the movie is kept. At 40, the score decides.",
+    ),
+    p(
+      "Shows are measured as a whole, so any episode counts as activity, and keeping a show means keeping all its seasons. Say nobody has touched a show for a year. Out of 60 other shows that sat for a year, 20 came back. That's 33%, so at a threshold of 25, it's kept.",
+    ),
+    p(
+      "Where do those numbers come from? Every scan, Reaper pretends today is a year ago and sorts every title by how long it had been sitting at that point: under a year, one to two years, and so on. Because it rewound the clock, the following year is already in your history, so it can just count how many in each group got played again. Those counts fill the table on the card, one row per group. A group needs at least 30 titles before its number is used.",
+    ),
+    p(
+      "Think of it like guessing whether a kid is going to ride the old bike in the garage. You don't study the bike. You think about what happened to every other bike that sat in the garage that long.",
+    ),
+
+    h3("A title that came back", "came-back"),
+    p(
+      "Turn this on and Reaper will hold onto a title that was removed and added back for as long as you set, so the same title doesn't get flagged again until that time is up. The default is 1.5 years.",
+    ),
+    // The absence is an operator setting (`RETURN_ABSENCE_DAYS`, the "counts as gone after"
+    // control in `policyMeta.ts`), so name the control and give its default rather than
+    // stating a bare number this page would then have to chase.
+    p(
+      'Reaper picks up on this through Plex. A file that leaves and comes back shows up as a new entry in Plex even though it\'s the same film. It only counts when the title was actually gone for longer than your "counts as gone after" setting, which starts at 7 days. A file swapped out for a better copy comes back within hours, and that is ignored.',
+    ),
+    // Two, not one: `library_seen._SCANS_INSIDE_THE_ABSENCE`.
+    p(
+      "Reaper also needs at least two scans that ran while the title was missing to account for its absence, so a long gap between scans will not mark titles as coming back.",
+    ),
+    p(
+      "The card tells you which titles it saw come back, with a countdown protecting each one based on your configured policy. Reaper does not have to be the one that removed the title. It tracks them through Plex either way.",
+    ),
+    p(
+      "Reaper can only spot a returning title if it saw it before it left, so a fresh install has nothing to compare against yet. It builds the picture up over time as it watches your library.",
     ),
 
     h3("Pace and limits", "pace"),

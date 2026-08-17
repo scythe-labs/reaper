@@ -7,7 +7,6 @@
 //      looked and it was fine", and a row with nothing recorded must never be drawn as if
 //      it argued for keeping the file.
 //   3. The rules that did not apply are tucked away, never dropped.
-import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,24 +15,34 @@ import {
   type CandidateDetail,
   type GateOutcome,
   type Match,
+  REWATCH_KEEP,
   type SignalContribution,
 } from "../api";
 import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { CSS } from "../test/stylesheet";
 import { Synopsis, WhyPanel, allocateShares } from "./WhyPanel";
 
-vi.mock("../api", () => ({
-  api: {
-    override: vi.fn(),
-    clearOverride: vi.fn(),
-    profile: vi.fn(),
-    general: vi.fn(),
-    forgetWatchEvidenceFor: vi.fn(),
-  },
-}));
+// Real exports preserved (`...actual`), not just `api` stubbed out: WhyPanel.tsx reads the
+// real `REWATCH_KEEP` constant from this same module, and a bare `{ api: {...} }` factory
+// would hand it `undefined` -- which compares unequal to every keep name, so the row this
+// suite exists to single out would never be singled out.
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    api: {
+      override: vi.fn(),
+      clearOverride: vi.fn(),
+      profile: vi.fn(),
+      general: vi.fn(),
+      forgetWatchEvidenceFor: vi.fn(),
+    },
+  };
+});
 
 // The panel reads two settings on its own, through hooks no test here names: the unmeasured
 // allowance (["profile"], via useHoldsBackUnmeasured) and the default spare length
@@ -97,14 +106,10 @@ function detail(
     requested_by: null,
     group_key: null,
     group_title: null,
-    group_condemned_count: null,
-    group_condemned_bytes: null,
-    group_unknown_size: null,
     video_resolution: null,
     library: null,
     dormant_for: null,
     reason: null,
-    spared: false,
     override: null,
     override_own: null,
     show_override: null,
@@ -114,7 +119,6 @@ function detail(
     show_spare_expires_at: null,
     chip: null,
     season_number: 3,
-    group_seasons: null,
     show_status: null,
     content_rating: null,
     runtime_minutes: null,
@@ -150,12 +154,9 @@ function detail(
 }
 
 function show(item: CandidateDetail) {
-  const client = seedSettings(testQueryClient());
-  return render(
-    <QueryClientProvider client={client}>
-      <WhyPanel item={item} onClose={() => {}} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<WhyPanel item={item} onClose={() => {}} />, {
+    client: seedSettings(testQueryClient()),
+  });
 }
 
 /** The group box a heading sits in, so a row's points can be read in context. */
@@ -468,6 +469,138 @@ describe("the scoring receipt", () => {
     const unread = groupOf("Couldn't check");
     expect(visibleRows(unread)).toBe(12);
     expect(unread.querySelector("details")).toBeNull();
+  });
+});
+
+describe("the built-in rewatch keep", () => {
+  // REWATCH_KEEP is a built-in row, not one the operator authored, so "Your rule" beside it
+  // would be false about who wrote it. An operator's own keep row sitting right next to it
+  // keeps the tag, which is the contrast this test proves rather than assumes.
+  function withKeeps() {
+    const base = detail(WORKED_ROWS);
+    return detail(WORKED_ROWS, {
+      score: 40,
+      explanation: {
+        ...base.explanation,
+        score: 40,
+        base_score: 55,
+        keep_discount: 15,
+        keeps: [
+          {
+            name: REWATCH_KEEP,
+            discount: 15,
+            max_discount: 20,
+            detail: "Watched 14 times, most recently 3 weeks ago. Likely to be watched again.",
+            evaluated: true,
+          },
+          {
+            name: "asked for lately",
+            discount: 8,
+            max_discount: 15,
+            detail: "requested 30 days ago",
+            evaluated: true,
+          },
+        ],
+      },
+    });
+  }
+
+  it("renders with no rule tag, while the operator's own keep beside it keeps its tag", () => {
+    show(withKeeps());
+
+    const builtin = screen.getByText(/Watched 14 times/).closest("li");
+    expect(builtin).not.toBeNull();
+    expect(within(builtin as HTMLElement).queryByText("Your rule")).toBeNull();
+
+    const yours = screen.getByText("requested 30 days ago").closest("li");
+    expect(yours).not.toBeNull();
+    expect(within(yours as HTMLElement).getByText("Your rule")).toBeTruthy();
+  });
+
+  it('drops "Your" from the keeps blurb', () => {
+    show(withKeeps());
+
+    expect(screen.getByText(/^Soft keep rules lowered the score/)).toBeTruthy();
+    expect(screen.queryByText(/Your soft/)).toBeNull();
+  });
+});
+
+describe("the rewatch-probability block (#554 stage 2)", () => {
+  // Placed after "Leaning toward keeping" and before the protections: display only, no
+  // verdict input, so its own heading has to sit between those two sections rather than
+  // inside either.
+  function withOdds(
+    rewatch_odds: NonNullable<CandidateDetail["explanation"]["rewatch_odds"]> | null,
+  ) {
+    const base = detail(WORKED_ROWS);
+    return detail(WORKED_ROWS, { explanation: { ...base.explanation, rewatch_odds } });
+  }
+
+  it("states the cohort, the count and the percentage when measured", () => {
+    show(withOdds({ n: 599, k: 207, lo_days: 730, hi_days: 1095, state: "measured" }));
+
+    expect(
+      screen.getByText(
+        "Of 599 shows that had sat unwatched about this long, 207 (35%) were watched again " +
+          "within a year. Measured from your own history at the last scan.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says too few shows when the cohort is thin", () => {
+    show(withOdds({ n: 4, k: 1, lo_days: 730, hi_days: 1095, state: "thin" }));
+
+    expect(screen.getByText("Too few shows like this to say.")).toBeInTheDocument();
+    // Never a percentage on a cohort too thin to trust one.
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+  });
+
+  it("says the mirror is too short when there is no usable block", () => {
+    show(withOdds({ n: 0, k: 0, lo_days: 0, hi_days: null, state: "no_history" }));
+
+    expect(screen.getByText("Not enough watch history yet.")).toBeInTheDocument();
+  });
+
+  it("renders nothing at all for a row stored before the field existed", () => {
+    // A season row, and any row predating this field, both arrive with the key present and
+    // `null` rather than the key missing (`Explanation` defaults it and nothing excludes
+    // `None`) -- this is the shape the browser actually reads over the wire.
+    show(withOdds(null));
+
+    expect(
+      screen.queryByRole("heading", { name: "Watched again within a year" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("sits after Leaning toward keeping and before What spared it", () => {
+    const base = detail(WORKED_ROWS);
+    show(
+      detail(WORKED_ROWS, {
+        explanation: {
+          ...base.explanation,
+          keep_discount: 15,
+          keeps: [
+            {
+              name: "asked for lately",
+              discount: 15,
+              max_discount: 20,
+              detail: "requested 30 days ago",
+              evaluated: true,
+            },
+          ],
+          rewatch_odds: { n: 10, k: 3, lo_days: 0, hi_days: 365, state: "measured" },
+          protections_fired: [{ gate: "whitelisted", detail: "on your keep list, never reaped" }],
+        },
+      }),
+    );
+
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    const leaning = headings.indexOf("Leaning toward keeping");
+    const odds = headings.indexOf("Watched again within a year");
+    const spared = headings.indexOf("What spared it");
+    expect(leaning).toBeGreaterThanOrEqual(0);
+    expect(odds).toBeGreaterThan(leaning);
+    expect(spared).toBeGreaterThan(odds);
   });
 });
 
@@ -904,7 +1037,7 @@ describe("the verdict headline", () => {
     "seasons your rule keeps. Left for you to decide instead of removing it.";
 
   // The message and the flag come from the same conflict, exactly as the producer emits them
-  // (`season_scan.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
+  // (`season_evidence.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
   // refused one `false`. Passing them independently would let a test pin a pairing the backend
   // cannot produce.
   //
@@ -1011,7 +1144,7 @@ describe("the verdict headline", () => {
   it("does not read a mid-binge check that never ran as a conflict (#486)", () => {
     // A show Plex never resolved: no season carries a rating key, so the guard answered
     // "is anyone part-way through this" having asked nobody. Both details are verbatim
-    // producer output -- `season_scan.guard_result`'s unestablishable arm and
+    // producer output -- `season_evidence.guard_result`'s unestablishable arm and
     // `engine.gates._blocked` -- and they carry the SAME cause on purpose, which is what
     // makes them one box (rule 119).
     //
@@ -1123,6 +1256,72 @@ describe("the merged-listing count", () => {
     show(withMatch({ merged_rating_keys: [900] }));
     expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
   });
+
+  it("renders a row whose whole match block is null", () => {
+    // The third shape, and the one no fixture in this file carried: `ExplanationOut.match`
+    // defaults to `None` and nothing sets `exclude_none`, so a row that was never matched
+    // arrives with an explicit `null` rather than with the key missing. `api.ts` typed it
+    // `Match | undefined` until W4.2, so the compiler would have accepted a reader dropping
+    // the guard here, and the panel this feeds is the one an operator reads while deciding
+    // what to delete.
+    show(
+      detail(WORKED_ROWS, {
+        explanation: { ...detail(WORKED_ROWS).explanation, match: null },
+      }),
+    );
+    expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/couldn't find it in your Plex/i)).not.toBeInTheDocument();
+  });
+});
+
+// The collection chip's own line (#816 phase 4): its own paragraph beside cert/runtime/genres,
+// since that one is plain joined text a chip cannot join into. Navigation only, so these tests
+// are about the line showing up (or not) and staying reachable, never about fate.
+describe("the collection chip", () => {
+  it("renders no line when the scan recorded no collections", () => {
+    show(detail(WORKED_ROWS, { collections: null }));
+    expect(screen.queryByRole("button", { name: /Show the other/ })).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/^In the collection/)).not.toBeInTheDocument();
+  });
+
+  it("names the smallest collection beside the library chip, the order the cards use", () => {
+    show(
+      detail(WORKED_ROWS, {
+        content_rating: "PG",
+        runtime_minutes: 118,
+        genres: ["Drama"],
+        library: "Movies",
+        collections: ["Example Franchise", "Director Spotlight"],
+      }),
+    );
+    const chip = screen.getByRole("button", { name: "Example Franchise" });
+    // The head's chip row, with the library, not the plain cert/runtime/genre text below it:
+    // both chips answer "where does this file live in Plex", so they read as one group.
+    const head = chip.closest(".why-sub");
+    expect(head).not.toBeNull();
+    expect(head?.textContent).toMatch(/Movies/);
+    expect(head?.textContent).not.toMatch(/118 min/);
+    expect(screen.getByRole("button", { name: "Show the other 1 collection" })).toBeInTheDocument();
+  });
+
+  // One component, four call sites, so a picker fix lands on all of them (rule 18). The cards'
+  // pickers show each collection's size, so this one does too -- and a size the scan never
+  // recorded renders nothing rather than a "0", which would assert an empty shelf.
+  it("shows a known size in the picker and no number at all for an unrecorded one", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <WhyPanel
+        item={detail(WORKED_ROWS, { collections: ["Example Franchise", "Director Spotlight"] })}
+        onClose={() => {}}
+        collectionSizes={{ "Example Franchise": 4 }}
+      />,
+      { client: seedSettings(testQueryClient()) },
+    );
+    await user.click(screen.getByRole("button", { name: "Show the other 1 collection" }));
+    const pop = screen.getByRole("list", { name: "Collections" });
+    const rows = [...pop.querySelectorAll(".coll-pop-item")].map((r) => r.textContent);
+    expect(rows).toEqual(["Example Franchise4", "Director Spotlight"]);
+  });
 });
 
 // The per-title escape from a hold nothing else on this screen can lift (#275). Reaper keeps the
@@ -1211,11 +1410,12 @@ describe("the watch-record escape", () => {
    *  test would make `findByText` ambiguous in the one above that reads it off the page. Here
    *  the region is read as a region, which is the idiom the other announcement tests use. */
   function showSpeaking(item: CandidateDetail) {
-    return render(
-      <QueryClientProvider client={seedSettings(testQueryClient())}>
+    return renderWithProviders(
+      <>
         <Announcer />
         <WhyPanel item={item} onClose={() => {}} />
-      </QueryClientProvider>,
+      </>,
+      { client: seedSettings(testQueryClient()) },
     );
   }
 
@@ -1305,6 +1505,53 @@ describe("the coverage clause", () => {
     show(detail(WORKED_ROWS, { coverage_bp: 7_550 }));
 
     expect(screen.getByText(/Reaper could read 76% of what it scores on/)).toBeVisible();
+  });
+
+  it("names the floor when coverage fell under it, the way the score names its threshold", () => {
+    // An abstain forced by the floor scores at or above the threshold and is held anyway, so
+    // the coverage number alone never says it was the reason. 40% under a 50% floor.
+    const d = detail(WORKED_ROWS, { coverage_bp: 4_000 });
+    d.explanation.coverage_floor_bp = 5_000;
+    show(d);
+
+    expect(
+      screen.getByText(
+        /Reaper could read 40% of what it scores on, under the 50% it needs to judge this one/,
+      ),
+    ).toBeVisible();
+  });
+
+  it("does not name the floor when coverage cleared it", () => {
+    // 76% of the weight read, above a 50% floor: the coverage is reduced but it was enough, so
+    // the sentence states it without claiming the floor held anything.
+    const d = detail(WORKED_ROWS, { coverage_bp: 7_550 });
+    d.explanation.coverage_floor_bp = 5_000;
+    show(d);
+
+    expect(screen.getByText(/Reaper could read 76% of what it scores on\./)).toBeVisible();
+    expect(screen.queryByText(/it needs to judge/)).toBeNull();
+  });
+
+  it("drops the floor clause when the row predates the field", () => {
+    // No floor on the stored row (an older scan), so there is no line to name: the panel omits
+    // the clause exactly as it omits a null threshold, never inventing one from the live policy.
+    const d = detail(WORKED_ROWS, { coverage_bp: 4_000 });
+    d.explanation.coverage_floor_bp = null;
+    show(d);
+
+    expect(screen.getByText(/Reaper could read 40% of what it scores on\./)).toBeVisible();
+    expect(screen.queryByText(/it needs to judge/)).toBeNull();
+  });
+
+  it("drops the floor clause when it rounds to the same percent as coverage", () => {
+    // 49.9% under a 50% floor: both render "50%", so "50%, under the 50% it needs" would read
+    // as a bug. Silence is the right call, and the plain coverage sentence still renders.
+    const d = detail(WORKED_ROWS, { coverage_bp: 4_990 });
+    d.explanation.coverage_floor_bp = 5_000;
+    show(d);
+
+    expect(screen.getByText(/Reaper could read 50% of what it scores on\./)).toBeVisible();
+    expect(screen.queryByText(/it needs to judge/)).toBeNull();
   });
 });
 

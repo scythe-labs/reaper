@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 //
 // The scales hold, and the iOS zoom floor cannot be outranked.
 //
@@ -15,7 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { CSS, FILES, siteOf } from "./test/stylesheet";
+import { blocksOf, CSS, FILES, siteOf } from "./test/stylesheet";
 
 /** Comments stripped, so prose quoting a value is not read as a declaration. */
 const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
@@ -77,16 +78,16 @@ function outranks(a: [number, number, number], b: [number, number, number]): boo
   return false;
 }
 
-/** Every declaration of `prop`, as [selector, value, offset]. */
+/** Every declaration of `prop`, as [selector, value, offset].
+ *
+ *  The block walk itself is `blocksOf` in `test/stylesheet.ts`, shared with
+ *  `styles-control-standard.test.ts`. The property match anchors on `^` or `;`, so `font` does
+ *  not also collect `font-size`. */
 function declarationsOf(prop: string): [string, string, number][] {
   const out: [string, string, number][] = [];
-  for (const m of CODE.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const selector = (m[1] ?? "").trim().replace(/\s+/g, " ");
-    if (selector.startsWith("@")) continue;
-    const body = m[2] ?? "";
-    const bodyAt = (m.index ?? 0) + (m[1] ?? "").length + 1;
+  for (const { selector, body, at } of blocksOf()) {
     for (const d of body.matchAll(new RegExp(`(^|;)\\s*${prop}\\s*:([^;]*)`, "g"))) {
-      out.push([selector, (d[2] ?? "").trim(), bodyAt + (d.index ?? 0)]);
+      out.push([selector, (d[2] ?? "").trim(), at + (d.index ?? 0)]);
     }
   }
   return out;

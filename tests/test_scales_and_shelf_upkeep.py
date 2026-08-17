@@ -37,6 +37,7 @@ from reaper.services.fairness import (
     roll_up,
 )
 from reaper.services.grace import GraceItem, GraceReport
+from reaper.services.leaving_soon import LeavingSoonUnlinkedError
 
 GB = 1024**3
 NOW = utcnow()
@@ -61,7 +62,6 @@ def _req(
         request_id=request_id,
         media_type=media_type,
         is_4k=False,
-        status=5,
         requested_at=NOW - timedelta(days=500),
         requester=Requester(
             seerr_user_id=plex_id,
@@ -258,7 +258,7 @@ class TestOneTitleReachedTwoWays:
 
 @pytest.fixture
 async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -267,7 +267,7 @@ async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSessi
 
 
 def _settings(tmp_path: Path) -> Settings:
-    return Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    return Settings(data_dir=tmp_path, secret_key="test-key")
 
 
 def _grace_report(keys: Sequence[int]) -> GraceReport:
@@ -334,7 +334,8 @@ class _Rendezvous:
                     await self._second_arrived.wait()
         else:
             self._second_arrived.set()
-        return await self._real(session)
+        seen: set[int] = await self._real(session)
+        return seen
 
 
 class TestOverlappingPassesAnnounceOnce:
@@ -430,12 +431,14 @@ class TestOverlappingPassesAnnounceOnce:
 
 class TestTheLockBindsToTheRunningLoop:
     async def test_one_lock_per_loop(self) -> None:
-        """A module-level ``asyncio.Lock`` binds to whichever loop first awaits it and raises
-        on every other, and the suite runs a fresh loop per test (rule 37). Same shape as
-        ``history_sync._rebuild_lock``, for the same reason."""
+        """Two callers on one loop meet one lock, which is what serializes a pass against
+        every other one in the process.
+
+        That the lock is per-LOOP, and that a closed loop's lock is collected, are properties
+        of ``aio.per_loop_lock`` and are pinned in ``tests/test_aio.py``. This asserts only
+        that this module reads through it.
+        """
         assert leaving_soon._pass_lock() is leaving_soon._pass_lock()
-        loop = asyncio.get_running_loop()
-        assert leaving_soon._pass_locks[loop] is leaving_soon._pass_lock()
 
 
 class _CountingClient:
@@ -583,7 +586,7 @@ class TestADegradedScanDoesNotReachTheShelf:
         # exactly, not caught as a bare Exception: the point is WHICH gate stopped it, and a
         # test that accepts any failure would pass even if the degraded guard had fired
         # (rule 119).
-        with pytest.raises(PlexError, match="needs a linked Plex server"):
+        with pytest.raises(LeavingSoonUnlinkedError, match="needs a linked Plex server"):
             await leaving_soon.run_sync(factory, _settings(tmp_path), SecretBox("test-key"))
 
     async def test_no_snapshot_at_all_is_not_degraded(
@@ -696,14 +699,15 @@ class TestAScanThatSkippedTheShelfSaysSo:
         assert skip["result"] == "the scan didn't finish cleanly"
         assert skip["at"]
 
-    async def test_an_unreachable_plex_is_written_down(
+    async def test_no_plex_link_is_written_down(
         self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
-        """No Plex link at all, which is the shape ``_run_pass`` raises ``PlexError`` for.
+        """No Plex link at all, which ``_run_pass`` raises ``LeavingSoonUnlinkedError`` for.
 
-        A different clause from the degraded case above, and asserted as such: the two are
-        the operator's only signal for which of the two happened, so a fix that collapsed
-        them into one string would still satisfy a test that only checked a record exists.
+        A different clause from the degraded case above and from the unreachable case below,
+        and asserted as such: they are the operator's only signal for which happened, and the
+        fixes differ, so a change collapsing them would still satisfy a test that only
+        checked a record exists. All three shared two classes until #734.
         """
         async with factory() as session:
             await app_settings.set_leaving_soon_enabled(session, enabled=True)
@@ -714,6 +718,32 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None
+        assert skip["result"] == "no Plex server is linked"
+
+    async def test_a_linked_server_that_will_not_answer_is_written_down(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The arm the route now answers 502 for, and the one this file could not reach
+        before: with no link, the pass never got as far as talking to a server (#734)."""
+
+        async def _stalled(*args: object, **kwargs: object) -> object:
+            raise PlexError("movie listing for section 3 stalled at 200 of 1000")
+
+        async with factory() as session:
+            await app_settings.set_leaving_soon_enabled(session, enabled=True)
+            await session.commit()
+        await self._snapshot(factory, degraded=False)
+        monkeypatch.setattr(leaving_soon, "_plex_client", _stalled)
+
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        skip = await self._skip(factory)
+        assert skip is not None
+        # The row clause carries no client text at all: a Jobs row is scanned, and the
+        # diagnostic tail belongs on the route's response, where someone is reading it.
         assert skip["result"] == "Reaper couldn't reach Plex"
 
     async def test_the_shelf_being_off_is_not_written_down(
@@ -770,10 +800,11 @@ class TestAScanThatSkippedTheShelfSaysSo:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The unreachable-Plex path records its reason and then falls through to the
-        Discord heads-up, which sits inside the catch-all. A surprise down there must not
-        overwrite "Reaper couldn't reach Plex" with the vague clause: the specific one is
-        the only clause that tells the operator what to go and fix.
+        """The no-link path records its reason and then falls through to the Discord
+        heads-up, which sits inside the catch-all. A surprise down there must not overwrite
+        "no Plex server is linked" with the vague clause: the specific one is the only clause
+        that tells the operator what to go and fix. The unreachable arm beside it falls
+        through the same way, so this covers both (#734 split the two).
 
         A notifier is forced in because the fall-through returns before announcing without
         one, and the surprise is planted in ``announce_new`` rather than ``build_notifier``:
@@ -799,7 +830,7 @@ class TestAScanThatSkippedTheShelfSaysSo:
 
         skip = await self._skip(factory)
         assert skip is not None
-        assert skip["result"] == "Reaper couldn't reach Plex"
+        assert skip["result"] == "no Plex server is linked"
 
     async def test_a_surprise_with_no_name_still_says_the_shelf_did_not_move(
         self,

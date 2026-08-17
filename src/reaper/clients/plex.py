@@ -32,7 +32,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -43,10 +44,16 @@ from xml.etree.ElementTree import Element
 import requests
 import structlog
 
-from reaper.clients.base import SAFE_METHODS, SafetyViolationError
+from reaper.clients.base import (
+    SAFE_METHODS,
+    SafetyViolationError,
+    refuse_mutation,
+    trace_call,
+)
 from reaper.config import RuntimeSafety
 from reaper.engine.identity import PlexFile, PlexItem, parse_guids, to_basename
 from reaper.ratings import Rating, from_plex
+from reaper.text import fold
 
 if TYPE_CHECKING:
     from plexapi.server import PlexServer
@@ -60,6 +67,26 @@ BATCH_SIZE = 100
 #: per item, not per page), bounded so a huge library never materialises in one response.
 SWEEP_PAGE_SIZE = 1000
 
+#: Hard stop on :func:`_iter_pages` (rule 56/89). Its one continuing path is a ``totalSize`` that
+#: stays ahead of ``start`` on a non-empty page. ``totalSize`` is re-read from every response, so
+#: the walk's length is the answering server's to choose. Nothing outside the loop bounds it. The
+#: sweeps run under ``asyncio.to_thread``, which cannot be canceled, and
+#: ``scan_runner._scan_running`` is cleared in a ``finally`` a loop that never returns never
+#: reaches. Every later scan is then refused until the container restarts. What answers is not
+#: always Plex either: a reverse proxy, an auth portal or a tunnel sits in that path.
+#:
+#: The bound is 1,000 PAGES, so the item count it covers falls with the page size the server
+#: actually serves. A million at ``SWEEP_PAGE_SIZE`` rows, less against a server that clamps the
+#: page below the request, which the loop follows to the end rather than truncating.
+#:
+#: Tripping it RAISES, which is where the three siblings differ. ``seerr.MAX_PAGES`` raises,
+#: ``history_sync.MAX_HISTORY_PAGES`` stops short and warns, and ``library_index._SPINE_MAX_PAGES``
+#: stops short, warns and degrades. Seerr is the one to match here. ``_iter_pages`` is
+#: complete-or-raise, and every caller reads a protection source. Stopping short would return part
+#: of a section as the whole of it, and the protection built on that read would cover only what
+#: was read.
+SWEEP_MAX_PAGES = 1_000
+
 #: Rating keys per batched ``/library/metadata/{ids}`` read (Rating children + folder
 #: paths). The ids ride in the URL path, so this is bounded by URL length, not by response
 #: size: 400 keys is ~4 KB of comma-joined ids, comfortably under the usual ~8 KB limit,
@@ -67,6 +94,28 @@ SWEEP_PAGE_SIZE = 1000
 #: past a few thousand keys a server can answer 414, and the existing ``except`` maps that
 #: to ``PlexError`` (the snapshot then degrades), which is safe but not free.
 METADATA_BATCH_SIZE = 400
+
+#: What :meth:`PlexClient.collection_tags` asks Plex to leave out of its metadata batch: it
+#: reads one child element and the response carries every other one, which roughly halved the
+#: batch where it was measured (docs/LEARNINGS.md). ``Collection`` is deliberately absent from
+#: the exclusion. A server ignoring these params answers as before, and one that answered them
+#: by dropping Collection children would leave every collection short of its ``childCount``,
+#: which already sends the caller to the per-collection read.
+_TAGS_ONLY = (
+    "?excludeElements=Media,Genre,Country,Director,Writer,Producer,Role,Similar,Chapter,"
+    "Marker,Extras,Related,Rating,Review,Image,UltraBlurColors,Guid"
+    "&excludeFields=summary,tagline,titleSort"
+)
+
+#: Seconds Reaper waits for one Plex response, over plexapi's default of 30, which is a
+#: budget for an idle server. A busy library can take longer than that to answer a section
+#: sweep, and the read that times out is a protection source the scan then does without.
+#: Still a bound: nothing here waits forever.
+#:
+#: ``PlexServer.query`` passes it on every call, so it covers the sweeps, the shelf reads and
+#: the writes alike. The watchlist reads plex.tv through ``myPlexAccount()``, which plexapi
+#: builds with no timeout, so that one call keeps the 30.
+PLEX_READ_TIMEOUT = 60
 
 
 def _parse_rating_children(el: Element) -> list[Rating]:
@@ -338,23 +387,49 @@ class GuardedSession(requests.Session):
                 # branch can NEVER permit a deletion: a verb+path outside _benign_shape
                 # does not match it and falls through to the armed-and-declared rule.
                 if not self._safety.leaving_soon_write_allowed:
-                    raise SafetyViolationError(
-                        f"Blocked {method} to Plex (Leaving Soon shelf). Turn deletion "
-                        'on, or turn on "Update while read-only" under Settings, Plex, '
-                        "Leaving Soon to allow this reversible shelf write while "
-                        "Reaper is read-only."
+                    refuse_mutation(
+                        "plex.write_blocked",
+                        method,
+                        path,
+                        reason="shelf_not_allowed",
+                        message=(
+                            f"Blocked {method} to Plex (Leaving Soon shelf). Turn deletion "
+                            'on, or turn on "Update while read-only" under Settings, Plex, '
+                            "Leaving Soon to allow this reversible shelf write while "
+                            "Reaper is read-only."
+                        ),
                     )
             elif not self._safety.destructive_allowed:
-                raise SafetyViolationError(
-                    f"Blocked {method} to Plex. {self._safety.why_blocked()}"
+                refuse_mutation(
+                    "plex.write_blocked",
+                    method,
+                    path,
+                    reason="not_armed",
+                    message=f"Blocked {method} to Plex. {self._safety.why_blocked()}",
                 )
             elif not _declared.get():
-                raise SafetyViolationError(
-                    f"Blocked {method} to Plex: this mutation was not declared to the "
-                    "action journal. Destructive calls must go through the action "
-                    "executor so that they are recorded before they are sent."
+                refuse_mutation(
+                    "plex.write_blocked",
+                    method,
+                    path,
+                    reason="not_declared",
+                    message=(
+                        f"Blocked {method} to Plex: this mutation was not declared to the "
+                        "action journal. Destructive calls must go through the action "
+                        "executor so that they are recorded before they are sent."
+                    ),
                 )
-        return super().request(method, url, *args, **kwargs)
+        # Trace only what passed the guard and reached the wire; a blocked mutation raised
+        # above and never happened. plexapi puts X-Plex-Token in the query string (rule 13),
+        # so `path` -- already the token-free split above -- is what is logged, never `url`.
+        started = time.monotonic()
+        status: int | None = None
+        try:
+            response = super().request(method, url, *args, **kwargs)
+            status = response.status_code
+            return response
+        finally:
+            trace_call("plex", method, path, status, started, mutation=mutates)
 
 
 def normalize_label(tag: str) -> str:
@@ -364,7 +439,7 @@ def normalize_label(tag: str) -> str:
     Comparing raw tags therefore silently fails to match a label that is present, so
     every comparison goes through here.
     """
-    return tag.strip().casefold()
+    return fold(tag)
 
 
 @dataclass(frozen=True)
@@ -408,9 +483,26 @@ class PlexSeasonRow:
     added_at: str | None
 
 
-#: Plex's numeric metadata types, for listing and collection creation. Only the two the
-#: shelf works on: movies in movie sections, seasons in show sections.
-_PLEX_TYPE_CODES = {"movie": 1, "season": 3}
+@dataclass(frozen=True)
+class PlexCollectionRow:
+    """One collection as the section-level listing sees it: its rating key, title and
+    Plex's own member count. Membership -- which items actually sit inside it -- is a
+    separate read, :meth:`PlexClient.collection_children`, which already exists (rule 72):
+    this row is the shelf's identity, not its contents.
+
+    ``child_count`` is also what tells a caller that :meth:`PlexClient.collection_tags`
+    did not see all of this collection, since Plex counts members it stores no tag for.
+    """
+
+    rating_key: int
+    title: str
+    child_count: int | None
+
+
+#: Plex's numeric metadata types. The two the shelf works on -- movies in movie sections,
+#: seasons in show sections -- plus the show itself, which is the level a TV collection
+#: lists and therefore the level ``collection_tags`` reads a show library at.
+_PLEX_TYPE_CODES = {"movie": 1, "show": 2, "season": 3}
 
 
 def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[list[Any]]:
@@ -419,9 +511,11 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
     The single paging loop every listing read runs on, so none of them can drift (rule 72):
     the four section sweeps (``library_guid_index``, ``library_season_index``,
     ``labeled_in_section``, ``section_rating_keys``) through :func:`_iter_section_pages`, and
-    the two shelf reads (``find_collection``, ``collection_children``) directly. ``query`` is
-    the listing's own query string BEFORE the container-window params (``"?includeGuids=1"``,
-    ``"?type=3&label=..."``, or ``""``); this appends the start/size.
+    the two shelf reads (``list_collections``, ``collection_children``) directly --
+    ``find_collection`` searches ``list_collections``'s result rather than reading this a
+    second time. ``query`` is the listing's own query string BEFORE the container-window
+    params (``"?includeGuids=1"``, ``"?type=3&label=..."``, or ``""``); this appends the
+    start/size.
 
     Pages and terminates on the RAW child count, never a filtered one: advancing or ending a
     listing on the count of children that survived a ``ratingKey`` filter would let one dropped
@@ -430,8 +524,11 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
     authority -- a server that clamps a page below the requested size is still followed to the
     end, and a full page with no ``totalSize`` to bound it is failed closed rather than guessed
     to be the last. Never falls back ``totalSize`` -> ``size`` (rule 56).
+
+    Bounded by :data:`SWEEP_MAX_PAGES`, which raises rather than returning short.
     """
     start = 0
+    pages = 0
     joiner = "&" if query else "?"
     while True:
         container = server.query(
@@ -439,6 +536,7 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
             f"{joiner}X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
         )
         raw = list(container)
+        pages += 1
         if any(el.get("ratingKey") is None for el in raw):
             # A child the paging math cannot advance over: not the container shape the loop
             # assumes. Raise so the caller falls back / degrades, never end on a filtered page.
@@ -456,6 +554,10 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
             if not raw:
                 # start < total but the page was empty: no progress. Fail closed.
                 raise PlexError(f"{what} stalled at {start} of {int(total_attr)}")
+            if pages >= SWEEP_MAX_PAGES:
+                # Only reachable while the reported total keeps outrunning ``start`` on full
+                # pages, which is a server that is not advancing through the listing.
+                raise PlexError(f"{what} never finished, after {start} items")
         elif len(raw) < SWEEP_PAGE_SIZE:
             # No totalSize to lean on: a short raw page is the last page.
             return
@@ -556,10 +658,13 @@ class PlexClient:
 
             # The guarded session, not plexapi's default. Every write plexapi makes
             # goes through it, so Plex is held to the same rule as everything else.
+            # The timeout rides the server object, not the session: query passes its own
+            # value explicitly, so a session default would be overridden.
             return _PlexServer(  # type: ignore[no-untyped-call]
                 self._base_url,
                 self._token,
                 session=GuardedSession(self._safety, verify=self._verify),
+                timeout=PLEX_READ_TIMEOUT,
             )
 
         async with self._connect_lock:
@@ -568,12 +673,62 @@ class PlexClient:
             connected = self._server
             if connected is not None:
                 return connected
+            # Not through `_call`: its message would in fact be reproduced byte for byte by
+            # `what=f"reach Plex at {self._base_url}"`, so this is a contract boundary and not
+            # a mapping difference. `_call` describes one call against the connected server;
+            # this is the call that runs before there is one.
             try:
                 built = await asyncio.to_thread(build)
             except Exception as exc:
                 raise PlexError(f"Could not reach Plex at {self._base_url}: {exc}") from exc
             self._server = built
             return built
+
+    async def _call[T](self, work: Callable[[], T], *, what: str) -> T:
+        """Run one synchronous plexapi call off the event loop, mapping its failures.
+
+        plexapi is synchronous, so every call in this client is a closure handed to a worker
+        thread. The failure mapping around it was written out at each one: a catch-all
+        converting whatever plexapi raised into a :class:`PlexError` naming what was being
+        attempted (rule 9/110), and, on every mutating method, an arm ahead of it letting the
+        transport guard's refusal through unchanged.
+
+        **The refusal arm is the reason this is a helper rather than a tidy-up.** A guard
+        refusal is not a Plex failure: it means a mutating call was attempted without the host
+        armed or without the intent journalled first, and re-labeling it ``PlexError`` tells the
+        caller Plex is unwell and invites it to degrade. Eight write methods each carried that
+        arm by hand, so a ninth written later inherits nothing. Here it is one declaration and a
+        new write cannot arrive without it.
+
+        ``asyncio.to_thread`` rather than a shared executor, and that is load-bearing: it copies
+        the context, and the journalled-intent flag the guard reads is a
+        :class:`~contextvars.ContextVar`. Under ``loop.run_in_executor`` with a bare executor
+        the worker reads it as unset and every journalled write is refused. Fail-closed in both
+        directions, and both executor call sites swallow the refusal into a warning, so it would
+        break quietly.
+
+        ``what`` completes the sentence ``Could not {what}: {exc}``, so it is a verb phrase and
+        not a noun. ``_iter_pages`` in this same file takes a ``what`` that IS a noun, which is
+        the one way to get ``Could not GUID sweep: ...`` out of this.
+
+        **Five methods do not read through this and each says why in place**: ``_connect`` (the
+        one call that runs before there is a server, so this contract does not describe it),
+        ``active_streams`` (its message is the fail-closed reasoning, not a verb phrase),
+        ``is_refreshing`` (it degrades to a warning rather than raising), ``aclose`` (no mapping
+        at all, it is teardown), and ``trash_count`` (its own read raises ``PlexError``, which
+        this would wrap a second time).
+        """
+        try:
+            return await asyncio.to_thread(work)
+        # Ahead of the catch-all, deliberately. `SafetyViolationError` and `PlexError` are
+        # siblings off `RuntimeError`, neither derived from the other, so an `except PlexError`
+        # downstream does NOT catch a refusal -- and this arm is what keeps it that way. It must
+        # reach the caller as itself; `clients/base.refuse_mutation` has already logged it at
+        # the point of refusal.
+        except SafetyViolationError:
+            raise
+        except Exception as exc:
+            raise PlexError(f"Could not {what}: {exc}") from exc
 
     # -- reading -----------------------------------------------------------
 
@@ -609,6 +764,8 @@ class PlexClient:
                 )
             return streams
 
+        # Not through `_call`: the message below is the fail-closed reasoning itself, not a
+        # verb phrase, and this is the last read before an irreversible act.
         try:
             return await asyncio.to_thread(read)
         except Exception as exc:
@@ -650,10 +807,7 @@ class PlexClient:
                 for s in server.library.sections()
             ]
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not read Plex section paths: {exc}") from exc
+        return await self._call(read, what="read Plex section paths")
 
     async def library_guid_index(
         self, *, section_type: str, allowed_sections: set[int] | None = None
@@ -799,12 +953,7 @@ class PlexClient:
             return out
 
         async with self._sweep_lock:
-            try:
-                out = await asyncio.to_thread(read)
-            except Exception as exc:
-                raise PlexError(
-                    f"Could not sweep Plex GUIDs for {section_type} sections: {exc}"
-                ) from exc
+            out = await self._call(read, what=f"sweep Plex GUIDs for {section_type} sections")
 
         # Back on the event loop, with the worker thread joined, so the collector is
         # appended to from one place. One reason for the whole sweep, however many chunks
@@ -834,10 +983,7 @@ class PlexClient:
         def read() -> int:
             return int(server.library.sectionByID(section_key).totalSize)
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not count items in section {section_key}: {exc}") from exc
+        return await self._call(read, what=f"count items in section {section_key}")
 
     async def trash_count(self, section_key: int) -> int:
         """How many items are sitting in one section's trash, waiting to be purged.
@@ -880,6 +1026,8 @@ class PlexClient:
                 raise PlexError(f"trash listing for section {section_key} reported no totalSize")
             return int(raw)
 
+        # Not through `_call`: `read` raises `PlexError` itself on a missing totalSize, and
+        # `_call` would wrap that into a second one naming the wrong thing.
         try:
             return await asyncio.to_thread(read)
         except PlexError:
@@ -904,10 +1052,7 @@ class PlexClient:
         def read() -> bool:
             return bool(server.settings.get("autoEmptyTrash").value)
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not read the empty-trash-after-scan setting: {exc}") from exc
+        return await self._call(read, what="read the empty-trash-after-scan setting")
 
     async def aclose(self) -> None:
         """Close the underlying plexapi session, if one was ever built.
@@ -925,6 +1070,7 @@ class PlexClient:
             if session is not None:
                 session.close()
 
+        # Not through `_call`: teardown maps nothing, because there is no caller left to tell.
         await asyncio.to_thread(close)
 
     async def __aenter__(self) -> PlexClient:
@@ -948,6 +1094,8 @@ class PlexClient:
             section.reload()
             return bool(getattr(section, "refreshing", False))
 
+        # Not through `_call`: this one degrades to a warning and a conservative True rather
+        # than raising, so there is no `PlexError` for a shared mapping to build.
         try:
             return await asyncio.to_thread(read)
         except Exception as exc:
@@ -976,12 +1124,7 @@ class PlexClient:
                 keys.update(int(el.get("ratingKey") or 0) for el in raw)
             return keys
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(
-                f"Could not read items labeled {label!r} in section {section_key}: {exc}"
-            ) from exc
+        return await self._call(read, what=f"read items labeled {label!r} in section {section_key}")
 
     async def video_sections(self) -> list[PlexSection]:
         """Every movie and show library on the server, for the library picker.
@@ -998,10 +1141,7 @@ class PlexClient:
                 if s.type in ("movie", "show")
             ]
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not list Plex libraries: {exc}") from exc
+        return await self._call(read, what="list Plex libraries")
 
     async def section_rating_keys(self, section_key: int, *, kind: str) -> set[int]:
         """Every rating key in one section, at the level the shelf works on: movies in a
@@ -1024,10 +1164,7 @@ class PlexClient:
                 keys.update(int(el.get("ratingKey") or 0) for el in raw)
             return keys
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not list section {section_key}: {exc}") from exc
+        return await self._call(read, what=f"list section {section_key}")
 
     async def library_season_index(
         self, *, allowed_sections: set[int] | None = None
@@ -1098,24 +1235,26 @@ class PlexClient:
             return out
 
         async with self._sweep_lock:
-            try:
-                return await asyncio.to_thread(read)
-            except Exception as exc:
-                raise PlexError(f"Could not sweep Plex seasons: {exc}") from exc
+            return await self._call(read, what="sweep Plex seasons")
 
-    async def find_collection(self, section_key: int, name: str) -> int | None:
-        """The rating key of the collection called ``name`` in one section, or ``None``.
+    async def list_collections(self, section_key: int) -> list[PlexCollectionRow]:
+        """Every collection in one section: its rating key, title and Plex's own child count.
 
-        Matched casefolded, because Plex title-cases tags and titles on the way in. A
-        read, paged through the one hardened ``_iter_pages`` loop like every other
-        listing (rule 72). Windowed by the server and read unpaged, a shelf sitting past
-        the first window reads as absent, and the caller then CREATES a second "Leaving
-        Soon" collection: the reconcile splits across two shelves and neither is right.
+        Paged through the one hardened ``_iter_pages`` loop over
+        ``/library/sections/{key}/collections``. :meth:`find_collection` searches this
+        method's result rather than running its own second loop over the same path (rule
+        72). Complete-or-raise like every other listing (rule 56): a truncated page is
+        never read as the whole shelf.
+
+        Collections are navigation, never protection (the fence in
+        ``docs/history/COLLECTIONS_PLAN.md``), so this method does not degrade anything itself --
+        it either reports the section honestly or raises. A caller that wants "missing
+        chip" rather than "broken scan" out of a Plex hiccup catches the raise itself.
         """
         server = await self._connect()
-        wanted = normalize_label(name)
 
-        def read() -> int | None:
+        def read() -> list[PlexCollectionRow]:
+            rows: list[PlexCollectionRow] = []
             for raw in _iter_pages(
                 server,
                 f"/library/sections/{section_key}/collections",
@@ -1123,18 +1262,36 @@ class PlexClient:
                 what=f"collection list of section {section_key}",
             ):
                 for el in raw:
-                    title = str(el.get("title") or "")
-                    key = el.get("ratingKey")
-                    if key and normalize_label(title) == wanted:
-                        return int(key)
-            return None
+                    raw_count = el.get("childCount")
+                    rows.append(
+                        PlexCollectionRow(
+                            rating_key=int(el.get("ratingKey")),
+                            title=str(el.get("title") or ""),
+                            child_count=int(raw_count) if raw_count is not None else None,
+                        )
+                    )
+            return rows
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(
-                f"Could not look for the {name!r} collection in section {section_key}: {exc}"
-            ) from exc
+        return await self._call(read, what=f"list collections in section {section_key}")
+
+    async def find_collection(self, section_key: int, name: str) -> int | None:
+        """The rating key of the collection called ``name`` in one section, or ``None``.
+
+        Searches :meth:`list_collections`'s result rather than paging
+        ``/library/sections/{key}/collections`` a second time (rule 72), so it inherits
+        that method's paging and completeness guarantees. Matched casefolded, because
+        Plex title-cases tags and titles on the way in.
+
+        A row ``list_collections`` cannot assign a rating key to now raises instead of
+        being silently skipped as it once was: returning ``None`` here reads to the
+        caller as "no such collection," and the caller then CREATES a second "Leaving
+        Soon" collection, splitting the shelf. Raising degrades honestly instead.
+        """
+        wanted = normalize_label(name)
+        for row in await self.list_collections(section_key):
+            if normalize_label(row.title) == wanted:
+                return row.rating_key
+        return None
 
     async def collection_children(self, collection_key: int) -> set[int]:
         """The rating keys currently on one collection. A read.
@@ -1157,10 +1314,76 @@ class PlexClient:
                 keys.update(int(el.get("ratingKey")) for el in raw)
             return keys
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not read collection {collection_key}: {exc}") from exc
+        return await self._call(read, what=f"read collection {collection_key}")
+
+    async def collection_tags(self, section_key: int, *, kind: str) -> dict[int, tuple[str, ...]]:
+        """Every item's collection names in one section, keyed by rating key.
+
+        One request per 400 items, where asking each collection for its children costs one
+        per COLLECTION. A Plex read costs about the same whatever it returns, so a library
+        holding hundreds of collections spends the difference on per-request overhead alone
+        (measured in docs/LEARNINGS.md).
+
+        A "dumb" collection's membership IS each member's ``collection`` tag, which is what
+        :meth:`remove_collection_members` already writes through, and the full metadata read
+        carries those tags. **The section LISTING does not**, which is why this pays for a
+        second read rather than parsing the sweep's pages: it reports some of an item's tags
+        and drops the rest. Never a wrong tag, only a missing one, which would have shipped
+        as titles quietly losing their chip.
+
+        A collection Plex reports MORE members for than this returns is one whose membership
+        is not tags: a smart collection is a saved filter, and a collection of seasons or
+        episodes holds objects this section-level listing never lists. The caller compares
+        against ``child_count`` and reads those the per-collection way
+        (``services.snapshot._collection_membership``); this method reports what the tags say
+        and nothing more.
+
+        Collections are navigation, never protection (the fence in
+        ``docs/history/COLLECTIONS_PLAN.md``), so a short metadata chunk is logged and the
+        rest is returned rather than raised on -- the cost is a missing chip, and rule 28
+        binds evidence sources. The key LISTING is still complete-or-raise through
+        ``_iter_section_pages``, so a truncated page can never quietly shrink the section.
+        """
+        code = _PLEX_TYPE_CODES["movie" if kind == "movie" else "show"]
+        server = await self._connect()
+
+        def read() -> dict[int, tuple[str, ...]]:
+            keys = [
+                int(el.get("ratingKey") or 0)
+                for raw in _iter_section_pages(
+                    server, section_key, f"?type={code}", what="collection tag listing"
+                )
+                for el in raw
+            ]
+            out: dict[int, tuple[str, ...]] = {}
+            for start in range(0, len(keys), METADATA_BATCH_SIZE):
+                chunk = keys[start : start + METADATA_BATCH_SIZE]
+                batch = list(
+                    server.query(  # type: ignore[no-untyped-call]
+                        "/library/metadata/" + ",".join(str(k) for k in chunk) + _TAGS_ONLY
+                    )
+                )
+                if len(batch) < len(chunk):
+                    log.warning(
+                        "plex.collection_tags_short",
+                        section=section_key,
+                        requested=len(chunk),
+                        returned=len(batch),
+                    )
+                for el in batch:
+                    rk = el.get("ratingKey")
+                    names = tuple(
+                        str(c.get("tag") or "") for c in el.findall("Collection") if c.get("tag")
+                    )
+                    if rk is not None and names:
+                        out[int(rk)] = names
+            return out
+
+        # Deliberately NOT under ``_sweep_lock``, which the two GUID sweeps take: this is one
+        # request at a time where the fan-out it replaces was eight, so it adds a single
+        # reader beside them, and serializing it would add its whole cost to the index phase
+        # rather than overlapping it.
+        return await self._call(read, what=f"read collection tags in section {section_key}")
 
     # -- writing -----------------------------------------------------------
     #
@@ -1207,12 +1430,7 @@ class PlexClient:
                 if items:
                     section.batchMultiEdits(items).addLabel(label).saveMultiEdits()
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not add label {label!r}: {exc}") from exc
+        await self._call(write, what=f"add label {label!r}")
 
     async def remove_label(self, section_key: int, rating_keys: list[int], label: str) -> None:
         """Remove a label from many items.
@@ -1251,12 +1469,7 @@ class PlexClient:
                 for actual_tag, group in by_spelling.items():
                     section.batchMultiEdits(group).removeLabel(actual_tag).saveMultiEdits()
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not remove label {label!r}: {exc}") from exc
+        await self._call(write, what=f"remove label {label!r}")
 
     @staticmethod
     def _metadata_uri(machine_identifier: str, rating_keys: list[int]) -> str:
@@ -1301,12 +1514,7 @@ class PlexClient:
                     return int(key)
             return None
 
-        try:
-            created = await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not create the {name!r} collection: {exc}") from exc
+        created = await self._call(write, what=f"create the {name!r} collection")
 
         if created is not None and len(rating_keys) > BATCH_SIZE:
             await self.add_to_collection(created, rating_keys[BATCH_SIZE:])
@@ -1332,12 +1540,7 @@ class PlexClient:
                     method=server._session.put,
                 )
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not add items to collection {collection_key}: {exc}") from exc
+        await self._call(write, what=f"add items to collection {collection_key}")
 
     async def remove_collection_members(
         self, section_key: int, *, name: str, rating_keys: list[int]
@@ -1398,12 +1601,7 @@ class PlexClient:
                         actual_tag, locked=True
                     ).saveMultiEdits()
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not remove items from the {name!r} collection: {exc}") from exc
+        await self._call(write, what=f"remove items from the {name!r} collection")
 
     async def delete_collection(self, collection_key: int) -> None:
         """Delete a whole collection in one request.
@@ -1423,12 +1621,7 @@ class PlexClient:
                 method=server._session.delete,
             )
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not delete collection {collection_key}: {exc}") from exc
+        await self._call(write, what=f"delete collection {collection_key}")
 
     async def refresh_path(self, section_key: int, path: str) -> None:
         """Rescan **one directory**, not the whole section.
@@ -1454,12 +1647,7 @@ class PlexClient:
         def write() -> None:
             server.library.sectionByID(section_key).update(path=path)
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not refresh {path!r}: {exc}") from exc
+        await self._call(write, what=f"refresh {path!r}")
 
     async def empty_trash(self, section_key: int) -> None:
         """Purge one section's trash: the items Plex marked missing after a refresh.
@@ -1482,9 +1670,4 @@ class PlexClient:
         def write() -> None:
             server.library.sectionByID(section_key).emptyTrash()
 
-        try:
-            await asyncio.to_thread(write)
-        except SafetyViolationError:
-            raise
-        except Exception as exc:
-            raise PlexError(f"Could not empty trash for section {section_key}: {exc}") from exc
+        await self._call(write, what=f"empty trash for section {section_key}")

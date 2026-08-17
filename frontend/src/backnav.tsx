@@ -40,7 +40,10 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
+
+import { reassertUrl } from "./navUrl";
 
 /** One thing a Back press can unwind. `onBack` closes an overlay or restores a prior tab. */
 type Layer = { id: number; onBack: () => void };
@@ -225,6 +228,16 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
     if (priorScrollRestoration !== null) history.scrollRestoration = "manual";
 
     const onPop = () => {
+      // Every traversal lands on an older entry, and the address bar goes with it: `writeUrl`
+      // wrote onto the entry we just left, so what we land on is whatever URL that older entry
+      // was parked with. Put the app's own back before anything else runs.
+      //
+      // On EVERY pop, not only our self-issued ones. A step that merely closes a layer is
+      // followed by no state change at all, so no effect ever runs to correct it -- that is the
+      // case this exists for. A step that genuinely moves the app (a nav frame's undo, below)
+      // does change state, and the render it causes writes the real URL straight over this one,
+      // so re-asserting first costs a `replaceState` and can never win against a real move.
+      reassertUrl();
       if (selfPopRef.current > 0) {
         // Our own step; that entry is gone, nothing to unwind. Whatever we are working through
         // takes its next step from here, now that `history.state` reflects where we landed.
@@ -331,4 +344,28 @@ export function useBackGuard(
     });
     return () => ctx.remove(id);
   }, [ctx, open]);
+}
+
+/**
+ * The child half of `useBackGuard`. The modal owns its reasons to stay open, the parent owns the
+ * Back registration, and this ref is the only thing between them. Back then refuses exactly what
+ * the scrim, Escape and the ✕ refuse (rule 80). Cleared on unmount, so a stale refusal never
+ * outlives the modal.
+ *
+ * It takes the WHOLE predicate, never one term of it. `ScheduleModal` mirrored `save.isPending`
+ * against a shell handed `!save.isPending`. Those agree, and agree only while `canClose` has one
+ * term. A second reason to stay open leaves Back the one dismissal that ignores it, and
+ * `ServiceModal` already has two.
+ */
+export function useBackCloseMirror(
+  blockCloseRef: RefObject<boolean> | undefined,
+  canClose: boolean,
+): void {
+  useEffect(() => {
+    if (!blockCloseRef) return;
+    blockCloseRef.current = !canClose;
+    return () => {
+      blockCloseRef.current = false;
+    };
+  }, [canClose, blockCloseRef]);
 }

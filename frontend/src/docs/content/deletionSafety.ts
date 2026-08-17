@@ -34,7 +34,12 @@ export const deletionSafety: Doc = {
           enter: { label: "yes" },
         },
         { node: { text: "Read each item's reason", sub: "score, and every protection checked" } },
-        { node: { text: "Build the plan", sub: "unknown size held back, smallest first" } },
+        {
+          node: {
+            text: "Build the plan",
+            sub: "unknown size held back by default, smallest first",
+          },
+        },
         { node: { text: "Practice run", sub: "every check runs, nothing sent" } },
         {
           node: { text: "Deletion armed?", shape: "decision" },

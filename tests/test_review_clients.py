@@ -10,18 +10,29 @@ must not be relayed same-origin.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import httpx
 import httpx2
 import pytest
+import requests
 import respx
 
 from reaper import logbuffer
 from reaper.clients.arr import RadarrClient, SonarrClient
-from reaper.clients.base import IntegrationError
+from reaper.clients.base import (
+    DEFAULT_TIMEOUT,
+    BaseClient,
+    IntegrationError,
+    SafetyViolationError,
+)
+from reaper.clients.plex import GuardedSession
 from reaper.clients.plextv import PlexTvClient
+from reaper.clients.public import PublicClient
 from reaper.clients.seerr import SeerrClient
 from reaper.clients.tautulli import ALLOWED_IMAGE_TYPES, TautulliClient
 from reaper.config import RuntimeSafety
@@ -129,12 +140,13 @@ class TestEveryListReadRefusesANonListBody:
                 "/api/v3/importlistexclusion",
                 lambda c: c.exclusions(),
             ),
+            (SeerrClient, "seerr.test", "/api/v1/settings/sonarr", lambda c: c.services()),
         ],
     )
     async def test_a_non_list_200_raises(
         self,
         httpx2_mock: respx.Router,
-        client_cls: type[RadarrClient] | type[SonarrClient],
+        client_cls: type[RadarrClient] | type[SonarrClient] | type[SeerrClient],
         host: str,
         path: str,
         call: Any,
@@ -156,6 +168,80 @@ class TestEveryListReadRefusesANonListBody:
             assert await client.movies() == []
 
 
+class TestEveryObjectReadRefusesANonObjectBody:
+    """The list guards' other half, and the half nothing drove. Eleven shape guards were
+    written out by hand in ``arr.py``; the parametrize above reached seven of them and
+    ``tags`` had its own test, so the three object reads were the members missing from the
+    proof (rules 145, 147). They are now one helper with the eight list reads, which is
+    exactly why the population has to be pinned: a site quietly reverted to ``get_json``
+    coerces again, and only a per-site case says so.
+
+    Seerr's five sit here too, because the same helper serves them (rule 72)."""
+
+    @pytest.mark.parametrize(
+        ("client_cls", "host", "path", "call"),
+        [
+            (RadarrClient, "radarr.test", "/api/v3/system/status", lambda c: c.system_status()),
+            (RadarrClient, "radarr.test", "/api/v3/movie/7", lambda c: c.movie_by_id(7)),
+            (SonarrClient, "sonarr.test", "/api/v3/series/7", lambda c: c.series_by_id(7)),
+            (SeerrClient, "seerr.test", "/api/v1/status", lambda c: c.status()),
+            (SeerrClient, "seerr.test", "/api/v1/request", lambda c: c.requests()),
+            (SeerrClient, "seerr.test", "/api/v1/user", lambda c: c.users()),
+            (SeerrClient, "seerr.test", "/api/v1/user/7/quota", lambda c: c.quota(7)),
+            (
+                SeerrClient,
+                "seerr.test",
+                "/api/v1/movie/7",
+                lambda c: c.title(tmdb_id=7, media_type="movie"),
+            ),
+        ],
+    )
+    async def test_a_non_object_200_raises(
+        self,
+        httpx2_mock: respx.Router,
+        client_cls: type[RadarrClient] | type[SonarrClient] | type[SeerrClient],
+        host: str,
+        path: str,
+        call: Any,
+    ) -> None:
+        httpx2_mock.get(host=host, path=path).mock(
+            return_value=httpx.Response(200, json=["bad gateway"])
+        )
+        async with client_cls(f"https://{host}", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError, match="did not return an object"):
+                await call(client)
+
+    async def test_the_message_names_the_path_that_was_asked(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The three arr messages used to be hand-written and dropped the API prefix, so
+        an operator on a v5 Sonarr read "series/7 did not return an object" and could not
+        tell which API path had answered. Generating the message from the path fixes that,
+        and this is the assertion that would notice it going back."""
+        httpx2_mock.get(host="sonarr.test", path="/api/v5/series/7").mock(
+            return_value=httpx.Response(200, json=["bad gateway"])
+        )
+        async with SonarrClient(
+            "https://sonarr.test", "k", safety=READ_ONLY, api_path_prefix="/api/v5"
+        ) as client:
+            with pytest.raises(
+                IntegrationError, match=r"/api/v5/series/7 did not return an object"
+            ):
+                await client.series_by_id(7)
+
+    async def test_a_helper_cannot_be_asked_not_to_raise(self) -> None:
+        """The one property that makes the extraction safe rather than convenient: a
+        ``default=`` or ``coerce=`` parameter would reopen rules 28/93 at every call site
+        at once, from one line nobody reviews again."""
+        for helper in (BaseClient.get_list, BaseClient.get_dict):
+            assert set(inspect.signature(helper).parameters) == {
+                "self",
+                "path",
+                "params",
+                "headers",
+            }
+
+
 class TestAShortSeerrWalkRefusesRatherThanUndercounting:
     """``build_request_index`` sets ``available=True`` when every Seerr "was read in full",
     and its docstring says exactly why that matters: a confident ``Known(value=False)`` off
@@ -165,7 +251,9 @@ class TestAShortSeerrWalkRefusesRatherThanUndercounting:
     (rules 56/89, 7/24).
 
     The existing guard only fired on rows-without-a-total. The undetected case is its
-    mirror: a total that promises more, and a page that hands back none."""
+    mirror: a total that promises more, and a page that hands back none. A third way out
+    was missing entirely, and neither guard can see it: the walk's length is whatever the
+    server's reported total says it is, and nothing bounded that number."""
 
     @staticmethod
     def _page(mock: respx.Router, path: str, *responses: httpx.Response) -> None:
@@ -226,6 +314,64 @@ class TestAShortSeerrWalkRefusesRatherThanUndercounting:
         async with self._client() as client:
             with pytest.raises(IntegrationError, match="did not return a list of results"):
                 await client.users()
+
+    @staticmethod
+    def _endless(path: str, body: dict[str, Any], allowed: int, asked: list[str]) -> Any:
+        """A portal that answers every page in full and never lowers its total.
+
+        The mock REFUSES the page past the cap rather than serving it, so deleting the cap
+        fails this test in three round trips instead of wedging the suite on an unbounded
+        walk (rule 118). `AssertionError` is not caught anywhere on this path: the retry
+        predicate matches transport errors only."""
+
+        def _respond(request: httpx.Request) -> httpx.Response:
+            asked.append(request.url.params["skip"])
+            assert len(asked) <= allowed, f"the walk asked {path} for a page past the cap"
+            return httpx.Response(200, json=body)
+
+        return _respond
+
+    async def test_a_portal_that_never_stops_promising_more_is_bounded(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A total the walk cannot reach in any sane number of round trips, with every page
+        full so neither existing guard fires. The fixture's 10,000 would end on its own at
+        page 100, which is the point: the cap stops it at 3 and the count is what stops it,
+        never the total. The trip raises rather than returning short, because the caller's
+        `available=True` is a claim that this read finished (rules 56/89)."""
+        monkeypatch.setattr("reaper.clients.seerr.MAX_PAGES", 3)
+        rows = [{"id": i, "type": "movie", "media": {"tmdbId": i}} for i in range(2)]
+        asked: list[str] = []
+        httpx2_mock.get(host="seerr.test", path="/api/v1/request").mock(
+            side_effect=self._endless(
+                "/request", {"pageInfo": {"results": 10_000}, "results": rows}, 3, asked
+            )
+        )
+        async with self._client() as client:
+            with pytest.raises(IntegrationError, match="never finished, after 6 requests"):
+                await client.all_requests()
+        assert asked == ["0", "100", "200"]
+
+    async def test_the_user_walk_is_bounded_too(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rule 72 again, and a different cap value from the case above so neither test
+        rests on one number (rule 141). Production is 1,000, so nothing here can pass by
+        matching a hardcoded bound."""
+        monkeypatch.setattr("reaper.clients.seerr.MAX_PAGES", 2)
+        asked: list[str] = []
+        httpx2_mock.get(host="seerr.test", path="/api/v1/user").mock(
+            side_effect=self._endless(
+                "/user",
+                {"pageInfo": {"results": 10_000}, "results": [{"id": 1}, {"id": 2}]},
+                2,
+                asked,
+            )
+        )
+        async with self._client() as client:
+            with pytest.raises(IntegrationError, match="never finished, after 4 accounts"):
+                await client.users()
+        assert asked == ["0", "100"]
 
 
 class TestSendRetriesTransientTransportErrors:
@@ -300,6 +446,104 @@ class TestTimeoutMessageNamesTheKind:
         message = str(exc.value)
         assert "ConnectTimeout" in message
         assert "30" not in message  # never the misleading fixed read-timeout figure
+
+    @pytest.mark.parametrize(
+        ("kind", "shrinkable"),
+        [(httpx2.ReadTimeout, True), (httpx2.ConnectTimeout, False), (httpx2.PoolTimeout, False)],
+    )
+    async def test_only_a_read_timeout_is_marked_as_one(
+        self,
+        httpx2_mock: respx.Router,
+        kind: type[httpx2.TimeoutException],
+        shrinkable: bool,
+    ) -> None:
+        """A read timeout says the service took the request and could not finish the body,
+        so asking for less is worth trying -- ``history_sync.sync`` halves its page on it.
+        A connect or pool timeout says nothing about size, and marking one would have the
+        history walk shrink its way through an unreachable host before giving up."""
+        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
+            side_effect=kind("no answer")
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError) as exc:
+                await client.system_status()
+
+        assert exc.value.read_timed_out is shrinkable
+
+    async def test_a_status_failure_is_not_marked_as_a_timeout(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The flag defaults to False, so an answer that arrived cannot be mistaken for one
+        that never did."""
+        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
+            return_value=httpx.Response(503)
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError) as exc:
+                await client.system_status()
+
+        assert exc.value.read_timed_out is False
+
+
+class TestOneBulkReadCanWidenItsOwnReadBudget:
+    """A client's timeout is shared by every method on it, so the history sweep's minute-long
+    page and the artwork proxy's answer to a browser were bound to one number, and the sweep
+    paid for that with 5x the requests (#780). ``read_timeout`` moves the budget per call.
+
+    httpx resolves the effective timeout onto the outgoing request's ``extensions``, so what
+    reached the wire is readable rather than inferred from the argument.
+    """
+
+    @staticmethod
+    def _budget(route: respx.Route) -> dict[str, float | None]:
+        extensions: dict[str, Any] = route.calls.last.request.extensions
+        return dict(extensions["timeout"])
+
+    async def test_a_call_that_asks_for_nothing_keeps_the_clients_budget(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            return_value=httpx.Response(200, json={"response": {"result": "success", "data": {}}})
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            await client.history(length=1)
+
+        assert self._budget(route) == {
+            "connect": DEFAULT_TIMEOUT.connect,
+            "read": DEFAULT_TIMEOUT.read,
+            "write": DEFAULT_TIMEOUT.write,
+            "pool": DEFAULT_TIMEOUT.pool,
+        }
+
+    async def test_only_the_read_leg_moves(self, httpx2_mock: respx.Router) -> None:
+        """Connect, write and pool say nothing about how much was asked for, so widening
+        them would buy a bulk read nothing and cost every failure mode its speed."""
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            return_value=httpx.Response(200, json={"response": {"result": "success", "data": {}}})
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            await client.history(length=25_000, read_timeout=61.0)
+
+        assert self._budget(route) == {
+            "connect": DEFAULT_TIMEOUT.connect,
+            "read": 61.0,
+            "write": DEFAULT_TIMEOUT.write,
+            "pool": DEFAULT_TIMEOUT.pool,
+        }
+
+    async def test_the_wider_budget_does_not_stick_to_the_client(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The next call on the same client is back to the shared budget. A widening that
+        leaked would hand a browser-facing read the sweep's minute."""
+        route = httpx2_mock.get("https://tautulli.test/api/v2").mock(
+            return_value=httpx.Response(200, json={"response": {"result": "success", "data": {}}})
+        )
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
+            await client.history(length=25_000, read_timeout=61.0)
+            await client.history(length=1)
+
+        assert self._budget(route)["read"] == DEFAULT_TIMEOUT.read
 
 
 class TestPlexTvErrorsAreMapped:
@@ -453,17 +697,19 @@ def call_lines(_restore_logging: None) -> Iterator[Callable[[], list[str]]]:
     logbuffer.RING = logbuffer.LogRing()
 
 
-class TestEveryBaseClientCallIsTraced:
-    """One DEBUG line per `BaseClient` call, and it never carries a credential.
+class TestEveryOutboundCallIsTraced:
+    """One DEBUG line per outbound call, and it never carries a credential.
 
     Nothing else records that one of these calls happened: the HTTP libraries are pinned
     to WARNING because they log the URL verbatim (``logging._NOISY_LOGGERS``), so this is
     the only trace there can be -- and the reason those libraries are quiet is exactly
     the reason this line must not grow a URL, a query string, or a header.
 
-    Named for `BaseClient` and not for every outbound call, because two surfaces are not
-    traced: `PlexClient` rides plexapi rather than this base, and `PublicClient.stream_to`
-    streams past `_send`. `_trace`'s docstring carries what extending it would cost.
+    All three client surfaces emit through `base.trace_call`: `BaseClient._send` for the
+    *arr calls, `GuardedSession.request` for every Plex call including the deletion path's
+    `refresh_path` and `empty_trash`, and `PublicClient._stream_once` for the ratings
+    dataset. The Discord webhook stays out, since its path is the credential (rule 33). The
+    Plex, blocked-mutation, and stream cases are the last three below.
     """
 
     async def test_a_read_reports_service_status_and_shape(
@@ -584,3 +830,58 @@ class TestEveryBaseClientCallIsTraced:
         assert "SUPERSECRET" not in call
         assert "apikey" not in call
         assert "path=/api/v2" in call
+
+    def test_a_plex_call_is_traced_by_path_and_never_the_token(
+        self, call_lines: Callable[[], list[str]]
+    ) -> None:
+        """`PlexClient` rides plexapi through `GuardedSession`, not `BaseClient`, so this is
+        the only line a Plex read or an `emptyTrash` on the deletion path produces. plexapi
+        carries `X-Plex-Token` in the query string (rule 13), so the line logs the path split
+        and never the URL, exactly like the Tautulli case above.
+        """
+        session = GuardedSession(READ_ONLY)
+        response = requests.Response()
+        response.status_code = 200
+        with mock.patch.object(requests.Session, "send", autospec=True, return_value=response):
+            session.get("http://plex.test/library/sections?X-Plex-Token=SUPERSECRET")
+
+        (call,) = call_lines()
+        assert "service=plex" in call
+        assert "path=/library/sections" in call
+        assert "status=200" in call
+        assert "mutation=False" in call
+        assert "SUPERSECRET" not in call
+        assert "X-Plex-Token" not in call
+
+    def test_a_blocked_plex_mutation_is_not_traced(
+        self, call_lines: Callable[[], list[str]]
+    ) -> None:
+        """The guard raises above the trace, so a refused write reaches no wire and leaves no
+        line. A blocked mutation never happened: tracing it would invent a call and log the
+        token the block kept off the wire. This pins that ordering (rule 118).
+        """
+        session = GuardedSession(READ_ONLY)
+        with mock.patch.object(requests.Session, "send", autospec=True) as send:
+            with pytest.raises(SafetyViolationError, match="Blocked"):
+                session.delete("http://plex.test/library/metadata/1?X-Plex-Token=SUPERSECRET")
+            send.assert_not_called()
+
+        assert call_lines() == []
+
+    async def test_a_streamed_download_is_traced(
+        self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]], tmp_path: Path
+    ) -> None:
+        """`PublicClient._stream_once` hand-rolls its loop past `_send`, so the ratings
+        dataset -- the longest single outbound operation in the app -- traces itself. `path`
+        is the argument, never the post-redirect target.
+        """
+        httpx2_mock.get("https://data.test/ratings.tsv").mock(
+            return_value=httpx.Response(200, content=b"col\tval\n")
+        )
+        async with PublicClient("https://data.test") as client:
+            await client.stream_to("/ratings.tsv", tmp_path / "out.tsv")
+
+        (call,) = call_lines()
+        assert "service=public-fetch" in call
+        assert "path=/ratings.tsv" in call
+        assert "status=200" in call

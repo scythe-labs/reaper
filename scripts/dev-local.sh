@@ -34,6 +34,10 @@
 #                         reaper.db, else <this tree>/data)
 #   REAPER_PORT           API port    (default 8420); Vite's /api proxy target follows it
 #   REAPER_WEB_PORT       Vite port   (default 5173)
+#   REAPER_WEB_HOST       what Vite binds to (default loopback). 0.0.0.0 on a headless box,
+#                         where the browser is on another machine and there is no local one
+#                         to fall back to. The API stays on loopback either way: Vite
+#                         proxies /api, so nothing else has to be reachable.
 #   REAPER_DEV_NO_MIGRATE 1 to skip `alembic upgrade head` (booting on a DB behind the
 #                         branch head usually fails, because the models expect the new
 #                         columns -- the upgrade is additive-only, so it is safe to run)

@@ -25,6 +25,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from sqlalchemy import select
 
 from reaper.api import tags as api_tags
+from reaper.api.deps import state_singleton
 from reaper.clients.tautulli import TautulliClient
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
@@ -54,13 +55,7 @@ async def _artwork_client(app: FastAPI, row: Instance, box: SecretBox) -> Tautul
     lifespan closes it at shutdown (:func:`close_artwork_client`), so it has an owner
     (rule 34).
     """
-    lock: asyncio.Lock | None = getattr(app.state, "artwork_client_lock", None)
-    if lock is None:
-        # No await between the read and the write, so two concurrent requests cannot both
-        # install a lock. Created here rather than in the lifespan so a test app that
-        # never ran one still gets a client bound to its own running loop.
-        lock = asyncio.Lock()
-        app.state.artwork_client_lock = lock
+    lock = state_singleton(app, "artwork_client_lock", asyncio.Lock)
 
     want = _fingerprint(row)
     cached: tuple[_Fingerprint, TautulliClient] | None = getattr(app.state, "artwork_client", None)
@@ -98,7 +93,14 @@ async def close_artwork_client(app: FastAPI) -> None:
         await cached[1].aclose()
 
 
-@router.get("/poster/{rating_key}")
+# Image bytes, not JSON. Without this the route publishes ``application/json`` with an empty
+# schema, which tells a script author to parse a PNG as JSON (rule 72, with the two download
+# routes in ``api/logs.py`` and ``api/backup.py``).
+@router.get(
+    "/poster/{rating_key}",
+    response_class=Response,
+    responses={200: {"content": {"image/*": {}}}},
+)
 async def poster(request: Request, rating_key: int, kind: str = "poster") -> Response:
     """Return one item's Plex artwork as image bytes, or 404 so the UI shows a placeholder.
 

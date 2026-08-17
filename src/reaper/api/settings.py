@@ -2,7 +2,9 @@
 """Configuring Reaper from the web UI.
 
 Everything an operator needs to stand the tool up and keep it running lives here: the
-external services it reads from, the Plex link, the schedule, and the safety switch.
+external services it reads from, the schedule, and the safety switch. The Plex link and the
+library shelf moved to ``api/plex.py``, which keeps this prefix and restates the two facts
+below for its own readers.
 
 Two things are true of the whole router:
 
@@ -17,11 +19,13 @@ Two things are true of the whole router:
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import secrets
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from ipaddress import ip_network
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import SplitResult, urlsplit
 from zoneinfo import ZoneInfo
@@ -29,51 +33,41 @@ from zoneinfo import ZoneInfo
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import launcher
 from reaper.api import tags as api_tags
-from reaper.api.auth import (
-    _busy_hashing,
-    _client_ip,
-    _throttled,
-    _verify_admin_password,
-    record_password_failure,
+from reaper.api.deps import (
+    busy_hashing,
+    client_ip,
+    require_admin_password,
+    runtime_settings,
+    secret_box,
+    session_factory,
 )
-from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
+from reaper.api.schemas import JobRunOut, OkOut, RemovedOut
 from reaper.auth.proxy import parse_proxy_networks
-from reaper.auth.ratelimit import argon2_gate, password_throttle
+from reaper.auth.ratelimit import argon2_gate
 from reaper.auth.sessions import (
     resolve_session_from_cookies,
     session_via_recovery,
     spend_recovery_mark,
 )
+from reaper.buildinfo import env_flag
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
-from reaper.clients.plextv import PlexConnection, PlexTvClient, connection_identity
-from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import AppSetting, InstanceKind, PlexServer, Snapshot, WatchHighWater
+from reaper.db.models import InstanceKind, PlexServer
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import (
     admin_password,
     app_settings,
     instances,
     leaving_soon,
-    watch_evidence,
 )
 from reaper.services.app_settings import ExpandSeasonsMode
-from reaper.services.plex_link import (
-    PlexLinkError,
-    PlexLinkRetryableError,
-    PlexServerChoiceNeededError,
-    client_identifier,
-    poll_link,
-    start_link,
-    switch_server,
-)
 from reaper.services.scheduler import (
     DEFAULT_MAINTENANCE_CRONS,
     MAINTENANCE_JOB_IDS,
@@ -81,29 +75,14 @@ from reaper.services.scheduler import (
     SCHEDULABLE_JOB_IDS,
     apply_maintenance_schedule,
     apply_scan_schedule,
+    apply_stored_schedules,
     effective_maintenance_cron,
-    reschedule_timezone,
     run_maintenance_now,
 )
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/settings")
-
-
-def _factory(request: Request) -> async_sessionmaker[AsyncSession]:
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    return factory
-
-
-def _settings(request: Request) -> Settings:
-    settings: Settings = request.app.state.settings
-    return settings
-
-
-def _box(request: Request) -> SecretBox:
-    box: SecretBox = request.app.state.secret_box
-    return box
 
 
 def _kind(value: str) -> InstanceKind:
@@ -200,11 +179,27 @@ class SeerrServiceOut(BaseModel):
 
 
 class TestOut(BaseModel):
+    """The verdict on one connection test: did it reach the service, and what to say about it.
+
+    What a test of a SAVED instance and a webhook test can both answer. The mapping a
+    pre-save probe reads is on :class:`InstanceProbeOut` below, because only that route can
+    answer it and a shared shape said otherwise: the published contract had a Discord webhook
+    test declaring it may return Sonarr root folders (rule 25)."""
+
     ok: bool
     detail: str
     version: str | None = None
-    # What this connection has to map, read on the same pass that proved the credentials. Only
-    # one is ever populated -- a test is for exactly one kind -- and both stay empty on a
+
+
+class InstanceProbeOut(TestOut):
+    """The pre-save test on the add form, which also reads what the connection has to map.
+
+    Only this route can: it is the only caller with no instance id, so the mapping has to come
+    back on the same pass that proved the credentials. That is what lets the form map a service
+    before it is saved.
+    """
+
+    # Only one is ever populated -- a test is for exactly one kind -- and both stay empty on a
     # failed test, since nothing was reached to read them from.
     root_folders: list[RootFolderOut] = []
     seerr_services: list[SeerrServiceOut] = []
@@ -217,183 +212,20 @@ class TestOut(BaseModel):
     map_error: str | None = None
 
 
-class PlexStatusOut(BaseModel):
-    linked: bool
-    name: str | None = None
-    connection_uri: str | None = None
-    last_ok_at: str | None = None
-    verify_tls: bool = True
-    """Whether the server's TLS certificate is checked (mirrors the per-instance
-    setting). True when unlinked, since on is the only default."""
-    web_url: str = ""
-    """Where "open in Plex" links point. Always present, linked or not -- the hosted
-    Plex Web default until the operator overrides it."""
-
-
-# A comment, not the docstring: this class's docstring is the schema description in the API
-# reference an operator can browse, so the incident lives here and the plain sentence lives there.
-#
-# Both fields need three states, and `web_url` had two. `str = ""` could not tell "I am not
-# changing the address" from "reset it to the hosted default", so every caller wrote the address
-# whether it meant to or not (rule 1). The browser's certificate switch was such a caller and
-# filled the field from its CACHED status row, so flipping a setting about certificates wrote back
-# an address that may have moved since -- silently reverting it, and pointing every "open in Plex"
-# link in the app at plex.tv (#204). `None` means keep; `""` still means reset.
-#
-# Both sentences of the contract are in the CLASS docstring because that is the only part of this
-# model an operator can read: Pydantic harvests the per-field docstrings below only under
-# `use_attribute_docstrings`, which this tree does not set (`schemas.py` says so as well). So the
-# empty-string reset -- the one way back to the hosted default -- was written beside the field it
-# describes and published nowhere, leaving the browsable schema naming neither field's semantics
-# while every test stayed green (rule 144).
-class PlexUpdateIn(BaseModel):
-    """The editable Plex settings. Send only what you are changing: a field you leave out
-    keeps its stored value, and an empty web address puts it back to the hosted default."""
-
-    web_url: str | None = None
-    """Where "open in Plex" links point."""
-    verify_tls: bool | None = None
-    """Whether to check the linked server's TLS certificate."""
-
-
-class PlexLinkStartOut(BaseModel):
-    pin_id: int
-    auth_url: str
-
-
-class PlexLinkPollIn(BaseModel):
-    pin_id: int
-    # Multi-server accounts only: the machine identifier of the owned server the admin
-    # picked, echoed back from a "choose_server" response.
-    machine_identifier: str | None = None
-    # The certificate-check choice made in the link form. Off lets a self-signed HTTPS
-    # server be reached at all; it is stored on the server row when the link completes.
-    verify_tls: bool = True
-
-
-class PlexServerChoiceOut(BaseModel):
-    name: str
-    machine_identifier: str
-
-
-class PlexLinkPollOut(BaseModel):
-    status: str  # "pending" | "retrying" | "ok" | "choose_server"
-    server: PlexStatusOut | None = None
-    # Present only with status "choose_server": the owned servers to pick from.
-    servers: list[PlexServerChoiceOut] | None = None
-    # Present only with status "retrying": why this poll could not finish yet, in the
-    # operator's words. The sign-in is still good and the browser keeps polling.
-    reason: str | None = None
-
-
-class PlexResourceConnectionOut(BaseModel):
-    """One address a server can be reached at, for the connection picker."""
-
-    uri: str
-    local: bool
-    relay: bool
-    protocol: str
-
-
-class PlexResourceOut(BaseModel):
-    name: str
-    machine_identifier: str
-    current: bool
-    """Whether this is the server Reaper is linked to right now."""
-    connections: list[PlexResourceConnectionOut]
-
-
-class PlexResourcesOut(BaseModel):
-    source: str
-    """``"plex.tv"`` when the listing is live, ``"stored"`` when plex.tv could not be
-    reached and this is the linked server's addresses as remembered at link time. Honest
-    about staleness rather than pretending a cache is live."""
-    servers: list[PlexResourceOut]
-    owner_username: str | None = None
-    """The signed-in Plex account's name -- the person, not the server. Known only on the
-    live path (it comes from plex.tv); ``None`` on the stored fallback, where the UI shows
-    the server name instead."""
-
-
-class PlexServerSwitchIn(BaseModel):
-    machine_identifier: str
-    verify_tls: bool | None = (
-        None  # omitted keeps the stored setting; a self-signed target needs False
-    )
-
-
-class PlexConnectionIn(BaseModel):
-    """A connection choice: one of the discovered addresses, or a manually typed one.
-    The address is probed before anything is saved -- a typo changes nothing."""
-
-    uri: str
-    verify_tls: bool | None = None
-
-
-class PlexLibraryOut(BaseModel):
-    key: int
-    title: str
-    kind: str
-    """``"movie"`` or ``"show"``."""
-    enabled: bool
-
-
-class WatchEvidenceOut(BaseModel):
-    """How much watching Reaper has recorded, and what the last scan could not read.
-
-    ``titles`` is how many titles hold a record. ``held_back`` is how many items the last scan
-    found had plays it could no longer read, and it is **null when no scan has counted** --
-    either none has run, or the newest one predates the count. Null is not zero and must not be
-    rendered as zero: a scan that did not count is not a scan that counted none (rule 93).
-
-    It counts what was measured, never what was decided. Such an item is normally held, but by
-    three gates the operator can each switch off, and nothing here consults the verdict, so copy
-    calling this figure items held back or kept asserts a protection it is not computed from.
-
-    The contract lives in this class docstring, not on the fields: attribute docstrings are
-    not published in the schema here (see ``PlexUpdateIn`` above), so a field-level note is
-    invisible to anyone reading the API reference.
-    """
-
-    titles: int
-    held_back: int | None = None
-
-
-class WatchEvidenceResetIn(BaseModel):
-    """The admin password, which is what confirms forgetting the record.
-
-    Optional on the wire rather than required, so an omitted password comes back as the same
-    plain "that password didn't match" the wrong one gets, instead of a validator's sentence
-    (rule 21). Its siblings ``SafetyIn`` and ``RestoreConfirmIn`` are typed the same way.
-    """
-
-    password: str | None = Field(default=None, max_length=128)
-
-
-class WatchEvidenceResetOut(BaseModel):
-    """How many titles Reaper forgot."""
-
-    forgotten: int
-
-
-class PlexLibrariesIn(BaseModel):
-    """The full set of enabled section keys. Keys not in the stored list are ignored;
-    an empty list turns every library off, which just means no shelf is managed
-    anywhere -- this scopes a warning feature, never a deletion."""
-
-    enabled_keys: list[int]
-
-
 class LeavingSoonLastOut(BaseModel):
     at: str
     movies: int
     seasons: int
     applied: bool
-    #: Whether the last sync was actually clean: false only for a real per-library
-    #: problem, never merely because it ran in preview (unarmed). This, not ``applied``,
-    #: is what should color the Jobs page's status dot.
+    #: Whether the last sync did what it set out to do: no library failed, and there was
+    #: one turned on to update. Never false merely because it ran in preview (unarmed).
+    #: This, not ``applied``, is what should color the Jobs page's status dot.
     ok: bool
-    #: A short plain-language summary of the last sync, for the Jobs page's resting line.
+    #: The pass's own one-line summary (``LeavingSoonResult.summary``). Rendered as it
+    #: arrives: no surface words a pass of its own (#555). The Plex panel's shelf status
+    #: shows it on every pass; the Jobs row shows it only when ``ok`` is false, since
+    #: ``JobStatus`` reads it as the reason a run failed and a run that worked is already
+    #: described by the counts beside it.
     result: str
 
 
@@ -456,6 +288,12 @@ class ScheduleOut(BaseModel):
 
 class JobScheduleIn(BaseModel):
     cron: str | None = None
+
+
+#: What both arms of :func:`set_job_schedule` answer with when the scheduler will not take a
+#: cron. One declaration, so the two cannot drift into two sentences (rule 144). ``reason``
+#: is the parser's own words about what it choked on.
+_BAD_CRON = "That is not a valid schedule: {reason}. Use cron form, e.g. '30 4 * * *'."
 
 
 class SafetyOut(BaseModel):
@@ -596,7 +434,7 @@ def _sample_embed() -> Embed:
 
 @router.get("/instances", tags=[api_tags.SERVICES])
 async def list_instances(request: Request) -> list[InstanceOut]:
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         return [InstanceOut.of(v) for v in await instances.list_instances(session)]
 
 
@@ -604,11 +442,11 @@ async def list_instances(request: Request) -> list[InstanceOut]:
 async def create_instance(request: Request, payload: InstanceCreateIn) -> InstanceOut:
     _require_web_url(payload.base_url, refusal=_BASE_URL_REFUSAL)
     _validate_external_url(payload.external_url)
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
             view = await instances.create_instance(
                 session,
-                _box(request),
+                secret_box(request),
                 kind=_kind(payload.kind),
                 name=payload.name,
                 base_url=payload.base_url,
@@ -619,12 +457,8 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
                 plex_library_map=payload.plex_library_map,
                 service_instance_map=payload.service_instance_map,
             )
-        except instances.InstanceConflictError as exc:
-            # A duplicate name is a conflict; anything else the service refused (a blank
-            # field, say) is a validation failure -- mirror update_instance's split.
-            raise HTTPException(409, str(exc)) from exc
         except instances.InstanceError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         await session.commit()
         return InstanceOut.of(view)
 
@@ -635,11 +469,11 @@ async def update_instance(
 ) -> InstanceOut:
     _require_web_url(payload.base_url, refusal=_BASE_URL_REFUSAL)
     _validate_external_url(payload.external_url)
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
             view = await instances.update_instance(
                 session,
-                _box(request),
+                secret_box(request),
                 instance_id,
                 name=payload.name,
                 base_url=payload.base_url,
@@ -651,21 +485,18 @@ async def update_instance(
                 plex_library_map=payload.plex_library_map,
                 service_instance_map=payload.service_instance_map,
             )
-        except instances.InstanceConflictError as exc:
-            # A rename into an existing name is a conflict, not a missing resource.
-            raise HTTPException(409, str(exc)) from exc
         except instances.InstanceError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         await session.commit()
         return InstanceOut.of(view)
 
 
 @router.delete("/instances/{instance_id}", tags=[api_tags.SERVICES])
-async def delete_instance(request: Request, instance_id: int) -> dict[str, bool]:
-    async with _factory(request)() as session:
+async def delete_instance(request: Request, instance_id: int) -> RemovedOut:
+    async with session_factory(request)() as session:
         removed = await instances.delete_instance(session, instance_id)
         await session.commit()
-    return {"removed": removed}
+    return RemovedOut(removed=removed)
 
 
 async def _plex_section_paths(request: Request) -> dict[str, list[str]]:
@@ -681,14 +512,14 @@ async def _plex_section_paths(request: Request) -> dict[str, list[str]]:
     second copy would be two suggestion sources for one control (rule 144).
     """
     section_paths: dict[str, list[str]] = {}
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         server = (await session.execute(select(PlexServer))).scalars().first()
-        safety = await app_settings.runtime_safety(session, _settings(request))
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
     if server is None or not server.connection_uri:
         return section_paths
     plex = PlexClient(
         server.connection_uri,
-        _box(request).decrypt(server.token_enc),
+        secret_box(request).decrypt(server.token_enc),
         safety=safety,
         verify=server.verify_tls,
     )
@@ -703,7 +534,7 @@ async def _plex_section_paths(request: Request) -> dict[str, list[str]]:
 
 
 @router.post("/instances/test", tags=[api_tags.SERVICES])
-async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOut:
+async def test_new_instance(request: Request, payload: InstanceTestIn) -> InstanceProbeOut:
     """Test a URL and key before saving, and hand back what this connection has to map.
 
     The add form gates its Save on this passing, so a service can never be saved at an address
@@ -723,7 +554,7 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOu
     result = await instances.test_connection(
         kind, payload.base_url, payload.api_key, verify=payload.verify_tls
     )
-    out = TestOut(ok=result.ok, detail=result.detail, version=result.version)
+    out = InstanceProbeOut(ok=result.ok, detail=result.detail, version=result.version)
     if not result.ok:
         return out
     try:
@@ -739,20 +570,13 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOu
                 RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in found
             ]
         elif kind is InstanceKind.SEERR:
-            async with _factory(request)() as session:
+            async with session_factory(request)() as session:
                 arr_rows = await instances.arr_rows(session)
             services = await instances.probe_seerr_services(
                 payload.base_url, payload.api_key, verify=payload.verify_tls, arr_rows=arr_rows
             )
             out.seerr_services = [
-                SeerrServiceOut(
-                    service_id=s.service_id,
-                    kind=s.kind,
-                    name=s.name,
-                    is_4k=s.is_4k,
-                    suggested_instance_id=s.suggested_instance_id,
-                )
-                for s in services
+                SeerrServiceOut.model_validate(s, from_attributes=True) for s in services
             ]
     except (IntegrationError, instances.InstanceError) as exc:
         # The raw exception stays in the log, where a diagnosis needs it, and what the operator
@@ -773,11 +597,11 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOu
 @router.post("/instances/{instance_id}/test", tags=[api_tags.SERVICES])
 async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
     """Test a stored instance and record the outcome on it."""
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
-            result = await instances.test_saved_instance(session, _box(request), instance_id)
+            result = await instances.test_saved_instance(session, secret_box(request), instance_id)
         except instances.InstanceError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         await session.commit()
     return TestOut(ok=result.ok, detail=result.detail, version=result.version)
 
@@ -795,15 +619,13 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
     # folder cannot be suggested differently depending on which screen asked (rule 144).
     section_paths = await _plex_section_paths(request)
 
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
             folders = await instances.instance_root_folders(
-                session, _box(request), instance_id, section_paths=section_paths
+                session, secret_box(request), instance_id, section_paths=section_paths
             )
-        except instances.InstanceNotFoundError as exc:
-            raise HTTPException(404, str(exc)) from exc
         except instances.InstanceError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         except IntegrationError as exc:
             raise HTTPException(502, f"Could not read the folder list: {exc}") from exc
     return [RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in folders]
@@ -818,560 +640,14 @@ async def instance_seerr_services(request: Request, instance_id: int) -> list[Se
     reached (or its key is not admin, so settings are refused), so the modal can say so rather
     than show an empty list as if the portal had no services.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         try:
-            services = await instances.seerr_services(session, _box(request), instance_id)
-        except instances.InstanceNotFoundError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            services = await instances.seerr_services(session, secret_box(request), instance_id)
         except instances.InstanceError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         except IntegrationError as exc:
             raise HTTPException(502, f"Could not read the service list: {exc}") from exc
-    return [
-        SeerrServiceOut(
-            service_id=s.service_id,
-            kind=s.kind,
-            name=s.name,
-            is_4k=s.is_4k,
-            suggested_instance_id=s.suggested_instance_id,
-        )
-        for s in services
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Plex
-# ---------------------------------------------------------------------------
-
-
-async def _plex_status(session: AsyncSession) -> PlexStatusOut:
-    web_url = await app_settings.get_plex_web_url(session)
-    server = (await session.execute(select(PlexServer))).scalars().first()
-    if server is None:
-        return PlexStatusOut(linked=False, web_url=web_url)
-    return PlexStatusOut(
-        linked=True,
-        name=server.name,
-        connection_uri=server.connection_uri,
-        last_ok_at=server.last_ok_at.isoformat() if server.last_ok_at else None,
-        verify_tls=server.verify_tls,
-        web_url=web_url,
-    )
-
-
-@router.get("/plex", tags=[api_tags.PLEX])
-async def plex_status(request: Request) -> PlexStatusOut:
-    async with _factory(request)() as session:
-        return await _plex_status(session)
-
-
-@router.put("/plex", tags=[api_tags.PLEX])
-async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexStatusOut:
-    """Save the Plex settings: the "open in Plex" web address (empty resets to the
-    hosted default) and, once a server is linked, the certificate check. Each field is
-    independent, and one left out is left alone."""
-    cleaned = payload.web_url.strip() if payload.web_url is not None else None
-    _require_web_url(
-        cleaned,
-        refusal="The Plex web address must be a full web address, like https://192.0.2.10:32400.",
-    )
-    async with _factory(request)() as session:
-        # Only when the caller sent the field. `cleaned` is `None` for "not sent" and `""` for
-        # "reset to the hosted default", and those are different requests (rule 1).
-        if cleaned is not None:
-            await app_settings.set_plex_web_url(session, cleaned or None)
-        if payload.verify_tls is not None:
-            server = (await session.execute(select(PlexServer))).scalars().first()
-            if server is None:
-                raise HTTPException(
-                    422, "No Plex server is linked yet. Link one before changing this."
-                )
-            server.verify_tls = payload.verify_tls
-        status = await _plex_status(session)
-        await session.commit()
-    log.info("settings.plex_saved")
-    return status
-
-
-@router.post("/plex/link/start", tags=[api_tags.PLEX])
-async def plex_link_start(
-    request: Request, payload: PlexStartIn = NO_PLEX_FORWARD
-) -> PlexLinkStartOut:
-    async with _factory(request)() as session:
-        safety = await app_settings.runtime_safety(session, _settings(request))
-    start = await start_link(_factory(request), safety=safety, forward_url=payload.forward_url())
-    return PlexLinkStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
-
-
-@router.post("/plex/link/poll", tags=[api_tags.PLEX])
-async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkPollOut:
-    async with _factory(request)() as session:
-        safety = await app_settings.runtime_safety(session, _settings(request))
-    try:
-        linked = await poll_link(
-            _factory(request),
-            _box(request),
-            pin_id=payload.pin_id,
-            safety=safety,
-            choice=payload.machine_identifier,
-            verify_tls=payload.verify_tls,
-        )
-    except PlexServerChoiceNeededError as exc:
-        # The account owns several servers. The PIN stays valid; the browser shows the
-        # candidates and re-polls with the admin's pick.
-        return PlexLinkPollOut(
-            status="choose_server",
-            servers=[
-                PlexServerChoiceOut(name=c.name, machine_identifier=c.machine_identifier)
-                for c in exc.candidates
-            ],
-        )
-    except PlexLinkRetryableError as exc:
-        # The sign-in was approved but the server could not be reached this instant -- it
-        # may just be restarting. ``poll_link`` deliberately KEEPS the pending login for
-        # exactly this case, so the answer must not be an error: the browser aborts its
-        # poll loop on any thrown status, which would strand the still-valid sign-in and
-        # send the operator back through the whole approval round trip (B2-14). Answered
-        # as a non-final status instead, so the loop keeps polling until it works or the
-        # deadline passes.
-        return PlexLinkPollOut(status="retrying", reason=str(exc))
-    except PlexLinkError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    if linked is None:
-        return PlexLinkPollOut(status="pending")
-    # The server is linked as of this line, so its libraries are readable for the first time.
-    await _sync_libraries_after_link(request)
-    async with _factory(request)() as session:
-        return PlexLinkPollOut(status="ok", server=await _plex_status(session))
-
-
-@router.delete("/plex", tags=[api_tags.PLEX])
-async def plex_unlink(request: Request) -> dict[str, bool]:
-    """Forget the linked Plex server. Deletes nothing in Plex -- it just drops the stored
-    connection and token, so Leaving Soon and the collection whitelist go quiet until a
-    server is linked again."""
-    async with _factory(request)() as session:
-        server = (await session.execute(select(PlexServer))).scalars().first()
-        if server is None:
-            return {"removed": False}
-        await session.delete(server)
-        await session.commit()
-    log.info("plex.unlinked")
-    return {"removed": True}
-
-
-async def _linked_server(session: AsyncSession) -> PlexServer:
-    server = (await session.execute(select(PlexServer))).scalars().first()
-    if server is None:
-        raise HTTPException(400, "No Plex server is linked yet. Link one first.")
-    return server
-
-
-@router.get("/plex/resources", tags=[api_tags.PLEX])
-async def plex_resources(request: Request) -> PlexResourcesOut:
-    """The servers this Plex account owns and every address each can be reached at,
-    for the server and connection pickers.
-
-    Asks plex.tv live using the stored token. When plex.tv cannot be reached, falls
-    back to the linked server's addresses as remembered at link time -- marked
-    ``source: "stored"`` so the UI can say the list may be stale rather than imply it
-    is fresh.
-    """
-    async with _factory(request)() as session:
-        server = await _linked_server(session)
-        current_id = server.machine_identifier
-        token = _box(request).decrypt(server.token_enc)
-        cid = await client_identifier(session)
-        safety = await app_settings.runtime_safety(session, _settings(request))
-        stored_connections = json.loads(server.connections_json or "[]")
-        stored_name = server.name
-        await session.commit()
-
-    try:
-        async with PlexTvClient(cid, safety=safety) as plextv:
-            owned = await plextv.owned_servers(token)
-            # The signed-in person's name, for the "who you're linked as" line. Same token,
-            # same live call as the server list; a failure here degrades to stored below.
-            account = await plextv.account(token)
-    except IntegrationError as exc:
-        log.warning("plex.resources_unreachable", error=str(exc))
-        return PlexResourcesOut(
-            source="stored",
-            servers=[
-                PlexResourceOut(
-                    name=stored_name,
-                    machine_identifier=current_id,
-                    current=True,
-                    connections=[
-                        PlexResourceConnectionOut(
-                            uri=str(c.get("uri") or ""),
-                            local=bool(c.get("local")),
-                            relay=bool(c.get("relay")),
-                            protocol=str(c.get("protocol") or "https"),
-                        )
-                        for c in stored_connections
-                        if c.get("uri")
-                    ],
-                )
-            ],
-        )
-
-    return PlexResourcesOut(
-        source="plex.tv",
-        owner_username=account.username,
-        servers=[
-            PlexResourceOut(
-                name=r.name,
-                machine_identifier=r.client_identifier,
-                current=r.client_identifier == current_id,
-                connections=[
-                    PlexResourceConnectionOut(
-                        uri=c.uri, local=c.local, relay=c.relay, protocol=c.protocol
-                    )
-                    for c in r.preferred_connections()
-                ],
-            )
-            for r in owned
-        ],
-    )
-
-
-@router.put("/plex/server", tags=[api_tags.PLEX])
-async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> PlexStatusOut:
-    """Point Reaper at a different server the same account owns.
-
-    Resolved against the live OWNED list from plex.tv and probed before anything is
-    saved. Switching clears the library choices and the announced set -- they were keyed
-    to the old server and would silently mis-target the new one. The certificate check
-    rides along when given, so switching to a self-signed server can turn it off in the
-    same step rather than being stuck on the old server's setting.
-    """
-    async with _factory(request)() as session:
-        safety = await app_settings.runtime_safety(session, _settings(request))
-    try:
-        await switch_server(
-            _factory(request),
-            _box(request),
-            machine_identifier=payload.machine_identifier,
-            safety=safety,
-            verify_tls=payload.verify_tls,
-        )
-    except PlexLinkRetryableError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    except PlexLinkError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    # Switching cleared the library choices, which were keyed to the old server. Refill them
-    # from the new one here, for the same reason the link path does (rule 72): the stored list
-    # is otherwise empty until something presses Sync, and the library pickers read that list.
-    await _sync_libraries_after_link(request)
-    async with _factory(request)() as session:
-        status = await _plex_status(session)
-    log.info("plex.server_switched")
-    return status
-
-
-@router.put("/plex/connection", tags=[api_tags.PLEX])
-async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> PlexStatusOut:
-    """Save how Reaper reaches the linked server: a discovered address or a manual one.
-
-    The address is probed with the stored token before anything is written, so a typo
-    or a dead address changes nothing. The certificate check rides along when given
-    (a self-signed HTTPS server needs it off to be probed at all).
-
-    The probe also asks the server who it is and refuses anything but the linked one.
-    This address is typed by hand, so it can be any Plex on the network; saving one
-    that belongs to a different server would point Reaper's Leaving Soon writes and its
-    Never-Reap read at a library nobody asked it to touch (B-10). A server that will
-    not say who it is is refused for the same reason: unconfirmed is not confirmed.
-    """
-    uri = payload.uri.strip().rstrip("/")
-    # The required form: this address is dialed, not stored for display, so a blank one is refused
-    # here rather than carried into the probe. `host` is the validated host the probe needs.
-    parts, host = _required_web_url(
-        uri, refusal="The server address must be a full web address, like https://192.0.2.10:32400."
-    )
-
-    async with _factory(request)() as session:
-        server = await _linked_server(session)
-        token = _box(request).decrypt(server.token_enc)
-        verify = payload.verify_tls if payload.verify_tls is not None else server.verify_tls
-        expected = server.machine_identifier
-        expected_name = server.name
-
-    probe = PlexConnection(
-        uri=uri,
-        address=host,
-        port=parts.port or (443 if parts.scheme == "https" else 32400),
-        local=False,
-        relay=False,
-        protocol=parts.scheme,
-    )
-    answered = await connection_identity(probe, token, verify=verify)
-    if answered is None:
-        raise HTTPException(
-            502,
-            "Couldn't reach a Plex server at that address, so nothing was changed. "
-            "Check the address and port, and whether the certificate check should be off.",
-        )
-    if answered != expected:
-        log.warning("plex.connection_wrong_server")
-        raise HTTPException(
-            409,
-            f"That address is a different Plex server, so nothing was changed. Reaper is "
-            f"linked to {expected_name}; use an address for that server, or link the other "
-            f"one instead.",
-        )
-
-    async with _factory(request)() as session:
-        server = await _linked_server(session)
-        server.connection_uri = uri
-        if payload.verify_tls is not None:
-            server.verify_tls = payload.verify_tls
-        server.last_ok_at = utcnow()
-        status = await _plex_status(session)
-        await session.commit()
-    log.info("plex.connection_saved")
-    return status
-
-
-# ---------------------------------------------------------------------------
-# Plex libraries
-# ---------------------------------------------------------------------------
-
-
-def _libraries_out(stored: list[dict[str, Any]]) -> list[PlexLibraryOut]:
-    return [
-        PlexLibraryOut(
-            key=int(lib.get("key", 0)),
-            title=str(lib.get("title", "")),
-            kind=str(lib.get("kind", "movie")),
-            enabled=bool(lib.get("enabled", True)),
-        )
-        for lib in stored
-    ]
-
-
-@router.get("/plex/libraries", tags=[api_tags.PLEX])
-async def plex_libraries(request: Request) -> list[PlexLibraryOut]:
-    """The video libraries as last synced, each with its enabled flag. Empty until the
-    first sync."""
-    async with _factory(request)() as session:
-        return _libraries_out(await app_settings.get_plex_libraries(session))
-
-
-async def _sync_libraries_after_link(request: Request) -> None:
-    """Refresh the library list because the linked server just changed. Never raises.
-
-    The library list is a property of the server that was just linked, so this is where it
-    becomes knowable -- and reading it here is what stops every later screen from having to
-    remember. Nothing did: ``GET /plex/libraries`` answers "as last synced", the setup wizard
-    only ever called that, and an operator who signs in with Plex at the login screen is past
-    ``plex_linked`` before the wizard's Plex step would have run, so the step never renders and
-    nothing ever syncs. The service editor's library pickers were then empty on a fresh install
-    while its folder suggestions -- which come from a LIVE Plex read, not the stored list --
-    were right, so the two disagreed about libraries that plainly existed (#384).
-
-    Best-effort by design: a sync failure must not fail the sign-in the operator just approved.
-    Both callers have a manual Sync button behind them and ``PlexPanel`` re-syncs an empty list
-    on sight, so the recovery path is the one that already existed.
-    """
-    # Deliberately every exception, because the promise above is unconditional and the two named
-    # families were not the whole surface: `_sync_libraries` also decrypts the stored token, writes
-    # and commits, and closes the client in a `finally`. An `InvalidToken` or a locked database
-    # would have come out of `plex_link_poll` as a 500 -- after the pin was already consumed and
-    # the server already linked, which is precisely the stranded sign-in the poll route's own
-    # comment is written to avoid. A docstring saying "never raises" has to be true (rule 7/24).
-    try:
-        await _sync_libraries(request)
-    except Exception as exc:
-        log.warning("plex.libraries_autosync_failed", error=f"{type(exc).__name__}: {exc}")
-
-
-@router.post("/plex/libraries/sync", tags=[api_tags.PLEX])
-async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
-    """Refresh the library list from the server."""
-    try:
-        return await _sync_libraries(request)
-    except PlexError as exc:
-        raise HTTPException(502, f"Could not reach Plex: {exc}") from exc
-
-
-async def _sync_libraries(request: Request) -> list[PlexLibraryOut]:
-    """The refresh itself, raising ``PlexError`` for an unreachable server.
-
-    Merge, not replace: a library the operator already turned off stays off across a
-    re-sync; a newly discovered library starts ON, so the default install marks every
-    movie and TV library without further setup. Libraries that no longer exist on the
-    server are dropped.
-    """
-    async with _factory(request)() as session:
-        server = await _linked_server(session)
-        safety = await app_settings.runtime_safety(session, _settings(request))
-        stored = {
-            int(lib["key"]): bool(lib.get("enabled", True))
-            for lib in await app_settings.get_plex_libraries(session)
-        }
-        plex = PlexClient(
-            server.connection_uri,
-            _box(request).decrypt(server.token_enc),
-            safety=safety,
-            verify=server.verify_tls,
-        )
-
-    try:
-        sections = await plex.video_sections()
-    finally:
-        await plex.aclose()
-
-    merged = [
-        {
-            "key": s.key,
-            "title": s.title,
-            "kind": s.kind,
-            "enabled": stored.get(s.key, True),
-        }
-        for s in sections
-    ]
-    async with _factory(request)() as session:
-        await app_settings.set_plex_libraries(session, merged)
-        result = _libraries_out(await app_settings.get_plex_libraries(session))
-        await session.commit()
-    log.info("plex.libraries_synced", count=len(merged))
-    return result
-
-
-@router.get("/watch-evidence", tags=[api_tags.PLEX])
-async def get_watch_evidence(request: Request) -> WatchEvidenceOut:
-    """How many titles hold a watch record, and how many the last scan could not read.
-
-    The second number is the one that answers "do I need to press this": a nonzero count is
-    items whose recorded plays Reaper can no longer see. It is what was measured, not what was
-    decided -- see ``WatchEvidenceOut``, which says why the difference matters here.
-    """
-    async with _factory(request)() as session:
-        titles = int(
-            (await session.execute(select(func.count()).select_from(WatchHighWater))).scalar() or 0
-        )
-        held_back = (
-            await session.execute(
-                select(Snapshot.watch_blind_items).order_by(Snapshot.id.desc()).limit(1)
-            )
-        ).scalar()
-    return WatchEvidenceOut(titles=titles, held_back=held_back)
-
-
-@router.post("/watch-evidence/reset", tags=[api_tags.PLEX])
-async def reset_watch_evidence(
-    request: Request, payload: WatchEvidenceResetIn
-) -> WatchEvidenceResetOut:
-    """Forget how much watching Reaper has measured for each title, and start over.
-
-    Reaper records the most watch history it has ever seen per title, so that a title whose
-    plays suddenly read as zero can be told apart from one nobody ever watched. Plays go
-    unreadable when Plex reissues an item's id, which happens when a file leaves the library
-    and comes back: the plays stay filed under the old id.
-
-    Rebuild a whole library without repairing that history and EVERY watched title reads zero
-    at once, so every one of them is held back and nothing is reapable. That is the honest
-    answer, and no amount of re-scanning changes it. This discards the record so the next scan
-    accepts the library as it is now.
-
-    Deliberately not paired with a cache rebuild: the watch mirror is a faithful copy of the
-    source, so re-syncing it fetches the same rows back. The repair that restores the real
-    numbers is on the source side, in Tautulli.
-
-    **Gated on the admin password, exactly like arming deletion (:func:`set_safety`) and
-    confirming a restore (:func:`reaper.api.backup.restore_confirm`)** -- the same per-IP and
-    per-account lockout, the same Argon2 concurrency gate, and the same refusal when no
-    password has been set at all. It earns that gate on blast radius: the record is the only
-    thing that can tell a title whose plays went unreadable apart from one nobody ever
-    watched, so discarding it withdraws that protection from every title at once, and the
-    three gates that were holding those titles (``MIN_DORMANCY``, ``SERVER_POPULARITY``,
-    ``DATA_HORIZON``) stop holding on the next scan. A stray click or a stale tab must not be
-    able to do that, which is the same sentence ``set_safety`` is written on.
-
-    No content-binding token (rule 73), and that is a decision rather than an omission: there
-    is nothing staged for the operator to review. They are not approving a list, and the
-    action discards the whole record whatever the count beside it says, so a token bound to
-    that count could only refuse a press over a change that cannot alter what the press does.
-    ``set_safety`` is the shape this follows; ``restore_confirm`` binds a token because it has
-    a staged artifact to bind one to.
-    """
-    keys = (f"ip:{_client_ip(request)}", "account:watch-evidence-reset")
-    async with _factory(request)() as session:
-        if not await admin_password.has_password(session):
-            raise HTTPException(
-                400,
-                "Set an admin password first. It's what confirms forgetting the record.",
-            )
-        _throttled(password_throttle, *keys)
-        ok = await _verify_admin_password(session, payload.password or "")
-        if not ok:
-            record_password_failure(password_throttle, keys, gate="forget_watch_record")
-            raise HTTPException(403, "That password didn't match. The record was kept.")
-        for key in keys:
-            password_throttle.record_success(key)
-        forgotten = await watch_evidence.forget_all(session)
-        await session.commit()
-    return WatchEvidenceResetOut(forgotten=forgotten)
-
-
-@router.delete("/watch-evidence/{media_key}", tags=[api_tags.PLEX])
-async def forget_watch_evidence_for(request: Request, media_key: str) -> dict[str, bool]:
-    """Accept what Reaper can see now for ONE title, and judge it on that from the next scan.
-
-    The narrow twin of the reset above. Reaper holds a title back when the plays it recorded
-    earlier stop being readable, because it cannot tell that from a title nobody watched. The
-    usual cause is a file that left the library and came back: Plex gives it a new id and the
-    earlier plays stay filed under the old one.
-
-    Two other events read the same way and are not that -- removing a duplicate copy of a
-    title held twice, and rebuilding a Radarr or Sonarr database so a different title inherits
-    the record. Nothing in the scan can tell the three apart, which is why this is a control
-    the operator presses rather than something Reaper decides.
-
-    Returns whether a record existed. Removing one does NOT delete anything and does not
-    approve a removal: the title goes back to being judged by the policy on its current plays,
-    like any other.
-    """
-    async with _factory(request)() as session:
-        removed = await watch_evidence.forget_one(session, media_key)
-        await session.commit()
-    return {"removed": removed}
-
-
-@router.put("/plex/libraries", tags=[api_tags.PLEX])
-async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list[PlexLibraryOut]:
-    """Turn libraries on or off. The keys name the enabled set; everything else stored
-    turns off. Unknown keys are ignored rather than invented.
-
-    A library that just turned OFF gets one last empty-reconcile (when Reaper is allowed
-    to write), so its "Leaving Soon" shelf does not linger unmanaged -- the reconcile
-    never visits a disabled library again, and a stale warning shelf is a lie.
-    """
-    enabled = {int(k) for k in payload.enabled_keys}
-    async with _factory(request)() as session:
-        stored = await app_settings.get_plex_libraries(session)
-        turned_off = [
-            lib for lib in stored if lib.get("enabled") and int(lib.get("key", 0)) not in enabled
-        ]
-        for lib in stored:
-            lib["enabled"] = int(lib.get("key", 0)) in enabled
-        await app_settings.set_plex_libraries(session, stored)
-        result = _libraries_out(await app_settings.get_plex_libraries(session))
-        await session.commit()
-
-    if turned_off:
-        # Best-effort, after the choice is committed: failure is logged inside, never
-        # raised, and never blocks the settings change itself.
-        await leaving_soon.cleanup_sections(
-            _factory(request), _settings(request), _box(request), sections=turned_off
-        )
-
-    log.info("plex.libraries_set", enabled=len(enabled), cleaned=len(turned_off))
-    return result
+    return [SeerrServiceOut.model_validate(s, from_attributes=True) for s in services]
 
 
 # ---------------------------------------------------------------------------
@@ -1406,8 +682,8 @@ async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> Leavin
 
 @router.get("/leaving-soon", tags=[api_tags.JOBS])
 async def get_leaving_soon_settings(request: Request) -> LeavingSoonSettingsOut:
-    async with _factory(request)() as session:
-        return await _leaving_soon_out(session, _settings(request))
+    async with session_factory(request)() as session:
+        return await _leaving_soon_out(session, runtime_settings(request))
 
 
 @router.put("/leaving-soon", tags=[api_tags.JOBS])
@@ -1420,7 +696,7 @@ async def set_leaving_soon_settings(
     Turning the shelf OFF runs one last pass that takes everything off it (when Reaper
     is allowed to write), so nothing stale lingers in the library.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         was_enabled = await app_settings.leaving_soon_enabled(session)
         if payload.enabled is not None:
             await app_settings.set_leaving_soon_enabled(session, enabled=payload.enabled)
@@ -1431,10 +707,12 @@ async def set_leaving_soon_settings(
     if was_enabled and payload.enabled is False:
         # Best-effort: takes everything off the shelves so nothing stale lingers.
         # Failure is logged inside, never raised -- turning a warning off must succeed.
-        await leaving_soon.cleanup_shelves(_factory(request), _settings(request), _box(request))
+        await leaving_soon.cleanup_shelves(
+            session_factory(request), runtime_settings(request), secret_box(request)
+        )
 
-    async with _factory(request)() as session:
-        result = await _leaving_soon_out(session, _settings(request))
+    async with session_factory(request)() as session:
+        result = await _leaving_soon_out(session, runtime_settings(request))
     log.info(
         "leaving_soon.settings_saved",
         enabled=payload.enabled,
@@ -1458,7 +736,7 @@ async def get_schedule(request: Request) -> ScheduleOut:
     """
     scheduler = request.app.state.scheduler
     running: set[str] = getattr(request.app.state, "running_jobs", set())
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         scan_cron = await app_settings.get_scan_schedule(session)
         maintenance = await app_settings.get_maintenance_schedules(session)
         last_runs = await app_settings.get_job_last_runs(session)
@@ -1499,24 +777,22 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
     cron = (payload.cron or "").strip() or None
     scheduler = request.app.state.scheduler
     # Read the cron in the current server zone, so a job set for 2 AM fires at 2 AM there.
-    async with _factory(request)() as session:
-        job_tz = ZoneInfo(await app_settings.get_timezone(session, _settings(request)))
+    async with session_factory(request)() as session:
+        job_tz = ZoneInfo(await app_settings.get_timezone(session, runtime_settings(request)))
     if job_id == SCAN_JOB_ID:
         try:
             apply_scan_schedule(
                 scheduler,
                 cron,
-                settings=_settings(request),
-                session_factory=_factory(request),
+                settings=runtime_settings(request),
+                session_factory=session_factory(request),
                 cache_engine=request.app.state.cache_engine,
-                secret_box=_box(request),
+                secret_box=secret_box(request),
                 timezone=job_tz,
             )
         except ValueError as exc:
-            raise HTTPException(
-                422, f"That is not a valid schedule: {exc}. Use cron form, e.g. '30 4 * * *'."
-            ) from exc
-        async with _factory(request)() as session:
+            raise HTTPException(422, _BAD_CRON.format(reason=exc)) from exc
+        async with session_factory(request)() as session:
             await app_settings.set_scan_schedule(session, cron)
             await session.commit()
     elif job_id in MAINTENANCE_JOB_IDS:
@@ -1526,18 +802,15 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 job_id,
                 cron,
                 cache_engine=request.app.state.cache_engine,
-                data_dir=_settings(request).data_dir,
-                session_factory=_factory(request),
-                secret_box=_box(request),
-                settings=_settings(request),
+                session_factory=session_factory(request),
+                secret_box=secret_box(request),
+                settings=runtime_settings(request),
                 update_checker=request.app.state.update_checker,
                 timezone=job_tz,
             )
         except ValueError as exc:
-            raise HTTPException(
-                422, f"That is not a valid schedule: {exc}. Use cron form, e.g. '30 4 * * *'."
-            ) from exc
-        async with _factory(request)() as session:
+            raise HTTPException(422, _BAD_CRON.format(reason=exc)) from exc
+        async with session_factory(request)() as session:
             await app_settings.set_maintenance_schedule(session, job_id, cron)
             await session.commit()
     else:
@@ -1548,7 +821,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
 
 
 @router.post("/jobs/{job_id}/run", tags=[api_tags.JOBS])
-async def run_job(request: Request, job_id: str) -> dict[str, str]:
+async def run_job(request: Request, job_id: str) -> JobRunOut:
     """Run an upkeep job now, whether or not it is on a schedule.
 
     A scheduled job is nudged to fire immediately; one the owner turned off is run once
@@ -1564,14 +837,13 @@ async def run_job(request: Request, job_id: str) -> dict[str, str]:
         request.app.state.scheduler,
         job_id,
         cache_engine=request.app.state.cache_engine,
-        data_dir=_settings(request).data_dir,
-        session_factory=_factory(request),
-        secret_box=_box(request),
-        settings=_settings(request),
+        session_factory=session_factory(request),
+        secret_box=secret_box(request),
+        settings=runtime_settings(request),
         update_checker=request.app.state.update_checker,
     )
     log.info("jobs.run_now", job=job_id)
-    return {"status": "started", "job": job_id}
+    return JobRunOut(status="started", job=job_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1590,8 +862,8 @@ async def _safety_out(session: AsyncSession, safety: RuntimeSafety) -> SafetyOut
 
 @router.get("/safety", tags=[api_tags.SECURITY])
 async def get_safety(request: Request) -> SafetyOut:
-    async with _factory(request)() as session:
-        safety = await app_settings.runtime_safety(session, _settings(request))
+    async with session_factory(request)() as session:
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
         return await _safety_out(session, safety)
 
 
@@ -1604,19 +876,20 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     one click. If no admin password has been set yet, enabling is refused with a message
     pointing at the password step.
 
-    The verify runs behind the same per-IP + per-account lockout and Argon2 concurrency
-    gate as login (``password_throttle`` / ``argon2_gate``): arming is a password-guessing
-    surface too, and Argon2 is expensive by design.
+    The check runs through :func:`reaper.api.deps.require_admin_password`. That is the same
+    per-IP + per-account lockout shape as login and the same Argon2 concurrency gate
+    (``argon2_gate``), on its own counter (``password_throttle``, not ``login_throttle``):
+    arming is a password-guessing surface too, and Argon2 is expensive by design.
     """
-    keys = (f"ip:{_client_ip(request)}", "account:safety-arm")
-    async with _factory(request)() as session:
+    keys = (f"ip:{client_ip(request)}", "account:safety-arm")
+    async with session_factory(request)() as session:
         if payload.enabled:
             # Refused before the password is even looked at, because no password makes this
             # allowed: `RuntimeSafety.destructive_allowed` holds deletion off for the whole
             # life of a recovery-mode process, so accepting the flip would write a stored
             # `true` the app then ignores and the banner contradicts. Answering here is what
             # keeps the switch and the state one thing.
-            if _settings(request).recovery:
+            if runtime_settings(request).recovery:
                 raise HTTPException(
                     409,
                     "Recovery mode is on, so deletion stays off. Turn it off and restart first.",
@@ -1626,23 +899,23 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
                     400,
                     "Set an admin password first. It's what confirms turning deletion on.",
                 )
-            _throttled(password_throttle, *keys)
-            ok = await _verify_admin_password(session, payload.password or "")
-            if not ok:
-                record_password_failure(password_throttle, keys, gate="arm_deletion")
-                raise HTTPException(403, "That password didn't match. Deletion stays off.")
-            for key in keys:
-                password_throttle.record_success(key)
+            await require_admin_password(
+                session,
+                payload.password or "",
+                keys=keys,
+                gate="arm_deletion",
+                refusal="That password didn't match. Deletion stays off.",
+            )
         await app_settings.set_destructive_enabled(session, enabled=payload.enabled)
         await session.commit()
-        safety = await app_settings.runtime_safety(session, _settings(request))
+        safety = await app_settings.runtime_safety(session, runtime_settings(request))
         result = await _safety_out(session, safety)
     log.info("safety.destructive_set", enabled=payload.enabled)
     return result
 
 
 @router.post("/admin-password", tags=[api_tags.SECURITY])
-async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict[str, bool]:
+async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOut:
     """Set (or change) the admin password.
 
     This is the password that later confirms turning deletion on, and it doubles as the
@@ -1660,8 +933,8 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
     same transaction as the new hash, so a second change from that session asks for the
     password like any other, and the mark cannot outlive the reset it was for.
     """
-    keys = (f"ip:{_client_ip(request)}", "account:admin-password")
-    async with _factory(request)() as session:
+    keys = (f"ip:{client_ip(request)}", "account:admin-password")
+    async with session_factory(request)() as session:
         # Preserve the caller's own cookie so changing your password does not log you out
         # of the tab you are using; every *other* session for that admin is still revoked.
         # It has to be the token that actually RESOLVES: with two cookie names in play, a
@@ -1670,16 +943,17 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
         _, keep = await resolve_session_from_cookies(session, request.cookies)
         via_recovery = await session_via_recovery(session, keep)
         if await admin_password.has_password(session) and not via_recovery:
-            _throttled(password_throttle, *keys)
-            ok = await _verify_admin_password(session, payload.current_password or "")
-            if not ok:
-                record_password_failure(password_throttle, keys, gate="change_password")
-                raise HTTPException(403, "The current password didn't match. Nothing was changed.")
-            for key in keys:
-                password_throttle.record_success(key)
-        # Hashing the NEW password is one more Argon2 run, so it takes its own slot.
+            await require_admin_password(
+                session,
+                payload.current_password or "",
+                keys=keys,
+                gate="change_password",
+                refusal="The current password didn't match. Nothing was changed.",
+            )
+        # Hashing the NEW password is one more Argon2 run, so it takes its own slot. Not part
+        # of the gate above: the verify has already passed, so a refusal here records nothing.
         if not argon2_gate.acquire():
-            raise _busy_hashing()
+            raise busy_hashing()
         try:
             username = await admin_password.set_password(
                 session, payload.password, keep_session_token=keep
@@ -1695,7 +969,7 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
             await spend_recovery_mark(session, keep)
         await session.commit()
     log.info("safety.admin_password_set", username=username, via_recovery=via_recovery)
-    return {"ok": True}
+    return OkOut(ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1707,8 +981,10 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
 async def get_notifications(request: Request) -> NotificationsOut:
     """Whether a Discord webhook is configured. The URL is write-only -- like an API key,
     only its presence is ever reported, never the value."""
-    async with _factory(request)() as session:
-        has = await app_settings.has_discord_webhook(session, _box(request), _settings(request))
+    async with session_factory(request)() as session:
+        has = await app_settings.has_discord_webhook(
+            session, secret_box(request), runtime_settings(request)
+        )
     return NotificationsOut(has_webhook=has)
 
 
@@ -1717,8 +993,8 @@ async def set_notifications(request: Request, payload: NotificationsIn) -> Notif
     """Store (or replace) the Discord webhook. The URL is validated to a Discord https host
     and encrypted at rest; it is never read back to the browser."""
     url = _validated_discord_webhook(payload.webhook_url)
-    async with _factory(request)() as session:
-        await app_settings.set_discord_webhook(session, _box(request), url)
+    async with session_factory(request)() as session:
+        await app_settings.set_discord_webhook(session, secret_box(request), url)
         await session.commit()
     log.info("notifications.webhook_set")
     return NotificationsOut(has_webhook=True)
@@ -1727,7 +1003,7 @@ async def set_notifications(request: Request, payload: NotificationsIn) -> Notif
 @router.delete("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def clear_notifications(request: Request) -> NotificationsOut:
     """Forget the webhook -- Leaving Soon warnings go silent until one is set again."""
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         await app_settings.clear_discord_webhook(session)
         await session.commit()
     log.info("notifications.webhook_cleared")
@@ -1747,8 +1023,8 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
             _validated_discord_webhook(payload.webhook_url)
         )
     else:
-        async with _factory(request)() as session:
-            notifier = await build_notifier(session, _box(request), _settings(request))
+        async with session_factory(request)() as session:
+            notifier = await build_notifier(session, secret_box(request), runtime_settings(request))
         if notifier is None:
             return TestOut(ok=False, detail="No Discord webhook is configured to test.")
 
@@ -1796,8 +1072,12 @@ class GeneralSettingsOut(BaseModel):
     accent_color: str
     """The UI accent as ``#rrggbb``; the built-in sky blue until changed."""
     api_key_set: bool
-    """Whether a key exists at all -- the value itself only leaves through the
-    dedicated reveal route, never rides along on a settings read."""
+    """Whether a key this install can actually use exists -- the value itself only leaves
+    through the dedicated reveal route, never rides along on a settings read. Read through
+    ``get_api_key``, so a key written under a secret key that has since rotated reports as
+    absent here exactly as it does to the header lane that would authenticate with it (rule
+    76). It used to report the row, which promised a working credential to an operator whose
+    reveal button then 404s."""
     expand_seasons_mode: ExpandSeasonsMode
     """Which screens the review queue opens each show's season list expanded on. A display
     preference; ``off`` until the operator picks a screen."""
@@ -1841,20 +1121,29 @@ def _desktop_out() -> DesktopSettingsOut | None:
     platform = launcher.desktop_platform()
     if platform is None:
         return None
+    # The value the launcher resolved this boot. `load_launcher_conf` seeded the file into
+    # the environment before serving, so the environment is the effective record; the file
+    # only matters again at the next start.
+    #
+    # `default=True` is the same fact `launcher._tray_wanted` writes as `return frozen`, and
+    # the two agree only because the guard above returns None off a frozen build, which is
+    # the one shape where `frozen` is False (rule 104).
     return DesktopSettingsOut(
         platform=platform,
-        tray=launcher.desktop_flag(launcher.DESKTOP_TRAY_KEY, default=True),
-        dock_icon=launcher.desktop_flag(launcher.DESKTOP_DOCK_KEY, default=False),
+        tray=env_flag(launcher.DESKTOP_TRAY_KEY, default=True),
+        dock_icon=env_flag(launcher.DESKTOP_DOCK_KEY, default=False),
     )
 
 
-async def _general_out(session: AsyncSession, settings: Settings) -> GeneralSettingsOut:
+async def _general_out(
+    session: AsyncSession, settings: Settings, box: SecretBox
+) -> GeneralSettingsOut:
     return GeneralSettingsOut(
         application_name=await app_settings.get_application_name(session),
         application_url=await app_settings.get_application_url(session),
         timezone=await app_settings.get_timezone(session, settings),
         accent_color=await app_settings.get_accent_color(session),
-        api_key_set=(await session.get(AppSetting, app_settings.API_KEY_KEY)) is not None,
+        api_key_set=await app_settings.get_api_key(session, box) is not None,
         expand_seasons_mode=await app_settings.get_expand_seasons_mode(session),
         default_spare_days=await app_settings.get_default_spare_days(session),
         proxy_trust_enabled=await app_settings.proxy_trust_enabled(session, settings),
@@ -1870,7 +1159,7 @@ async def _refresh_proxy_state(request: Request, session: AsyncSession) -> None:
     makes a General save take effect immediately. Disabled means an empty tuple:
     forwarded headers from anywhere are ignored, exactly like a fresh install.
     """
-    settings = _settings(request)
+    settings = runtime_settings(request)
     if await app_settings.proxy_trust_enabled(session, settings):
         entries = await app_settings.get_trusted_proxies(session, settings)
         request.app.state.trusted_proxies = parse_proxy_networks(entries)
@@ -1888,27 +1177,197 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
     scheduler = getattr(request.app.state, "scheduler", None)
     if scheduler is None:
         return
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         scan_cron = await app_settings.get_scan_schedule(session)
         maintenance = await app_settings.get_maintenance_schedules(session)
-    reschedule_timezone(
+    apply_stored_schedules(
         scheduler,
         ZoneInfo(name),
-        settings=_settings(request),
-        session_factory=_factory(request),
+        settings=runtime_settings(request),
+        session_factory=session_factory(request),
         cache_engine=request.app.state.cache_engine,
-        secret_box=_box(request),
+        secret_box=secret_box(request),
         update_checker=request.app.state.update_checker,
-        data_dir=_settings(request).data_dir,
         scan_cron=scan_cron,
         maintenance=maintenance,
     )
 
 
+@dataclass(frozen=True)
+class _GeneralField[T]:
+    """One field of ``GeneralSettingsIn`` that is stored as an app setting.
+
+    ``clean`` validates the value that arrived and returns the one to store, raising
+    ``HTTPException`` on a refusal; a field with nothing to check leaves it unset and
+    stores what arrived. ``write`` is the setter, wrapped where its own signature is
+    keyword-only.
+
+    Generic in the stored type, and each row below names it, so mypy checks that a row's
+    setter and its cleaner agree about what that field holds. Without the parameter the
+    table is a tuple of ``Any`` and a setter wired to the wrong field is caught only if some
+    route test happens to send that field alone.
+    """
+
+    name: str
+    write: Callable[[AsyncSession, T], Awaitable[None]]
+    clean: Callable[[T], T] | None = None
+
+
+def _clean_application_url(value: str) -> str:
+    _require_web_url(
+        value,
+        refusal="The application URL must be a full web address, like https://reaper.example.com",
+    )
+    return value
+
+
+def _clean_timezone(value: str) -> str:
+    """The one validator here that also refuses an empty string. An empty accent means
+    "put the built-in one back"; there is no such thing as an empty zone, and storing one
+    would leave every timed job on whatever the host happens to be set to."""
+    stripped = value.strip()
+    if not stripped or not app_settings.is_valid_timezone(stripped):
+        raise HTTPException(422, "That is not a known time zone. Pick one from the list.")
+    return stripped
+
+
+def _clean_accent_color(value: str) -> str:
+    """Empty passes: it is how the Reset link says "back to the built-in accent", and
+    ``set_accent_color`` turns it into the default. The stored value is the one that
+    arrived, not the stripped copy checked here, because the setter folds case and
+    whitespace itself."""
+    stripped = value.strip()
+    if stripped and not _HEX_COLOR.match(stripped):
+        raise HTTPException(422, "The accent color must be a hex code like #25c3ff.")
+    return value
+
+
+def _clean_trusted_proxies(value: list[str]) -> list[str]:
+    for entry in value:
+        cleaned_entry = entry.strip()
+        if not cleaned_entry:
+            continue
+        try:
+            ip_network(cleaned_entry, strict=False)
+        except ValueError:
+            raise HTTPException(
+                422,
+                f'"{cleaned_entry}" is not an address or a range. Use entries '
+                "like 172.16.0.1 or 172.16.0.0/12.",
+            ) from None
+    return value
+
+
+async def _write_expand_seasons_mode(session: AsyncSession, value: ExpandSeasonsMode) -> None:
+    await app_settings.set_expand_seasons_mode(session, mode=value)
+
+
+async def _write_default_spare_days(session: AsyncSession, value: int) -> None:
+    await app_settings.set_default_spare_days(session, days=value)
+
+
+async def _write_proxy_trust_enabled(session: AsyncSession, value: bool) -> None:
+    await app_settings.set_proxy_trust_enabled(session, enabled=value)
+
+
+#: Every ``GeneralSettingsIn`` field that is an app-settings row, in the order the model
+#: declares them. ``put_general`` walks this twice, so adding a General setting is a row
+#: here rather than a check in one loop and a write in another that can disagree.
+#:
+#: Order decides only which refusal an operator sees when two fields are both wrong, and
+#: nothing pins that: the promise is that a refusal writes nothing, whichever field earned
+#: it.
+_GENERAL_FIELDS: tuple[_GeneralField[Any], ...] = (
+    _GeneralField[str]("application_name", app_settings.set_application_name),
+    _GeneralField[str]("application_url", app_settings.set_application_url, _clean_application_url),
+    _GeneralField[str]("timezone", app_settings.set_timezone, _clean_timezone),
+    _GeneralField[str]("accent_color", app_settings.set_accent_color, _clean_accent_color),
+    _GeneralField[ExpandSeasonsMode]("expand_seasons_mode", _write_expand_seasons_mode),
+    _GeneralField[int]("default_spare_days", _write_default_spare_days),
+    _GeneralField[bool]("proxy_trust_enabled", _write_proxy_trust_enabled),
+    _GeneralField[list[str]](
+        "trusted_proxies", app_settings.set_trusted_proxies, _clean_trusted_proxies
+    ),
+)
+
+#: The fields of the same model that are deliberately NOT rows, each with the reason it
+#: cannot be one. Declared rather than left as anonymous lines in the route, so the pair
+#: with ``_GENERAL_FIELDS`` covers the model exactly and
+#: ``test_every_general_field_is_a_row_or_a_declared_exception`` fails on a field that is
+#: neither (rule 103).
+_GENERAL_FIELD_EXCEPTIONS: Mapping[str, str] = {
+    "tray": (
+        "Not a settings row: it is a launcher.conf line plus an os.environ mirror, on the "
+        "desktop builds only. See _validated_desktop_values."
+    ),
+    "dock_icon": (
+        "Not a settings row, and narrower still than tray: macOS alone. Same launcher.conf "
+        "and os.environ pair."
+    ),
+}
+
+
+def _cleaned_general_values(payload: GeneralSettingsIn) -> dict[str, Any]:
+    """Pass one: check every field that arrived, and return what each should store.
+
+    Nothing here touches the session, which is the point -- a refusal raises before the
+    first write rather than partway through it.
+    """
+    cleaned: dict[str, Any] = {}
+    for field in _GENERAL_FIELDS:
+        value = getattr(payload, field.name)
+        if value is None:
+            continue
+        cleaned[field.name] = field.clean(value) if field.clean else value
+    return cleaned
+
+
+def _validated_desktop_values(payload: GeneralSettingsIn) -> dict[str, str]:
+    """The desktop pair's half of pass one: refuse it where the platform cannot honor it,
+    and return the launcher.conf lines to write. Empty when neither field was sent.
+
+    These two checks used to sit below the writes, where they were covered only by the
+    commit at the end of the route rolling the session back. They are checks, so they
+    belong with the other checks; the operator sees the same two refusals either way.
+    """
+    if payload.tray is None and payload.dock_icon is None:
+        return {}
+    platform = launcher.desktop_platform()
+    if platform is None:
+        raise HTTPException(422, "These settings exist only on the Windows and macOS apps.")
+    # Refused where it is inert: accepting it would write a launcher.conf line
+    # nothing on Windows reads, and every later read would echo a switch the
+    # platform cannot honor.
+    if payload.dock_icon is not None and platform != "macos":
+        raise HTTPException(422, "The Dock icon setting exists only on the macOS app.")
+    values: dict[str, str] = {}
+    if payload.tray is not None:
+        values[launcher.DESKTOP_TRAY_KEY] = "true" if payload.tray else "false"
+    if payload.dock_icon is not None:
+        values[launcher.DESKTOP_DOCK_KEY] = "true" if payload.dock_icon else "false"
+    return values
+
+
+def _write_desktop_values(data_dir: Path, values: dict[str, str]) -> None:
+    """Pass two for the desktop pair. Not a settings row and not in the transaction: this
+    writes a file and then the process environment."""
+    try:
+        launcher.write_conf_values(data_dir, values)
+    except OSError:
+        raise HTTPException(
+            500, "Reaper couldn't save this to launcher.conf in its data folder."
+        ) from None
+    # The environment is the boot-resolved record _desktop_out reads (the
+    # launcher seeded the file into it), so mirror the write there too:
+    # the response and every later read then show the value the next start
+    # will use, instead of snapping the switch back.
+    os.environ.update(values)
+
+
 @router.get("/general", tags=[api_tags.GENERAL])
 async def get_general(request: Request) -> GeneralSettingsOut:
-    async with _factory(request)() as session:
-        return await _general_out(session, _settings(request))
+    async with session_factory(request)() as session:
+        return await _general_out(session, runtime_settings(request), secret_box(request))
 
 
 @router.put("/general", tags=[api_tags.GENERAL])
@@ -1919,92 +1378,37 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
     every trusted-proxy entry must parse as an address or a range -- refused with a
     plain message otherwise, and nothing is changed.
     """
-    async with _factory(request)() as session:
-        if payload.application_url is not None:
-            _require_web_url(
-                payload.application_url,
-                refusal=(
-                    "The application URL must be a full web address, like "
-                    "https://reaper.example.com"
-                ),
-            )
-        if payload.trusted_proxies is not None:
-            for entry in payload.trusted_proxies:
-                cleaned_entry = entry.strip()
-                if not cleaned_entry:
-                    continue
-                try:
-                    ip_network(cleaned_entry, strict=False)
-                except ValueError:
-                    raise HTTPException(
-                        422,
-                        f'"{cleaned_entry}" is not an address or a range. Use entries '
-                        "like 172.16.0.1 or 172.16.0.0/12.",
-                    ) from None
-
-        if payload.accent_color is not None:
-            cleaned_color = payload.accent_color.strip()
-            if cleaned_color and not _HEX_COLOR.match(cleaned_color):
-                raise HTTPException(
-                    422,
-                    "The accent color must be a hex code like #25c3ff.",
-                )
-
-        cleaned_timezone: str | None = None
-        if payload.timezone is not None:
-            cleaned_timezone = payload.timezone.strip()
-            if not cleaned_timezone or not app_settings.is_valid_timezone(cleaned_timezone):
-                raise HTTPException(
-                    422,
-                    "That is not a known time zone. Pick one from the list.",
-                )
-
-        if payload.application_name is not None:
-            await app_settings.set_application_name(session, payload.application_name)
-        if payload.application_url is not None:
-            await app_settings.set_application_url(session, payload.application_url)
-        if cleaned_timezone is not None:
-            await app_settings.set_timezone(session, cleaned_timezone)
-        if payload.accent_color is not None:
-            await app_settings.set_accent_color(session, payload.accent_color)
-        if payload.expand_seasons_mode is not None:
-            await app_settings.set_expand_seasons_mode(session, mode=payload.expand_seasons_mode)
-        if payload.default_spare_days is not None:
-            await app_settings.set_default_spare_days(session, days=payload.default_spare_days)
-        if payload.proxy_trust_enabled is not None:
-            await app_settings.set_proxy_trust_enabled(session, enabled=payload.proxy_trust_enabled)
-        if payload.trusted_proxies is not None:
-            await app_settings.set_trusted_proxies(session, payload.trusted_proxies)
-        if payload.tray is not None or payload.dock_icon is not None:
-            platform = launcher.desktop_platform()
-            if platform is None:
-                raise HTTPException(422, "These settings exist only on the Windows and macOS apps.")
-            # Refused where it is inert: accepting it would write a launcher.conf line
-            # nothing on Windows reads, and every later read would echo a switch the
-            # platform cannot honor.
-            if payload.dock_icon is not None and platform != "macos":
-                raise HTTPException(422, "The Dock icon setting exists only on the macOS app.")
-            desktop_values: dict[str, str] = {}
-            if payload.tray is not None:
-                desktop_values[launcher.DESKTOP_TRAY_KEY] = "true" if payload.tray else "false"
-            if payload.dock_icon is not None:
-                desktop_values[launcher.DESKTOP_DOCK_KEY] = "true" if payload.dock_icon else "false"
-            try:
-                launcher.write_conf_values(_settings(request).data_dir, desktop_values)
-            except OSError:
-                raise HTTPException(
-                    500, "Reaper couldn't save this to launcher.conf in its data folder."
-                ) from None
-            # The environment is the boot-resolved record _desktop_out reads (the
-            # launcher seeded the file into it), so mirror the write there too:
-            # the response and every later read then show the value the next start
-            # will use, instead of snapping the switch back.
-            os.environ.update(desktop_values)
+    # Two passes, and the loops are what make that structural rather than conventional:
+    # every field is checked before any field is written, so a body carrying five good
+    # values and one bad one leaves the stored settings exactly as they were. That is what
+    # the docstring above promises the operator and what
+    # `test_one_bad_field_writes_none_of_the_others` pins. A single pass that validated and
+    # wrote each field in turn would half-apply the save while telling them it failed.
+    #
+    # The commit at the end is a second, independent layer: an `HTTPException` escaping
+    # this block closes the session unwritten. Every refusal is raised above it.
+    cleaned = _cleaned_general_values(payload)
+    desktop_values = _validated_desktop_values(payload)
+    async with session_factory(request)() as session:
+        for field in _GENERAL_FIELDS:
+            if field.name in cleaned:
+                await field.write(session, cleaned[field.name])
         await session.commit()
+        # After the commit, not before it (#748). `launcher.conf` is a file and
+        # `os.environ` is process state, so neither is in the transaction: written first,
+        # a commit that then failed left the switch on in the file and echoed back by
+        # `_desktop_out` from the environment, while the five fields saved beside it went
+        # back and the operator was told the save failed. Ordered this way the desktop pair
+        # is never ahead of the rows. It can still fall behind them, on a `launcher.conf`
+        # that cannot be written: the 500 below reports that, the environment is not
+        # updated, so the file and every later read still agree on the old value.
+        if desktop_values:
+            _write_desktop_values(runtime_settings(request).data_dir, desktop_values)
         await _refresh_proxy_state(request, session)
-        if cleaned_timezone is not None:
-            await _apply_timezone_to_scheduler(request, cleaned_timezone)
-        result = await _general_out(session, _settings(request))
+        stored_timezone = cleaned.get("timezone")
+        if isinstance(stored_timezone, str):
+            await _apply_timezone_to_scheduler(request, stored_timezone)
+        result = await _general_out(session, runtime_settings(request), secret_box(request))
     log.info("settings.general_saved")
     return result
 
@@ -2013,8 +1417,8 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
 async def reveal_api_key(request: Request) -> ApiKeyOut:
     """The stored key, for the Show button. Session-only: the middleware fences this
     route away from API-key auth, so a key cannot read or manage itself."""
-    async with _factory(request)() as session:
-        key = await app_settings.get_api_key(session, _box(request))
+    async with session_factory(request)() as session:
+        key = await app_settings.get_api_key(session, secret_box(request))
     if key is None:
         raise HTTPException(404, "No API key exists yet. Generate one first.")
     return ApiKeyOut(key=key)
@@ -2027,8 +1431,8 @@ async def generate_api_key(request: Request) -> ApiKeyOut:
     header-credential lane, though: there is always a working key afterwards. Turning the
     lane off is what ``DELETE`` below is for."""
     key = secrets.token_urlsafe(32)
-    async with _factory(request)() as session:
-        await app_settings.set_api_key(session, _box(request), key)
+    async with session_factory(request)() as session:
+        await app_settings.set_api_key(session, secret_box(request), key)
         await session.commit()
     request.app.state.api_key_digest = hashlib.sha256(key.encode("utf-8")).digest()
     log.info("settings.api_key_rotated")
@@ -2036,7 +1440,7 @@ async def generate_api_key(request: Request) -> ApiKeyOut:
 
 
 @router.delete("/general/api-key", tags=[api_tags.GENERAL])
-async def remove_api_key(request: Request) -> dict[str, bool]:
+async def remove_api_key(request: Request) -> RemovedOut:
     """Close the header-credential lane: delete the key, and stop honoring it now.
 
     Rotating replaces one working key with another, so an operator who generated a key for
@@ -2047,9 +1451,9 @@ async def remove_api_key(request: Request) -> dict[str, bool]:
     Session-only, like every write here: the middleware is deny-by-default for anything
     that is not a safe method, so a key cannot delete itself or anyone else's.
     """
-    async with _factory(request)() as session:
+    async with session_factory(request)() as session:
         await app_settings.clear_api_key(session)
         await session.commit()
     request.app.state.api_key_digest = None
     log.info("settings.api_key_removed")
-    return {"removed": True}
+    return RemovedOut(removed=True)

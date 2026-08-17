@@ -65,7 +65,7 @@ class Instance(Base):
     # never sent a request, so it does not need TLS verification or a key. Nullable and NULL by
     # default: the additive migration only ADDs a nullable column, and NULL means "no external
     # address", so links fall back to base_url and nothing changes for an operator who leaves it
-    # blank (services.deep_links via api.routes._deep_links). Plex has its own web_url and is
+    # blank (services.deep_links via api.review._deep_links). Plex has its own web_url and is
     # not an Instance, so it is untouched here.
     external_url: Mapped[str | None] = mapped_column(String(500), default=None)
 
@@ -154,7 +154,6 @@ class PlexServer(Base):
     connections_json: Mapped[str] = mapped_column(Text, default="[]")
 
     token_enc: Mapped[str] = mapped_column(Text)
-    owner_plex_account_id: Mapped[int] = mapped_column(Integer)
 
     # Verify the server's TLS certificate (mirrors Instance.verify_tls). Off is a
     # deliberate operator choice for a self-signed HTTPS server, never a silent default.
@@ -232,14 +231,20 @@ class PendingPlexLogin(Base):
     The PIN is created and polled entirely by the backend. The browser never
     handles a Plex authToken -- Overseerr posts the token from the browser to its
     own API, which needlessly exposes a full-power account credential to the page.
+
+    Only the pin **id** is stored, because only the id is polled. The human-readable code
+    rode along in a column nothing ever read back: this flow hands the operator an auth URL
+    rather than a code to type, so the code had no reader the day it was written. The
+    attribute retired in release M (rule 148).
     """
 
     __tablename__ = "pending_plex_login"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     pin_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    pin_code: Mapped[str] = mapped_column(String(20))
-    purpose: Mapped[str] = mapped_column(String(20))  # "setup" | "login"
+    # plex_link.PinPurpose: "login" | "link". Read the comment there before changing a
+    # value; each poller filters on its own, and that filter is the fence between them.
+    purpose: Mapped[str] = mapped_column(String(20))
     created_at: Mapped[UtcTimestamp]
     expires_at: Mapped[UtcTimestamp]
 
@@ -279,36 +284,24 @@ class Profile(Base):
     """A named configuration: which policy, and how much it may do.
 
     The caps and the grace period live here rather than on the Policy so that
-    tightening a limit is always safe and never voids a pending approval. Only the
-    ``active_policy_id`` pointer moves.
+    tightening a limit is always safe and never voids a pending approval.
+
+    **Two attributes left in release M** (rule 148): ``enabled``, which shipped False and
+    was read by nothing, and ``active_policy_id``, which pointed at a policy row while the
+    policy actually in force is resolved by pure recency. Their columns survive one release
+    so a rollback works, and revision ``e6f7a8b9c0d1`` is what lets an INSERT omit them.
     """
 
     __tablename__ = "profile"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    """Ships disabled, and nothing in ``src/`` reads it: written at creation, never
-    consulted, so it gates nothing today. What keeps a fresh install from acting is the
-    arming requirement and the typed phrase on ``api.runs.execute_run``, not this flag.
-
-    **The attribute cannot simply be deleted (#271).** The column is ``NOT NULL`` with no
-    server default in the frozen baseline, so dropping it here leaves ``alembic check``
-    -- a CI gate -- reporting a pending ``drop_column`` forever, and a ``DROP COLUMN``
-    revision is not the additive-only migration ``CLAUDE.md`` requires. Retiring it for
-    real means excluding it from autogenerate first. Until then the honest state is this
-    docstring plus ``test_profiles``'s pin, which says what the value is and refuses to
-    call it a safeguard."""
-
-    active_policy_id: Mapped[int] = mapped_column(ForeignKey("policy.id"))
 
     settings_json: Mapped[str] = mapped_column(Text)
     """ProfileSettings: the four caps, caps_enabled, grace_days, the unknown-size allowance."""
 
     created_at: Mapped[UtcTimestamp]
     updated_at: Mapped[UtcTimestamp]
-
-    policy: Mapped[Policy] = relationship()
 
 
 class AutonomyGrant(Base):
@@ -319,14 +312,26 @@ class AutonomyGrant(Base):
     the profile silently reverts to approval-required.** Autonomy cannot be
     inherited by a policy nobody has reviewed.
 
-    It is *earned*, not set: it requires a passing backtest and a run of clean
-    supervised executions, both recorded here.
+    It is *earned*, not set: a grant records a bar that was cleared, never a switch
+    somebody flipped.
 
-    **Not wired yet.** No route or flow creates or consults grants today -- the
-    backtest that must feed ``backtest_passed`` has no route or UI, so the check
-    constraints below mean no row can honestly exist until that ships. The schema is
-    kept (pre-release, single migration baseline) so the earned-autonomy design stays
-    enforced in the database from day one, and docs/STATUS.md tracks the wiring as open work.
+    **Not wired, and one of its two bars no longer has a candidate.**
+    ``clean_supervised_runs`` is measurable from the journal today.
+    ``backtest_passed`` is not: the replay engine that would have produced it was
+    deleted rather than wired, and its successors (#553, #554) answer different
+    questions, so **no honest writer of this table exists.**
+
+    **What keeps the table empty is that nothing constructs a grant** -- not the CHECK
+    below, which only refuses a row that admits ``backtest_passed = 0`` and would accept
+    one that simply asserts ``1``. So whoever wires M3b must decide what replaces the
+    retired bar rather than satisfy it: passing ``True`` for a check nothing performed
+    grants a profile unattended deletion on a policy nobody measured, and the database
+    will not stop them. Dropping the column is part of that change, under rule 148.
+
+    The schema is kept because M3b sits at the top of ``docs/STATUS.md``'s open work
+    and this docstring is the only full record of the design. It is NOT kept on
+    "pre-release, single migration baseline" -- that premise expired at revision 2 and
+    stating it here was #550's class, a true conclusion resting on a false reason.
     """
 
     __tablename__ = "autonomy_grant"
@@ -416,6 +421,15 @@ class Snapshot(Base):
 
     degraded_reason: Mapped[str | None] = mapped_column(Text, default=None)
 
+    degraded_doc: Mapped[str | None] = mapped_column(Text, default=None)
+    """The in-app help page that explains what to do about the reason above, by its
+    ``frontend/src/docs/registry.ts`` id. ``NULL`` for a degradation with no page, which is most
+    of them: an unreachable Radarr needs no guide.
+
+    Stored rather than worked out when the notice renders, because the notice renders from a
+    stored scan and the reason is prose by then. Reading the cause back out of that string would
+    be rule 92's coupling, on operator copy that will be reworded."""
+
     watch_blind_items: Mapped[int | None] = mapped_column(Integer, default=None)
     """How many items this scan found had watch history it could no longer read
     (``services.watch_evidence``). Counted at scan time and stored, rather than derived
@@ -429,6 +443,14 @@ class Snapshot(Base):
 
     ``NULL`` means "not recorded", which is every snapshot taken before this column
     existed -- read it as unknown, never as zero."""
+
+    collection_sizes_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """Every Plex collection this scan saw, name to Plex's own member count, as a JSON
+    object -- see ``services.snapshot._collection_membership``. Feeds the collection
+    picker's counts and the collection screen's header; navigation only, never a verdict
+    input. NULL means no collection was read this scan, whether because none exist or
+    because the read failed -- the two are indistinguishable on purpose, since a failed
+    collection read costs a missing chip and nothing else (#816's fence)."""
 
 
 class SizeSource(enum.StrEnum):
@@ -534,15 +556,20 @@ class Candidate(Base):
     summary: Mapped[str | None] = mapped_column(Text, default=None)
     """A short description of the show or film -- the *arr's ``overview``."""
 
-    poster_url: Mapped[str | None] = mapped_column(String(1000), default=None)
-    """A poster image URL (the *arr's remote TMDb cover). Display only; may be absent."""
-
     requested_by: Mapped[str | None] = mapped_column(String(200), default=None)
     """Who asked for this via Seerr, if anyone. Never a gate -- see services.requested_by."""
 
     genres_json: Mapped[str | None] = mapped_column(Text, default=None)
     """The item's genres at scan time, as a JSON array. Feeds the rule editors' value
     suggestions (GET /api/vocabulary/values); suggestion only, never a verdict input."""
+
+    collections_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """This item's Plex collection names at scan time, as a JSON array, sorted smallest
+    collection first (ties alphabetical) -- see ``services.snapshot._collection_membership``.
+    NULL means "not recorded for this scan", never "in no collection": a scan taken before
+    this column existed and a scan whose Plex collection read failed are indistinguishable,
+    on purpose (#816's fence). Navigation only -- no gate, signal, or policy field reads it,
+    and it is never a verdict input."""
 
     quality: Mapped[str | None] = mapped_column(String(100), default=None)
     """The file's quality name at scan time (e.g. "Bluray-1080p"), same purpose."""
@@ -666,7 +693,7 @@ class SeasonPruneEvidence(Base):
     """The show key, shared by every season of the show and equal to ``Candidate.group_key``
     for those rows.
 
-    Carries no index of its own: the only read is ``routes._season_payloads``' ``WHERE
+    Carries no index of its own: the only read is ``simulate._season_payloads``' ``WHERE
     snapshot_id = ?``, which the unique constraint above already covers on its leading column,
     and nothing filters a show key across snapshots. A second B-tree here would be written
     once per show per scan to serve nobody, in the table whose per-row cost the paragraph
@@ -748,6 +775,82 @@ class WatchHighWater(Base):
 
     updated_at: Mapped[UtcTimestamp]
     """When the mark last moved. Diagnostic only: nothing reads it to make a decision."""
+
+
+class LibrarySeen(Base):
+    """Every Plex listing Reaper has ever seen for one external id, and whether it came back.
+
+    A file that leaves the library and returns gets a NEW Plex rating key, while the earlier
+    one stops existing. That is the witness #553 rests on, and this table is the memory behind
+    it: without a record of which keys an id has held, a fresh key is indistinguishable from
+    the only key it ever had.
+
+    ``WatchHighWater`` above is the precedent for every property here. Outside the snapshot
+    lifecycle, keyed on something stable rather than on the Plex key that moves, upserted once
+    per scan, never pruned. Roughly one row per title.
+
+    **Keyed on an external id, not on ``media_key``.** A ``media_key`` is
+    ``{radarr|sonarr}:{instance}:{arr_id}``, and deleting a movie removes Radarr's row, so a
+    re-add gets a fresh internal id and the old key is retired. That is true whether Reaper or
+    the operator did the deleting, which is exactly the case this table exists to notice.
+
+    **``rating_keys`` is a SET, and that is a measured requirement, not caution.** About one
+    movie entry in 150 shares its TMDb id with a second \\*arr entry, one per copy, each bound
+    to a different Plex listing (``docs/LEARNINGS.md``, assumption 16). Storing only the last
+    key seen would read the second copy's key as a change on every scan and hold both copies
+    forever.
+
+    **Written only on a confident Plex bind.** No bind, no write, so a Plex outage, a partial
+    \\*arr, or an item that did not resolve leaves this table untouched rather than recording an
+    absence. Absence is never an input here: a return is only ever found by comparing two keys
+    Reaper actually read, so missing data can delay a detection to the next scan but can never
+    manufacture one.
+    """
+
+    __tablename__ = "library_seen"
+
+    id_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    """The item's external identity, media kind first: ``movie:tmdb:12345``,
+    ``tv:tvdb:678``, ``tv:tvdb:678:s3``.
+
+    The kind leads because movie and TV TMDb ids share one integer space, so a bare
+    ``tmdb:12345`` can name two different titles (rule 52). Built by
+    ``services.library_seen.id_key``, off the same id ladders the Plex resolver binds on
+    (``identity.MOVIE_ID_PRIORITY`` / ``SHOW_ID_PRIORITY``)."""
+
+    rating_keys_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    """Every Plex rating key ever recorded for this id, as a JSON array of ints. Only ever
+    added to. An unreadable value is read as an empty set by
+    ``services.library_seen.recall_all``, which costs a detection and never invents one."""
+
+    first_seen_at: Mapped[UtcTimestamp]
+    last_seen_at: Mapped[UtcTimestamp]
+    """When Reaper last saw this id bound to a Plex listing. The clock a return is measured
+    against, and it is the last time Reaper *looked*, not the moment the title left, which is
+    why a minimum absence alone cannot settle a return (``docs/history/RETURN_PLAN.md``)."""
+
+    returned_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+    """When Reaper recorded that this title had come back, or ``NULL`` for the ordinary state
+    of a title that has sat in one place.
+
+    Stored rather than derived, because a return is visible for exactly one scan: the moment
+    the new key is written into ``rating_keys_json`` it stops looking new. The hold runs in
+    months, so the fact has to outlive its own evidence.
+
+    Only ever the instant Reaper *detected* the return, never the copy's own arrival date,
+    which may be earlier. A later start is a longer hold, which is the keep direction
+    (rule 31)."""
+
+    returned_by_reaper: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    """Whether Reaper's own journal shows it removed this title before the return.
+
+    Decided once, at detection, by the ``ActionStep`` -> ``ReapRun`` -> ``Candidate`` join
+    (``services.library_seen.removed_by_reaper``), because that join reads the whole journal
+    and a stored answer costs one query per scan instead of one per item.
+
+    Three states, and the third is not "no" (rule 142). ``NULL`` is a row with no return
+    recorded at all; ``False`` is a return whose removal Reaper cannot claim. Both take the
+    same hold, for the same length. Only the sentence the operator reads differs."""
 
 
 class WhitelistEntry(Base):
@@ -908,11 +1011,6 @@ class ListConfig(Base):
     """Off keeps the row and its name, so a list switched off comes back with its rules
     intact. Deleting is a separate verb and is the operator's to choose."""
 
-    built_in: Mapped[bool] = mapped_column(Boolean, default=False)
-    """Ships with Reaper (the IMDb Top 250). Editable and switchable, never deletable: the
-    default policy carries a keep rule naming it, and copy may only reference a mechanism
-    that is wired (rule 25)."""
-
     created_at: Mapped[UtcTimestamp]
 
 
@@ -1010,7 +1108,8 @@ class ActionStep(Base):
     __tablename__ = "action_step"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    run_id: Mapped[int] = mapped_column(ForeignKey("reap_run.id", ondelete="CASCADE"))
+    run_id: Mapped[int] = mapped_column(ForeignKey("reap_run.id", ondelete="CASCADE"), index=True)
+    """Which run this step belongs to. Indexed by revision ``f7a8b9c0d1e2``, which says why."""
 
     media_key: Mapped[str] = mapped_column(String(100), index=True)
     """Which candidate this step acts on, so the journal can be read back per item."""
@@ -1020,7 +1119,10 @@ class ActionStep(Base):
     item, executed and verified alone before anything else is allowed to proceed."""
 
     kind: Mapped[str] = mapped_column(String(40))
-    """What sort of action: 'radarr_delete', 'sonarr_unmonitor_season', 'plex_refresh'..."""
+    """Which action, one of the four the planner emits: 'radarr_delete',
+    'sonarr_unmonitor', 'sonarr_verify_unmonitor', 'sonarr_delete_files'. The Plex refresh
+    is not among them: it is ``executor._best_effort_refresh``, declared to the guard
+    rather than journalled as a step, so nothing here records one."""
 
     method: Mapped[str] = mapped_column(String(10))
     path: Mapped[str] = mapped_column(String(500))

@@ -4,15 +4,20 @@
 // reaper/api/ (schemas.py holds most, but the one route that deletes answers with
 // runs.py's ReapStatus) plus engine/policy.py and engine/explanation.py.
 //
-// Hand-written rather than generated. The set is small, it changes rarely, and a
-// codegen step is one more thing that can silently drift out of date in CI. If these
-// grow much past this size, generate them from /openapi.json instead.
+// Hand-written rather than generated, and this header used to say to generate them from
+// /openapi.json once they grew past this size. Measured at that size: the served document
+// carries one property description across 749, and the declarations below carry 679 lines
+// of comment. Almost every one of them says something no annotation holds -- when a field
+// is null and what to read instead, which of two spare expiries answers which question,
+// why a three-state field must never read as false. Generating deletes all 679 and there
+// is nothing to regenerate them from, so the answer is the guard rather than the codegen.
 //
 // tests/test_api_type_mirror.py checks this file against those declarations and fails
 // naming the field, because hand-maintained meant nothing noticed when MatchOut gained
 // `by` and `merged_rating_keys` and this file did not (#260, #289). It compares field
-// NAMES only: the type and optionality differences here are deliberate and documented
-// there. A new type with no server model is classified in that file, not ignored.
+// names AND field types; the deliberate type differences are listed by name there, in
+// NARROWED and WIDENED. Optionality is not compared, and that file says why. A new type
+// with no server model is classified in that file, not ignored.
 
 export type Verdict = "condemn" | "protect" | "abstain";
 
@@ -24,6 +29,9 @@ export interface Snapshot {
   item_count: number;
   degraded: boolean;
   degraded_reason: string | null;
+  /** The in-app help page for that reason, by its `docs/registry.ts` id, or null where no page
+   *  fits. Most degradations have none: an unreachable Radarr needs no guide. */
+  degraded_doc: string | null;
   condemned: number;
   protected: number;
   abstained: number;
@@ -31,13 +39,22 @@ export interface Snapshot {
   /** How many condemned items have no size, and so sit outside the total above rather
    *  than inside it as zeros. Zero for a healthy library, and hidden at zero. */
   unknown_size_items: number;
+  /** Every collection this scan saw, name to Plex's own member count -- the collection
+   *  screen's header reads it for "N titles in this collection" beside the scan's own
+   *  count. Null when none were read, whether none exist or the read failed; the UI
+   *  omits that clause rather than guessing. Optional: most fixtures are not made to
+   *  carry it (#816 phase 5). */
+  collection_sizes?: Record<string, number> | null;
 }
 
 /** The one short status chip a card wears, display-ready from the server. `kept`
  *  renders green (a protection fired), `quiet` gray (nothing to act on), `look`
- *  amber-outlined (deliberately left for the owner to decide). */
+ *  amber-outlined (deliberately left for the owner to decide), `held` green-outlined
+ *  (a protection that EXPIRES, saying how long is left). Outlined is Reaper's decision
+ *  and filled is the owner's; `held` is green rather than amber because the file is
+ *  kept, and amber means only "left for you to decide". */
 export interface Chip {
-  tone: "kept" | "quiet" | "look";
+  tone: "kept" | "quiet" | "look" | "held";
   text: string;
   /** The same fact as `text`, worded as a lowercase clause that can follow "Reap
    *  requested, kept for now:" -- or null when this chip names no reason a reap would
@@ -92,14 +109,6 @@ export interface Candidate {
   requested_by: string | null;
   group_key: string | null;
   group_title: string | null;
-  /** How many seasons "Reap now" on this show would plan: its condemned, not-spared
-   *  seasons across the whole snapshot, not just the fetched pages. Null for movies. */
-  group_condemned_count: number | null;
-  /** The byte total over that same set: the number the planner will act on. */
-  group_condemned_bytes: number | null;
-  /** How many of the show's actable seasons have no size. They are left out of both
-   *  numbers above, because the planner will not plan them. Null for movies. */
-  group_unknown_size: number | null;
   /** Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality badge.
    *  Null hides the badge (TV seasons, unmatched items, rows from older scans). */
   video_resolution: string | null;
@@ -113,7 +122,6 @@ export interface Candidate {
   /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
    *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis. */
   reason: string | null;
-  spared: boolean;
   /** The manual decision *in effect* -- "spare", "reap", or null -- own or inherited from
    *  the show. It colors the row's chip and score (the item's real fate). Set the moment they
    *  click, so the card shows the pending intent before the next scan bakes it in. To decide
@@ -152,12 +160,25 @@ export interface Candidate {
   chip: Chip | null;
   /** Which season this row is, for season rows. Null for movies and unparseable keys. */
   season_number: number | null;
-  /** The whole show's per-season verdict marks, for the card's season strip. Null for
-   *  movies. */
-  group_seasons: GroupSeasonMark[] | null;
   /** Whether the show has finished. Null for a movie, where the question doesn't apply,
    *  and on a row stored before this field existed -- both render nothing at all. */
   show_status: ShowStatus | null;
+  /** This item's Plex collection names (a season's are its SHOW's), sorted smallest
+   *  collection first -- `CollectionChip` takes element 0. Navigation only, never a verdict
+   *  input. Null means "not recorded for this scan" (no Plex configured, a failed
+   *  section read, a row from before this shipped), NOT "in no collection": render no
+   *  chip for null rather than an empty one. Optional: the test fixtures are not made to
+   *  carry it (#816 phase 3). */
+  collections?: string[] | null;
+  /** Which of three search blocks this row matched: 0 exact title, 1 partial title/show,
+   *  2 collection-name only. Null outside a search. Optional: no component reads it yet
+   *  (#816 phase 3b; the divider that reads it is phase 5). */
+  search_rank?: number | null;
+  /** For a `search_rank === 2` row, the collection name that matched -- not
+   *  `collections[0]`, which would show the smallest collection instead of the one the
+   *  search found. Null for a title match, and outside a search. Optional, same reason as
+   *  `search_rank`. */
+  matched_collection?: string | null;
 }
 
 /** Whether a show has finished, as three states rather than a bool, so "the server never
@@ -197,23 +218,53 @@ export interface Group {
    *  reading of the series is stamped onto every season in the same scan, so they cannot
    *  disagree. Null only when no row carries it (a snapshot from before this field). */
   show_status: ShowStatus | null;
+  /** The show's Plex collection names, taken the same way as `show_status`: a TV
+   *  collection lists the show, not its seasons, so every season carries the same list.
+   *  Null means "not recorded for this scan," never "in no collection". Optional, same
+   *  reason as `Candidate.collections` -- `toGroups` (ReviewQueue.tsx) reads it off the
+   *  first season into the local `Group.collections` `CollectionChip` renders. */
+  collections?: string[] | null;
   /** Every season, sorted by season number (unnumbered rows last). */
   seasons: Candidate[];
+}
+
+/** What one show on the page looks like across the whole snapshot, sent once per show
+ *  rather than stamped onto each of its season rows.
+ *
+ *  Every figure spans the whole snapshot, never the fetched page: a page can hold some of a
+ *  show's seasons and not the rest, and these numbers sit beside "Reap now". */
+export interface GroupRollup {
+  group_key: string;
+  /** How many seasons "Reap now" on this show would plan: its condemned, not-spared
+   *  seasons, plus the hand reaps the engine honors. */
+  condemned_count: number;
+  /** The byte total over that same set: the number the planner will act on. */
+  condemned_bytes: number;
+  /** How many of those seasons have no size. They are left out of both numbers above,
+   *  because the planner will not plan them. */
+  unknown_size: number;
+  /** Every season of the show, all lanes, for the card's season strip. */
+  seasons: GroupSeasonMark[];
 }
 
 /** One page of candidates, plus the full-set totals the server measured before the page
  *  window -- what the queue header counts and sizes. */
 export interface CandidatePage {
   items: Candidate[];
+  /** One entry per show with a row on this page. A show straddling two pages appears in
+   *  both with the same figures, so merging pages by `group_key` cannot leave a partial
+   *  rollup behind. */
+  groups: GroupRollup[];
   total: number;
-  totalBytes: number;
-  /** How many across the whole filtered set have no size. `totalBytes` is the sum of
+  total_bytes: number;
+  /** How many across the whole filtered set have no size. `total_bytes` is the sum of
    *  what is known; this is what it could not include. */
-  unknownSize: number;
+  unknown_size: number;
+  /** Where this page starts. The queue asks for `offset + items.length` next. */
   offset: number;
   /** The snapshot this page was drawn from, or null before any scan. The queue compares it
    *  against the newest completed scan to notice when a fresher snapshot has landed under it. */
-  snapshotId: number | null;
+  snapshot_id: number | null;
 }
 
 export type RequestedFilter = "any" | "yes" | "no";
@@ -226,6 +277,11 @@ export interface CandidateQuery {
   media_type?: string;
   requested?: RequestedFilter;
   genre?: string;
+  /** Exact name match against a row's stored collection list -- genre's sibling, over
+   *  `collections_json` instead. Navigation only; never re-decides a verdict.
+   *  Spelled `| undefined`: a caller forwards `activeCollection ?? undefined` straight
+   *  through, and `exactOptionalPropertyTypes` counts an explicit `undefined` as a value. */
+  collection?: string | undefined;
   library?: string;
   override?: OverrideFilter;
   sort?: SortKey;
@@ -331,17 +387,42 @@ export interface KeepContribution {
   evaluated: boolean;
 }
 
+/** The Stage 2 rewatch-probability context (#554): what fraction of similarly-dormant
+ *  titles got watched again, from the operator's own history. Display only -- no verdict
+ *  input and no signal; the opt-in protective hold reads the frozen cohort facts directly,
+ *  never this block.
+ *
+ *  `n`/`k` are the block's pooled cohort size and watched-again count, `lo_days`/`hi_days`
+ *  its half-open dormancy range (`hi_days` null on the open tail bucket). In the
+ *  `"no_history"` state there is no usable block and those four carry a placeholder;
+ *  render off `state` first and never them in that state. */
+export interface RewatchOdds {
+  n: number;
+  k: number;
+  lo_days: number;
+  hi_days: number | null;
+  state: "measured" | "thin" | "no_history";
+}
+
 export interface Explanation {
   score: number;
   /** The condemnation subtotal before any keep discount. Optional so an item scored before
-   *  this shipped still parses. */
-  base_score?: number;
-  keep_discount?: number;
+   *  this shipped still parses, and nullable because that is what such a row arrives as:
+   *  `Explanation` defaults both to `None` and nothing sets `exclude_none`, so the server
+   *  sends `null` rather than omitting the key. `WhyPanel` already reads them that way
+   *  (`base_score != null`, `keep_discount ?? 0`); only the type disagreed. */
+  base_score?: number | null;
+  keep_discount?: number | null;
   /** The score the item had to beat. Null only when the stored explanation could not be
    *  read and the server sent the degraded fallback: the panel omits its "your threshold
    *  is N" clause rather than print a number that is not the operator's setting. */
   threshold: number | null;
   coverage: number;
+  /** The share of scoring weight that had to be readable before Reaper would judge this, in
+   *  basis points (5000 = 50%). Frozen beside `threshold` so an abstain forced by the floor can
+   *  name the line coverage fell under. Null when the row could not be read or predates this
+   *  field: the panel drops the floor clause rather than read the live policy (rule 113). */
+  coverage_floor_bp?: number | null;
   /** Whether this title is held because the plays Reaper recorded earlier stopped being
    *  readable. The panel offers the per-title escape on it, and on nothing else: the reason
    *  text beside it is operator copy and will be reworded (rule 92).
@@ -364,8 +445,13 @@ export interface Explanation {
    *  it was fine", and rendering them alike is the entire Deleterr failure class. */
   protections_unknown: GateOutcome[];
   /** How it was tied to Plex. Optional so a candidate scored before this shipped still
-   *  parses (its explanation JSON has no match block). */
-  match?: Match;
+   *  parses (its explanation JSON has no match block), and nullable because a row that was
+   *  never matched arrives as an explicit `null`. Both consumers already guard it. */
+  match?: Match | null;
+  /** The Stage 2 rewatch-probability context (#554), movie lane only. `null` for a season
+   *  row (the fit is movie-only) and for a row stored before this field existed -- both
+   *  read as nothing to show. */
+  rewatch_odds?: RewatchOdds | null;
 }
 
 /** Where the item can be opened. Each link is null when it can't be built (unmatched in
@@ -453,7 +539,6 @@ export interface SignalProbe {
   /** In the units the signal stores: days, watchers, a season's rank, a rating in tenths,
    *  or bytes. */
   value: number;
-  window_days?: number;
 }
 
 /** What `POST /api/policy/probe` accepts. One member today; see `SignalProbe`. */
@@ -461,10 +546,10 @@ export type PolicyProbe = SignalProbe;
 
 /** One answer, the same shape for every probe kind, so a new kind needs no new rendering. */
 export interface PolicyProbeResult {
-  /** What the rule moves the score by, in its own direction. */
+  /** What the rule moves the score by, in its own direction. The only field: the engine's
+   *  own wording used to ride beside it and nothing rendered it, because `signalRamp.ts`
+   *  words both the editor's sentence and the panel's row. */
   points: number;
-  /** The engine's own words for it, the sentence the panel's row would carry. */
-  detail: string;
 }
 
 export interface Condition {
@@ -521,6 +606,11 @@ export interface RatingRule {
   min_votes: number;
 }
 
+/** The built-in rewatch keep's name, as it arrives on `KeepContribution.name`. Mirrors
+ *  `engine/signals.py`'s `REWATCH_KEEP`; a mirror test pins the two together later.
+ *  Declared beside `PolicyBody` because that is where the keep's own four fields live. */
+export const REWATCH_KEEP = "rewatch_habit";
+
 export interface PolicyBody {
   name: string;
   media_type: string;
@@ -540,6 +630,12 @@ export interface PolicyBody {
   protect_conditions: Condition[];
   custom_condemn: CustomCondemn[];
   graded_keeps: GradedKeep[];
+  // The built-in rewatch keep's knobs, live on both lanes: a movie body counts title
+  // re-watches, a TV body counts whole show re-watches.
+  rewatch_keep_enabled: boolean;
+  rewatch_keep_discount: number;
+  rewatch_min_viewings: number;
+  rewatch_recent_days: number;
   keep_rating_rules: RatingRule[];
   keep_rating_match: "any" | "all";
 }
@@ -551,12 +647,47 @@ export interface SeasonShape {
   season_counts: Record<number, number>;
 }
 
+/** One measured rung of the fitted rewatch ladder (#554 stage 2): a merged dormancy block
+ *  from the latest scan's fit, aggregated across every movie candidate that landed in it. */
+export interface RewatchOddsBlock {
+  lo_days: number;
+  hi_days: number | null;
+  n: number;
+  k: number;
+  /** The Wilson 95% upper bound of k/n, in percent: what the hold actually compares against
+   *  the operator's threshold, so the ladder and the gate can never disagree. */
+  upper_bound_pct: number;
+  /** Candidates of the latest scan (movies, or seasons on the TV lane) whose current
+   *  dormancy falls in this rung: what the consequence echo counts. */
+  items: number;
+}
+
+/** The latest scan's fitted rewatch curve, for the Policy page's ladder and consequence
+ *  echo. Empty `blocks` with `total_items === 0` means no scan has run on this build yet. */
+export interface RewatchOddsFit {
+  blocks: RewatchOddsBlock[];
+  /** Every candidate of the latest scan on the requested lane, block or no block: what the
+   *  consequence echo states its protected count out of. */
+  total_items: number;
+}
+
+/** What a vocabulary field's value IS, which decides how it is typed, stored and read back
+ *  (`engine/fields.py`'s `FieldType`). Two of the six convert. A size is typed in GB and stored
+ *  in bytes, a rating is typed as 7.5 and stored as 75. Days are typed and stored alike.
+ *
+ *  It was a bare `string` here, so a member added on the server was a value the browser had no
+ *  name for and no way to notice. `test_api_type_mirror.py` notices now. Its failure names every
+ *  site in `PolicyRuleEditors.tsx` that dispatches on this value, and not one of them is
+ *  exhaustive: a member none handles takes a fall-through arm rather than failing. The list
+ *  lives there and not here, so the two cannot drift (rule 144). */
+export type FieldType = "days" | "bytes" | "count" | "rating_tenths" | "bool" | "text";
+
 /** One field the owner may write a protect condition about (from the vocabulary endpoint). */
 export interface VocabField {
   key: string;
   label: string;
   help_text: string;
-  type: string;
+  type: FieldType;
   unit_suffix: string;
   ops: string[];
 }
@@ -603,7 +734,8 @@ export interface Policy {
 
 /** One way the server had to change a stored policy body to load it.
  *
- *  Mirrors `PolicyRepair` in `src/reaper/engine/policy.py`, which is the declaration; a
+ *  Mirrors `PolicyRepair` in `src/reaper/engine/policy_migrations.py`, which is the
+ *  declaration; a
  *  member the server adds and this union has not is handled rather than assumed away
  *  (`REPAIR_NOTICES` in `PolicyEditor.tsx`, rule 66). Widened to `string` on purpose so an
  *  unknown id is a value TypeScript admits exists, not a cast. */
@@ -688,7 +820,6 @@ export interface ActionStep {
 export interface Run {
   id: number;
   snapshot_id: number;
-  policy_hash: string;
   state: string;
   item_count: number;
   total_bytes: number;
@@ -696,10 +827,23 @@ export interface Run {
   /** How many condemned items this plan left out because nothing would report their
    *  size. The plan is smaller than the queue implied, and this is what says so. */
   held_back_unknown_size: number;
-  approved_manifest_hash: string;
-  approved_by: string;
-  approved_at: string;
+  /** How many journal rows this run holds in total. `steps` below is a window, so anything
+   *  counting rows reads THIS: `steps.length` is the size of the page, never the size of the
+   *  plan. Not `item_count` either, which counts deduplicated candidates, and a season is
+   *  three steps sharing one key. */
+  step_count: number;
+  /** The first page of the journal, not all of it. `api.runSteps` serves any window. */
   steps: ActionStep[];
+}
+
+/** One window of a run's journal, from `GET /api/runs/{id}/steps`. Its own route rather than
+ *  query parameters on the run detail: building that response re-derives the confirmation
+ *  phrase, and the sheet holds the detail under one cache key with an infinite stale time so
+ *  it keeps the exact plan it opened with. */
+export interface RunSteps {
+  steps: ActionStep[];
+  step_count: number;
+  offset: number;
 }
 
 /** One line of the run history: the stored row, and nothing derived. A past plan's counts,
@@ -708,12 +852,9 @@ export interface Run {
  *  list carries none of them and opening a row fetches the full `Run` (P-3). */
 export interface RunSummary {
   id: number;
-  snapshot_id: number;
   state: string;
-  approved_by: string;
   approved_at: string;
   aborted_reason: string | null;
-  held_back_unknown_size: number;
 }
 
 export interface RunCheck {
@@ -800,8 +941,6 @@ export interface SignalCount {
   /** A built-in signal id or a custom rule's name. */
   id: string;
   count: number;
-  bytes: number;
-  unknown_size: number;
 }
 
 /** What Plex would remove besides the files a reap deletes.
@@ -898,6 +1037,12 @@ export interface ListConfig {
   config: ListConfigBody;
   /** How the policies use this list right now: one entry per keep rule naming it. */
   policy_use: ListPolicyUse[];
+  /** The media types a keep rule on this list can be authored for: the set the Policy picker
+   *  offers it on (`policy_migrations.authorable_media_scope`, #549). A Plex collection takes its library's
+   *  kind and a watchlist both, known before any sync; a tag or IMDb list is known only once a
+   *  sync has read it. Empty means offer on neither: the type is unknown, so a rule could keep
+   *  nothing. */
+  authorable_media: ("movie" | "tv")[];
 }
 
 /** What one "Check now" did. Each failed list's own error is on its row, which the screen
@@ -930,7 +1075,6 @@ export interface ReapBreakdown {
   has_snapshot: boolean;
   policy_condemned: number;
   policy_condemned_bytes: number;
-  policy_condemned_unknown: number;
   hand_spared: number;
   /** The share of `hand_spared` a scan would hand back to policy: TITLES kept out of the plan
    *  by a spare whose clock has already passed. They are still being kept -- only a scan
@@ -942,7 +1086,6 @@ export interface ReapBreakdown {
   spares_expired: number;
   hand_reaped: number;
   hand_reaped_bytes: number;
-  hand_reaped_unknown: number;
   /** Hand reaps the engine won't honor yet, so they are not in `will_reap`. The page shows
    *  one line when nonzero so the operator's held marks are not silently dropped. */
   hand_reaped_held: number;
@@ -961,16 +1104,14 @@ export interface ReapBreakdown {
 }
 
 export interface LeavingSoonResult {
-  added_count: number;
-  cleared_count: number;
-  /** Whether the shelf writes landed everywhere. False in read-only preview, and false
-   *  when any library failed. */
-  applied: boolean;
-  notified: boolean;
-  movies_on_shelves: number;
-  seasons_on_shelves: number;
-  /** Per-library failures, in plain words. */
-  problems: string[];
+  /** Whether the pass did what it set out to do. Preview is not a failure; no library
+   *  turned on, or one that failed, is. */
+  ok: boolean;
+  /** The one plain sentence describing this pass, worded by the server and stored on the
+   *  Jobs row in the same breath. Render it; never compose one here (#555). */
+  result: string;
+  // `problems` was dropped with its server field: nothing here ever rendered it, and `result`
+  // now names the libraries that failed. See `LeavingSoonOut` for the whole reason.
 }
 
 export interface WatchEvidence {
@@ -996,10 +1137,10 @@ export interface LeavingSoonSettings {
     movies: number;
     seasons: number;
     applied: boolean;
-    /** Whether the last sync was actually clean: false only for a real per-library
-     *  problem, never merely because it ran in preview (unarmed). */
+    /** Whether the last sync did what it set out to do: no library failed, and there was
+     *  one turned on to update. Never false merely because it ran in preview (unarmed). */
     ok: boolean;
-    /** A short plain-language summary of the last sync. */
+    /** The pass's own one-line summary. Render it; never compose one here (#555). */
     result: string;
   } | null;
   /** A scan that finished without updating the shelf, and why. Reported beside `last`
@@ -1281,7 +1422,6 @@ export interface AuthUser {
   id: number;
   username: string;
   provider: string;
-  email: string | null;
   thumb_url: string | null;
   /** This session was opened with a recovery code, so Settings, Security accepts a new
    *  admin password without the current one. False on every ordinary sign-in. Read it
@@ -1378,30 +1518,26 @@ export interface Instance {
   last_error: string | null;
 }
 
+/** The verdict on one connection test: what a saved-instance test and a webhook test can both
+ *  answer. What a pre-save probe additionally reads is on `InstanceProbe`. */
 export interface InstanceTest {
   ok: boolean;
   detail: string;
   version: string | null;
-  /** What this connection has to map, read on the pass that proved the credentials. Only ONE
-   *  route ever fills these -- the pre-save test on the add form, which is the only caller with
-   *  no instance id to ask a second question with. This is what lets that form map a service
-   *  before it is saved. Only one list is ever filled (a test is for exactly one kind), and
-   *  both are empty on a failed test, since nothing was reached to read them from. */
+}
+
+/** The pre-save test on the add form, which also reads what the connection has to map. Only
+ *  this route can: it is the only caller with no instance id, so the mapping has to come back on
+ *  the pass that proved the credentials, and that is what lets the form map a service before it
+ *  is saved. Only one list is ever filled (a test is for exactly one kind), and both are empty
+ *  on a failed test, since nothing was reached to read them from. */
+export interface InstanceProbe extends InstanceTest {
   root_folders: RootFolder[];
   seerr_services: SeerrService[];
   /** Why the list above is empty, when the read FAILED rather than there being nothing to map.
    *  `null` means the read landed, so an empty list really is nothing to map. */
   map_error: string | null;
 }
-
-/** What the test BADGE reads: the verdict, and nothing about mapping.
- *
- *  Declared as the subset rather than reusing `InstanceTest` because the service card renders a
- *  result it rebuilt from what it remembers of the last test (`last_ok_at`, `last_error`), and
- *  no folder read ever happened for that one. Handing the badge a whole `InstanceTest` would
- *  have made that card fill in a `map_error: null`, which reads as "we looked and nothing was
- *  wrong" about a read nobody ran (rule 93). The badge only ever needed these three. */
-export type TestVerdict = Pick<InstanceTest, "ok" | "detail" | "version">;
 
 /** One of an *arr instance's root folders, with a suggested Plex library to prefill the map. */
 export interface RootFolder {
@@ -1503,8 +1639,6 @@ export interface RestoreSummary {
   app_version: string | null;
   /** When the backup was taken (ISO 8601, UTC), or null. */
   created_at: string | null;
-  /** The schema revision the backup sits at. */
-  revision: string | null;
   /** "current" when it matches this server, "older" when this server will update it on
    *  restart. Both are safe to restore. */
   verdict: string;
@@ -1616,8 +1750,8 @@ async function throwIfFailed(response: Response, path: string): Promise<void> {
 
 /** EVERY request the app makes goes through here: the CSRF header, the session hook, and the
  *  error mapping, in one place, returning the raw Response for the few callers that need more
- *  than a parsed body (the paged queue reads its totals off the headers; the two downloads
- *  want a blob).
+ *  than a parsed body: the two downloads want a blob, and the restore upload sends a file
+ *  rather than the JSON body `request` names.
  *
  *  Four call sites used to hand-roll this `fetch` -- so the wrapper only looked like a choke
  *  point, and a cross-cutting change landed on three quarters of the surface. They had already
@@ -1684,11 +1818,13 @@ const plexForward = () => ({ forward_origin: window.location.origin });
 export const api = {
   latestSnapshot: () => request<Snapshot>("/api/snapshots/latest"),
   /** One page of the review queue. The full filtered totals (count + bytes, before the page
-   *  window) ride along in response headers, so the queue can show the whole set's count and
-   *  byte total without loading them all. Paged because a library runs to thousands of
-   *  protected titles. */
+   *  window) ride in the envelope beside the rows, so the queue can show the whole set's
+   *  count and byte total without loading them all. Paged because a library runs to
+   *  thousands of protected titles. */
   candidates: async (
-    verdict: Verdict,
+    // "any" is every stored lane at once -- what makes the collection screen cross-lane
+    // (#816 phase 5): a title's siblings show up whatever fate each one got.
+    verdict: Verdict | "any",
     q: CandidateQuery = {},
     limit = 100,
     offset = 0,
@@ -1698,6 +1834,7 @@ export const api = {
     if (q.media_type) params.set("media_type", q.media_type);
     if (q.requested && q.requested !== "any") params.set("requested", q.requested);
     if (q.genre) params.set("genre", q.genre);
+    if (q.collection) params.set("collection", q.collection);
     if (q.library) params.set("library", q.library);
     if (q.override && q.override !== "any") params.set("override", q.override);
     if (q.sort) params.set("sort", q.sort);
@@ -1705,19 +1842,16 @@ export const api = {
     params.set("limit", String(limit));
     params.set("offset", String(offset));
 
-    const response = await fetchApi(`/api/candidates?${params.toString()}`, {
-      headers: { "Content-Type": "application/json" },
-    });
-    const items = (await parseBody<Candidate[]>(response)) ?? [];
-    const snapshotHeader = response.headers.get("X-Snapshot-Id");
-    return {
-      items,
-      total: Number(response.headers.get("X-Total-Count") ?? items.length),
-      totalBytes: Number(response.headers.get("X-Total-Bytes") ?? 0),
-      unknownSize: Number(response.headers.get("X-Unknown-Size-Count") ?? 0),
-      offset,
-      snapshotId: snapshotHeader ? Number(snapshotHeader) : null,
-    };
+    const page = await request<CandidatePage>(`/api/candidates?${params.toString()}`);
+    // `parseBody` reads a 200 with no body as `undefined`, which is right for the calls that
+    // expect nothing back and wrong here: this is the one read whose consumer holds a LIST of
+    // pages and indexes into each, so the queue reaches `undefined.items` and dies with a
+    // TypeError no `instanceof ApiError` branch can see. Saying it plainly here puts the same
+    // failure on the queue's own error branch. The old hand-assembly defaulted the body to
+    // `[]`, which did not crash and was worse: it drew "nothing to review" over a read that
+    // never landed.
+    if (!page) throw new ApiError(502, "Reaper got an unexpected reply from the server.");
+    return page;
   },
   candidate: (id: number) => request<CandidateDetail>(`/api/candidates/${id}`),
   /** One show, whole: every season in the latest snapshot, across all lanes. */
@@ -1767,7 +1901,7 @@ export const api = {
    *  Save is gated on this passing, so a service can never be saved at an address Reaper has
    *  not reached. */
   testInstance: (body: { kind: string; base_url: string; api_key: string; verify_tls?: boolean }) =>
-    post<InstanceTest>("/api/settings/instances/test", body),
+    post<InstanceProbe>("/api/settings/instances/test", body),
   testSavedInstance: (id: number) => post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
 
   plexStatus: () => request<PlexStatus>("/api/settings/plex"),
@@ -1948,12 +2082,24 @@ export const api = {
   /** The season-count distribution from the latest snapshot, for the keep-last advisory.
    *  Independent of the current keep-last value, so it needs no re-scan. */
   seasonShape: () => request<SeasonShape>("/api/snapshot/season-shape"),
+  /** The latest scan's fitted rewatch ladder (#554 stage 2), for the rewatch card's ladder
+   *  and consequence echo. Aggregated server-side from the stored explanation blocks, never
+   *  refit here, so the page states exactly what the gate will actually compare. Movies and
+   *  TV seasons carry their own fit, so the ladder never mixes the two lanes. */
+  rewatchOddsFit: (mediaType: "movie" | "tv") =>
+    request<RewatchOddsFit>(`/api/policy/rewatch-odds?media_type=${mediaType}`),
 
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),
 
   runs: () => request<RunSummary[]>("/api/runs"),
   run: (id: number) => request<Run>(`/api/runs/${id}`),
+  /** A window of one run's journal, past the page the detail route carries. No component
+   *  reads this yet: the step table still draws the first page and says how many it is not
+   *  showing. It ships with the route so the whole plan stays reachable, which is what the
+   *  table's own paging will read when it is built. */
+  runSteps: (id: number, offset = 0, limit = 50) =>
+    request<RunSteps>(`/api/runs/${id}/steps?offset=${offset}&limit=${limit}`),
   /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned set; an
    *  array reaps just those items -- the safe path for a first, hand-picked deletion.
    *
@@ -2010,13 +2156,14 @@ export const api = {
   syncLists: (target: { list_id?: number } = {}) => post<ListSyncResult>("/api/lists/sync", target),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
-  // The keep list has one pair of methods in the UI, `override` / `clearOverride` below.
-  // `whitelist`, `spare` and `unspare` used to sit here too, uncalled by anything: three
-  // more ways to write the same safety-adjacent row, with nothing to tell a reader which
-  // one the app actually used (rule 38, R-6). Their routes are still served, but only the
-  // READ is reachable by an API key: `_API_KEY_WRITES` admits scanning, planning, the
-  // policy and the profile, so a key meets a 403 on both writes. This line offered the
-  // lane all three, and #326 was filed against the refusal that mistake implied.
+  // The keep list has one pair of methods, `override` / `clearOverride` below, and now one
+  // pair of routes behind them. `whitelist`, `spare` and `unspare` used to sit here too,
+  // uncalled by anything: three more ways to write the same safety-adjacent row, with nothing
+  // to tell a reader which one the app actually used (rule 38, R-6). The methods went first
+  // and the routes stayed served; both are gone now, so there is one way to write the row.
+  // Neither survivor is reachable by an API key: `_API_KEY_WRITES` admits scanning, planning,
+  // the policy and the profile. This line offered the lane all three, and #326 was filed
+  // against the refusal that mistake implied.
   /** Override a verdict by hand -- spare (keep) or reap (force onto the list). A show's
    *  media_key covers all its seasons. `spareDays` is how long a spare keeps it: 0 = forever,
    *  a positive count that many days; ignored for a reap. */

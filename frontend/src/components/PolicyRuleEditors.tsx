@@ -19,8 +19,15 @@ import { type CSSProperties, type RefObject, useEffect, useId, useRef, useState 
 import { useQuery } from "@tanstack/react-query";
 import { announce } from "../announce";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
-import { api, type Condition, type CustomCondemn, type GradedKeep, type VocabField } from "../api";
-import { FIELD_TO_GATE, FIELD_TO_SIGNAL, humanDays, OP_LABELS } from "./PolicyEditor";
+import {
+  api,
+  type Condition,
+  type CustomCondemn,
+  type GradedKeep,
+  type ListConfig,
+  type VocabField,
+} from "../api";
+import { humanDays } from "../format";
 import { usePopoverShift } from "./popoverFit";
 import {
   FixedQuantity,
@@ -44,6 +51,39 @@ const RAMP_PHRASES: Record<string, string> = {
 
 /** The sentinel option value for a ramp phrase in the condition dropdown. */
 const RAMP_OP = "__ramp__";
+
+/** How each comparison reads in a rule sentence. */
+const OP_LABELS: Record<string, string> = {
+  gte: "is at least",
+  lte: "is at most",
+  eq: "is",
+  in: "is one of",
+  contains: "contains",
+};
+
+// A vocabulary field already handled by a built-in protection -> not offered as a custom rule,
+// so the two never say the same thing twice. Only fields with no built-in gate (size, all-time
+// watchers, vote count, season rank) remain to be authored here.
+const FIELD_TO_GATE: Record<string, string> = {
+  days_unwatched: "min_dormancy",
+  recent_watchers: "server_popularity",
+  imdb_rating: "rating_floor",
+  streaming_now: "streaming_now",
+  // `whitelisted` and `on_curated_list` were here, mapped to the two list gates. Both gates
+  // are retired -- every list now protects through an `on_list` keep rule the operator
+  // authors -- so their fields stay authorable and nothing filters them.
+};
+
+// The built-in signals already cover these fields, so they are not offered as custom
+// "remove" rules -- the two never say the same thing twice. That leaves the new metadata
+// fields (genre, requested, quality, release age, show ended) to be authored here.
+const FIELD_TO_SIGNAL: Record<string, string> = {
+  days_unwatched: "unwatched",
+  recent_watchers: "few_watchers",
+  imdb_rating: "low_rating",
+  season_rank: "season_rank",
+  size_bytes: "size",
+};
 
 /** The backwards-ramp complaint, named once so the six boxes that can be wrong and the one
  *  sentence explaining it are the same string rather than seven that can drift (rule 67). */
@@ -72,8 +112,21 @@ function rampValue(field: VocabField | undefined, value: number): string {
   if (field?.type === "bytes") return `${Math.round(value / 1e9)} GB`;
   if (field?.type === "days") return humanDays(value);
   if (field?.type === "rating_tenths") return (value / 10).toFixed(1);
-  const suffix = field?.unit_suffix ? ` ${field.unit_suffix}` : "";
-  return `${value.toLocaleString()}${suffix}`;
+  return withUnit(value.toLocaleString(), field?.unit_suffix);
+}
+
+/**
+ * A value and its unit, in a sentence.
+ *
+ * A unit that is a word takes a space ("30 days", "2 GB"); one that is punctuation does not
+ * ("7.5/10"). Both callers joined with an unconditional space, so a saved rating keep rule
+ * read back as "at least 7.5 /10" (#726). Deciding it from the suffix rather than per branch
+ * is what keeps the next punctuation unit from arriving with the same space: `/10` is the
+ * only one in `engine/fields.py` today, and nothing stops a second.
+ */
+function withUnit(value: string, suffix: string | null | undefined): string {
+  if (!suffix) return value;
+  return /^[A-Za-z]/.test(suffix) ? `${value} ${suffix}` : `${value}${suffix}`;
 }
 
 /** Coerce a text input into the value the wire expects, in the field's own units. */
@@ -104,7 +157,7 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
   //
   // The op is still read, because `on_list` carries TEXT_OPS and this branch used to
   // short-circuit past it: the composer only ever writes `eq`, but
-  // `policy.convert_list_protections` re-spells a legacy `on_curated_list` rule keeping
+  // `policy_migrations.convert_list_protections` re-spells a legacy `on_curated_list` rule keeping
   // whatever op it had, and an imported body can hold one. A stored `contains "Top"` then
   // rendered as an exact match on a list named "Top" -- a rule described as narrower than it
   // is, on the screen where its strength is judged.
@@ -118,7 +171,8 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
   const label = f?.label ?? c.field;
   const op = OP_LABELS[c.op] ?? c.op;
   let value: string;
-  let unit = f?.unit_suffix ? ` ${f.unit_suffix}` : "";
+  // Cleared by the branches that have already said their unit inside `value`.
+  let unit = f?.unit_suffix;
   if (f?.type === "rating_tenths" && typeof c.value === "number") value = (c.value / 10).toFixed(1);
   else if (f?.type === "bytes" && typeof c.value === "number") {
     value = `${Math.round(c.value / 1e9)} GB`;
@@ -128,7 +182,7 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
     unit = "";
   } else if (typeof c.value === "number") value = c.value.toLocaleString();
   else value = String(c.value);
-  return `Keep it when ${label} ${op} ${value}${unit}`;
+  return `Keep it when ${label} ${op} ${withUnit(value, unit)}`;
 }
 
 function describeCondemn(rule: CustomCondemn, fields: VocabField[]): string {
@@ -729,7 +783,15 @@ export function KeepRulesEditor({
     queryFn: api.listConfigs,
     enabled: onListField !== undefined,
   });
-  const allListNames = (lists.data ?? []).map((l) => l.name);
+  const configured = lists.data ?? [];
+  // Which policy each list may protect is the server's call, not the picker's: `authorable_media`
+  // is the authoritative scope (`policy_migrations.authorable_media_scope`, #549), so a Plex collection is
+  // scoped by its library kind before any sync, and an unsynced tag whose type nothing can
+  // establish is offered on neither. Offering a list a rule there could never match reads as a
+  // protection the operator set (rule 38).
+  const coversThisMedia = (l: ListConfig) => l.authorable_media.includes(mediaType);
+  const eligible = configured.filter(coversThisMedia);
+  const allListNames = eligible.map((l) => l.name);
   // One list, one rule. A list already named by a rule is not offered again at EITHER
   // strength: the two rules do not combine, the outright one wins and the lean beside it can
   // never change an outcome, so the operator was tuning points that could not matter (#510).
@@ -750,9 +812,26 @@ export function KeepRulesEditor({
   const listNames = keptByBlanketRule
     ? []
     : allListNames.filter((n) => !named.has(n.trim().toLowerCase()));
-  // Why the list select is empty, said once for both composers (rule 72). A failed read is
-  // named as one, never shown as "you have no lists" (rules 17/36), and a set of lists that
-  // all already have a rule is a fourth thing again: nothing is wrong, and adding another
+  // Two reasons hide a list from the picker, each with its own note (rule 144, #549), and
+  // neither is that a rule already names it. A list holding only the other type can never keep
+  // here; a list no sync has read yet has an unknown type and is withheld until it is checked.
+  // Counted apart because the fix differs: nothing to do about the first, "check it" about the
+  // second.
+  const notNamed = (l: ListConfig) => !named.has(l.name.trim().toLowerCase());
+  const hiddenWrongType = keptByBlanketRule
+    ? 0
+    : configured.filter((l) => notNamed(l) && l.authorable_media.length > 0 && !coversThisMedia(l))
+        .length;
+  const hiddenUnverified = keptByBlanketRule
+    ? 0
+    : configured.filter((l) => notNamed(l) && l.authorable_media.length === 0).length;
+  const thisMedia = mediaType === "movie" ? "movies" : "shows";
+  const otherMedia = mediaType === "movie" ? "shows" : "movies";
+  const thisSingular = mediaType === "movie" ? "movie" : "show";
+  // Why the list select is empty, said once for both composers (rule 72). A failed read is named
+  // as one, never shown as "you have no lists" (rules 17/36); a set that all already have a rule
+  // is a third thing; and a set none of which this policy can keep is a fourth, which is either
+  // the wrong type or not synced yet (#549). Nothing is wrong in the last two, and adding another
   // list is not the move.
   const noListsMessage =
     !lists.isPending && listNames.length === 0
@@ -761,9 +840,17 @@ export function KeepRulesEditor({
         : keptByBlanketRule
           ? 'Your "On a list you curate yourself" rule already keeps every one of your lists. ' +
             "Remove it above to set a strength per list."
-          : allListNames.length > 0
-            ? "Every list already has a keep rule. Remove one above to give it a different strength."
-            : "You have no lists yet. Add one on Settings → Lists first."
+          : configured.length === 0
+            ? "You have no lists yet. Add one on Settings → Lists first."
+            : eligible.length > 0
+              ? // "this policy can keep" so it stays true when an unnamed wrong-type or unsynced
+                // list is also hidden: those are not lists this policy can keep (#549).
+                "Every list this policy can keep already has a rule. Remove one above to give it a different strength."
+              : hiddenUnverified > 0 && hiddenWrongType === 0
+                ? "Your lists haven't synced yet. Check them on Settings → Lists so Reaper knows what's on them."
+                : hiddenWrongType > 0 && hiddenUnverified === 0
+                  ? `None of your lists holds ${thisMedia}. Add a ${thisSingular} list on Settings → Lists.`
+                  : "None of your lists can be kept here yet. Check them on Settings → Lists."
       : null;
 
   const [strength, setStrength] = useState<"hard" | "lean">("hard");
@@ -1154,14 +1241,30 @@ export function KeepRulesEditor({
             )}
           </div>
           {/* Rule 144: this paragraph is the operator-facing copy of what the two composers
-              filter out, and both filters are stated, or the one left unsaid reads as a list
-              that went missing. */}
+              filter out, or a filter left unsaid reads as a list that went missing. Two filters
+              are always in force and stated here. Two more, media type and not-yet-synced, hide a
+              list only in some states, so their copy is the conditional notes below and the
+              empty-state message above, said only when they actually bite (#549). */}
           <p className="help">
             Suggestions are values from your own library. Pick one, or type anything else. Fields
             already covered by a protection you've turned on aren't offered for outright keeps, so a
             rule never repeats a built-in. A list that already has a keep rule isn't offered either:
             one list takes one rule, at one strength.
           </p>
+          {!keptByBlanketRule && listNames.length > 0 && hiddenWrongType > 0 && (
+            <p className="help">
+              {hiddenWrongType === 1
+                ? `One list isn't shown here: it holds only ${otherMedia}, which this policy can't keep.`
+                : `${hiddenWrongType} lists aren't shown here: they hold only ${otherMedia}, which this policy can't keep.`}
+            </p>
+          )}
+          {!keptByBlanketRule && listNames.length > 0 && hiddenUnverified > 0 && (
+            <p className="help">
+              {hiddenUnverified === 1
+                ? "One list isn't shown here yet: it hasn't synced. Check it on Settings → Lists."
+                : `${hiddenUnverified} lists aren't shown here yet: they haven't synced. Check them on Settings → Lists.`}
+            </p>
+          )}
         </>
       )}
     </div>

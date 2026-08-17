@@ -59,6 +59,7 @@ from reaper.clock import humanize_days, humanize_window
 from reaper.engine import fields
 from reaper.engine.gates import Facts
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.text import fold
 
 MAX_SCORE = 100
 
@@ -69,7 +70,7 @@ class SignalId(enum.StrEnum):
     Note what is **not** here: size.
 
     ``SIZE`` remains available for owners who insist, but it is off by default and
-    enabling it raises a ``danger`` warning on the policy page (``policy.inspect``, the
+    enabling it raises a ``danger`` warning on the policy page (``policy_warnings.inspect``, the
     same one a hand-written size rule raises). Backtested against real watch history, a
     scorer that weighted
     size produced a condemned set with *worse* regret than picking at random among
@@ -175,6 +176,18 @@ class KeepConfig:
     on the list takes the full discount, off it none, and a membership that could not be
     read takes the full one, the same fail-closed arm every keep has. ``None`` ramps."""
 
+    min_viewings: int | None = None
+    """The built-in rewatch keep's two bars (``REWATCH_KEEP``), carried on the config so the
+    condition is decided at judge time over frozen facts and a bar edit replays exactly.
+    ``None`` on every authored keep; only ``policy.PolicyBody.keep_configs`` sets them."""
+    recent_days: int | None = None
+
+    media_type: Literal["movie", "tv"] = "movie"
+    """Which lane's wording the rewatch detail speaks: a movie's ``rewatch_viewings`` counts
+    qualified viewings ("Watched 12 times"), a show's counts whole re-watches ("Watched
+    again 3 times", ``services.rewatch.replay_period_count``). Only the ``REWATCH_KEEP``
+    detail helpers read it; authored keeps leave the default."""
+
     @property
     def enabled(self) -> bool:
         return self.max_discount > 0
@@ -279,13 +292,18 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     weight in the denominator so coverage falls with it.
 
     **A caller that understates the window charges MORE than the evidence supports**, which
-    is why every caller passes ``policy.popularity_window_days()`` and none may lean on the
-    default above. A shorter window is easier for the mirror to cover, so the shortfall
-    stops firing and the signal takes full pressure at full coverage on a count the true
-    window could not establish. Measured on a 180-day mirror against a count taken over the
-    real 365-day window: 0.00/20 at coverage 0.00 when passed 365, and 20.00/20 at coverage
-    1.00 when passed 180 or 90. ``score()``'s docstring names the same hazard, and
-    ``backtest.run`` was a live instance of it.
+    is why every caller on the SCAN path passes ``policy.popularity_window_days()`` and none
+    may lean on the default above. A shorter window is easier for the mirror to cover, so the
+    shortfall stops firing and the signal takes full pressure at full coverage on a count the
+    true window could not establish.
+
+    ``engine.preview.probe_signal`` is the one caller outside that rule, and it is safe for a
+    reason that does not generalize to a real item: a probe answers about a RULE rather than a
+    file, so the mirror it builds out-reaches any window and the shortfall cannot fire at all.
+
+    Measured on a 180-day mirror against a count taken over the real 365-day window: 0.00/20 at
+    coverage 0.00 when passed 365, and 20.00/20 at coverage 1.00 when passed 180 or 90.
+    ``score()``'s docstring names the same hazard.
 
     The span is named in the withheld arm too, where the shortfall clause that follows it
     says why it could not be checked.
@@ -619,10 +637,111 @@ def _branch_custom(
     )
 
 
+#: The built-in habitual-rewatch keep (stage 1 of ``docs/history/REWATCH_PLAN.md``). One string for
+#: both the ``KeepConfig.field`` it evaluates by and its row name in the stored explanation.
+#: Not a ``fields.BY_KEY`` key: the keep is not authorable, the vocabulary never offers it,
+#: and ``evaluate_keep`` reads the facts directly. ``PolicyBody._no_duplicates`` refuses an
+#: operator keep with this name so the panel's per-name rows cannot collide.
+REWATCH_KEEP = "rewatch_habit"
+
+
+def _rewatch_count_phrase(config: KeepConfig, n: int) -> str:
+    """The lane-correct count: a movie's viewings are plays, a show's are whole re-watches
+    (``KeepConfig.media_type``), so the show phrasing says "again" everywhere the count
+    appears. Copy from the approved TV mockup."""
+    times = "time" if n == 1 else "times"
+    if config.media_type == "tv":
+        return f"Watched again {n} {times}"
+    return f"Watched {n} {times}"
+
+
+def _rewatch_firing_detail(config: KeepConfig, facts: Facts) -> str:
+    """The figures behind a firing rewatch keep, then the claim. Draft copy from the
+    approved mockups; the recency figure is the last qualified play the condition read."""
+    viewings = facts.rewatch_viewings
+    count = (
+        _rewatch_count_phrase(config, int(viewings.value))
+        if isinstance(viewings, Known)
+        else "Watched again and again"
+    )
+    last = facts.rewatch_last_play_days
+    if isinstance(last, Known):
+        return (
+            f"{count}, most recently {humanize_days(last.value)} ago. Likely to be watched again."
+        )
+    return f"{count}, and recently. Likely to be watched again."
+
+
+def _rewatch_miss_detail(config: KeepConfig, facts: Facts) -> str:
+    """Why the rewatch keep did not fire, with the item's own numbers."""
+    viewings = facts.rewatch_viewings
+    if not isinstance(viewings, Known) or viewings.value == 0:
+        # A show at zero was possibly watched once through -- its count is re-watches, not
+        # plays -- so the honest zero there is "never again," not "never."
+        return "Never watched again here." if config.media_type == "tv" else "Never watched here."
+    n = int(viewings.value)
+    if config.min_viewings is not None and n < config.min_viewings:
+        return f"{_rewatch_count_phrase(config, n)} in all."
+    window = humanize_window(config.recent_days) if config.recent_days is not None else "window"
+    return f"{_rewatch_count_phrase(config, n)}, but not in the last {window}."
+
+
+def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
+    """The built-in habitual-rewatch keep: flat, mirroring the membership arm.
+
+    The condition is decided HERE, over two frozen observations, against the two bars the
+    config carries -- never at scan time -- so a threshold edit replays exactly from a
+    stored snapshot (``policy.PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``). Met takes the full
+    discount; read-and-not-met and Absent take zero, evaluated, with the honest figures;
+    an input that could not be read takes the full discount with ``evaluated=False``. The
+    keep invariants come free: a discount can only lower a score and never un-protects a
+    gated item (``services.snapshot._verdict``).
+
+    No reach arm, deliberately (rule 140): the viewing count is drawn from the mirror and
+    bounded by its reach, and the backtest that set the default bars measured that same
+    bounded view (``docs/history/REWATCH_PLAN.md``), so a Known miss is an honest zero-discount
+    answer rather than a claim about plays nobody saw.
+    """
+    viewings = facts.rewatch_viewings
+    last = facts.rewatch_last_play_days
+    if isinstance(viewings, Unknown) or isinstance(last, Unknown):
+        return KeepResult(
+            config.name,
+            float(config.max_discount),
+            config.max_discount,
+            "kept fully: could not check your watch history",
+            evaluated=False,
+        )
+    if isinstance(viewings, Absent):
+        # Hand-built Facts (preview._bare_facts and tests): both live builders now write
+        # the observation -- movies as qualified viewings, seasons as the show's replay
+        # periods -- so a genuine Absent means the caller never gathered watch history, and
+        # the keep has nothing to say there and discounts nothing.
+        return KeepResult(config.name, 0.0, config.max_discount, "Does not apply here.", True)
+    met = (
+        config.min_viewings is not None
+        and config.recent_days is not None
+        and int(viewings.value) >= config.min_viewings
+        and isinstance(last, Known)
+        and float(last.value) <= float(config.recent_days)
+    )
+    if met:
+        return KeepResult(
+            config.name,
+            float(config.max_discount),
+            config.max_discount,
+            _rewatch_firing_detail(config, facts),
+            True,
+        )
+    return KeepResult(
+        config.name, 0.0, config.max_discount, _rewatch_miss_detail(config, facts), True
+    )
+
+
 def evaluate_keep(
     config: KeepConfig, facts: Facts, *, window_days: int | None = None
 ) -> KeepResult:
-    """One user-authored graded keep. A discount in ``[0, max_discount]``, fail-closed.
+    """One graded keep. A discount in ``[0, max_discount]``, fail-closed.
 
     A value we cannot read yields the FULL discount -- missing data pushes toward keeping.
     An ``Absent`` value (we looked, there genuinely is none) yields no discount: absence is
@@ -634,6 +753,9 @@ def evaluate_keep(
     if not config.enabled:
         return KeepResult(config.name, 0.0, 0, "disabled", evaluated=True)
 
+    if config.field == REWATCH_KEEP:
+        return _rewatch_keep(config, facts)
+
     spec = fields.BY_KEY.get(config.field)
     label = spec.label if spec is not None else config.field
     observation = spec.read(facts) if spec is not None else None
@@ -642,9 +764,9 @@ def evaluate_keep(
         # The membership form: flat, per the spec (GradedKeepSpec.value). Both sides of the
         # name match are case-folded (rule 88), and the fact is the multi convention's
         # comma-joined list, split the way `fields.evaluate` splits it.
-        wanted = config.value.strip().casefold()
+        wanted = fold(config.value)
         if isinstance(observation, Known) and isinstance(observation.value, str):
-            names = {part.strip().casefold() for part in observation.value.split(",")}
+            names = {fold(part) for part in observation.value.split(",")}
             on_it = wanted in names
             return KeepResult(
                 config.name,

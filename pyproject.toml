@@ -14,7 +14,7 @@ authors = [{ name = "Scythe Labs" }]
 # Version floors are the exact releases verified on PyPI on 2026-07-23.
 dependencies = [
     # Web
-    "fastapi>=0.139.2",          # >=0.138 for app.frontend(), >=0.135 for fastapi.sse
+    "fastapi>=0.140.0",          # >=0.138 for app.frontend(), >=0.135 for fastapi.sse
     "starlette>=1.3.1,<2.0.0",   # PIN: 1.0 removed on_startup/on_shutdown; FastAPI declares no upper bound
     "uvicorn[standard]>=0.51.0",
     "pydantic>=2.13.4",
@@ -26,7 +26,7 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "greenlet>=3.5.4",
     # Integrations
-    "httpx2>=2.9.0",
+    "httpx2>=2.9.1",
     "plexapi>=4.18.2",
     "tenacity>=9.1.4",
     # Scheduling — 3.x, NOT 4.x (still alpha: 4.0.0a6, 14 months stale)
@@ -49,17 +49,18 @@ package = [
     "pystray>=0.19.5",  # the menu-bar/tray icon the desktop builds keep while serving
 ]
 dev = [
-    "ruff>=0.15.22",
+    "ruff>=0.16.0",
     "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "httpx>=0.28.1",             # dev-only: no production import remains; respx speaks httpx only, not httpx2
     "respx>=0.23.1",             # httpx mocking (respx speaks httpx only, not httpx2)
-    "hypothesis>=6.161.0",       # property tests for the scoring invariants
+    "hypothesis>=6.161.5",       # property tests for the scoring invariants
     "pytest-xdist>=3.8.0",
     "pytest-httpx2>=1.0.0",      # httpx2 mocking; respx cannot (see docs/history/PLAN-narrative.md httpx2 scope)
     "pyyaml>=6.0.3",             # imported directly (test_repo_hygiene reads the CI config), not only via uvicorn[standard]
+    "types-pyyaml>=6.0.12",      # its stubs, so the hygiene test type-checks with everything else in tests/
 ]
 
 [project.scripts]
@@ -159,8 +160,8 @@ branch = true
 # SQLAlchemy's async bridge runs the body of every session-using coroutine inside a
 # greenlet, and coverage does not trace one unless it is named here. Without it the
 # report was blind to most route and service bodies -- it recorded a line carrying an
-# `await` and dropped its neighbors, so `record_password_failure` read as unreached in
-# all four password gates that in fact have tests asserting the exact 403 each one
+# `await` and dropped its neighbors, so `deps._record_password_failure` read as unreached
+# in all four password gates that in fact have tests asserting the exact 403 each one
 # raises. It understated the suite by 2.8 points and, worse, made the codecov patch
 # gate unusable: a genuinely untested line was indistinguishable from an artifact.
 concurrency = ["thread", "greenlet"]

@@ -14,9 +14,10 @@ through the old connection), and it must be CLOSED at shutdown rather than leake
 from __future__ import annotations
 
 from collections.abc import Iterator
-from pathlib import Path
+from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
@@ -34,15 +35,11 @@ PNG = (b"\x89PNG\r\n\x1a\n", "image/png")
 
 
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    return Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-
-
-@pytest.fixture
 def client(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     """One Tautulli configured, and its artwork reads stubbed to return bytes."""
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    assert settings.secret_key is not None
     box = SecretBox(settings.secret_key.get_secret_value())
     with Session(engine) as session:
         session.add(
@@ -77,7 +74,7 @@ def _is_closed(client: object) -> bool:
 
 
 def _built(client: TestClient) -> object | None:
-    cached = getattr(client.app.state, "artwork_client", None)
+    cached = getattr(cast(FastAPI, client.app).state, "artwork_client", None)
     return None if cached is None else cached[1]
 
 
@@ -143,6 +140,7 @@ class TestItHasAnOwner:
         """Kept across requests means kept until something closes it. The lifespan does."""
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
+        assert settings.secret_key is not None
         box = SecretBox(settings.secret_key.get_secret_value())
         with Session(engine) as session:
             session.add(

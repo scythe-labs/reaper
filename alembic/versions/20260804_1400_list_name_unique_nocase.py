@@ -43,6 +43,11 @@ down_revision: str | None = "d4e5f6a7b8c9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Copy the database aside before this runs (`reaper.db.schema_gate.SNAPSHOT_ATTR`, #566). It
+# renames rows to break a collision and then rebuilds `list_config` from reflection. This is the
+# revision that taught the collation lesson every later comment cites.
+needs_snapshot = True
+
 
 def _disambiguate(bind: sa.Connection) -> list[tuple[str, str]]:
     """Give every case-colliding name its own spelling, oldest row first.

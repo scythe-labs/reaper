@@ -12,16 +12,21 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import uvicorn
 
 from reaper import launcher
+from reaper.buildinfo import env_flag
+from reaper.config import Settings, configured_env
 
 
 class TestDefaultDataDir:
@@ -106,15 +111,51 @@ class TestBrowserChoice:
 
 class TestPort:
     def test_the_default_port_matches_the_container(self) -> None:
-        assert launcher._port({}) == 8420
+        assert launcher._port({}, frozen=False) == 8420
 
     def test_a_configured_port_is_used(self) -> None:
-        assert launcher._port({"REAPER_PORT": "9000"}) == 9000
+        assert launcher._port({"REAPER_PORT": "9000"}, frozen=False) == 9000
 
-    def test_garbage_stops_with_a_plain_message(self) -> None:
+    @pytest.mark.parametrize("frozen", [False, True])
+    def test_garbage_stops_with_a_plain_message(
+        self, monkeypatch: pytest.MonkeyPatch, frozen: bool
+    ) -> None:
+        """Through `_say`, so a double-clicked build shows the operator something.
+
+        On a desktop build this value comes from `launcher.conf`, the one file that shape is
+        configured through, and stderr there is `os.devnull` (#622). Both install shapes are
+        driven, because `_say`'s dialog half is the one that only fires when frozen and a
+        single case could not tell a routed refusal from a hardcoded one (rule 141).
+        """
+        said: list[tuple[str, bool]] = []
+        monkeypatch.setattr(launcher, "_say", lambda m, *, frozen: said.append((m, frozen)))
+
         with pytest.raises(SystemExit) as excinfo:
-            launcher._port({"REAPER_PORT": "eighty"})
+            launcher._port({"REAPER_PORT": "eighty"}, frozen=frozen)
+
         assert excinfo.value.code == 2
+        assert said == [("REAPER_PORT must be a port number; it is set to 'eighty'.", frozen)]
+
+    #: The container's pair, spelled once so the S104 suppression sits in one place.
+    DEFAULTS = (("port", "8420"), ("host", "0.0.0.0"))  # noqa: S104 -- not a bind
+
+    @pytest.mark.parametrize(("field", "expected"), DEFAULTS)
+    def test_the_defaults_are_the_settings_defaults(self, field: str, expected: str) -> None:
+        """One declaration, not two that happen to agree.
+
+        The launcher spelled `8420` and `0.0.0.0` beside `config.Settings`'s copies, so the
+        port it bound and the port `main.py` printed in the anti-lockout recovery link could
+        drift apart without anything failing (#558). The literals here are the third copy on
+        purpose: a test transcribing `Settings.model_fields` would agree with any value.
+        """
+        assert launcher._settings_default(field) == expected
+        assert str(Settings.model_fields[field].default) == expected
+
+    def test_the_host_default_matches_the_container(self) -> None:
+        assert launcher._host({}) == dict(TestPort.DEFAULTS)["host"]
+
+    def test_a_configured_host_is_used(self) -> None:
+        assert launcher._host({"REAPER_HOST": "127.0.0.1"}) == "127.0.0.1"
 
 
 class TestLauncherConf:
@@ -205,7 +246,7 @@ class TestLoopbackGuard:
         """The dialog is for the double-clicked binary that has no readable stderr;
         a source run must never pop native UI."""
         calls: list[object] = []
-        monkeypatch.setattr(launcher.subprocess, "run", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a))
         launcher._say("a plain refusal", frozen=False)
         assert "a plain refusal" in capsys.readouterr().err
         assert calls == []
@@ -226,17 +267,6 @@ class TestDesktopHelpers:
     )
     def test_the_platform_gate(self, platform: str, frozen: bool, expected: str | None) -> None:
         assert launcher.desktop_platform(platform, frozen=frozen) == expected
-
-    def test_a_flag_reads_the_environment_else_its_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("REAPER_TRAY", raising=False)
-        assert launcher.desktop_flag("REAPER_TRAY", default=True) is True
-        assert launcher.desktop_flag("REAPER_TRAY", default=False) is False
-        monkeypatch.setenv("REAPER_TRAY", "false")
-        assert launcher.desktop_flag("REAPER_TRAY", default=True) is False
-        monkeypatch.setenv("REAPER_TRAY", "1")
-        assert launcher.desktop_flag("REAPER_TRAY", default=False) is True
 
     def test_writing_replaces_in_place_and_appends_the_rest(self, tmp_path: Path) -> None:
         (tmp_path / "launcher.conf").write_text(
@@ -298,6 +328,11 @@ class TestTrayChoice:
             ("darwin", None, False, False),  # source runs stay plain
             ("darwin", "false", True, False),
             ("win32", "1", False, True),  # a dev run can opt in while testing
+            # A typo is not an answer. It used to read as False, which on the .app buys an
+            # install with no menu-bar icon -- and `LSUIElement` hides the Dock one, so that
+            # icon is the only route to Quit.
+            ("darwin", "ture", True, True),
+            ("win32", "enabled", True, True),
         ],
     )
     def test_the_default_follows_the_install_shape(
@@ -343,16 +378,20 @@ class _FakeIcon:
         self.stopped.set()
 
 
-class _FakeServer:
+class _FakeServer(uvicorn.Server):
     """uvicorn's seam: ``run()`` blocks until ``should_exit``, or dies with the
-    scripted error. Self-terminating, so a failed assertion cannot hang the suite."""
+    scripted error. Self-terminating, so a failed assertion cannot hang the suite.
+
+    Inherits the real `Server` so `_serve_with_tray`'s parameter type holds, and skips its
+    `__init__` so no `Config` is built and nothing binds a port.
+    """
 
     def __init__(self, error: BaseException | None = None) -> None:
         self.should_exit = False
         self.running = threading.Event()
         self._error = error
 
-    def run(self) -> None:
+    def run(self, sockets: list[socket.socket] | None = None) -> None:
         self.running.set()
         if self._error is not None:
             raise self._error
@@ -377,7 +416,8 @@ class TestServeWithTray:
         while not created and time.monotonic() < deadline:
             time.sleep(0.005)
         assert created, "the icon was never built"
-        return next(item for item in created[0].menu if item.label == label)
+        found: _FakeMenuItem = next(i for i in created[0].menu if i.label == label)
+        return found
 
     def test_quit_stops_the_server_then_the_icon(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The quit path of #431: the menu only sets should_exit (uvicorn's graceful
@@ -393,7 +433,7 @@ class TestServeWithTray:
 
         presser = threading.Thread(target=press_quit)
         presser.start()
-        error = launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)  # type: ignore[arg-type]
+        error = launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)
         presser.join(timeout=10)
         assert error is None
         assert server.should_exit is True
@@ -409,7 +449,7 @@ class TestServeWithTray:
         boom = RuntimeError("bind failed")
         error = launcher._serve_with_tray(
             module, _FakeServer(error=boom), 8437, object(), dock_icon=False
-        )  # type: ignore[arg-type]
+        )
         assert error is boom
         assert created[0].stopped.is_set()
 
@@ -419,7 +459,7 @@ class TestServeWithTray:
         """default=True is what makes a double-click on the Windows tray icon open
         the UI rather than only the right-click menu."""
         opened: list[str] = []
-        monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url))
+        monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
         module, created = self._module()
         server = _FakeServer()
 
@@ -432,7 +472,7 @@ class TestServeWithTray:
 
         driver = threading.Thread(target=drive)
         driver.start()
-        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)  # type: ignore[arg-type]
+        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)
         driver.join(timeout=10)
         assert opened == ["http://127.0.0.1:8437"]
 
@@ -448,7 +488,7 @@ class TestServeWithTray:
 
         presser = threading.Thread(target=press_quit)
         presser.start()
-        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=True)  # type: ignore[arg-type]
+        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=True)
         presser.join(timeout=10)
         assert docked == [True]
 
@@ -463,8 +503,9 @@ class TestMain:
             captured["args"] = args
             captured["kwargs"] = kwargs
 
-        def fake_preflight() -> int:
+        def fake_preflight(refuse: Any = None) -> int:
             captured["preflighted"] = True
+            captured["refuse"] = refuse
             return int(captured["preflight_code"])
 
         import uvicorn
@@ -488,6 +529,32 @@ class TestMain:
         monkeypatch.delenv("REAPER_HOME", raising=False)
         monkeypatch.delenv("REAPER_BUILDINFO", raising=False)
         return captured
+
+    def test_the_bind_is_the_pair_the_recovery_link_prints(
+        self, serve: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`main()` binds what a `.env.local` says, because `main.py` prints that value.
+
+        The anti-lockout recovery link is built from `settings.host`/`settings.port`, which
+        do read the file. The launcher read `os.environ` directly, so a source checkout with
+        `REAPER_PORT` in `.env.local` -- which `.env.example` ships uncommented -- bound
+        8420 and printed a link to a port nothing was listening on. That link is the way back
+        in for a locked-out operator (#558).
+
+        Both values are non-default, so neither assertion can pass on a default (rule 141).
+        """
+        (tmp_path / ".env.local").write_text(
+            "REAPER_PORT=8433\nREAPER_HOST=127.0.0.1\n", encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setitem(Settings.model_config, "env_file", (".env", ".env.local"))
+
+        launcher.main()
+
+        assert (serve["kwargs"]["host"], serve["kwargs"]["port"]) == ("127.0.0.1", 8433)
+        # The other reader of the same two values, and the one that was already right.
+        settings = Settings(data_dir=tmp_path, secret_key="k")
+        assert (settings.host, settings.port) == ("127.0.0.1", 8433)
 
     def test_the_serve_call_never_trusts_forwarded_headers(self, serve: dict[str, Any]) -> None:
         """proxy_headers=False is the programmatic --no-proxy-headers: peer trust is
@@ -547,6 +614,32 @@ class TestMain:
         assert serve["migrated"] is False
         assert "kwargs" not in serve
 
+    @pytest.mark.parametrize("frozen", [False, True])
+    def test_preflights_fatal_sentence_is_said_out_loud(
+        self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch, frozen: bool
+    ) -> None:
+        """`preflight.main` returns an int and used to keep its sentence to itself, so a
+        double-clicked build that refused to boot closed with no window and no message
+        (#622). It takes a callback now and the launcher passes `_say`.
+
+        Both install shapes are driven: `_say`'s dialog half only fires when frozen, and one
+        case could not tell a routed refusal from a hardcoded one (rule 141).
+        """
+        monkeypatch.setattr(launcher, "_bundle_root", lambda: Path("/bundle") if frozen else None)
+        said: list[tuple[str, bool]] = []
+        monkeypatch.setattr(launcher, "_say", lambda m, *, frozen: said.append((m, frozen)))
+        serve["preflight_code"] = 1
+
+        with pytest.raises(SystemExit):
+            launcher.main()
+
+        # The launcher hands preflight a callback rather than letting it write to a stream
+        # that a windowed build has pointed at os.devnull.
+        refuse = serve["refuse"]
+        assert callable(refuse)
+        refuse("Reaper can't open this database.")
+        assert said == [("Reaper can't open this database.", frozen)]
+
     @pytest.fixture
     def tray(self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         """Route main() down the tray path with every boundary captured."""
@@ -570,7 +663,8 @@ class TestMain:
         ) -> BaseException | None:
             captured["tray_port"] = port
             captured["dock_icon"] = dock_icon
-            return captured["tray_error"]
+            error: BaseException | None = captured["tray_error"]
+            return error
 
         monkeypatch.setattr(launcher, "_serve_with_tray", fake_tray)
         return captured
@@ -651,3 +745,91 @@ class TestBuildinfoPath:
         monkeypatch.delenv("REAPER_BUILDINFO", raising=False)
         monkeypatch.delenv("REAPER_HOME", raising=False)
         assert launcher._buildinfo_path() is None
+
+
+class TestADotenvReachesTheLauncherAndTheDesktopFlags:
+    """`.env.example` says "Copy to .env.local", and four of the keys it documents did
+    nothing when set there (#558).
+
+    A `.env` file is read by pydantic-settings into `Settings` and is **not** exported into
+    `os.environ`, so every reader going straight to the process environment was blind to it:
+    it read as configured, warned nothing, and did nothing. The port half is the one that
+    matters most, because `main.py` prints the anti-lockout recovery link from
+    `settings.port` -- which does see the file -- while the launcher bound the value that
+    did not. A locked-out operator was sent to a port nothing was listening on.
+
+    Both halves are driven through one `.env.local`, since one merge answers both.
+    """
+
+    @pytest.fixture
+    def dotenv(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """A `.env.local` beside the process, the way a source checkout has one.
+
+        `conftest.py`'s `_hermetic` clears `env_file` so no test reads the developer's real
+        one; this puts a throwaway back for the duration, which is also what proves the two
+        are the same switch.
+        """
+        env_local = tmp_path / ".env.local"
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setitem(Settings.model_config, "env_file", (".env", ".env.local"))
+        return env_local
+
+    def test_the_launcher_binds_the_port_the_recovery_link_prints(
+        self, dotenv: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("REAPER_PORT", raising=False)
+        monkeypatch.delenv("REAPER_HOST", raising=False)
+        dotenv.write_text("REAPER_PORT=8433\nREAPER_HOST=127.0.0.1\n", encoding="utf-8")
+
+        settled = configured_env()
+
+        assert launcher._port(settled, frozen=False) == 8433
+        assert launcher._host(settled) == "127.0.0.1"
+        # The other reader of the same two values, and the one that was already right.
+        settings = Settings(data_dir=Path("data"), secret_key="k")
+        assert (settings.port, settings.host) == (8433, "127.0.0.1")
+
+    def test_a_real_environment_variable_still_wins(
+        self, dotenv: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Precedence is pydantic-settings', not a new one: the container and the desktop
+        conf both arrive as real environment variables and must keep winning."""
+        dotenv.write_text("REAPER_PORT=8433\n", encoding="utf-8")
+        monkeypatch.setenv("REAPER_PORT", "8444")
+
+        assert launcher._port(configured_env(), frozen=False) == 8444
+
+    @pytest.mark.parametrize(
+        ("key", "written", "expected"),
+        [
+            # Each of the four `.env.example` documents, and each driven AGAINST its own
+            # default so the assertion cannot pass on the default alone (rule 141).
+            ("REAPER_UPDATE_CHECK", "false", False),
+            ("REAPER_LAUNCH_BROWSER", "true", True),
+            ("REAPER_TRAY", "true", True),
+            ("REAPER_DOCK_ICON", "true", True),
+        ],
+    )
+    def test_the_four_documented_desktop_flags_read_the_file(
+        self, dotenv: Path, monkeypatch: pytest.MonkeyPatch, key: str, written: str, expected: bool
+    ) -> None:
+        monkeypatch.delenv(key, raising=False)
+        dotenv.write_text(f"{key}={written}\n", encoding="utf-8")
+
+        assert env_flag(key, default=not expected) is expected
+
+    def test_an_unrecognized_value_still_falls_to_the_default(
+        self, dotenv: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reason these four stayed `env_flag` rather than becoming `Settings` fields.
+
+        A pydantic bool refuses the boot on a value it cannot parse, which is right for
+        `destructive_actions_enabled` and wrong here: `REAPER_TRAY=ture` on a frozen macOS
+        build would trade "no menu-bar icon" for "will not start", on the build with no
+        stderr anyone reads.
+        """
+        monkeypatch.delenv("REAPER_TRAY", raising=False)
+        dotenv.write_text("REAPER_TRAY=ture\n", encoding="utf-8")
+
+        assert env_flag("REAPER_TRAY", default=True) is True
+        assert env_flag("REAPER_TRAY", default=False) is False

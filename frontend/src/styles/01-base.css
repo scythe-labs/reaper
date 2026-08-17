@@ -122,6 +122,49 @@ a:hover {
   overflow-x: auto;
 }
 
+/* Severity-typed inline notices, so an error never wears a warning's clothes and vice
+ * versa. Error (red): can't be saved. Warning (amber): legal, but probably not meant.
+ *
+ * These live here, with the other shared primitives, because `.notice` is rendered at 143
+ * sites across the app. They were written in `16-simulator.css` and stayed there long after
+ * they stopped being a simulator control (#779). Two thirds of the way down a 35-file load
+ * order is the wrong home for a base rule: a `.notice` variant added to any earlier file
+ * would have lost at equal specificity, and that loss is invisible in a diff and invisible
+ * in a green suite. `test_the_notice_base_rule_loads_before_the_feature_files` holds the
+ * position. The move itself changed nothing, since no other file declared a `.notice` rule
+ * to conflict with. */
+.notice {
+  font-size: var(--text-md);
+  padding: var(--space-md) var(--space-xl);
+  border-radius: var(--radius-sm);
+  margin: var(--space-md) 0;
+  border: 1px solid;
+  line-height: 1.45;
+}
+.notice-error {
+  background: var(--condemn-soft);
+  border-color: var(--condemn);
+  color: var(--text);
+}
+.notice-warn {
+  background: var(--unknown-soft);
+  border-color: var(--unknown);
+  color: var(--text);
+}
+/* A notice living inside the rule it describes, right under the control that fixes it. */
+.notice-inline {
+  margin: 0.55rem 0 0;
+}
+/* A notice that offers the help page for what it just said. The column is what puts the button
+   under the sentence rather than in the middle of it, and it is inert on the notice that has no
+   page to offer, which is most of them: one child, so nothing moves. */
+.notice-doc {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+}
+
 .app {
   max-width: 1400px;
   margin: 0 auto;

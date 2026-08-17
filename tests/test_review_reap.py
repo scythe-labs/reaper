@@ -42,7 +42,7 @@ GB = 1024**3
 
 @pytest.fixture
 async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -204,7 +204,9 @@ class TestBulkReapOfAShowGroupKey:
         snapshot_id, group_key = await _snapshot_show(
             session, series=42, seasons=[(3, 4 * GB), (4, 5 * GB)]
         )
-        await whitelist.spare(session, media_key="sonarr:1:42:4", title="Keep S4", note=None)
+        await whitelist.set_override(
+            session, media_key="sonarr:1:42:4", title="Keep S4", decision="spare", note=None
+        )
 
         run = await build_plan(
             session,
@@ -323,7 +325,9 @@ class TestCapsCountOnlyWhatWillActuallyBeDeleted:
         )
         run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
         # Spare one AFTER the plan is built: it stays in the plan but will not be deleted.
-        await whitelist.spare(session, media_key="radarr:1:3", title="Kept", note=None)
+        await whitelist.set_override(
+            session, media_key="radarr:1:3", title="Kept", decision="spare", note=None
+        )
 
         settings = ProfileSettings(max_items_per_run=2, max_items_per_30d=100)
         report = await Executor(

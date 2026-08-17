@@ -127,8 +127,8 @@ export function reapIsNoop(item: { verdict: Verdict; override: Override | null }
 
 /** Whether a show-level reap actually takes anywhere: true when any season's reap is honored,
  *  false when every one is refused, undefined outside a reap override. Feeds the whole-show
- *  override chip's `effective` flag. Judges over the WHOLE show (`group_seasons`), every lane,
- *  never the tab-filtered page. */
+ *  override chip's `effective` flag. Judges over the WHOLE show (the rollup's `seasons`),
+ *  every lane, never the tab-filtered page. */
 export function groupReapEffective(
   items: ReadonlyArray<{ override: Override | null; override_effective: boolean | null }>,
 ): boolean | undefined {
@@ -201,7 +201,7 @@ export function showReapReaches(season: {
  *  The card once passed only the seasons on the current tab, so on the Condemned lane it saw
  *  a set that was all-condemned by construction and wrongly dropped Reap, hiding the one
  *  control that reaps the show's kept seasons. So the parameter takes the strip-mark shape
- *  too (`group_seasons`), not just a full `Candidate`. */
+ *  too (the rollup's `seasons`), not just a full `Candidate`. */
 export function showReapIsNoop(
   seasons: ReadonlyArray<{ verdict: Verdict; override: Override | null }>,
 ): boolean {

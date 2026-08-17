@@ -28,7 +28,7 @@ export const cheatSheet: Doc = {
       "Points must total **100** or Save is blocked. Never weight size: it aims at your biggest, most-loved files.",
     ),
 
-    h2("Protections, all on by default", "protections"),
+    h2("Protections", "protections"),
     table(
       ["Protection", "Default"],
       [
@@ -37,6 +37,8 @@ export const cheatSheet: Doc = {
         ["Keep well-rated titles", "IMDb 7.5, 1,000 votes"],
         ["Never touch something playing right now", "On"],
         ["Stop if the unwatched time can't be read", "On"],
+        ["Keep titles most likely to be rewatched above a percentage", "Off by default"],
+        ["Keep a title that came back", "Off by default"],
       ],
     ),
     p(

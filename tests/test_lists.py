@@ -8,15 +8,17 @@ Maintainerr, Janitorr or Reclaimerr.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
 import respx
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from reaper.clients.base import IntegrationError
 from reaper.config import Settings
@@ -41,25 +43,9 @@ from reaper.services.lists import (
     memberships,
     sync,
 )
+from tests._fakes import FakeSonarr
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
-
-
-class _FakeSonarr:
-    """A Sonarr stand-in for the tag-rule test: not a RadarrClient, so ArrTagRule takes
-    the series path. Carries just the two methods the tag fetch touches."""
-
-    service = "sonarr"
-
-    def __init__(self, tags: list[dict[str, object]], series: list[dict[str, object]]) -> None:
-        self._tags = tags
-        self._series = series
-
-    async def tags(self) -> list[dict[str, object]]:
-        return self._tags
-
-    async def series(self) -> list[dict[str, object]]:
-        return self._series
 
 
 @dataclass(frozen=True)
@@ -93,11 +79,11 @@ class _FakePlexServer:
     the resolver has to survive.
     """
 
-    def __init__(self, libraries: dict[str, list[str | None | _Held] | None]) -> None:
+    def __init__(self, libraries: dict[str, list[str | _Held | None] | None]) -> None:
         self.library = self._Library(libraries)
 
     class _Library:
-        def __init__(self, libraries: dict[str, list[str | None | _Held] | None]) -> None:
+        def __init__(self, libraries: dict[str, list[str | _Held | None] | None]) -> None:
             self._libraries = libraries
 
         def sections(self) -> list[_FakePlexServer._Section]:
@@ -107,7 +93,7 @@ class _FakePlexServer:
             ]
 
     class _Section:
-        def __init__(self, title: str, entries: list[str | None | _Held] | None) -> None:
+        def __init__(self, title: str, entries: list[str | _Held | None] | None) -> None:
             self.title = title
             self._entries = entries
 
@@ -119,7 +105,7 @@ class _FakePlexServer:
             return _FakePlexServer._Collection(self._entries)
 
     class _Collection:
-        def __init__(self, entries: list[str | None | _Held]) -> None:
+        def __init__(self, entries: list[str | _Held | None]) -> None:
             self._entries = [e if isinstance(e, _Held) else _Held(e) for e in entries]
 
         def items(self) -> list[object]:
@@ -141,29 +127,29 @@ class TestArrTagRule:
     """The configurable keep-list: several tags, combined ANY (union) or ALL (intersection)."""
 
     @pytest.fixture
-    def sonarr(self) -> _FakeSonarr:
+    def sonarr(self) -> FakeSonarr:
         tags = [{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}]
         series = [
             {"title": "A", "tvdbId": 10, "tags": [1]},  # keep only
             {"title": "B", "tvdbId": 11, "tags": [1, 2]},  # keep AND gold
             {"title": "C", "tvdbId": 12, "tags": [2]},  # gold only
         ]
-        return _FakeSonarr(tags, series)
+        return FakeSonarr(tag_rows=tags, series_rows=series)
 
-    async def test_any_is_the_union(self, sonarr: _FakeSonarr) -> None:
-        items = await ArrTagRule(sonarr, ("keep", "gold"), "any").fetch()  # type: ignore[arg-type]
+    async def test_any_is_the_union(self, sonarr: FakeSonarr) -> None:
+        items = await ArrTagRule(sonarr, ("keep", "gold"), "any").fetch()
         assert {i.title for i in items} == {"A", "B", "C"}
 
-    async def test_all_is_the_intersection(self, sonarr: _FakeSonarr) -> None:
-        items = await ArrTagRule(sonarr, ("keep", "gold"), "all").fetch()  # type: ignore[arg-type]
+    async def test_all_is_the_intersection(self, sonarr: FakeSonarr) -> None:
+        items = await ArrTagRule(sonarr, ("keep", "gold"), "all").fetch()
         assert {i.title for i in items} == {"B"}  # only B has both tags
 
-    async def test_a_single_tag_is_just_that_tag(self, sonarr: _FakeSonarr) -> None:
-        items = await ArrTagRule(sonarr, ("keep",), "any").fetch()  # type: ignore[arg-type]
+    async def test_a_single_tag_is_just_that_tag(self, sonarr: FakeSonarr) -> None:
+        items = await ArrTagRule(sonarr, ("keep",), "any").fetch()
         assert {i.title for i in items} == {"A", "B"}
 
-    async def test_no_tags_keeps_nothing(self, sonarr: _FakeSonarr) -> None:
-        assert await ArrTagRule(sonarr, (), "any").fetch() == []  # type: ignore[arg-type]
+    async def test_no_tags_keeps_nothing(self, sonarr: FakeSonarr) -> None:
+        assert await ArrTagRule(sonarr, (), "any").fetch() == []
 
     @pytest.mark.parametrize("configured", ["Reaper-Keep", "REAPER-KEEP", " reaper-keep "])
     async def test_the_operators_capitalization_still_matches(self, configured: str) -> None:
@@ -172,35 +158,35 @@ class TestArrTagRule:
         tag map cannot hold. The tag then read as MISSING, and on a first sync that stored an
         empty keep-list and reported success: keep-tagged titles silently deletable, forever,
         with the settings screen showing the list as healthy."""
-        sonarr = _FakeSonarr(
-            [{"id": 1, "label": "reaper-keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        sonarr = FakeSonarr(
+            tag_rows=[{"id": 1, "label": "reaper-keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         )
 
-        items = await ArrTagRule(sonarr, (configured,), "any").fetch()  # type: ignore[arg-type]
+        items = await ArrTagRule(sonarr, (configured,), "any").fetch()
 
         assert [i.title for i in items] == ["A"]
 
     async def test_a_tag_that_really_is_absent_still_raises(self) -> None:
         """The other direction: normalizing must not turn a genuinely missing tag into a
         match, or the wipe protection above stops firing."""
-        sonarr = _FakeSonarr([{"id": 1, "label": "other"}], [])
+        sonarr = FakeSonarr(tag_rows=[{"id": 1, "label": "other"}], series_rows=[])
 
         with pytest.raises(ContainerMissingError):
-            await ArrTagRule(sonarr, ("reaper-keep",), "any").fetch()  # type: ignore[arg-type]
+            await ArrTagRule(sonarr, ("reaper-keep",), "any").fetch()
 
-    async def test_any_mode_counts_each_tag_independently(self, sonarr: _FakeSonarr) -> None:
+    async def test_any_mode_counts_each_tag_independently(self, sonarr: FakeSonarr) -> None:
         """The per-tag counts answer "which tags are doing the protecting here", so each
         tag counts its own carriers: A and B carry keep, B and C carry gold."""
-        rule = ArrTagRule(sonarr, ("keep", "gold"), "any")  # type: ignore[arg-type]
+        rule = ArrTagRule(sonarr, ("keep", "gold"), "any")
         await rule.fetch()
 
         assert rule.tag_counts == {"keep": 2, "gold": 2}
 
-    async def test_all_mode_counts_per_tag_not_per_match(self, sonarr: _FakeSonarr) -> None:
+    async def test_all_mode_counts_per_tag_not_per_match(self, sonarr: FakeSonarr) -> None:
         """Under ALL only B matches the rule, and the counts still say what each tag
         covers on its own -- a per-tag count is independent of the combining mode."""
-        rule = ArrTagRule(sonarr, ("keep", "gold"), "all")  # type: ignore[arg-type]
+        rule = ArrTagRule(sonarr, ("keep", "gold"), "all")
         items = await rule.fetch()
 
         assert {i.title for i in items} == {"B"}
@@ -209,30 +195,30 @@ class TestArrTagRule:
     async def test_the_counts_keep_the_operators_own_spelling(self) -> None:
         """The counts are keyed by the spelling the operator configured, which is what the
         Lists screen echoes back -- both sides of the lookup itself stay case-folded."""
-        sonarr = _FakeSonarr(
-            [{"id": 1, "label": "reaper-keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        sonarr = FakeSonarr(
+            tag_rows=[{"id": 1, "label": "reaper-keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         )
-        rule = ArrTagRule(sonarr, ("Reaper-Keep",), "any")  # type: ignore[arg-type]
+        rule = ArrTagRule(sonarr, ("Reaper-Keep",), "any")
         await rule.fetch()
 
         assert rule.tag_counts == {"Reaper-Keep": 1}
 
-    async def test_sync_stats_carries_the_counts_and_the_server(self, sonarr: _FakeSonarr) -> None:
+    async def test_sync_stats_carries_the_counts_and_the_server(self, sonarr: FakeSonarr) -> None:
         """The server is named service-first ("Sonarr (hd)"): the instance name alone is
         the operator's own label ("hd", "4k"), which two services can share, and the
         per-server fold-out on the Lists screen echoes this string as the whole row head."""
-        rule = ArrTagRule(sonarr, ("keep",), "any", instance_name="hd")  # type: ignore[arg-type]
+        rule = ArrTagRule(sonarr, ("keep",), "any", instance_name="hd")
         await rule.fetch()
 
         assert rule.sync_stats == {"tags": {"keep": 2}, "server": "Sonarr (hd)"}
 
     async def test_stats_before_any_counting_pass_read_as_unknown_not_zero(
-        self, sonarr: _FakeSonarr
+        self, sonarr: FakeSonarr
     ) -> None:
         """An untaken count is unknown, never zero (rule 96): before a fetch the stats
         carry ``tags: None``, which the screen renders as bare pills."""
-        rule = ArrTagRule(sonarr, ("keep",), "any", instance_name="hd")  # type: ignore[arg-type]
+        rule = ArrTagRule(sonarr, ("keep",), "any", instance_name="hd")
 
         assert rule.sync_stats == {"tags": None, "server": "Sonarr (hd)"}
 
@@ -240,8 +226,8 @@ class TestArrTagRule:
         """No configured tag exists upstream, so no title carries one: every count is a
         TRUE zero, and recording them is what lets the genuinely-empty first sync show
         "0" on the Lists screen instead of a blank."""
-        sonarr = _FakeSonarr([{"id": 1, "label": "other"}], [])
-        rule = ArrTagRule(sonarr, ("keep", "gold"), "any")  # type: ignore[arg-type]
+        sonarr = FakeSonarr(tag_rows=[{"id": 1, "label": "other"}], series_rows=[])
+        rule = ArrTagRule(sonarr, ("keep", "gold"), "any")
 
         with pytest.raises(ContainerMissingError):
             await rule.fetch()
@@ -249,13 +235,13 @@ class TestArrTagRule:
         assert rule.sync_stats == {"tags": {"keep": 0, "gold": 0}, "server": "Sonarr"}
 
     async def test_all_mode_with_one_tag_resolved_leaves_the_counts_unknown(
-        self, sonarr: _FakeSonarr
+        self, sonarr: FakeSonarr
     ) -> None:
         """Under ALL one absent tag aborts the fetch before the counting pass, so the
         resolved tags' counts were never taken -- and an untaken count is unknown, not
         zero (rule 96): "keep" genuinely covers titles here, and storing 0 would say the
         opposite."""
-        rule = ArrTagRule(sonarr, ("keep", "absent"), "all")  # type: ignore[arg-type]
+        rule = ArrTagRule(sonarr, ("keep", "absent"), "all")
 
         with pytest.raises(ContainerMissingError):
             await rule.fetch()
@@ -270,11 +256,11 @@ class TestSyncStatsRoundTrip:
 
     @staticmethod
     def _rule(instance_name: str = "hd") -> ArrTagRule:
-        sonarr = _FakeSonarr(
-            [{"id": 1, "label": "keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        sonarr = FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         )
-        return ArrTagRule(sonarr, ("keep",), "any", instance_name=instance_name)  # type: ignore[arg-type]
+        return ArrTagRule(sonarr, ("keep",), "any", instance_name=instance_name)
 
     async def test_the_stats_round_trip_through_the_stored_row(self, engine: AsyncEngine) -> None:
         rule = self._rule()
@@ -376,11 +362,11 @@ class TestAdoptLegacy:
     async def _seed_keep_tag_row(engine: AsyncEngine) -> ArrTagRule:
         """One legacy keep-tag list with a member, exactly as the policy era stored it:
         no ``-list`` suffix on the slug."""
-        sonarr = _FakeSonarr(
-            [{"id": 1, "label": "keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        sonarr = FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         )
-        rule = ArrTagRule(sonarr, ("keep",), "any", instance_id=3, instance_name="hd")  # type: ignore[arg-type]
+        rule = ArrTagRule(sonarr, ("keep",), "any", instance_id=3, instance_name="hd")
         assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
         return rule
 
@@ -433,9 +419,9 @@ class TestAdoptLegacy:
         """A check already landed under the definition's slug, so that row is the living
         one; the legacy row stays for the retire sweep to stand down."""
         rule = await self._seed_keep_tag_row(engine)
-        sonarr = _FakeSonarr([{"id": 1, "label": "keep"}], [])
+        sonarr = FakeSonarr(tag_rows=[{"id": 1, "label": "keep"}], series_rows=[])
         claimed = ArrTagRule(
-            sonarr,  # type: ignore[arg-type]
+            sonarr,
             ("keep",),
             "any",
             instance_id=3,
@@ -537,15 +523,15 @@ class TestAVanishedContainerNeverWipesTheList:
     async def test_a_vanished_tag_with_stored_members_keeps_the_membership(
         self, engine: AsyncEngine
     ) -> None:
-        good = _FakeSonarr(
-            [{"id": 1, "label": "keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        good = FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         )
-        rule = ArrTagRule(good, ("keep",), "any")  # type: ignore[arg-type]
+        rule = ArrTagRule(good, ("keep",), "any")
         assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
 
-        renamed = _FakeSonarr([{"id": 1, "label": "hold"}], [])
-        stale = ArrTagRule(renamed, ("keep",), "any")  # type: ignore[arg-type]
+        renamed = FakeSonarr(tag_rows=[{"id": 1, "label": "hold"}], series_rows=[])
+        stale = ArrTagRule(renamed, ("keep",), "any")
         with pytest.raises(ContainerMissingError):
             await sync(engine, stale, kind=ListKind.WHITELIST)
 
@@ -555,8 +541,8 @@ class TestAVanishedContainerNeverWipesTheList:
     async def test_a_missing_tag_with_nothing_stored_is_an_empty_first_sync(
         self, engine: AsyncEngine
     ) -> None:
-        sonarr = _FakeSonarr([{"id": 1, "label": "other"}], [])
-        rule = ArrTagRule(sonarr, ("keep",), "any")  # type: ignore[arg-type]
+        sonarr = FakeSonarr(tag_rows=[{"id": 1, "label": "other"}], series_rows=[])
+        rule = ArrTagRule(sonarr, ("keep",), "any")
         assert await sync(engine, rule, kind=ListKind.WHITELIST) == 0
 
     async def test_under_all_one_missing_tag_raises_when_members_are_stored(
@@ -564,18 +550,18 @@ class TestAVanishedContainerNeverWipesTheList:
     ) -> None:
         """Under ALL, one absent tag structurally rules every title out -- which is the
         same wipe wearing a different hat, so it gets the same treatment."""
-        both = _FakeSonarr(
-            [{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
-            [{"title": "B", "tvdbId": 11, "tags": [1, 2]}],
+        both = FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
+            series_rows=[{"title": "B", "tvdbId": 11, "tags": [1, 2]}],
         )
-        rule = ArrTagRule(both, ("keep", "gold"), "all")  # type: ignore[arg-type]
+        rule = ArrTagRule(both, ("keep", "gold"), "all")
         assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
 
-        one_gone = _FakeSonarr(
-            [{"id": 1, "label": "keep"}],
-            [{"title": "B", "tvdbId": 11, "tags": [1]}],
+        one_gone = FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "B", "tvdbId": 11, "tags": [1]}],
         )
-        stale = ArrTagRule(one_gone, ("keep", "gold"), "all")  # type: ignore[arg-type]
+        stale = ArrTagRule(one_gone, ("keep", "gold"), "all")
         with pytest.raises(ContainerMissingError):
             await sync(engine, stale, kind=ListKind.WHITELIST)
 
@@ -638,7 +624,7 @@ class TestATitleTheContainerStillListsIsNeverDropped:
     """
 
     @staticmethod
-    def _collection(*entries: str | None | _Held) -> PlexCollection:
+    def _collection(*entries: str | _Held | None) -> PlexCollection:
         return PlexCollection(
             server=_FakePlexServer({"Movies": list(entries)}), section_name="Movies"
         )
@@ -772,7 +758,7 @@ class TestATitlePlexNeverMatchedIsStillProtected:
     and without that it is on the operator's keep list and Reaper reaps it anyway."""
 
     @staticmethod
-    def _collection(*entries: str | None | _Held) -> PlexCollection:
+    def _collection(*entries: str | _Held | None) -> PlexCollection:
         return PlexCollection(
             server=_FakePlexServer({"Movies": list(entries)}), section_name="Movies"
         )
@@ -944,7 +930,7 @@ class TestARowIsNeverFiledUnderAKindItsIdsDoNotBelongTo:
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
 
@@ -996,6 +982,57 @@ class TestAStoredCacheIsWidenedNeverRebuilt:
         assert "plex_rating_key" in columns
         assert [str(r.title) for r in rows] == ["First"]
 
+    async def test_two_callers_widening_at_once_leave_one_of_each_column(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rule 58. The PRAGMA guarding each ``ALTER`` is not inside a transaction --
+        pysqlite autocommits DDL, so ``engine.begin()`` opens nothing around it -- and SQLite
+        has no ``ADD COLUMN IF NOT EXISTS``. Without ``_widen_lock`` both callers read the
+        pre-widen shape and the second raises ``duplicate column name``, which aborts a scan.
+
+        Two callers overlap on an ordinary install: the Lists screen calls ``configured``
+        while a scan calls ``load_membership_index``, and the nightly ``refresh_curated_lists``
+        calls ``sync``. Three job ids, so APScheduler's ``max_instances`` does not separate
+        them.
+
+        **The interleave is probabilistic and this test says so rather than reading as a
+        proof (rule 118).** Every shape read yields once, which widens the window; measured
+        against the unlocked function that raises in about a third of rounds, so it runs
+        twelve rounds against twelve fresh databases and fails on any one of them. With the
+        lock it cannot fail at all -- the second caller reads the widened shape and skips.
+        """
+        real_execute = AsyncConnection.execute
+
+        async def yielding_execute(
+            self: AsyncConnection, statement: Any, *args: Any, **kwargs: Any
+        ) -> Any:
+            result = await real_execute(self, statement, *args, **kwargs)
+            if "PRAGMA table_info(" in str(statement):
+                await asyncio.sleep(0)
+            return result
+
+        monkeypatch.setattr(AsyncConnection, "execute", yielding_execute)
+
+        for round_number in range(12):
+            data_dir = tmp_path / f"round-{round_number}"
+            engine = create_engine(Settings(data_dir=data_dir, secret_key="k"))
+            try:
+                async with engine.begin() as conn:
+                    await conn.execute(text(_SCHEMA_BEFORE_THE_PLEX_KEY))
+
+                await asyncio.gather(ensure_schema(engine), ensure_schema(engine))
+
+                async with engine.connect() as conn:
+                    columns = [
+                        str(row.name)
+                        for row in (
+                            await conn.execute(text("PRAGMA table_info(protection_list_item)"))
+                        ).all()
+                    ]
+                assert columns.count("plex_rating_key") == 1, round_number
+            finally:
+                await engine.dispose()
+
     async def test_widening_twice_is_the_same_as_widening_once(self, engine: AsyncEngine) -> None:
         """It runs on every call, several times per scan."""
         async with engine.begin() as conn:
@@ -1009,9 +1046,11 @@ class TestAStoredCacheIsWidenedNeverRebuilt:
 
 
 def _top250_payload(count: int = 250) -> list[dict[str, object]]:
+    """Ids from 1, never 0: ``tt0000000`` is the "unknown" sentinel ``identity._clean_imdb``
+    drops, so an entry numbered from zero is stored under no imdb id at all."""
     return [
         {"ImdbId": f"tt{i:07d}", "TmdbId": 1000 + i, "Title": f"Film {i}", "Year": 1920 + i}
-        for i in range(count)
+        for i in range(1, count + 1)
     ]
 
 
@@ -1084,11 +1123,29 @@ class TestImdbList:
         )
         await sync(engine, ImdbList(list_name="IMDb Top 250"))
 
-        found = await memberships(engine, media_type="movie", imdb_id="tt0000000")
+        found = await memberships(engine, media_type="movie", imdb_id="tt0000001")
 
         assert len(found) == 1
         assert found[0].rank is None
         assert found[0].describe() == "IMDb Top 250"  # no fabricated "#1"
+
+    async def test_an_unknown_id_sentinel_is_stored_under_no_imdb_id(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        """The mirror emits ``tt0000000`` for a chart entry it has no IMDb id for.
+
+        Stored raw, that row answers every OTHER item whose own imdbId is the same sentinel,
+        and the why-panel then names a list the film is not on. The entry keeps protecting by
+        its tmdb id, which is the id it is actually identified by (#709).
+        """
+        payload = _top250_payload()
+        payload[0]["ImdbId"] = "tt0000000"
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=payload))
+
+        await sync(engine, ImdbList(list_name="IMDb Top 250"))
+
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000000") == []
+        assert len(await memberships(engine, media_type="movie", tmdb_id=1001)) == 1
 
     @pytest.mark.parametrize(
         ("variant", "floor"),

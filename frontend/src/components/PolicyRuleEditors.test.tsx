@@ -14,18 +14,17 @@
 // keeps outright, a lean is a FLAT discount. What is pinned is the exact body each composer
 // emits, because the server validates it (`GradedKeepSpec._valid_keep`) and a wrong shape is
 // a keep rule that refuses to save.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-import type { Condition, GradedKeep, VocabField } from "../api";
+import type { Condition, GradedKeep, ListConfig, VocabField } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { vocabulary: vi.fn(), vocabularyValues: vi.fn(), listConfigs: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -52,10 +51,8 @@ function optionNamed(name: string): HTMLElement {
 
 async function openTheSuggester() {
   const user = userEvent.setup();
-  const { container } = render(
-    <QueryClientProvider client={testQueryClient()}>
-      <RemoveRulesEditor condemn={[]} onCondemn={() => {}} mediaType="movie" />
-    </QueryClientProvider>,
+  const { container } = renderWithProviders(
+    <RemoveRulesEditor condemn={[]} onCondemn={() => {}} mediaType="movie" />,
   );
 
   // Rule 137: the picker is a <select>, whose accessible name does not change while the
@@ -83,6 +80,18 @@ beforeEach(() => {
   scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
   scrollIntoView.mockClear();
 });
+
+/** A list definition as the picker reads it (`/api/lists/configured`). `authorable_media` is
+ *  the server's authoritative scope: the policies a keep rule on this list may protect. Empty
+ *  means offer on neither -- the type is not known (an unsynced tag), #549. */
+function listCfg(
+  id: number,
+  name: string,
+  authorable_media: ("movie" | "tv")[],
+  source: ListConfig["source"] = "plex_collection",
+): ListConfig {
+  return { id, name, source, config: {}, policy_use: [], authorable_media };
+}
 
 describe("arrowing through the value suggester", () => {
   it("scrolls the option it just marked into view", async () => {
@@ -165,20 +174,20 @@ const VOTES: VocabField = {
   ops: ["gte", "lte"],
 };
 
-function renderKeepEditor(over: { conditions?: Condition[]; keeps?: GradedKeep[] } = {}) {
+function renderKeepEditor(
+  over: { conditions?: Condition[]; keeps?: GradedKeep[]; mediaType?: "movie" | "tv" } = {},
+) {
   const onConditions = vi.fn();
   const onKeeps = vi.fn();
-  render(
-    <QueryClientProvider client={testQueryClient()}>
-      <KeepRulesEditor
-        conditions={over.conditions ?? []}
-        keeps={over.keeps ?? []}
-        gateIds={[]}
-        mediaType="movie"
-        onConditions={onConditions}
-        onKeeps={onKeeps}
-      />
-    </QueryClientProvider>,
+  renderWithProviders(
+    <KeepRulesEditor
+      conditions={over.conditions ?? []}
+      keeps={over.keeps ?? []}
+      gateIds={[]}
+      mediaType={over.mediaType ?? "movie"}
+      onConditions={onConditions}
+      onKeeps={onKeeps}
+    />,
   );
   return { onConditions, onKeeps, user: userEvent.setup() };
 }
@@ -187,8 +196,8 @@ describe("a hard keep rule on a list", () => {
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
     apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 2, name: "IMDb Top 250", source: "imdb", config: {}, policy_use: [] },
+      listCfg(1, "Never Reap", ["movie", "tv"]),
+      listCfg(2, "IMDb Top 250", ["movie"], "imdb"),
     ]);
   });
 
@@ -231,9 +240,7 @@ describe("a hard keep rule on a list", () => {
 describe("a lean keep rule on a list", () => {
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
-    apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
-    ]);
+    apiMock.listConfigs.mockResolvedValue([listCfg(1, "Never Reap", ["movie", "tv"])]);
   });
 
   async function openLean(user: ReturnType<typeof userEvent.setup>) {
@@ -325,8 +332,8 @@ describe("one list, one keep rule", () => {
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
     apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 2, name: "IMDb Top 250", source: "imdb", config: {}, policy_use: [] },
+      listCfg(1, "Never Reap", ["movie", "tv"]),
+      listCfg(2, "IMDb Top 250", ["movie"], "imdb"),
     ]);
   });
 
@@ -401,7 +408,7 @@ describe("one list, one keep rule", () => {
 
     expect(
       await screen.findByText(
-        "Every list already has a keep rule. Remove one above to give it a different strength.",
+        "Every list this policy can keep already has a rule. Remove one above to give it a different strength.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
@@ -414,5 +421,243 @@ describe("one list, one keep rule", () => {
     await pickTheListField(user);
 
     expect(await screen.findByText(/You have no lists yet/)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The field types whose typed units are not their stored ones.
+// ---------------------------------------------------------------------------
+
+/** Three types as `engine/fields.py` serves them, one real field each.
+ *
+ *  Two convert. A size is typed in GB and stored in bytes, a rating is typed as 7.5 and stored
+ *  as 75. Days are typed and stored alike, and are here because they reach `coerceValue` through
+ *  its fall-through arm rather than a branch of their own. Nothing pinned any of the three, in
+ *  either direction.
+ *
+ *  What a wrong one costs is a policy field off by a factor. A size rule storing the typed 50
+ *  rather than 50 GB is a floor every title clears. A keep rule meant for the big files then
+ *  keeps everything, and a remove rule meant for them flags everything. The number is wrong in
+ *  the body the server stores, where nothing downstream can tell it from one the operator
+ *  meant. */
+const SIZE: VocabField = {
+  key: "size_bytes",
+  label: "Size on disk",
+  help_text: "",
+  type: "bytes",
+  unit_suffix: "GB",
+  ops: ["gte", "lte"],
+};
+
+const RATING: VocabField = {
+  key: "imdb_rating",
+  label: "IMDb rating",
+  help_text: "",
+  type: "rating_tenths",
+  unit_suffix: "/10",
+  ops: ["gte", "lte"],
+};
+
+const DORMANCY: VocabField = {
+  key: "days_unwatched",
+  label: "Days since anyone watched it",
+  help_text: "",
+  type: "days",
+  unit_suffix: "days",
+  ops: ["gte", "lte"],
+};
+
+/** Typed, stored, read back. `reads` is what the composed sentence must say: the number the
+ *  operator typed, with its unit. A stored value rendering as anything else means one of the
+ *  two directions is wrong, and only one of them writes the policy.
+ *
+ *  The rating reads `7.5/10`, no space. It said `7.5 /10` until #726, and this expectation is
+ *  where that was seen: the string had to be written with the space for the test to pass. Every
+ *  other unit in the vocabulary is a word and keeps its space; `/10` is the one that is
+ *  punctuation, and the three rows here are what hold both halves of that rule at once. */
+const CONVERSIONS = [
+  { field: SIZE, typed: "50", stored: 50_000_000_000, reads: "50 GB" },
+  { field: RATING, typed: "7.5", stored: 75, reads: "7.5/10" },
+  { field: DORMANCY, typed: "180", stored: 180, reads: "180 days" },
+];
+
+describe("a rule on a field whose stored units are not its typed ones", () => {
+  beforeEach(() => {
+    apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [SIZE, RATING, DORMANCY] });
+  });
+
+  it.each(CONVERSIONS)(
+    "stores a $field.key rule in the units the wire expects",
+    async ({ field, typed, stored }) => {
+      const { onConditions, user } = renderKeepEditor();
+
+      // Rule 137: the picker's name holds still while the vocabulary loads, so it cannot gate
+      // itself and `selectOptions` against the empty list is a silent no-op.
+      const picker = screen.getByRole("combobox", { name: "Field" });
+      await waitFor(() =>
+        expect(screen.getByRole("option", { name: field.label })).toBeInTheDocument(),
+      );
+      await user.selectOptions(picker, field.key);
+
+      const box = await screen.findByRole("spinbutton", { name: `${field.label} value` });
+      await user.type(box, typed);
+
+      // Add gates itself on the value, so it is actable only once the typing has landed in
+      // state. Rule 137 again, at the control that emits the rule.
+      const add = screen.getByRole("button", { name: "Add rule" });
+      await waitFor(() => expect(add).toBeEnabled());
+      await user.click(add);
+
+      expect(onConditions).toHaveBeenCalledWith([{ field: field.key, op: "gte", value: stored }]);
+    },
+  );
+
+  it.each(CONVERSIONS)(
+    "reads a stored $field.key rule back as the number that was typed",
+    async ({ field, stored, reads }) => {
+      renderKeepEditor({ conditions: [{ field: field.key, op: "gte", value: stored }] });
+
+      expect(
+        await screen.findByText(`Keep it when ${field.label} is at least ${reads}`),
+      ).toBeInTheDocument();
+    },
+  );
+});
+
+describe("the list picker filtered to what the server says it may protect", () => {
+  // #549: `authorable_media` is the server's authoritative scope. A Movies policy offers a list
+  // whose scope includes "movie" -- a movie or both-type list, or a synced-but-empty one the
+  // operator may fill -- and hides a shows-only list and an unsynced one whose type is unknown.
+  beforeEach(() => {
+    apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
+    apiMock.listConfigs.mockResolvedValue([
+      listCfg(1, "Movie Night", ["movie"]),
+      listCfg(2, "Saturday Cartoons", ["tv"]),
+      listCfg(3, "Family Watchlist", ["movie", "tv"]),
+      listCfg(4, "Empty Collection", ["movie", "tv"]), // synced but empty: offered on both
+    ]);
+  });
+
+  it("offers movie, both, and synced-empty lists, and hides a shows-only one", async () => {
+    const { user } = renderKeepEditor();
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument(),
+    );
+
+    expect(within(lists).getByRole("option", { name: "Family Watchlist" })).toBeInTheDocument();
+    expect(within(lists).getByRole("option", { name: "Empty Collection" })).toBeInTheDocument();
+    expect(
+      within(lists).queryByRole("option", { name: "Saturday Cartoons" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One list isn't shown here: it holds only shows, which this policy can't keep.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("filters the lean picker the same way (rule 72)", async () => {
+    const { user } = renderKeepEditor();
+    await user.click(await screen.findByRole("button", { name: "Leans toward keeping" }));
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument(),
+    );
+
+    expect(
+      within(lists).queryByRole("option", { name: "Saturday Cartoons" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("flips the filter and the words on a shows policy", async () => {
+    // The other direction, so a hardcoded "movie"/"shows" cannot pass: the movies-only list is
+    // now the one that can never be kept, and the offered lists swap.
+    const { user } = renderKeepEditor({ mediaType: "tv" });
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Saturday Cartoons" })).toBeInTheDocument(),
+    );
+
+    expect(within(lists).getByRole("option", { name: "Family Watchlist" })).toBeInTheDocument();
+    expect(within(lists).queryByRole("option", { name: "Movie Night" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One list isn't shown here: it holds only movies, which this policy can't keep.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("hides an unsynced list and says to check it, while still offering a known one", async () => {
+    // A synced-empty list is offered (verified, fillable); an unsynced one is withheld until a
+    // check reads it. The two carry different notes because the fix differs.
+    apiMock.listConfigs.mockResolvedValue([
+      listCfg(1, "Movie Night", ["movie"]),
+      listCfg(20, "Fresh List", []), // no sync has read it: offered on neither
+    ]);
+    const { user } = renderKeepEditor();
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument(),
+    );
+
+    expect(within(lists).queryByRole("option", { name: "Fresh List" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One list isn't shown here yet: it hasn't synced. Check it on Settings → Lists.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says to add a movie list when the only list holds shows", async () => {
+    apiMock.listConfigs.mockResolvedValue([listCfg(2, "Saturday Cartoons", ["tv"])]);
+    const { user } = renderKeepEditor();
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "None of your lists holds movies. Add a movie list on Settings → Lists.",
+      ),
+    ).toBeInTheDocument();
+    // Not the "you have no lists" message: the operator has one, it just can't be kept here.
+    expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
+  });
+
+  it("says to sync when the only list has never been read", async () => {
+    apiMock.listConfigs.mockResolvedValue([listCfg(20, "Fresh List", [])]);
+    const { user } = renderKeepEditor();
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "Your lists haven't synced yet. Check them on Settings → Lists so Reaper knows what's on them.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the already-ruled copy true when an unsynced list is also hidden", async () => {
+    // The keepable list is named and an unsynced one is hidden, so the picker is empty. The copy
+    // is qualified ("this policy can keep") so it does not claim the unsynced list has a rule.
+    apiMock.listConfigs.mockResolvedValue([
+      listCfg(1, "Movie Night", ["movie"]),
+      listCfg(20, "Fresh List", []),
+    ]);
+    const { user } = renderKeepEditor({
+      conditions: [{ field: "on_list", op: "eq", value: "Movie Night" }],
+    });
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "Every list this policy can keep already has a rule. Remove one above to give it a different strength.",
+      ),
+    ).toBeInTheDocument();
   });
 });

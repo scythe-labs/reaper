@@ -24,11 +24,12 @@ Last verified against the code: 2026-08-02.
 | **M2b** Protection lists — Arr-style registry, act through on_list rules | ✅ done |
 | **M3a** Scoring engine — gates, signals, observations | ✅ done |
 | **M3b** Policy persistence — immutable rows, hash, caps, autonomy grants | 🟡 see open 1 |
-| **M3c** Backtest — replay against the operator's own watch history | 🟡 see open 2 |
+| **M3c** Backtest — replay against the operator's own watch history | ❌ dropped for #553 |
+| **M3h** A title that came back — Plex-key ledger, hold, chip | ✅ opt-in, off by default, #553 |
 | **M3d** Field registry + authorable protect rules | ✅ done |
 | **M3e** Snapshot pipeline + REST API + polled progress | ✅ done |
-| **M3f** Signal quality — lift metric, size removed, dormancy gate | 🟡 see open 2 |
-| **M3g** Calibration — rewatch prior from the operator's own history | 🟡 see open 2 |
+| **M3f** Signal quality — banked as the shipped defaults, `docs/SIGNALS.md` | ✅ done |
+| **M3g** Rewatch — a fitted rewatch prior | ✅ keep and hold on both lanes, #554 |
 | **M4** React SPA — review queue, why-panel, policy editor, live simulator | ✅ done |
 | **M5** The reap loop — journal, planner, executor, canary, caps | ✅ done |
 | **M6** Season pruning | ✅ done |
@@ -39,34 +40,27 @@ Last verified against the code: 2026-08-02.
 | **Operator console** — service config, schedule, safety, review | ✅ done |
 | **First start** — four steps, password forced, restore door, resume from the server | ✅ done |
 | **Packaged installs** — Win/macOS binaries + tray, snap, CalVer, update check | 🟡 no cut yet |
+| **Collections** — chip, picker, collection screen, search reaches names | ✅ done, #816 |
 
 ## Open work
 
-1. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant.
-2. **The backtest (M3c), its lift metric (M3f), and the calibration prior (M3g).** All three
-   engines are complete and tested; none is reachable, and nothing in `src/` imports
-   `engine.backtest`. The backtest needs `POST /api/policy/backtest` plus a minimal UI, and
-   `calibration.derive` needs that route to call it and pass the result in, since `backtest.run`
-   never calls `derive`. Three things the route must inject, none reachable from `engine/`: the
-   prior; the watch-blind map, from `watch_evidence`'s marks, or a churned title replays on a
-   confident zero; and `ensure_schema` before the first mirror read, since `backtest._plays` and
-   `calibration.derive` query it raw (#283). The `rescued` count models grace as a delay before
-   deletion, which production does not do, so it is a best case: fix or label it when wiring.
-   Until they ship the live simulator is the threshold-tuning surface, and no operator copy may
-   name the backtest or promise a fitted prior (rule 25).
-3. **The screen-reader sweep is landed.** What landed and why each shape was chosen is
+1. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant,
+   and `backtest_passed` is now a gate nothing can ever satisfy: M3c is dropped, so wiring M3b
+   means choosing a different earned bar and dropping that column with it (rule 148).
+2. **The screen-reader sweep is landed.** What landed and why each shape was chosen is
    `docs/history/SCREEN_READER_SWEEP.md`; the guard's own measurement is in `docs/LEARNINGS.md`.
    A scroll container is now held reachable by a stylesheet-driven gate, not by memory. Whether a
    notice speaks is `standing`, declared per call site and held by a count and a written reason.
-4. **The stylesheet is 34 files with named scales** (`docs/CSS_SPLIT_PLAN.md`). Load order is
+3. **The stylesheet is 35 files with named scales** (`docs/history/CSS_SPLIT_PLAN.md`). Load
    declared by `index.css` and load-bearing. Type (9 steps), weight (4) and the constants
    (`--control-pad`, `--radius-pill`, a `--z-*` ladder) are adopted everywhere; space is 11 steps
    adopted only where nothing moved, with a ratchet on the 294 literals left. Gates hold the file
-   cap, the theme blocks and the iOS zoom floor. Left: `.notice` still lives in the simulator
-   section, and a dead-CSS pass that must stay manual, because 96 sites compute their class name.
-5. **The manual is one source, two renderers** (`frontend/src/docs/toMdx.ts`). Five pages are
-   generated into `manual/` from the app's typed blocks, eight hand-written beside them, all
-   thirteen served by `website/` on Docusaurus. `manual.gen.test.ts` fails on drift. Pages
+   cap, the theme blocks, the iOS zoom floor, and rule 40's control standard at all ten of its
+   boxes. Left: `.notice` still lives in the simulator section, and a dead-CSS pass that must
+   stay manual, because 96 sites compute their class name.
+4. **The manual is one source, two renderers** (`frontend/src/docs/toMdx.ts`). Six pages are
+   generated into `manual/` from the app's typed blocks, fifteen hand-written beside them, all
+   twenty-one served by `website/` on Docusaurus. `manual.gen.test.ts` fails on drift. Pages
    publishes from `dev`; revisit at the first release, probably as Docusaurus versioning.
 
 ## Decisions locked
@@ -75,7 +69,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 
 | Decision | Choice |
 |---|---|
-| Condemn logic | **Flat AND** of typed conditions. No OR, no nesting, no NOT. |
+| Condemn logic | **One typed condition per rule**, weighted. No OR, no nesting, no NOT. † |
 | Protections | **Gates with no CONDEMN constructor** — structurally cannot delete |
 | Protect authoring | **Catalog + user-authored protect rules** (worst case is nothing deleted) |
 | Signals | **Unsigned**, fixed denominator including unknown weights |
@@ -83,6 +77,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | What a hand reap may overrule | **Everything except a structural stop** † |
 | Watch-history reach | **Every reader that goes through `Facts`** † |
 | Watch history that vanished | **A high-water mark that cannot fall**, never a remapped key † |
+| A rebuilt source | **Tautulli's total aborts the scan, Plex's reissued keys degrade it** |
 | Why-panel scope | **Renders for keeps as well as deletes** † |
 | Delete mode | **A notice window, not a gate** † |
 | Autonomy | An **earned grant keyed to `policy_hash`** — any edit reverts to approval-required |
@@ -90,6 +85,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Size acquisition | **Sonarr or Radarr's own total, never a stand-in** † |
 | Kill switch | **Asymmetric, not one-way** † |
 | Section nav | **Its own grammar, not the pill track** † |
+| Address bar | **A URL per section, lane, filters, panel, policy**, written on nav, read at mount |
 | Settings saves | **One save bar on General**, the policy editor's `.savebar` reused † |
 | Settings row layout | **One fixed control track per box**, released for everything else † |
 | Setup readiness | **Scanning and reaping are two readinesses, reported apart** † |
@@ -100,7 +96,8 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
 | Peer trust | **`reaper.auth.proxy` alone believes a forwarded header** † |
 | ORM | **Plain SQLAlchemy, not SQLModel** † |
-| Migrations | **Baseline `22777b2b5015` is frozen going forward** † |
+| Migrations | **Frozen baseline; schema leaves in two releases**; destructive ones copy first † |
+| Rolling back | **A database a newer build migrated refuses to boot**, preflight and startup |
 | Gate retirement | **Persisted by the upgrade where it can be, healed on load where it can't** † |
 | Plex index retirement | **A row dropped only once the sweep has spoken** † |
 

@@ -59,11 +59,10 @@ one habit that reliably refills it, and it feels like diligence while it happens
   `(measured <date>)`, evidence as ratios and orders of magnitude, and a `⇒` consequence line.
   **Negative results count** — "we tried X and it was worse" stops the next person re-trying X.
 - **You learned what predicts that nobody will watch a title** → `SIGNALS.md`. It is cited from
-  five places in `src/` — `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py` and
-  `api/routes.py` — so read it before touching those, and before `engine/backtest.py`, which holds
-  the rewatch curve `SIGNALS.md` tabulates (`FALLBACK_REWATCH_PRIOR`). `engine/calibration.py`
-  cites it nowhere and holds only the machinery to fit a per-operator replacement, which has no
-  caller in `src/`.
+  six places in `src/` — `engine/signals.py`, `engine/policy.py` (three times), `engine/gates.py`
+  and `api/review.py` — so read it before touching those. It is also the only home of the rewatch
+  curve: the lab engines that measured and could have refitted it are deleted, so no constant in
+  the tree carries those numbers and this file is the record.
 - **A review pass, a migration, a finished remediation** → `docs/history/`, with a banner
   saying it is frozen and what supersedes it. Never edit an archived file to bring it up to
   date; that is what makes an archive lie.
@@ -113,7 +112,6 @@ auto-memory note to explain the product, move it here.
 | `DECISIONS.md` | knowledge | **live** — one section per daggered `STATUS.md` row |
 | `LEARNINGS.md` | knowledge | **live** — append by topic |
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
-| `CSS_SPLIT_PLAN.md` | state (one feature) | **live** — 3 of 7 stages landed; the last 4 are optional |
 | `I18N_PLAN.md` | state (one feature) | **live** — a proposal; nothing landed, no stage committed to |
 | `brand/README.md` | reference | stable; nothing here ships |
 | `../manual/` | the operator's manual | **live** — half generated from the app's help content |
@@ -124,3 +122,8 @@ auto-memory note to explain the product, move it here.
 | `history/UI_REVIEW.md` | history | frozen — 92/94 findings fixed |
 | `history/SCREEN_READER_SWEEP.md` | history | frozen — the sweep's narrative; open half in `STATUS.md` |
 | `history/SIZE_TRUTH_PLAN.md` | history | frozen — 5 stages shipped, 4 retired on a false premise |
+| `history/SIMPLIFICATION_PLAN.md` | history | frozen — every phase landed in #552; still cited from `src/` and `tests/` |
+| `history/CSS_SPLIT_PLAN.md` | history | frozen — 5 stages landed, 1 refused, the remainder is #779 |
+| `history/REWATCH_PLAN.md` | history | frozen — movie stages landed as #803 and #805; TV validated, unscoped, #554 |
+| `history/RETURN_PLAN.md` | history | frozen — the one stage landed as #812, opt-in; #553 closed |
+| `history/COLLECTIONS_PLAN.md` | history | frozen — chip, picker and collection screen landed, #816 |

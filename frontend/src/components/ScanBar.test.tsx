@@ -6,18 +6,19 @@
 // bar. Both of those are visual, the disable drops focus to `<body>`, and a `role="progressbar"`
 // announces nothing by itself -- so for an operation that runs for minutes the next thing an
 // operator using a screen reader heard was the finish (#177).
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient } from "@tanstack/react-query";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Snapshot } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { ScanRow } from "./ScanBar";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { scanStatus: vi.fn(), startScan: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 
@@ -48,6 +49,9 @@ const DEGRADED: Snapshot = {
   item_count: 10,
   degraded: true,
   degraded_reason: "Sonarr didn't answer.",
+  // The ordinary degradation: a source that did not answer has no page to send anyone to.
+  // `offers the help page the scan named` below is the other half.
+  degraded_doc: null,
   condemned: 2,
   protected: 3,
   abstained: 5,
@@ -55,24 +59,24 @@ const DEGRADED: Snapshot = {
   unknown_size_items: 0,
 };
 
-function rowTree(snapshot: Snapshot | undefined, client: QueryClient) {
+/** The row alone. `rerender` re-wraps it in the providers `renderRow` mounted it under, so a
+ *  re-render keeps reading the same cache rather than being handed a fresh one. */
+function rowTree(snapshot: Snapshot | undefined) {
   return (
-    <QueryClientProvider client={client}>
-      <ScanRow
-        snapshot={snapshot}
-        scanJob={undefined}
-        title="Library scan"
-        desc="Reads your library and scores it."
-        scheduleText="Every day at 4am"
-        onEdit={() => {}}
-        canEdit
-      />
-    </QueryClientProvider>
+    <ScanRow
+      snapshot={snapshot}
+      scanJob={undefined}
+      title="Library scan"
+      desc="Reads your library and scores it."
+      scheduleText="Every day at 4am"
+      onEdit={() => {}}
+      canEdit
+    />
   );
 }
 
 function renderRow(snapshot?: Snapshot, client: QueryClient = testQueryClient()) {
-  return render(rowTree(snapshot, client));
+  return renderWithProviders(rowTree(snapshot), { client });
 }
 
 describe("starting a library scan", () => {
@@ -149,6 +153,30 @@ describe("starting a library scan", () => {
 
     expect(await screen.findByText(/came back incomplete/i)).toBeInTheDocument();
     expect(screen.getByText(/sonarr didn't answer/i)).toBeInTheDocument();
+    // The control case for the pair below: this degradation named no page, so there is no
+    // button. Without it, a link that renders unconditionally would still pass that test.
+    expect(screen.queryByRole("button", { name: /rebuilding a plex library/i })).toBeNull();
+  });
+
+  it("offers the help page when the scan named one", async () => {
+    apiMock.scanStatus.mockResolvedValue(IDLE);
+    renderRow({ ...DEGRADED, degraded_doc: "plex-rebuild" });
+
+    // The label is the page's own title, read from the docs registry rather than written here,
+    // so this fails if the doc is renamed out from under the id the backend stores.
+    expect(
+      await screen.findByRole("button", { name: /rebuilding a plex library/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers nothing for a page this build does not have", async () => {
+    // A snapshot outlives the version that wrote it, so an id from a newer Reaper can arrive
+    // here. A button opening an empty modal is worse than no button.
+    apiMock.scanStatus.mockResolvedValue(IDLE);
+    renderRow({ ...DEGRADED, degraded_doc: "a-page-from-a-later-release" });
+
+    expect(await screen.findByText(/came back incomplete/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /a-page-from-a-later-release/i })).toBeNull();
   });
 
   it("keeps holding it between the finish and the fresh snapshot, then speaks for that one", async () => {
@@ -173,7 +201,7 @@ describe("starting a library scan", () => {
 
     const fresh = { ...DEGRADED, id: 8, item_count: 11, degraded_reason: "Radarr didn't answer." };
     client.setQueryData(["snapshot"], fresh);
-    rerender(rowTree(fresh, client));
+    rerender(rowTree(fresh));
 
     expect(await screen.findByText(/came back incomplete/i)).toBeInTheDocument();
     expect(screen.getByText(/radarr didn't answer/i)).toBeInTheDocument();

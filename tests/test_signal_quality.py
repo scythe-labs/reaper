@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The signal-quality corrections.
 
-Every case here comes from discovering, by backtest, that the first scorer was
-**worse than useless** -- it selected films *more* likely to be watched than a random
-film of the same age (-50% lift).
+Every case here comes from discovering, by replaying real watch history, that the first
+scorer was **worse than useless** -- it selected films *more* likely to be watched than a
+random film of the same age (-50% lift). The instrument that measured it is gone; the finding
+is in ``docs/SIGNALS.md`` and the corrections are here.
 
 See docs/SIGNALS.md and docs/LEARNINGS.md.
 """
@@ -15,17 +16,18 @@ from dataclasses import replace
 import pytest
 from pydantic import ValidationError
 
-from reaper.clock import utcnow
-from reaper.engine.backtest import BacktestResult, Regret, rewatch_prior
 from reaper.engine.gates import (
     ABSTAIN,
     PROTECT,
+    REWATCH_BLOCK_FLOOR_N,
     Facts,
     GateConfig,
     GateId,
     MinDormancyGate,
+    RewatchOddsGate,
+    wilson_upper,
 )
-from reaper.engine.observation import Absent, Known, Unknown
+from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, GateSetting
 from reaper.engine.signals import SignalConfig, SignalId, evaluate_signal
 
@@ -52,7 +54,7 @@ def _facts(days_dormant: float | None) -> Facts:
     )
 
 
-GATE = MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1095))
+GATE = MinDormancyGate(GateConfig(threshold=1095))
 
 SEASON_SIGNAL = SignalConfig(SignalId.SEASON_RANK, weight=15, saturate_at=5)
 
@@ -150,6 +152,31 @@ class TestTheMinDormancyGate:
 
         assert (result.outcome == PROTECT) is protects
 
+    def test_dormancy_that_is_genuinely_absent_keeps_the_file_rather_than_raising(self) -> None:
+        """The one arm of this gate no fact builder can currently reach, tested anyway.
+
+        Both builders emit ``Known`` or ``Unknown`` for this field, so nothing in a scan
+        produces the ``Absent`` below, and ``_facts(None)`` above yields ``Unknown``, which
+        ``_blocked`` answers first with a different hold. The guard is still load-bearing:
+        delete it and the gate falls through to ``dormant.value``, which raises
+        ``AttributeError`` on an ``Absent`` and takes the item's whole verdict with it. Rule 118
+        -- an unreachable tripwire with no test is one refactor from silently becoming a
+        permissive ABSTAIN -- and it is driven against the gate directly because the builders
+        offer no route to it.
+
+        PROTECT rather than blocked is the point of the assertion. ``Absent`` is "we looked and
+        there is genuinely no watch history", a state we can describe, where ``Unknown`` is "we
+        could not look" (rule 93); either way we cannot establish that it has sat long enough,
+        so the file stays.
+        """
+        facts = replace(_facts(400), days_observed_unwatched=Absent(source="tautulli"))
+
+        result = GATE.evaluate(facts)
+
+        assert result.outcome == PROTECT
+        assert result.blocked is False
+        assert "dormancy cannot be established" in result.detail
+
     def test_a_gigantic_low_rated_film_is_still_protected_if_it_is_too_recent(
         self,
     ) -> None:
@@ -177,6 +204,132 @@ class TestTheMinDormancyGate:
         """A decision, not a slip: you may turn the protection off, but you may not
         neuter it by setting the threshold to zero."""
         assert GateSetting(gate=GateId.MIN_DORMANCY, enabled=False, threshold=0)
+
+
+def _cohort(n: Observation[int], k: Observation[int]) -> Facts:
+    """A dormancy-matched Facts, varying only the two cohort observations
+    ``RewatchOddsGate`` reads. Built off ``_facts`` so every other field stays readable and
+    cannot be the reason a case abstains."""
+    return replace(_facts(900), rewatch_cohort_n=n, rewatch_cohort_k=k)
+
+
+class TestTheRewatchOddsGate:
+    """Stage 2's opt-in hold (``docs/history/REWATCH_PLAN.md``): keep anything whose dormancy
+    cohort gets watched again at or above the operator's percentage, compared against the
+    Wilson 95% UPPER BOUND of the cohort's rate rather than its point estimate."""
+
+    def test_fires_when_the_upper_bound_clears_the_threshold(self) -> None:
+        """n=50, k=20: a 40% point rate against a 35% threshold (not the gate's shipped
+        25% default, rule 141) -- comfortably inside both the point rate and the bound."""
+        facts = _cohort(Known(value=50, source="fit"), Known(value=20, source="fit"))
+
+        result = RewatchOddsGate(GateConfig(threshold=35)).evaluate(facts)
+
+        assert result.outcome == PROTECT
+        assert "20 of 50" in result.detail
+
+    def test_fires_on_the_upper_bound_even_when_the_point_rate_is_under_the_threshold(
+        self,
+    ) -> None:
+        """The small-library design, pinned explicitly: n=30, k=6 is a 20% point rate,
+        under a 35% threshold -- but the Wilson upper bound of that cohort is about
+        37.3%, which clears it. A gate comparing the point rate alone would abstain here;
+        comparing the upper bound protects instead, so a small library never loses
+        protection to sampling noise."""
+        assert 100 * 6 / 30 < 35  # the point rate does NOT clear the threshold...
+        assert wilson_upper(6, 30) * 100 > 35  # ...but the upper bound does
+
+        facts = _cohort(Known(value=30, source="fit"), Known(value=6, source="fit"))
+
+        result = RewatchOddsGate(GateConfig(threshold=35)).evaluate(facts)
+
+        assert result.outcome == PROTECT
+
+    def test_a_cohort_under_the_floor_abstains_whatever_the_threshold(self) -> None:
+        """One under ``REWATCH_BLOCK_FLOOR_N``: too few to trust, whether the operator's
+        percentage is barely above zero or almost the whole scale."""
+        facts = _cohort(
+            Known(value=REWATCH_BLOCK_FLOOR_N - 1, source="fit"),
+            Known(value=REWATCH_BLOCK_FLOOR_N - 1, source="fit"),
+        )
+
+        for threshold in (1, 99):
+            result = RewatchOddsGate(GateConfig(threshold=threshold)).evaluate(facts)
+            assert result.outcome == ABSTAIN
+            assert result.detail == "Too few titles like this to say."
+
+    def test_an_unknown_cohort_abstains_without_blocking(self) -> None:
+        """The one documented deviation from every other gate's fail-closed ``_blocked``
+        arm, owned in the gate's own docstring: the items whose history is genuinely
+        unreadable are already blocked by the dormancy and popularity gates reading the
+        same sources, so failing quiet here withdraws no cover."""
+        facts = _cohort(
+            Unknown(reason="the fit could not read this item", source="fit"),
+            Unknown(reason="the fit could not read this item", source="fit"),
+        )
+
+        result = RewatchOddsGate(GateConfig(threshold=25)).evaluate(facts)
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is False
+
+    def test_an_absent_cohort_does_not_apply(self) -> None:
+        """The season lane, and any hand-built Facts: the fit ships no TV answer, so
+        there is genuinely nothing to compare -- rule 93's ``Absent``, not a failed read.
+        ``_facts`` leaves both cohort fields at their default, which is ``Absent``."""
+        result = RewatchOddsGate(GateConfig(threshold=25)).evaluate(_facts(900))
+
+        assert result.outcome == ABSTAIN
+        assert result.detail == "Does not apply here."
+
+    def test_the_boundary_is_inclusive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``wilson_upper(k, n) * 100 >= floor``: a bound landing exactly on the
+        operator's percentage still fires, not only one strictly above it. The real
+        function's inputs never land on a round percentage, so the comparison is isolated
+        by pinning what it returns rather than hunting for a coincidental (k, n)."""
+        monkeypatch.setattr("reaper.engine.gates.wilson_upper", lambda k, n: 0.5)
+        facts = _cohort(Known(value=40, source="fit"), Known(value=20, source="fit"))
+
+        result = RewatchOddsGate(GateConfig(threshold=50)).evaluate(facts)
+
+        assert result.outcome == PROTECT
+
+
+class TestWilsonUpper:
+    """The Wilson 95% upper bound of ``k/n``, read by the gate above and the Policy
+    page's consequence echo (``api.policy``)."""
+
+    def test_zero_successes_reduces_to_the_standard_closed_form(self) -> None:
+        """At k=0, p=0 so ``p*(1-p)`` drops out: the center term is z^2/(2n) and the
+        spread term reduces to the same z^2/(2n), summing to z^2/n over a denominator of
+        1 + z^2/n -- which is z^2 / (n + z^2), the textbook zero-count Wilson bound.
+        Independent of ``wilson_upper``'s own arithmetic (rule 119)."""
+        z = 1.96
+        n = 30
+
+        assert wilson_upper(0, n) == pytest.approx(z * z / (n + z * z))
+
+    def test_all_successes_reaches_the_top_of_the_scale(self) -> None:
+        """At k=n, p=1 so ``p*(1-p)`` drops out again: the center term is
+        1 + z^2/(2n) and the spread term is the same z^2/(2n), summing to 1 + z^2/n over
+        a denominator of 1 + z^2/n -- exactly 1, whatever n is."""
+        assert wilson_upper(40, 40) == pytest.approx(1.0)
+
+    def test_a_hand_checked_value(self) -> None:
+        """k=25, n=100 (a 25% point rate), by hand:
+
+        z=1.96, z^2=3.8416, z^2/n=0.038416, denominator=1.038416
+        center = 0.25 + 3.8416/200 = 0.269208
+        spread = 1.96 * sqrt(0.25*0.75/100 + 3.8416/40000)
+               = 1.96 * sqrt(0.001875 + 0.00009604) = 1.96 * 0.044396 = 0.087016
+        upper = (0.269208 + 0.087016) / 1.038416 = 0.343...
+
+        Matches the commonly cited Wilson interval for p=0.25, n=100 (about 0.175-0.343).
+        """
+        assert wilson_upper(25, 100) == pytest.approx(0.34301, abs=5e-5)
+
+    def test_n_zero_is_defined_as_zero(self) -> None:
+        assert wilson_upper(5, 0) == 0.0
 
 
 class TestSizeIsNotInTheDefaultScore:
@@ -209,86 +362,3 @@ class TestSizeIsNotInTheDefaultScore:
 
         assert gate.enabled
         assert gate.threshold == 1095
-
-
-class TestTheRewatchPrior:
-    """The measured ground truth. The most useful table in the project."""
-
-    @pytest.mark.parametrize(
-        ("days", "expected"),
-        [
-            (100, 0.61),
-            (400, 0.31),
-            (600, 0.32),
-            (900, 0.30),
-            (1200, 0.19),
-            (2000, 0.13),
-        ],
-    )
-    def test_the_curve(self, days: int, expected: float) -> None:
-        assert rewatch_prior(days) == expected
-
-    def test_it_falls_with_age(self) -> None:
-        """Older means less likely to be watched. If this ever inverts, the data has
-        changed and every default in the engine needs re-deriving."""
-        assert rewatch_prior(100) > rewatch_prior(1200) > rewatch_prior(2000)
-
-    def test_there_is_no_cliff(self) -> None:
-        """The finding that reframes the whole product: a film dormant for FIVE YEARS
-        still has a 13% chance of being watched next year, so deletion is never free
-        on an active library. This is why the grace period and the human approval
-        gate are not decoration."""
-        assert rewatch_prior(2000) > 0.10
-
-
-class TestLift:
-    """The number that decides a signal's fate.
-
-    Positive: the scorer beats an age-matched coin-flip.
-    Negative: the signals are WORSE THAN NOTHING and must not ship.
-    """
-
-    def _result(self, *, condemned: int, regrets: int, dormancy: float) -> BacktestResult:
-        result = BacktestResult(cutoff=utcnow(), condemn_at=60)
-        result.condemned = [(f"Film {i}", 80.0, 1) for i in range(condemned)]
-        result.condemned_dormancy = [dormancy] * condemned
-        result.regrets = [_regret(f"Film {i}") for i in range(regrets)]
-        return result
-
-    def test_a_scorer_that_beats_its_age_group_has_positive_lift(self) -> None:
-        # 1,200 days dormant => 19% expected. We regret only 5 of 100 => 5%.
-        result = self._result(condemned=100, regrets=5, dormancy=1200)
-
-        assert result.expected_regret_rate == pytest.approx(0.19)
-        assert result.regret_rate == pytest.approx(0.05)
-        assert result.lift > 0
-        assert result.beats_random is True
-
-    def test_a_scorer_worse_than_its_age_group_has_negative_lift(self) -> None:
-        """Selecting films MORE likely to be watched than their age implies. Not a
-        tuning problem -- a broken scorer, and it must not ship."""
-        result = self._result(condemned=100, regrets=30, dormancy=1200)  # 19% expected
-
-        assert result.lift < 0
-        assert result.beats_random is False
-
-    def test_the_summary_refuses_to_endorse_a_negative_lift_policy(self) -> None:
-        result = self._result(condemned=100, regrets=30, dormancy=1200)
-
-        assert "NOT BEATING AGE ALONE" in result.summary()
-
-    def test_the_summary_endorses_a_positive_lift_policy(self) -> None:
-        result = self._result(condemned=100, regrets=5, dormancy=1200)
-
-        assert "earns its keep" in result.summary()
-
-
-def _regret(title: str) -> Regret:
-    return Regret(
-        title=title,
-        watched_by="someone",
-        watched_at=utcnow(),
-        days_after_cutoff=100,
-        size_bytes=1,
-        score=80.0,
-    )

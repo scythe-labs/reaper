@@ -63,6 +63,47 @@ button.link:hover:not(:disabled) {
   padding: var(--space-lg) var(--space-3xl);
 }
 
+/* The ✕ that removes a chip: one shape, four controls, declared once. The queue's two filter
+   pills (22-queue-filters), the list modal's tag chips (34-lists) and the setup wizard's
+   instance chips (29-setup) all draw the same bare, pill-shaped hit area. Three of them carried
+   these thirteen declarations verbatim, two of those under a comment naming another.
+
+   It is chrome-free on purpose: the chip around it owns the border and the fill, so the control
+   standard's box (rule 40) would draw a second border inside the pill. A --tap-min square for
+   the 24px touch floor. On `.fchip-x` and `.inst-chip .chip-x` it does a second job, keeping a
+   touch meaning "change this" off the ✕ sitting flush against the control that edits the same
+   thing (00-tokens.css's own note on --tap-min).
+
+   Declared here, before every file that uses it, so the two rules that stay behind override at
+   equal specificity on load order: `.fchip-x` fades to 0.75 at rest, and `.inst-chip .chip-x`
+   is a bold muted glyph at the chip's own text size rather than an inherited-color one at
+   --text-lg. The other two keep only a `:hover`, which outranks this rule anyway.
+
+   Six controls draw this shape and two are deliberately out. `.bar-x` (14-policy-editor) is a
+   chip ✕ like these four and is now the same 24x24 circle -- it resets this file's `button`
+   padding itself, which is what #736 fixed -- but it keeps a visible border and a hover that
+   turns it red, so folding it in would take both. `.nudge-x` (11-queue-chrome) dismisses a
+   notice rather than a chip and draws a square corner around an SVG. Both read --tap-min
+   directly. */
+.filter-chip button,
+.fchip-x,
+.tag-chip button,
+.inst-chip .chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-lg);
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--radius-pill);
+}
+
 /* The pill inside the segmented track: the queue's lane tab (.tab) and the policy toggle
    button (.seg) are the same control, so they share one definition. The masthead's section nav
    used to be a third member and is now the .views rail instead. */
@@ -102,10 +143,20 @@ button.link:hover:not(:disabled) {
 /* Reserve the ACTIVE (600) width at every weight, so selecting an item -- which bumps 500 -> 600
    -- never widens it and shoves its neighbors sideways (the tab/nav "wiggle"). A hidden,
    zero-height copy of the label at the bold weight sets the width; the visible text rides above
-   it. `visibility: hidden` keeps the strut out of the accessibility tree. Applied to every
-   control that bolds when active (queue lane tabs `.tab`, policy toggle `.seg`, the
-   settings/policy rails `.settings-tab`, the docs index `.docs-index-item`); each needs a
-   `data-label` of its visible text, and one without simply keeps the old behavior. */
+   it. `visibility: hidden` keeps the strut out of the accessibility tree. Each control needs a
+   `data-label` of its visible text, and one without simply keeps the old behavior.
+
+   Applied to every control that bolds when active AND sits in a ROW, which is five: queue lane
+   tabs `.tab`, policy toggle `.seg`, the settings/policy rails `.settings-tab`, the docs index
+   `.docs-index-item`, and the masthead sections `.view-tab`. That last one is strutted in
+   `02-masthead.css` rather than here, because it is the masthead's control and its phone bar
+   turns the strut back off; the rule there is byte-identical to this one, so a change to the
+   strut is a change to both. `.filter-mi` bolds when selected and is deliberately NOT here: it
+   is a vertical menu item, so the extra weight has no neighbor to shove.
+
+   This list read as four for as long as `.view-tab` existed, which is the failure rule 144
+   describes -- so `test_repo_hygiene.py` now reconciles the sentence against the selectors
+   both ways, and names the file when they disagree. */
 .tab[data-label]::after,
 .seg[data-label]::after,
 .settings-tab[data-label]::after,

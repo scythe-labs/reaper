@@ -17,7 +17,6 @@ is pinned by ``test_repo_hygiene``, which also checks the two agree on the path.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -25,10 +24,11 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import select
 
 from reaper.api.schemas import PLEX_FORWARD_PATH, PlexStartIn
 from reaper.config import Settings
-from reaper.db.base import Base
+from reaper.db.models import PendingPlexLogin
 from reaper.main import create_app
 
 from ._auth import login
@@ -85,15 +85,6 @@ class TestTheOriginTheBrowserNames:
 
 
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    made = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-    engine = sa_create_engine(made.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    return made
-
-
-@pytest.fixture
 def client(settings: Settings) -> Iterator[TestClient]:
     with TestClient(create_app(settings)) as c:
         yield c
@@ -136,6 +127,10 @@ class TestBothStartRoutesForwardTheWindowHome:
 
         assert response.status_code == 200, response.text
         assert _forward_url(response.json()["auth_url"]) is None
+        # The other half of this route's response body. Nothing else reads it back over
+        # HTTP, so renaming the field would break `api.ts`'s poll call with the backend
+        # suite green.
+        assert response.json()["pin_id"] == 77
 
     def test_an_origin_naming_a_target_is_refused(
         self, client: TestClient, pins: respx.Route
@@ -148,3 +143,41 @@ class TestBothStartRoutesForwardTheWindowHome:
 
         assert response.status_code == 422
         assert pins.call_count == 0, "refused before asking plex.tv for a PIN"
+
+
+def _stored_purpose(settings: Settings) -> str:
+    engine = sa_create_engine(settings.sync_database_url)
+    try:
+        with engine.connect() as conn:
+            return str(conn.execute(select(PendingPlexLogin.purpose)).scalar_one())
+    finally:
+        engine.dispose()
+
+
+class TestEachStartRouteClaimsItsOwnPurpose:
+    """The other property the two start routes hold apart, on the same rule 72 footing.
+
+    ``purpose`` decides which poller can spend the row, and the sign-in poller is reached
+    from an open route where the link one is not. It used to be a literal inside each
+    flow's own function; both functions are now one ``start_pin`` and the literal moved
+    out to these two calls, one keyword apart. So the value is pinned where it is now
+    written, at the routes, and not only at the pollers that read it.
+
+    Both routes are swept, because a shared helper hardcoding either value is green
+    against the route that wanted that value (rule 141).
+    """
+
+    def test_signing_in_writes_a_login_pin(
+        self, client: TestClient, settings: Settings, pins: respx.Route
+    ) -> None:
+        assert client.post("/api/auth/plex/start", headers=CSRF).status_code == 200
+
+        assert _stored_purpose(settings) == "login"
+
+    def test_the_settings_relink_writes_a_link_pin(
+        self, client: TestClient, settings: Settings, pins: respx.Route
+    ) -> None:
+        login(client, settings)
+        assert client.post("/api/settings/plex/link/start").status_code == 200
+
+        assert _stored_purpose(settings) == "link"

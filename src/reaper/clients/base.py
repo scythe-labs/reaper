@@ -22,9 +22,10 @@ Two things it deliberately does *not* rely on:
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, NoReturn, Self
 
 import httpx2
 import structlog
@@ -39,6 +40,64 @@ from tenacity import (
 from reaper.config import RuntimeSafety
 
 log = structlog.get_logger(__name__)
+
+
+def trace_call(
+    service: str,
+    method: str,
+    path: str,
+    status: int | None,
+    started: float,
+    *,
+    mutation: bool = False,
+) -> None:
+    """One DEBUG line per outbound call: which service, what was asked, what came back.
+
+    Nothing else records that one of these calls happened. The HTTP libraries would, but
+    they are pinned to WARNING on purpose (``logging._NOISY_LOGGERS``) because they log the
+    URL verbatim and the structlog scrubber never sees a stdlib record, so this is the only
+    trace there can be. ``client.retry`` says a blip happened; this says the call happened,
+    how long it took, and how it ended -- which is what "the scan sat there for four minutes"
+    needs.
+
+    **This is the one place the line's shape is defined, and all three client surfaces emit
+    through here so they cannot drift (rule 72).** `BaseClient._send` covers the *arr calls;
+    `PlexClient`'s `GuardedSession.request` covers every Plex read and the `refresh_path` and
+    `empty_trash` calls on the deletion path; `PublicClient._stream_once` covers the ratings
+    dataset, the longest single outbound operation in the app. Each passes
+    ``urlsplit(url).path`` and never the URL, since plexapi puts ``X-Plex-Token`` in the query
+    string (rule 13). One outbound call stays out: `notify/discord.py`'s webhook POST
+    (rule 33) carries its secret in the URL path itself, so tracing it by path would log the
+    credential this line keeps out.
+
+    **``path`` is the argument, never the post-redirect target and never
+    ``response.request.url``**: a Location header carries its own query string, and Tautulli
+    and MDBList both put their key in one (rule 13). ``params`` and ``headers`` are never
+    logged for the same reason. The scrubber would catch the known key names, but not logging
+    a credential is a stronger guarantee than redacting one.
+
+    ``status=None`` is a call that never got an answer -- a timeout or an unreachable host --
+    which is the shape a scan stuck on one service takes.
+
+    The line is DEBUG-only, so it reaches the 2000-line ring only when the operator turns Debug
+    on. A scan's GUID sweep pages hundreds of Plex calls in at once; that is accepted, because
+    under Debug those are the lines a stuck scan is read by.
+
+    **Emitting can never raise.** `GuardedSession.request` runs under ``asyncio.to_thread`` on
+    the deletion path, where a raise from a trace would surface as a failed mutation, so the
+    emit is swallowed: a trace must never break the call it describes.
+    """
+    with contextlib.suppress(Exception):
+        log.debug(
+            "client.call",
+            service=service,
+            method=method.upper(),
+            path=path,
+            status=status,
+            duration_ms=round((time.monotonic() - started) * 1000),
+            mutation=mutation,
+        )
+
 
 # Methods that cannot change remote state.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -125,6 +184,30 @@ class SafetyViolationError(RuntimeError):
     """
 
 
+def refuse_mutation(event: str, method: str, path: str, *, reason: str, message: str) -> NoReturn:
+    """Record a blocked write, then raise it. Both guards refuse through here.
+
+    A refusal is the loudest thing either guard does and it was the quietest thing in the
+    log: nothing was written at the point of refusal, so the only trace was whatever the
+    caller made of the exception. The executor's ``_best_effort_refresh`` and
+    ``_finalize_plex`` catch ``Exception`` deliberately, because a reap must not fail on a
+    follow-up, and each logs the guard's own sentence under an event naming the wrong
+    cause. What was missing there is a discriminator, since rules 92/93 forbid reading the
+    sentence. ``sync_shelves._reconcile`` catches ``PlexError`` alone, so a shelf refusal
+    escapes it untouched -- what keeps it escaping is now ONE arm, in ``plex.PlexClient._call``,
+    where it was eight per-method copies when this line was written. C14 settled that collapse
+    and it landed; this line is the insurance that survived it, since it covers every write
+    either guard refuses rather than the eight that had thought put into them.
+
+    Raising from here rather than at each site is what makes that structural. A refusal
+    added later cannot arrive without its log line, and the ``reason`` is the discriminator
+    rules 92/93 ask for: something a reader matches on, never a sentence that will be
+    reworded. ``path`` is already token-free at both call sites (rule 13).
+    """
+    log.warning(event, method=method.upper(), path=path, reason=reason)
+    raise SafetyViolationError(message)
+
+
 class IntegrationError(RuntimeError):
     """An integration could not be reached, or returned an error."""
 
@@ -135,12 +218,30 @@ class IntegrationError(RuntimeError):
         *,
         status: int | None = None,
         retry_after: float | None = None,
+        read_timed_out: bool = False,
     ) -> None:
         super().__init__(f"{service}: {message}")
         self.service = service
         self.status = status
         self.retry_after = retry_after
         """Seconds the server asked us to wait (a numeric Retry-After), or None."""
+        self.read_timed_out = read_timed_out
+        """The service took the request and did not finish the body inside the read budget.
+
+        That is a statement about how much was asked for, so a caller that asked for a large
+        page can ask for a smaller one and get an answer. ``history_sync.sync`` is the caller
+        that does. Set only by :func:`transport_failure`, and only for a ``ReadTimeout``: a
+        connect or pool timeout says nothing about the size of the request, and shrinking it
+        would not help. ``False`` therefore means "not known to be one", which leaves a caller
+        raising rather than retrying. A typed flag rather than a match on the message, which
+        is operator copy and will be reworded (rule 92).
+
+        **Never re-send a mutation on it.** :meth:`BaseClient._mutate` maps its
+        transport errors through the same function, so a DELETE whose answer did not arrive
+        carries this flag too, and there it means the request reached the service and the
+        write may already have applied. Only the executor's verification step settles that,
+        never the response (see ``_mutate``). This is a fact about a READ that can be asked
+        again smaller."""
 
     @property
     def is_auth_failure(self) -> bool:
@@ -151,6 +252,90 @@ class IntegrationError(RuntimeError):
         re-entering keys for no reason.
         """
         return self.status in (401, 403)
+
+
+# Three transport and status failures, each worded once.
+#
+# Each sentence used to be written at the site that raised it: four in ``_send``, the same four
+# in ``_mutate``, and three of them again in ``PublicClient``, so four sentences stood as eleven
+# copies. Rule 144 is what that costs. The wording is what an operator reads when a service
+# stops answering, and rewording one copy leaves the others saying something else about the
+# same failure -- which is how ``public.py`` came to spell one of them with a hardcoded ``GET``
+# where ``base.py`` names the method.
+#
+# ``too many redirects`` is one more failure this layer raises and is NOT fenced here. It is
+# written once per file rather than twice, and the two spellings differ the same way: ``GET``
+# hardcoded in ``public.py``, which only ever issues one, against ``{method}`` here.
+# ``test_every_client_failure_sentence_is_worded_in_exactly_one_place`` fences the four below
+# and names this one as out.
+#
+# ``refuse_mutation`` above is the same move for the guard's refusal, for the same reason.
+
+
+def transport_failure(service: str, exc: httpx2.TransportError) -> IntegrationError:
+    """The request never got an answer: it timed out, or the host was not reachable.
+
+    Name the actual timeout kind. A ConnectTimeout (5s), WriteTimeout (10s) or PoolTimeout
+    (5s) is not the read timeout, so a fixed "30s" sends an operator to the wrong place. For a
+    mutation, "could not connect" and "the server was slow to answer" call for different next
+    steps (rule 10).
+
+    ``TimeoutException`` is itself a ``TransportError``, so callers catch the one type and the
+    split happens here, in the order the two ``except`` arms used to sit in.
+
+    A ``ReadTimeout`` also carries ``read_timed_out``, so a caller can tell the one timeout
+    kind that a smaller request would fix from the ones it would not.
+    """
+    if isinstance(exc, httpx2.TimeoutException):
+        return IntegrationError(
+            service,
+            f"timed out ({type(exc).__name__})",
+            read_timed_out=isinstance(exc, httpx2.ReadTimeout),
+        )
+    return IntegrationError(service, f"unreachable ({exc})")
+
+
+def refused_redirect(
+    service: str, response: httpx2.Response, method: str, path: str
+) -> IntegrationError:
+    """A redirect Reaper will not follow. The caller decides which ones qualify."""
+    return IntegrationError(
+        service,
+        f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+        status=response.status_code,
+    )
+
+
+def http_failure(
+    service: str, response: httpx2.Response, method: str, path: str
+) -> IntegrationError:
+    """The service answered with a 4xx or 5xx, carrying its own Retry-After if it sent one.
+
+    Reading the header here is what makes it uniform: the streamed public download raised
+    this sentence without it, so a Retry-After from a mirror reached two of the three raise
+    sites.
+    """
+    return IntegrationError(
+        service,
+        f"HTTP {response.status_code} for {method} {path}",
+        status=response.status_code,
+        retry_after=_retry_after_seconds(response),
+    )
+
+
+def unexpected_body(service: str, response: httpx2.Response, path: str) -> IntegrationError:
+    """A 200 whose body would not parse as JSON, named by the content type that came back.
+
+    Naming the type is what makes it diagnosable: an auth proxy's HTML login page and a
+    gateway's text error read the same as "it did not work" without it.
+
+    Raised by ``get_json`` and by ``plextv._post``, which normalizes its own POST for the
+    reason its docstring gives (rule 72).
+    """
+    return IntegrationError(
+        service,
+        f"expected JSON from {path}, got {response.headers.get('content-type')}",
+    )
 
 
 class GuardedTransport(httpx2.AsyncBaseTransport):
@@ -200,14 +385,24 @@ class GuardedTransport(httpx2.AsyncBaseTransport):
                 intended = request.extensions.get("reaper_mutation_approved") is True
 
                 if not self._safety.destructive_allowed:
-                    raise SafetyViolationError(
-                        f"Blocked {request.method} {path}. {self._safety.why_blocked()}"
+                    refuse_mutation(
+                        "http.write_blocked",
+                        request.method,
+                        path,
+                        reason="not_armed",
+                        message=f"Blocked {request.method} {path}. {self._safety.why_blocked()}",
                     )
                 if not intended:
-                    raise SafetyViolationError(
-                        f"Blocked {request.method} {path}: this mutation was not declared "
-                        "to the action journal. Destructive calls must go through the "
-                        "action executor so that they are recorded before they are sent."
+                    refuse_mutation(
+                        "http.write_blocked",
+                        request.method,
+                        path,
+                        reason="not_declared",
+                        message=(
+                            f"Blocked {request.method} {path}: this mutation was not declared "
+                            "to the action journal. Destructive calls must go through the "
+                            "action executor so that they are recorded before they are sent."
+                        ),
                     )
 
         return await self._inner.handle_async_request(request)
@@ -267,6 +462,7 @@ class BaseClient:
         params: Mapping[str, Any] | None = None,
         json: Any = None,
         headers: Mapping[str, str] | None = None,
+        read_timeout: float | None = None,
     ) -> httpx2.Response:
         """Issue one request and let raw httpx2 transport errors escape, so tenacity retries.
 
@@ -275,49 +471,29 @@ class BaseClient:
         ``IntegrationError`` inside the retried body, the predicate never matched, and the
         exponential backoff was dead code -- every momentary blip aborted the whole scan on
         the first attempt with zero retries.
+
+        ``read_timeout`` widens the read budget for ONE call. A client's timeout is shared by
+        every method on it, so a bulk read that legitimately takes a minute cannot buy its
+        margin from the client without handing the same minute to a call answering a browser.
+        Only the read leg moves: connect, write and pool say nothing about how much was asked
+        for. Passing ``timeout=None`` to httpx2 means no timeout at all rather than the
+        client's, so the untouched case sends the sentinel instead.
         """
-        return await self._client.request(method, path, params=params, json=json, headers=headers)
+        budget: Any = httpx2.USE_CLIENT_DEFAULT
+        if read_timeout is not None:
+            shared = self._client.timeout
+            budget = httpx2.Timeout(
+                connect=shared.connect, read=read_timeout, write=shared.write, pool=shared.pool
+            )
+        return await self._client.request(
+            method, path, params=params, json=json, headers=headers, timeout=budget
+        )
 
     def _trace(
         self, method: str, path: str, status: int | None, started: float, *, mutation: bool = False
     ) -> None:
-        """One line per `BaseClient` call: which service, what was asked, what came back.
-
-        Nothing else records that one of these calls happened. The HTTP libraries would, but
-        they are pinned to WARNING on purpose (``logging._NOISY_LOGGERS``) because they log
-        the URL verbatim and the structlog scrubber never sees a stdlib record, so this is
-        the only trace there can be. ``client.retry`` says a blip happened; this says the
-        call happened, how long it took, and how it ended -- which is what "the scan sat
-        there for four minutes" needs.
-
-        **Two outbound surfaces are NOT traced, and reading the *arr half as the whole
-        picture is the mistake this paragraph exists to prevent.** `PlexClient` is not a
-        `BaseClient`: it rides plexapi through `GuardedSession`, so every Plex read, and the
-        `refresh_path` and `empty_trash` calls on the deletion path, produce no line here.
-        `PublicClient.stream_to` streams past `_send`, so the ratings dataset -- the longest
-        single outbound operation in the app -- produces none either. Extending the trace to
-        `GuardedSession` means logging ``urlsplit(url).path`` and never the URL, since
-        plexapi puts ``X-Plex-Token`` in the query string (rule 13), and weighing the volume:
-        the GUID sweep pages through hundreds of calls into a 2000-line ring.
-
-        **``path`` is the argument, never the post-redirect target and never
-        ``response.request.url``**: a Location header carries its own query string, and
-        Tautulli and MDBList both put their key in one (rule 13). ``params`` and ``headers``
-        are never logged for the same reason. The scrubber would catch the known key names,
-        but not logging a credential is a stronger guarantee than redacting one.
-
-        ``status=None`` is a call that never got an answer -- a timeout or an unreachable
-        host -- which is the shape a scan stuck on one service takes.
-        """
-        log.debug(
-            "client.call",
-            service=self.service,
-            method=method.upper(),
-            path=path,
-            status=status,
-            duration_ms=round((time.monotonic() - started) * 1000),
-            mutation=mutation,
-        )
+        """One line per `BaseClient` call, emitted through :func:`trace_call`."""
+        trace_call(self.service, method, path, status, started, mutation=mutation)
 
     async def _send(
         self,
@@ -327,6 +503,7 @@ class BaseClient:
         params: Mapping[str, Any] | None = None,
         json: Any = None,
         headers: Mapping[str, str] | None = None,
+        read_timeout: float | None = None,
     ) -> httpx2.Response:
         """Issue a read -- retried on transient transport errors -- and map failures.
 
@@ -343,7 +520,8 @@ class BaseClient:
         in :meth:`_mutate`.
 
         ``headers`` are per-request extras (e.g. plex.tv's ``X-Plex-Token``, which differs
-        per call and so cannot live on the client's default headers).
+        per call and so cannot live on the client's default headers). ``read_timeout`` is a
+        per-request read budget for one bulk read, described on :meth:`_request`.
         """
         started = time.monotonic()
         status: int | None = None
@@ -353,28 +531,22 @@ class BaseClient:
             for _ in range(4):  # the request itself, plus at most three same-origin redirects
                 try:
                     response = await self._request(
-                        method, target, params=send_params, json=json, headers=headers
+                        method,
+                        target,
+                        params=send_params,
+                        json=json,
+                        headers=headers,
+                        read_timeout=read_timeout,
                     )
-                except httpx2.TimeoutException as exc:
-                    # Name the actual timeout kind: a ConnectTimeout (5s), WriteTimeout (10s)
-                    # or PoolTimeout (5s) is not the read timeout, and reporting a fixed
-                    # "30s" would misdirect an operator diagnosing a connectivity problem.
-                    raise IntegrationError(
-                        self.service, f"timed out ({type(exc).__name__})"
-                    ) from exc
                 except httpx2.TransportError as exc:
-                    raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+                    raise transport_failure(self.service, exc) from exc
 
                 status = response.status_code
                 if response.status_code not in _REDIRECTS:
                     break
                 location = response.headers.get("location")
                 if method.upper() not in ("GET", "HEAD") or not location:
-                    raise IntegrationError(
-                        self.service,
-                        f"refused redirect (HTTP {response.status_code}) for {method} {path}",
-                        status=response.status_code,
-                    )
+                    raise refused_redirect(self.service, response, method, path)
                 next_url = response.request.url.join(location)
                 if not self._allow_cross_origin_redirects and _origin(next_url) != _origin(
                     httpx2.URL(self.base_url)
@@ -391,12 +563,7 @@ class BaseClient:
                 raise IntegrationError(self.service, f"too many redirects for {method} {path}")
 
             if response.status_code >= 400:
-                raise IntegrationError(
-                    self.service,
-                    f"HTTP {response.status_code} for {method} {path}",
-                    status=response.status_code,
-                    retry_after=_retry_after_seconds(response),
-                )
+                raise http_failure(self.service, response, method, path)
             return response
         finally:
             self._trace(method, path, status, started)
@@ -407,15 +574,53 @@ class BaseClient:
         *,
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
+        read_timeout: float | None = None,
     ) -> Any:
-        response = await self._send("GET", path, params=params, headers=headers)
+        response = await self._send(
+            "GET", path, params=params, headers=headers, read_timeout=read_timeout
+        )
         try:
             return response.json()
         except ValueError as exc:
-            raise IntegrationError(
-                self.service,
-                f"expected JSON from {path}, got {response.headers.get('content-type')}",
-            ) from exc
+            raise unexpected_body(self.service, response, path) from exc
+
+    async def get_list(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> list[Any]:
+        """A GET whose body must be a JSON array. A body of any other shape raises.
+
+        A 200 carrying something else -- a reverse proxy's HTML error page, a schema
+        change -- is never "there are none of these". Coerced to ``[]``, an auth proxy's
+        JSON error page once read as an empty library: every movie on that Radarr
+        silently left the scan, the snapshot stayed executable, and the operator was told
+        a complete run over a partial library (rules 28 and 93).
+
+        There is deliberately no ``default=`` or ``coerce=`` parameter. That parameter is
+        the defect, and a helper that can be asked not to raise reopens it at every call
+        site at once. A genuinely empty array is still empty and still answers the
+        question.
+        """
+        data = await self.get_json(path, params=params, headers=headers)
+        if not isinstance(data, list):
+            raise IntegrationError(self.service, f"{path} did not return a list")
+        return list(data)
+
+    async def get_dict(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """A GET whose body must be a JSON object. See :meth:`get_list` for why."""
+        data = await self.get_json(path, params=params, headers=headers)
+        if not isinstance(data, dict):
+            raise IntegrationError(self.service, f"{path} did not return an object")
+        return data
 
     async def _mutate(
         self,
@@ -454,31 +659,18 @@ class BaseClient:
                     json=json,
                     extensions={"reaper_mutation_approved": True},
                 )
-            except httpx2.TimeoutException as exc:
-                # Report the actual timeout kind (connect/write/pool/read), not a fixed "30s":
-                # for a mutation especially, "could not connect" and "the server was slow to
-                # answer" call for different operator responses.
-                raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
             except httpx2.TransportError as exc:
-                raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+                raise transport_failure(self.service, exc) from exc
 
             status = response.status_code
             if response.status_code in _REDIRECTS:
-                # A redirected mutation is refused, never replayed: auto-following would
+                # EVERY redirect is refused here, never replayed: auto-following would
                 # re-issue the approved call -- credential headers, mutation approval and
-                # all -- at whatever URL the (possibly compromised) upstream chose.
-                raise IntegrationError(
-                    self.service,
-                    f"refused redirect (HTTP {response.status_code}) for {method} {path}",
-                    status=response.status_code,
-                )
+                # all -- at whatever URL the (possibly compromised) upstream chose. `_send`
+                # refuses a narrower set, since a read may follow a same-origin hop.
+                raise refused_redirect(self.service, response, method, path)
             if response.status_code >= 400:
-                raise IntegrationError(
-                    self.service,
-                    f"HTTP {response.status_code} for {method} {path}",
-                    status=response.status_code,
-                    retry_after=_retry_after_seconds(response),
-                )
+                raise http_failure(self.service, response, method, path)
             return response
         finally:
             self._trace(method, path, status, started, mutation=True)

@@ -1,40 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  lazy,
-  type ReactElement,
-  Suspense,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useQuery } from "@tanstack/react-query";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { applyAccent } from "./accent";
-import { announce, Announcer, useSlowWait } from "./announce";
-import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
+import { Announcer, useSlowWait } from "./announce";
+import { api, ApiError, type AuthUser, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
-import { useUpdateStatus } from "./updateStatus";
 import { Login } from "./components/Login";
 import { ModalShell } from "./components/ModalShell";
-import { PolicyIcon, ReapIcon, ReviewIcon, ScalesIcon, SettingsIcon } from "./components/navIcons";
 import { NotInScanPanel } from "./components/NotInScanPanel";
 import type { PolicySectionId } from "./components/PolicyEditor";
+import { ReapBar } from "./components/ReapBar";
 import { ReapConfirm } from "./components/ReapConfirm";
+import { ScanFreshness } from "./components/ScanFreshness";
+import { SectionNav } from "./components/SectionNav";
+import { UserMenu } from "./components/UserMenu";
+import { WhyPanelFallback } from "./components/WhyPanelFallback";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { ScalesPanel, ScalesPanelFallback } from "./components/ScalesPanel";
 import { BrandMark } from "./brand/BrandMark";
 import type { Panel } from "./components/Settings";
 import { ShowPanel } from "./components/ShowPanel";
 import { WhyPanel } from "./components/WhyPanel";
-import { WhyShell } from "./components/WhyShell";
 import { DocsProvider } from "./docs/DocsContext";
-import { bytes, count, date, souls } from "./format";
 import type { Focus, NavIntent, Selection, View } from "./navIntent";
+import { readLanding, sectionUrl, writeUrl } from "./navUrl";
 import { usePageScrollLock } from "./pageScrollLock";
+import { useGeneralSettings } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
-import { useSafety } from "./useSafety";
 import { useScanSettled } from "./useScanSettled";
 import { Notice } from "./components/Notice";
 import { SafetyBanner } from "./components/SafetyBanner";
@@ -69,238 +62,6 @@ function RouteLoading() {
     <div className="fair-loading">
       <span className="spinner spinner-xl" aria-hidden="true" />
       <p className="fair-loading-lead">Loading…</p>
-    </div>
-  );
-}
-
-const NAV: { id: View; label: string; Icon: () => ReactElement }[] = [
-  { id: "review", label: "Review", Icon: ReviewIcon },
-  { id: "policy", label: "Policy", Icon: PolicyIcon },
-  { id: "reap", label: "Reap", Icon: ReapIcon },
-  { id: "fairness", label: "Scales", Icon: ScalesIcon },
-  { id: "settings", label: "Settings", Icon: SettingsIcon },
-];
-
-/** The section nav. One element in two shapes: a rail sitting on the masthead's own bottom
- *  border on a wide screen, and the phone's bottom bar under 900px, where the labels give way
- *  to the icons. The labels are never dropped from the accessibility tree -- the 900px block in
- *  styles/10-layout.css clips `.view-label` to a 1px box rather than hiding it, so it still names its
- *  button -- which is why none of these carries an `aria-label` of its own.
- *
- *  Reap carries the safety state as a dot. That is the same fact `SafetyBanner` states in words
- *  directly below, and the banner renders on every view, which is why the dot is `aria-hidden`:
- *  the sentence is already in the tree, and the decoration would only say it twice. */
-export function SectionNav({ view, onChange }: { view: View; onChange: (next: View) => void }) {
-  const { data, isLoading, isError } = useSafety();
-  // No dot means "not armed", so a failed read must never fall through to no dot (rule 17/36):
-  // it wears the amber "we could not look" mark instead, the tone the banner uses for the same
-  // state. Only the very first fetch draws nothing, because it genuinely knows nothing yet.
-  const safety: "armed" | "unknown" | null = isLoading
-    ? null
-    : isError || !data
-      ? "unknown"
-      : data.destructive_enabled
-        ? "armed"
-        : null;
-
-  return (
-    <nav className="views" aria-label="Sections">
-      {NAV.map((n) => (
-        <button
-          key={n.id}
-          className={view === n.id ? "view-tab active" : "view-tab"}
-          // Reserve the bold (active) width so switching sections never shifts the rail. The
-          // phone bar drops the strut with the labels; see the 900px block in styles/10-layout.css.
-          data-label={n.label}
-          // The view you are on is stated, not just colored.
-          aria-current={view === n.id ? "page" : undefined}
-          onClick={() => onChange(n.id)}
-        >
-          {/* One positioned box around whichever of the two is showing, so the safety dot
-              anchors to the icon on a phone and to the word on a wide screen without being
-              placed twice. */}
-          <span className="view-mark">
-            <n.Icon />
-            <span className="view-label">{n.label}</span>
-            {n.id === "reap" && safety !== null && (
-              <span className={`view-armed view-armed-${safety}`} aria-hidden="true" />
-            )}
-          </span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-/** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
- *  its Stop are reachable after you close or navigate away from the reap sheet. A reap runs
- *  detached from the request that started it, so this bar (and Stop) survive navigating away
- *  and a tab reload -- it re-attaches by polling the shared status. Not a safety surface (the
- *  always-on one is SafetyBanner), so it shows nothing when idle. Stop is graceful: the run
- *  halts after the item in flight and still tidies Plex, and deletion stays armed.
- *
- *  "Every screen" means every screen of the app, and the setup wizard is not one: `Authed`
- *  returns it *instead of* `Dashboard`, so nothing below here mounts while it is up. That is
- *  reachable during a run -- removing the Tautulli or the last *arr invalidates `["setup"]`,
- *  `scan_ready` goes false, and the wizard takes the page with no reload -- and it lands on the
- *  Connect step, which has Back and Skip, so Stop is two presses away rather than lost.
- *
- *  It mounts, runs and reaches its end -- "Reap failed." included -- and used to do all of it
- *  in silence, which on most screens made it the only sign of a deletion and the only Stop
- *  (#170). It now announces the run's end, and its fill carries `role="progressbar"` the way
- *  `ScanLine` (components/ScanLine.tsx) already did (rule 72). The RUNNING ticks are deliberately not announced
- *  here: the reap sheet throttles and speaks them, and a bar that spoke too would say
- *  everything twice for anyone with the sheet open.
- *
- *  Exported for its tests, the way `WhyPanelFallback` below is: what it owes an
- *  operator is a property of this component, and reaching it through the whole authed `App`
- *  tree would test the login gate instead. */
-export function ReapBar({ onView }: { onView: (runId: number) => void }) {
-  const queryClient = useQueryClient();
-  const [dismissed, setDismissed] = useState<number | null>(null);
-  // Idle still polls, slowly. A reap can be started from a phone or a second tab, and this
-  // bar carries the only Stop on most screens: going silent when nothing is running here
-  // would leave an open tab dark through someone else's deletion (the scan line idle-polls
-  // at 15s for the same reason).
-  const { data: status } = useQuery({
-    queryKey: ["reapStatus"],
-    queryFn: api.reapStatus,
-    refetchInterval: (q) => (q.state.data?.running ? 1000 : 15000),
-  });
-  const stop = useMutation({
-    mutationFn: (id: number) => api.stopRun(id),
-    onSuccess: (s) => queryClient.setQueryData(["reapStatus"], s),
-  });
-
-  // A finished reap invalidates half the app -- the queue lists titles that are gone, the
-  // ledger promises to remove them, the snapshot's reclaimable figure counts them. That
-  // refresh belongs HERE, on the component a reap does not unmount: the confirmation sheet
-  // is explicitly designed to be closed mid-run, and everything it invalidated went with it.
-  // Fired once, on the running-to-ended edge of a run this mount actually saw running, so a
-  // page opened after the fact does not re-invalidate what it just fetched.
-  const ranRef = useRef<number | null>(null);
-  const settledRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!status || status.run_id == null) return;
-    if (status.running) {
-      ranRef.current = status.run_id;
-      return;
-    }
-    if (ranRef.current !== status.run_id || settledRef.current === status.run_id) return;
-    settledRef.current = status.run_id;
-    // Say how it ended. The same edge, for the same reason: a run that finished before this tab
-    // opened must not be announced as news. The sentence carries the outcome first and the
-    // figures after, matching the bar's own text below (rule 144), and it is said HERE rather
-    // than in the reap sheet because closing the sheet does not take this bar with it -- the
-    // sheet is meant to be closed mid-run, and an operator who closed it would otherwise hear
-    // nothing at all about a deletion finishing.
-    announce(
-      status.phase === "error"
-        ? `Reap failed. ${souls(status.deleted_items)} removed before it stopped.`
-        : `${status.phase === "aborted" ? "Reap stopped." : "Reap finished."} ${souls(status.deleted_items)} removed, ${bytes(status.deleted_bytes)} freed.`,
-    );
-    // ["run"] as well as ["runs"]: the plan surface reads one run by id, and that key does
-    // not match the list's.
-    for (const key of [
-      ["runs"],
-      ["run"],
-      ["candidates"],
-      ["reap-breakdown"],
-      ["snapshot"],
-      ["fairness"],
-    ]) {
-      void queryClient.invalidateQueries({ queryKey: key });
-    }
-  }, [status, queryClient]);
-
-  if (!status || status.run_id == null) return null;
-  const runId = status.run_id;
-  const running = status.running;
-  // Every terminal phase counts as ended -- including "error", so a reap that crashed after
-  // removing files still surfaces here (the one always-visible fallback) instead of vanishing.
-  const ended =
-    !running &&
-    (status.phase === "complete" || status.phase === "aborted" || status.phase === "error");
-  if (!running && !(ended && runId !== dismissed)) return null;
-
-  if (ended) {
-    const errored = status.phase === "error";
-    return (
-      <div className={errored ? "reap-bar errored" : "reap-bar done"}>
-        <span className="banner-dot" aria-hidden="true" />
-        <span className="reap-bar-text">
-          <b>{errored ? "Reap failed." : status.phase === "aborted" ? "Stopped." : "Reaped."}</b>{" "}
-          <span className="reap-bar-sub">
-            {souls(status.deleted_items)} removed, {bytes(status.deleted_bytes)} freed
-            {errored && status.error ? `. ${status.error}` : ""}
-          </span>
-        </span>
-        <span className="reap-bar-actions">
-          <button className="link" onClick={() => onView(runId)}>
-            View report
-          </button>
-          <button className="sm" onClick={() => setDismissed(runId)}>
-            Dismiss
-          </button>
-        </span>
-      </div>
-    );
-  }
-
-  const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
-  return (
-    <div className="reap-bar">
-      <span className="banner-dot" aria-hidden="true" />
-      {/* The role goes on the TEXT, never on the bar. `progressbar` carries ARIA's Children
-          Presentational: True, so a role on the container prunes everything inside it -- and
-          this container holds View, Stop, and the `role="alert"` that reports a Stop that
-          failed. A reader watching a live deletion heard the percentage and had no way to halt
-          it. That is the same pruning `CardOpen` exists to undo on the queue's four cards, so
-          the bar nearest deletion was the one sibling the sweep missed (rule 72); the three
-          sibling bars and `ScanLine` all carry the role on an element holding only a fill.
-          The text is the right anchor here: it is the visible readout, it is never empty, and
-          it holds no control -- where the fill is 0px wide at 0% and can drop out of the tree.
-          `aria-valuetext` says what a person would say, so nobody is left reading out "62". */}
-      <span
-        className="reap-bar-text"
-        role="progressbar"
-        aria-label="Reaping"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={pct}
-        aria-valuetext={`${pct}%, ${count(status.done)} of ${count(status.total)} removed`}
-      >
-        {status.stopping ? (
-          <b>Stopping after the current one…</b>
-        ) : (
-          <>
-            <b>
-              Reaping, {count(status.done)} of {count(status.total)}
-            </b>
-            <span className="reap-bar-sub">, {bytes(status.deleted_bytes)} freed</span>
-          </>
-        )}
-      </span>
-      <span className="reap-bar-actions">
-        <button className="link" onClick={() => onView(runId)}>
-          View
-        </button>
-        <button
-          className="stop-btn"
-          disabled={status.stopping || stop.isPending}
-          onClick={() => stop.mutate(runId)}
-        >
-          {status.stopping ? "Stopping…" : "Stop"}
-        </button>
-      </span>
-      {/* A Stop that failed must say so. Swallowed, it reads as a run that is halting while
-          it keeps deleting -- and this is the only Stop on every screen but the sheet. */}
-      {stop.error && (
-        <Notice tone="error" className="reap-bar-error">
-          Reaper couldn't stop the reap: {stop.error.message}
-        </Notice>
-      )}
-      <span className="reap-bar-fill" style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -345,274 +106,24 @@ function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => voi
   );
 }
 
-/** A slim freshness line on the Review screen: when the queue was last built, and a loud
- *  note if that scan came back incomplete (the scan control itself now lives in Settings →
- *  Jobs). Without this, the queue gives no sense of how stale it might be.
- *
- *  Missing data is not the same as "no scan exists". `/api/snapshots/latest` answers 404
- *  only for the genuine first-boot case; every other failure also arrives with no data, and
- *  reading that as "no scan has run yet" turns a dropped request into a confident claim and
- *  silently drops the incomplete-scan warning, the one staleness signal on this screen.
- *  Exported for its own test; the app renders it only from Dashboard. */
-export function ScanFreshness({
-  snapshot,
-  isPending,
-  error,
-  onGoToJobs,
-}: {
-  snapshot: Snapshot | undefined;
-  isPending: boolean;
-  error: unknown;
-  onGoToJobs: () => void;
-}) {
-  if (isPending) {
-    return <p className="scan-freshness muted">Checking the last scan…</p>;
-  }
-  if (!snapshot) {
-    if (error instanceof ApiError && error.status === 404) {
-      return (
-        <p className="scan-freshness muted">
-          No scan has run yet.{" "}
-          <button className="link" onClick={onGoToJobs}>
-            Run one from Settings → Jobs
-          </button>{" "}
-          to fill the queue.
-        </p>
-      );
-    }
-    // No "reload to try again" (#195): this line renders above a working review queue, where
-    // `selected` is component state -- only the filters persist -- so a reload drops a bulk
-    // selection that "Select everything matching" may have walked thousands of rows to build,
-    // and nothing anywhere in the app asks first.
-    return (
-      // `standing`: this line is the queue's age, so it is part of the page whenever the read
-      // behind it will not answer. It arrives that way on a first load, and again whenever
-      // `useScanSettled` invalidates `["snapshot"]` off the shell's 15s poll -- a scheduled scan
-      // finishing, with nothing pressed. It sits directly above the queue it describes.
-      <Notice tone="error" className="scan-freshness" standing>
-        Couldn't read the last scan, so Reaper can't say how old this queue is.
-      </Notice>
-    );
-  }
-  return (
-    <p className="scan-freshness muted">
-      Last scanned {date(snapshot.created_at)}, {count(snapshot.item_count)} items.
-      {snapshot.degraded && (
-        <>
-          {" "}
-          {/* The separating period is OUTSIDE the notice. Inside it, the character that
-              ends the neutral sentence before it painted amber and semibold, so the line
-              opened on a floating yellow dot a word early.
-
-              The shared `Notice`, not a bare styled span: it carries the visually-hidden
-              "Warning: " lead, so severity is not amber alone. As a span this read as
-              ordinary muted text to anyone not seeing the color, on the page where
-              approvals are made (rules 18, 72).
-
-              It says what the incomplete scan MEANS before it says what to do. The
-              consequence clause was dropped here and in `ScanBar`, leaving `ReapPlan` the
-              only one of the three still carrying it -- on the page an operator reaches
-              last, while this line sits above the queue they are approving from. Whether it
-              appeared at all had also become a matter of which source failed, since only
-              `library_index`'s reasons bake it into their own text (rule 144).
-
-              `standing`, and silent, because this is the age of the snapshot the queue below
-              is built from: it is on the page for as long as that snapshot is the one on
-              hand, not a reply to anything the operator pressed. The scan that produces it
-              announces itself from `ScanBar`, which is where the transition happens. */}
-          <Notice as="span" tone="warn" standing className="freshness-warn">
-            The last scan came back incomplete, so Reaper won&apos;t act on it.{" "}
-            {/* The only one of the three with no remedy in it, which is why this is the one
-                that grew a link (rule 72). `ScanBar`'s copy renders ON Settings → Jobs,
-                beside the Scan library button, so it would point at itself; `ReapPlan`'s
-                already ends "Fix the source and scan again" on a page whose remedy is the
-                source, not a rescan. Both were read and left as they are. */}
-            <button className="link" onClick={onGoToJobs}>
-              Go to Settings → Jobs
-            </button>{" "}
-            and rescan.
-          </Notice>
-        </>
-      )}
-    </p>
-  );
-}
-
-/** The signed-in identity, with a panel to sign out.
- *
- *  A disclosure, not an ARIA menu: it is a button that shows and hides a small panel, and
- *  it behaves like one (click or Tab away to dismiss, Escape to close). It used to claim
- *  role="menu", which promises arrow-key navigation between menu items that was never
- *  implemented, on a panel whose first child is a heading rather than an item. The honest
- *  simpler role is the one whose keyboard contract this actually keeps. */
-export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: () => void }) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  // The light and the menu item render only while an update actually exists; every
-  // could-not-answer state renders neither, so the chip never nags on a guess. The
-  // words ride the chip's accessible name -- the light itself is decoration.
-  const update = useUpdateStatus();
-  const updateAvailable = update.data?.update_available === true;
-
-  // A mutation, not a fire-and-forget async onClick: a sign-out that fails must say so.
-  // The session would still be live, and a swallowed error leaves the menu open with the
-  // user still signed in and nothing to explain why.
-  const signOut = useMutation({
-    mutationFn: () => api.logout(),
-    // A sign-out that WORKED is written, not asked about -- the same call `main.tsx` makes for
-    // every other 401, for the same reason. `noteAuthFailure` (api.ts) exempts the whole
-    // `/api/auth/` PREFIX, which is seven routes and this key's own read among them, so refetching
-    // it here answers a dead session with a query ERROR while React Query still holds the last
-    // good user beside it, and the gate below reads that as still signed in. Asking left the
-    // operator on their own dashboard until an unrelated poll happened to 401.
-    onSuccess: () => queryClient.setQueryData(["me"], null),
-    // A failure is the opposite question, and the refetch is the right way to ask it: the session
-    // may well still be live, and the answer is whatever `/api/auth/me` says.
-    onError: () => void queryClient.invalidateQueries({ queryKey: ["me"] }),
-  });
-
-  // While the sign-out is running or has failed, the panel stays put. Disabling the focused
-  // Sign out button moves focus off it, which some browsers report as focus leaving the
-  // whole menu -- closing the panel would then throw away the only place the failure is
-  // ever shown, and it would come back stale the next time the menu opened.
-  const keepOpen = signOut.isPending || signOut.isError;
-
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      if (keepOpen) return;
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", onClick);
-    return () => window.removeEventListener("mousedown", onClick);
-  }, [open, keepOpen]);
-
-  // Clicking away closed it; tabbing away did not, which left the panel hanging open over
-  // a page the keyboard had already moved on from.
-  const onBlur = (e: React.FocusEvent<HTMLDivElement>) => {
-    if (keepOpen) return;
-    if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
-  };
-  // Escape closes and hands focus back to the chip, so the keyboard is where it started.
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key !== "Escape" || !open) return;
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
-
-  // Opening starts clean: a failure from a previous attempt is history, not news.
-  const toggle = () => {
-    if (!open) signOut.reset();
-    setOpen((v) => !v);
-  };
-
-  // Back closes the menu instead of leaving Reaper. Held open while a sign-out is pending or
-  // failed, matching the outside-click guard, so the failure message is never yanked away.
-  useBackGuard(open && !keepOpen, () => setOpen(false));
-
-  const initial = user.username.slice(0, 1).toUpperCase();
-
-  return (
-    <div className="user-menu" ref={ref} onBlur={onBlur} onKeyDown={onKeyDown}>
-      <button
-        className="user-chip"
-        ref={triggerRef}
-        onClick={toggle}
-        aria-expanded={open}
-        aria-label={updateAvailable ? `${user.username}, update available` : undefined}
-      >
-        {user.thumb_url ? (
-          <img src={user.thumb_url} alt="" className="user-avatar" />
-        ) : (
-          <span className="user-avatar user-avatar-fallback">{initial}</span>
-        )}
-        <span className="user-name">{user.username}</span>
-        {updateAvailable && <span className="update-light" aria-hidden="true" />}
-        <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" className="chevron">
-          <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" />
-        </svg>
-      </button>
-      {open && (
-        <div className="user-dropdown">
-          <div className="user-dropdown-head">
-            <div className="user-name">{user.username}</div>
-            <div className="muted user-provider">
-              {user.provider === "plex" ? "Plex account" : "Local account"}
-            </div>
-          </div>
-          {updateAvailable && (
-            <button
-              className="user-dropdown-item user-dropdown-update"
-              onClick={() => {
-                setOpen(false);
-                onGoToAbout();
-              }}
-            >
-              Update available
-              <span className="update-light" aria-hidden="true" />
-            </button>
-          )}
-          <button
-            className="user-dropdown-item"
-            onClick={() => signOut.mutate()}
-            disabled={signOut.isPending}
-          >
-            {signOut.isPending ? "Signing out…" : "Sign out"}
-          </button>
-          {signOut.isError && (
-            <Notice tone="error" inline>
-              Couldn't sign you out. Try again.
-            </Notice>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** What the why-panel's column shows while the reasoning is loading, or when it could not
- *  be loaded at all. The column is already reserved the moment an item is selected, so
- *  leaving it blank would read as "the app hung"; and it must keep its own close button,
- *  or a failed fetch would strand the reader in split view. */
-export function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
-  const headingId = useId();
-  // Above the branch, and null on the failure arm: that arm reaches `Notice`'s `role="alert"`,
-  // which speaks on its own, so a wait sentence arriving beside it would say two things about
-  // one state (rule 146 -- what this reports has to be re-read in every state it renders).
-  useSlowWait(error ? null : "Still loading what Reaper saw about this item.");
-  return (
-    <WhyShell headingId={headingId} onClose={onClose}>
-      {error ? (
-        <>
-          <div className="why-head">
-            <h2 id={headingId}>Something went wrong</h2>
-          </div>
-          <Notice tone="error">
-            Couldn't load the reasons for this item. The item itself is unaffected. Close this panel
-            and click the item to try again.
-          </Notice>
-        </>
-      ) : (
-        // No live region here any more: it was mounted in the same commit as its text, which is
-        // the shape several readers never announce (#332). The sentence goes through the shared
-        // region in `announce.tsx`, once the wait has run long.
-        <div className="why-loading">
-          <span className="spinner spinner-lg" aria-hidden="true" />
-          {/* No heading in this branch, so the lead carries the panel's name. */}
-          <p className="why-loading-lead" id={headingId}>
-            Fetching what Reaper saw…
-          </p>
-        </div>
-      )}
-    </WhyShell>
-  );
-}
-
 function Dashboard({ user }: { user: AuthUser }) {
-  const [view, setView] = useState<View>("review");
-  const [verdict, setVerdict] = useState<Verdict>("condemn");
+  // Where the URL says to land, read once at mount and nowhere else (navUrl.ts). The URL is the
+  // authority for a cold load and for nothing after it: `backnav` owns Back, and its undo
+  // restores these two setters directly, so re-deriving either from the URL would fight it.
+  const [view, setView] = useState<View>(() => readLanding().view);
+  const [verdict, setVerdict] = useState<Verdict>(() => readLanding().lane);
+  // The two sections with sub-navigation of their own. Held here for the same reason `verdict` is:
+  // the address bar names where you are inside them, and the URL is written from here. These three
+  // are the whole of it, so `Settings` and `PolicyEditor` render what they are handed and report a
+  // click back rather than keeping a second copy (rule 146).
+  const [settingsPanel, setSettingsPanel] = useState<Panel>(() => readLanding().panel);
+  // Policy takes two of them, because Movies and TV are separate policies with separate caps,
+  // byte budgets and weights. While this one lived in the editor, a reload on the section URL
+  // reopened the right section with the other media type's numbers on every control.
+  const [policyMedia, setPolicyMedia] = useState<"movie" | "tv">(() => readLanding().policyMedia);
+  const [policySection, setPolicySection] = useState<PolicySectionId>(
+    () => readLanding().policySection,
+  );
   const [selected, setSelected] = useState<Selection>(null);
   // Which Scales person has their panel open. Kept here (not in Fairness) so the panel is a
   // sibling of the list inside `main.split`, exactly as the why-panel sits beside the queue.
@@ -694,34 +205,66 @@ function Dashboard({ user }: { user: AuthUser }) {
   // records itself.
   const { pushNav } = useBackNav();
 
-  // What each view is currently aimed at, held here rather than inside the view: `App` outlives
-  // the mount, so a jump can name a destination for a page that is not on screen yet. Each is
-  // acted on once, counted by its nonce -- revisiting the page later must not replay the jump
-  // that first brought you there. Rule 72: three of these now, and a fourth belongs in the same
-  // three places (declared here, cleared on a plain tab visit, handed to the view).
-  const [policyFocus, setPolicyFocus] = useState<Focus<{ section: PolicySectionId }> | null>(null);
-  const [settingsFocus, setSettingsFocus] = useState<Focus<{ panel: Panel }> | null>(null);
-  const [reviewFocus, setReviewFocus] = useState<Focus<{ search: string }> | null>(null);
-  const clearFocus = () => {
-    setPolicyFocus(null);
-    setSettingsFocus(null);
-    setReviewFocus(null);
-  };
+  // What the app is currently aimed at, held here rather than inside the view: `App` outlives
+  // the mount, so a jump can name a destination for a page that is not on screen yet. It is
+  // acted on once, counted by its nonce: revisiting the page later must not replay the jump that
+  // first brought you there.
+  //
+  // A cold load on `/policy/tv/deletion` seeds one, because the policy sections are places on one
+  // long page rather than panels: landing there means scrolling there, and the editor already
+  // knows how to do that for a jump. The media type needs no seed of its own -- it is a prop the
+  // editor reads, not a place on the page. Settings needs none either, since its panel is the
+  // whole of where it is.
+  const [focus, setFocus] = useState<Focus | null>(() => {
+    const landing = readLanding();
+    return landing.view === "policy"
+      ? { view: "policy", section: landing.policySection, nonce: Date.now() }
+      : null;
+  });
+  // Each view reads only the aim that names it. The check is not a formality. `goTo` sets the
+  // focus and the view in one commit and the effect below drops a stale one only after that
+  // commit, so a single render can hold the previous view's aim while the new view is on screen.
+  const reviewFocus = focus?.view === "review" ? focus : null;
+  const policyFocus = focus?.view === "policy" ? focus : null;
+  const settingsFocus = focus?.view === "settings" ? focus : null;
 
-  // A destination dies with the visit it aimed at. Clearing on a nav click (below) is not enough,
-  // because that is not the only way a view is left: a Back press restores `view` through the raw
-  // setter and runs no handler at all. The queue unmounts on the way out, so its once-per-nonce
-  // ref goes with it, and the next mount seeds the search box from a jump the operator had
-  // already backed out of -- they asked to return to the Review list they started from and got a
-  // one-title list with a chip they never typed. Clearing a focus as its view goes off screen
-  // also covers the search they cleared BY HAND, which the box would otherwise refill on the way
-  // back. Keyed on `view`, so clicking the tab you are already on still changes nothing (B-23).
-  // Rule 72: all three focuses, not just the one that was shown to replay.
+  // A destination dies with the visit it aimed at, and a nav click is not the only way a view is
+  // left: a Back press restores `view` through the raw setter and runs no handler at all. The
+  // queue unmounts on the way out, so its once-per-nonce ref goes with it, and the next mount
+  // seeded the search box from a jump the operator had already backed out of. They asked to
+  // return to the Review list they started from and got a one-title list with a chip they never
+  // typed. Dropping the aim as its view goes off screen also covers the search they cleared BY
+  // HAND, which the box would otherwise refill on the way back.
+  //
+  // Keyed on `view`, so clicking the tab you are already on still changes nothing (B-23). That
+  // was written for Settings, which used to be mounted under its aim's nonce, so a drop here
+  // remounted the whole subtree and threw away whatever was typed into it: arriving from a
+  // "Settings → Jobs" link, typing a name, then clicking Settings in the nav used to discard it.
+  // Settings has no aim and no key now, so nothing there can be discarded from here. The guard
+  // stays for Review, where a re-aim replays a search the operator has since cleared by hand.
+  //
+  // It names no view, so nothing here goes stale when a third destination is added. The line it
+  // replaced named all three by hand, and had to be corrected once already: it started out
+  // dropping only the one focus that had been shown to replay.
   useEffect(() => {
-    if (view !== "review") setReviewFocus(null);
-    if (view !== "policy") setPolicyFocus(null);
-    if (view !== "settings") setSettingsFocus(null);
+    setFocus((f) => (f?.view === view ? f : null));
   }, [view]);
+
+  // The address bar names the section and, where the section has sub-navigation, the panel open
+  // inside it. Review is the one section not written here: its URL carries the lane and the
+  // filters, both of which live in `ReviewQueue`, so the queue writes the whole thing (one writer
+  // per URL).
+  //
+  // A side PANEL is still not in the URL. A candidate id belongs to one snapshot, and the next
+  // scan would leave the link pointing at a row that no longer exists (rule 79). Scales' person
+  // panel is keyed on a stable identity rather than a snapshot row, so that argument does not
+  // reach it, and it is left out for its own reason: a request handle is the one thing on these
+  // screens that names a person, and a URL is the part of the app that gets pasted into a chat.
+  useEffect(() => {
+    if (view !== "review") {
+      writeUrl(sectionUrl(view, { panel: settingsPanel, policyMedia, policySection }));
+    }
+  }, [view, settingsPanel, policyMedia, policySection]);
 
   // Every jump in the app, in one place. The caller names a whole destination (navIntent.ts) and
   // this applies it; nothing else calls the raw setters, so a new destination is a new call site
@@ -761,12 +304,42 @@ function Dashboard({ user }: { user: AuthUser }) {
     if (intent.view === "review") {
       setVerdict(lane);
       if (intent.select !== undefined) setSelected(intent.select);
-      if (intent.search !== undefined) setReviewFocus({ search: intent.search, nonce: Date.now() });
+      // A collection jump fires its own Focus even with no search: it is what reaches the
+      // queue from WhyPanel, a sibling component, the same one-shot channel a cross-section
+      // jump's search text already rides.
+      if (intent.search !== undefined || intent.collection !== undefined)
+        setFocus({
+          view: "review",
+          search: intent.search ?? "",
+          collection: intent.collection,
+          nonce: Date.now(),
+        });
     } else if (intent.view === "policy") {
-      if (intent.section !== undefined)
-        setPolicyFocus({ section: intent.section, nonce: Date.now() });
+      if (intent.section !== undefined) {
+        setPolicySection(intent.section);
+        // ...and the aim beside it, which is what scrolls the page there. The editor can already
+        // be mounted when this arrives (the safety banner's link is on every screen), so a
+        // one-shot nonce is the only thing that fires a second jump to the same section.
+        setFocus({ view: "policy", section: intent.section, nonce: Date.now() });
+      } else {
+        // A plain nav click names no section, and the page it opens is scrolled to the top. The
+        // persisted one would put the rail's `aria-current` and the address bar on a section the
+        // operator is not looking at, until the scroll spy corrects it a draft-load later. Land
+        // where the page actually opens instead. Settings needs no equivalent: its panels do not
+        // share a scroll position, so the one it was left on is still the one it shows.
+        setPolicySection("flags");
+      }
     } else if (intent.view === "settings") {
-      if (intent.panel !== undefined) setSettingsFocus({ panel: intent.panel, nonce: Date.now() });
+      if (intent.panel !== undefined) {
+        // Already on Settings: the panel this would close can be holding unsaved edits, so ASK
+        // for the new one and let the confirm inside Settings refuse. Setting it from here moved
+        // the operator off General mid-sentence and dropped what they had typed, with no confirm
+        // either way (#794). Coming from another view there is nothing mounted to lose, so seed
+        // the panel directly rather than paint the old one for a frame first.
+        if (view === "settings")
+          setFocus({ view: "settings", panel: intent.panel, nonce: Date.now() });
+        else setSettingsPanel(intent.panel);
+      }
     }
     setView(intent.view);
   };
@@ -805,11 +378,7 @@ function Dashboard({ user }: { user: AuthUser }) {
   // The browser tab wears the install's chosen name (Settings → General), so two
   // Reapers stay tellable-apart. The default title is baked into index.html; only a
   // non-default name changes it, and a failed read changes nothing.
-  const { data: generalSettings } = useQuery({
-    queryKey: ["general-settings"],
-    queryFn: api.general,
-    staleTime: 60_000,
-  });
+  const { data: generalSettings } = useGeneralSettings();
   useEffect(() => {
     const name = generalSettings?.application_name;
     if (name && document.title !== name) document.title = name;
@@ -827,6 +396,10 @@ function Dashboard({ user }: { user: AuthUser }) {
   // another device) still surfaces here without a manual start or a tab refocus -- that
   // is what a global "something is running" line is for. Shares the ["scanStatus"] cache
   // with the scan bar, so the two never disagree.
+  //
+  // The idle poll is why this one is declared here rather than through `useScanStatus`, which
+  // every other reader takes: that hook speeds up during a scan and is silent otherwise, and
+  // this observer is the one that notices a scan nobody on this screen started.
   const { data: scanStatus } = useQuery({
     queryKey: ["scanStatus"],
     queryFn: api.scanStatus,
@@ -936,12 +509,10 @@ function Dashboard({ user }: { user: AuthUser }) {
         <SectionNav
           view={view}
           onChange={(next) => {
-            // A plain tab visit must not replay an old cross-page jump -- but clicking the
-            // tab you are ALREADY on is not a visit, and clearing the focus there changes
-            // the key Settings is mounted under, remounting the whole subtree and throwing
-            // away whatever is typed into it (B-23). Arriving from a "Settings → Jobs" link,
-            // typing a name, then clicking Settings in the nav used to silently discard it.
-            if (next !== view) clearFocus();
+            // No focus handling here. A plain tab visit must not replay an old cross-page jump,
+            // and the effect above is what drops it: the aim names its view, so a tab change
+            // takes it and a click on the tab you are already on leaves it alone (B-23).
+            //
             // Leaving Scales (or re-entering it) closes any open Scales panel, so the
             // split view never lingers on a tab that has no panel to show. Both the person
             // panel and the "not in the last scan" panel are cleared, matching the
@@ -1015,6 +586,13 @@ function Dashboard({ user }: { user: AuthUser }) {
                     // and the season this panel is open on is on the current one, so its show
                     // is already in the list behind.
                     onShowGroup={(key) => setSelected({ kind: "group", key })}
+                    // The panel is a sibling of the queue (both mount here in App), so opening
+                    // a collection from its chip has to cross that boundary the same way any
+                    // other cross-component jump does: through goTo, which never touches
+                    // `select`, so the panel stays open on the same item behind the swapped
+                    // list (#816 phase 5).
+                    onOpenCollection={(name) => goTo({ view: "review", collection: name })}
+                    collectionSizes={snapshot?.collection_sizes ?? null}
                   />
                 ) : (
                   <WhyPanelFallback error={detailError} onClose={() => setSelected(null)} />
@@ -1035,7 +613,13 @@ function Dashboard({ user }: { user: AuthUser }) {
                 ))}
             </>
           ) : view === "policy" ? (
-            <PolicyEditor focus={policyFocus} />
+            <PolicyEditor
+              focus={policyFocus}
+              mediaType={policyMedia}
+              onMediaTypeChange={setPolicyMedia}
+              section={policySection}
+              onSectionChange={setPolicySection}
+            />
           ) : view === "reap" ? (
             <ReapPlan
               onGoToDeletion={() => goToPolicySection("deletion")}
@@ -1072,8 +656,9 @@ function Dashboard({ user }: { user: AuthUser }) {
             </>
           ) : (
             <Settings
-              key={settingsFocus?.nonce ?? "settings"}
-              initialPanel={settingsFocus?.panel}
+              panel={settingsPanel}
+              onPanelChange={setSettingsPanel}
+              jump={settingsFocus}
               // The Lists rows' policy-use links land on the keep-rules card's section.
               onGoToPolicy={() => goToPolicySection("kept")}
             />
@@ -1188,7 +773,8 @@ export function App() {
   // `!user` alone, never `isError || !user` (#181). A read that never landed leaves `user`
   // undefined and lands on Login by this same test, and a signed-out answer reaches the gate as
   // DATA rather than as an error, because every 401 outside `/api/auth/` writes `["me"] = null`
-  // (`main.tsx`) and a sign-out that worked writes it directly (`signOut.onSuccess`). So the
+  // (`main.tsx`) and a sign-out that worked writes it directly (`UserMenu`'s `signOut.onSuccess`).
+  // So the
   // `isError` arm only ever covered the TRANSIENT case: a refetch that failed while React Query
   // still held the signed-in user, answered by showing the login screen to somebody who is signed
   // in. A sign-out that failed on a flaky network reached it and signed the operator out of the
@@ -1197,8 +783,9 @@ export function App() {
   // What this test canNOT see is a 401 on `["me"]` itself: the handler exempts the whole
   // `/api/auth/` prefix, so this key's own read arrives as an error with the last good user still
   // held. A writer that means to convey SIGNED OUT therefore has to put that state in, never
-  // refetch to discover it -- which is why the sign-out above writes on success. Invalidating is
-  // still right where the question is open rather than answered: `signOut.onError`, where the
+  // refetch to discover it -- which is why the sign-out in `UserMenu` writes on success.
+  // Invalidating is still right where the question is open rather than answered:
+  // `UserMenu`'s `signOut.onError`, where the
   // session may well still be live, and `Login`'s `onAuthed`, where the refetch is the sign-in.
   return (
     <>

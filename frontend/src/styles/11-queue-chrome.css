@@ -18,6 +18,85 @@
   margin: 0 0 var(--space-md);
 }
 
+/* The collection screen (#816 phase 5): the way back out, in the slot the lane tabs vacate.
+   It takes `.tabs`' own top margin so it lands where the eye already looks to change what it
+   is looking at, and it stays a control rather than dropping to a link: the tabs are the
+   widest thing on the page, and replacing them with lighter text made "you have left the
+   queue" a change you had to notice was MISSING. A bare `button` already carries the control
+   standard (04-buttons.css), so nothing is redeclared here beyond the row it sits in. */
+.back-to-lane {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-3xl) 0 var(--space-4xl);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+.back-to-lane .back-arrow {
+  color: var(--muted);
+}
+
+/* The header's rhythm carries its grouping, and the default margins did not: the exit, the
+   title and the fate chips sat 0.6rem, 0.25rem and 0.5rem apart, near enough to identical that
+   three separate things read as one clump. The exit is its own thing and takes the widest gap
+   below it; the title and its chips are one unit and stay tight; the search box starts a new
+   section and gets the gap back. */
+.coll-title {
+  margin: 0 0 var(--space-md);
+}
+.coll-head-fates {
+  margin-bottom: var(--space-4xl);
+}
+
+/* The collection screen's fate summary: how many of its scanned members landed in each lane,
+   the verdict language rather than raw JSON keys. One soft-filled chip per fate present; a fate
+   with none is left out rather than shown at zero. */
+.coll-fates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-md);
+}
+.coll-fate {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  border: 1px solid transparent;
+}
+.coll-fate b {
+  font-variant-numeric: tabular-nums;
+}
+.coll-fate-condemn {
+  background: var(--condemn-soft);
+  color: var(--condemn);
+  border-color: var(--condemn);
+}
+.coll-fate-protect {
+  background: var(--protect-soft);
+  color: var(--protect);
+  border-color: var(--protect);
+}
+.coll-fate-abstain {
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--border-strong);
+}
+
+/* The labeled seam above the search's collection-name block (#816 phase 3b): titles and shows
+   sort ahead of it under any operator sort, so this marks where "collection name only" starts
+   rather than letting a widened result set read as a bug. Same treatment as `h3`'s section
+   labels (01-base.css), spelled out rather than reused: an `h3` here would put a THIRD level
+   heading inside the card list, and this names no new section of the page, just a seam in one. */
+.search-divider {
+  margin: var(--space-4xl) 0 var(--space-xs);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  color: var(--muted);
+}
+
 /* A scan finished under an open review. Built from the app's own tokens so it reads as
    native, and accent (not amber/red -- neither a warning nor a decision, just a fresher list
    to load). Sticky so it stays in reach however far the reviewer has scrolled; the whole
@@ -259,29 +338,9 @@ tbody tr.selected {
   background: var(--surface-2);
   color: var(--abstain);
 }
-/* A hand decision recolors the number to the fate it forces, so it never contradicts the
-   row's chip: SOLID for a decision that takes effect (you chose this), DASHED RED for a reap
-   the engine can't honor yet (noted, the file is held) -- never solid, never the amber that
-   now means only "left for you to decide". This mirrors the chips (.chip-hand-*,
-   .chip-reap-refused) and the strip (.strip-ov-*), the app's one hand-decision language. */
-.score-reap {
-  background: var(--condemn);
-  color: var(--condemn-soft);
-}
-.score-spare {
-  background: var(--protect);
-  color: var(--protect-soft);
-}
-.score-refused {
-  background: var(--condemn-soft);
-  color: var(--condemn);
-  border: 1px dashed var(--condemn);
-}
-/* The keep-direction twin of .score-refused: a hand spare whose clock has passed. Green,
-   because the item is still kept until a scan re-judges it; dashed, because the decision
-   keeping it has expired. Routed through handFate like every other fate-bearing cell. */
-.score-spare-expired {
-  background: var(--protect-soft);
-  color: var(--protect);
-  border: 1px dashed var(--protect);
-}
+/* A hand decision recolors the number to the fate it forces, so it never contradicts the row's
+   chip. Those four rules (.score-reap, .score-spare, .score-refused, .score-spare-expired) are
+   in 23-queue-chips.css, each sharing one rule with the card chip and status pill that wear the
+   same tone: the three families are one language and a tone written out three times is three
+   places to change it. They load after this file, which is also the direction rule 49 wants --
+   a hand decision beats the scan verdict above, never the other way. */

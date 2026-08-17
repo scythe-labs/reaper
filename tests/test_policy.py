@@ -8,18 +8,21 @@ themselves at random, or (far worse) silently survive an edit the human never sa
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel, ValidationError
 
-from reaper.api.schemas import GateSettingIn, PolicyIn
+from reaper.api.schemas import GateSettingIn, GateSettingOut, PolicyIn
+from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.fields import RECENT_WATCHERS, Op, ReachSpan
@@ -46,21 +49,25 @@ from reaper.engine.policy import (
     GradedCondemnSpec,
     GradedKeepSpec,
     PolicyBody,
-    PolicyWarning,
     ProfileSettings,
     RatingRuleSpec,
     SignalSetting,
+)
+from reaper.engine.policy_migrations import (
+    authorable_media_scope,
     convert_list_protections,
     has_legacy_list_protections,
-    inspect,
+    library_media_types,
+    own_list_media_scope,
     rebalance,
     recover_rating_rules,
 )
-from reaper.engine.signals import Score, SignalConfig, SignalId, score
+from reaper.engine.policy_warnings import PolicyWarning, inspect
+from reaper.engine.signals import REWATCH_KEEP, Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 from reaper.services.scan_runner import GATE_TYPES, ScanConfigError, build_gates
-from reaper.services.season_pruning import SeasonStats, plan_series_prune
+from reaper.services.season_pruning import plan_series_prune
 
 #: Every gate ``build_gates`` can construct from a policy row. RATING_FLOOR is not in
 #: ``GATE_TYPES`` because it takes a set of per-source bars rather than one GateConfig, so
@@ -83,7 +90,7 @@ def _policy(**overrides: object) -> PolicyBody:
         # single-signal policy carries the whole budget.
         "signals": (SignalSetting(signal=SignalId.UNWATCHED, weight=100, saturate_at=730),),
     }
-    return PolicyBody(**{**base, **overrides})  # type: ignore[arg-type]
+    return PolicyBody(**{**base, **overrides})
 
 
 def _split(unwatched: int, few_watchers: int) -> tuple[SignalSetting, ...]:
@@ -95,7 +102,7 @@ def _split(unwatched: int, few_watchers: int) -> tuple[SignalSetting, ...]:
 
 
 class TestPopularityWindow:
-    """The one place snapshot and backtest read the recent-watchers window from."""
+    """The one place every reader takes the recent-watchers window from."""
 
     def test_reads_the_enabled_gates_window(self) -> None:
         body = _policy(
@@ -295,7 +302,7 @@ class TestEvidenceHash:
         of the nine still refusing (rule 141: the fixture values are all off the default, so
         an edit that does nothing cannot pass this).
         """
-        edits: list[dict[str, object]] = [
+        edits: list[dict[str, Any]] = [
             {"keep_last_seasons": 4},
             {"keep_first_season": False},
             {"keep_last_scope": "requested"},
@@ -664,10 +671,14 @@ class TestDefaultPolicy:
 
     def test_the_shipped_default_protects_before_it_condemns(self) -> None:
         """Every protection the owner asked for is on by default. List membership arrives
-        as the two shipped ``on_list`` keep rules rather than as gates: one names the tag
-        list, one the IMDb list, both keeping outright, and their names are the ones
+        as shipped ``on_list`` keep rules rather than as gates, and their names are the ones
         ``list_config.ensure_defaults`` seeds -- a rule naming a list that does not exist
-        would render as a live protection covering nothing (rule 25)."""
+        would render as a live protection covering nothing (rule 25).
+
+        Scoped by the media type each list can hold (#539): the tag list spans both libraries
+        so both policies name it, but the IMDb chart is movies only, so a TV rule naming it
+        could never keep a season (rule 38). The movie default names both, the TV default the
+        tag list alone."""
         enabled = {g.gate for g in DEFAULT_MOVIE_POLICY.gates if g.enabled}
 
         assert GateId.STREAMING_NOW in enabled
@@ -676,12 +687,15 @@ class TestDefaultPolicy:
         assert GateId.DATA_HORIZON in enabled
         assert GateId.MIN_DORMANCY in enabled
 
-        for body in (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY):
-            on_list = [c for c in body.protect_conditions if c.field == "on_list"]
-            assert {str(c.value) for c in on_list} == {
-                DEFAULT_TAG_LIST_NAME,
-                DEFAULT_IMDB_LIST_NAME,
-            }, body.media_type
+        movie_lists = {
+            str(c.value) for c in DEFAULT_MOVIE_POLICY.protect_conditions if c.field == "on_list"
+        }
+        tv_lists = {
+            str(c.value) for c in DEFAULT_TV_POLICY.protect_conditions if c.field == "on_list"
+        }
+        assert movie_lists == {DEFAULT_TAG_LIST_NAME, DEFAULT_IMDB_LIST_NAME}
+        assert tv_lists == {DEFAULT_TAG_LIST_NAME}
+        assert DEFAULT_IMDB_LIST_NAME not in tv_lists
 
     def test_no_shipped_protection_is_one_that_cannot_fire(self) -> None:
         """Rule 38/117, as a standing check rather than a one-off. Every gate a default
@@ -757,6 +771,26 @@ class TestDefaultPolicy:
             GateSettingIn(gate=gate, enabled=True)
 
         assert gate.value in str(caught.value)
+
+    @pytest.mark.parametrize("gate", sorted(set(GateId) - _BUILDABLE_GATES))
+    def test_the_same_gate_is_still_carried_on_the_way_out(self, gate: GateId) -> None:
+        """The twin of the refusal above, and the two together are the whole of #627.
+
+        ``PolicyOut.body`` was typed as the request model, so this refusal ran on the
+        RESPONSE as well and ``GET /api/policy`` raised on the one stored shape the loader
+        preserves on purpose -- an enabled ``whitelisted``/``curated_list`` whose replacement
+        keep rule cannot be named. Refusing a write of these ids and serving one that is
+        already stored are different questions, and only the first has an operator asking
+        for something that does not exist.
+
+        **This pins the model contract, not the wiring.** Point ``_policy_out`` back at
+        ``GateSettingIn`` and leave this model in place and this test stays green;
+        ``tests/test_api.py::TestPolicyPersistence`` ``::test_a_leftover_list_protection_
+        still_opens_the_editor`` is the one that goes red, and it is what pins the route.
+        Said here because a docstring naming the whole of #627 above a one-line model
+        assertion reads as the proof and is not one (rule 118).
+        """
+        assert GateSettingOut(gate=gate, enabled=True).gate is gate
 
     @pytest.mark.parametrize("gate", sorted(PolicyBody.RETIRED_GATES))
     def test_a_retired_gate_cannot_take_an_install_offline(self, gate: GateId) -> None:
@@ -948,7 +982,7 @@ class TestTheDangerousConfigDetector:
         self,
         anchor: str,
         kind: str,
-        build: Callable[[str], dict[str, object]],
+        build: Callable[[str], dict[str, Any]],
         media_type: str,
         unreadable: str,
         label: str,
@@ -1297,11 +1331,13 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
         added_early = reference_instant(
             last_played=None, added_at=now - timedelta(days=5000), horizon=horizon
         )
+        assert added_early is not None
         assert dormancy_days(added_early, now=now) == 90
         # Added after the horizon: measured from arrival, which is nearer still.
         added_late = reference_instant(
             last_played=None, added_at=now - timedelta(days=10), horizon=horizon
         )
+        assert added_late is not None
         assert dormancy_days(added_late, now=now) == 10
 
     def test_a_floor_the_history_cannot_reach_is_flagged(self) -> None:
@@ -1371,7 +1407,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
     def _pop(self, **overrides: object) -> PolicyBody:
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
-        return _policy(gates=(GateSetting(**{**base, **overrides}),))  # type: ignore[arg-type]
+        return _policy(gates=(GateSetting(**{**base, **overrides}),))
 
     def _pop_with_dormancy_floor(self, threshold: int) -> PolicyBody:
         """The same gate beside a dormancy floor, which decides whether the window matters."""
@@ -1394,7 +1430,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(
-            gates=(GateSetting(**{**base, "enabled": False, **overrides}),),  # type: ignore[arg-type]
+            gates=(GateSetting(**{**base, "enabled": False, **overrides}),),
             protect_conditions=(ConditionSpec(field="recent_watchers", op=op, value=1),),
         )
 
@@ -1474,7 +1510,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(
-            gates=(GateSetting(**{**base, "enabled": False}),),  # type: ignore[arg-type]
+            gates=(GateSetting(**{**base, "enabled": False}),),
             protect_conditions=(
                 ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),
                 ConditionSpec(field="recent_watchers", op=Op.GTE, value=5),
@@ -1525,7 +1561,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         with_bystanders = _policy(
-            gates=(GateSetting(**{**base, "enabled": False}),),  # type: ignore[arg-type]
+            gates=(GateSetting(**{**base, "enabled": False}),),
             protect_conditions=(
                 ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),
                 ConditionSpec(field="recent_watchers", op=Op.LTE, value=9),
@@ -1628,7 +1664,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         the editor and the why panel describe one mirror two ways.
 
         If this fails, the two copies have drifted: fix them together, in
-        ``engine/policy.py:inspect`` and ``engine/gates.py:ServerPopularityGate.evaluate``.
+        ``engine/policy_warnings.py inspect`` and ``engine/gates.py:ServerPopularityGate.evaluate``.
 
         **What it pins, stated exactly, because it was read as more than it is** (#243
         asked whether this is a tautological oracle, since it computes its expectation by
@@ -1647,9 +1683,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert expected
 
         message = self._window_warnings(self._pop(), reach=reach)[0].message
-        blocked = ServerPopularityGate(
-            GateConfig(gate=GateId.SERVER_POPULARITY, threshold=2, window_days=self.WINDOW)
-        ).evaluate(
+        blocked = ServerPopularityGate(GateConfig(threshold=2, window_days=self.WINDOW)).evaluate(
             replace(
                 _evidence(days=900, watchers=0, rank=1, rating=70, size_gb=1),
                 history_reach_days=Known(value=reach, source="t"),
@@ -1796,7 +1830,7 @@ _RESCALE_SHAPES: tuple[tuple[str, int, int], ...] = (
 )
 
 
-def _over_budget(weights: Sequence[int]) -> dict:
+def _over_budget(weights: Sequence[int]) -> dict[str, Any]:
     """A legacy body: the first ``len(weights)`` signal shapes, totalling anything at all."""
     return {
         "media_type": "tv",
@@ -1809,8 +1843,8 @@ def _over_budget(weights: Sequence[int]) -> dict:
     }
 
 
-def _signal_configs(body: dict) -> list[SignalConfig]:
-    """The same translation ``services.snapshot`` and ``api.routes`` do, so these tests
+def _signal_configs(body: dict[str, Any]) -> list[SignalConfig]:
+    """The same translation ``services.snapshot`` and ``api.simulate`` do, so these tests
     score through the real scorer rather than a transcription of it (rule 22)."""
     return [
         SignalConfig(
@@ -1823,7 +1857,7 @@ def _signal_configs(body: dict) -> list[SignalConfig]:
     ]
 
 
-def _rounding_slack(before_body: dict, repaired: dict) -> float:
+def _rounding_slack(before_body: dict[str, Any], repaired: dict[str, Any]) -> float:
     """The most the rounding can move a score: the total weight it handed *upward*.
 
     ``score' - score = Σ (w'ᵢ - wᵢ·100/T)·fillᵢ`` with every ``fill`` in ``[0, 1]``, and the
@@ -1833,7 +1867,10 @@ def _rounding_slack(before_body: dict, repaired: dict) -> float:
     """
     weights = [s["weight"] for s in before_body["signals"]]
     exact = [w * 100 / sum(weights) for w in weights]
-    return sum(max(0.0, s["weight"] - e) for s, e in zip(repaired["signals"], exact, strict=True))
+    slack: float = sum(
+        max(0.0, s["weight"] - e) for s, e in zip(repaired["signals"], exact, strict=True)
+    )
+    return slack
 
 
 def _evidence(days: float, watchers: int, rank: int, rating: int, size_gb: float) -> Facts:
@@ -1999,7 +2036,7 @@ class TestRebalancingAnOldPolicy:
         assert rebalance(raw) is None
 
 
-def _legacy_rating_body(**gate: object) -> dict[str, object]:
+def _legacy_rating_body(**gate: object) -> dict[str, Any]:
     """A stored body from before the rating bar moved off the RATING_FLOOR gate row.
 
     The shape that matters: no ``keep_rating_rules`` key at all, and the bar still on the
@@ -2103,7 +2140,7 @@ class TestRestoringALostRatingBar:
         ],
     )
     def test_numbers_the_old_validator_would_have_refused_are_not_restored(
-        self, gate: dict[str, object]
+        self, gate: dict[str, Any]
     ) -> None:
         """Only a bar the old gate would have accepted is put back. Anything else would be
         inventing a protection value on the operator's behalf, and ``RatingRuleSpec`` would
@@ -2119,9 +2156,7 @@ class TestRestoringALostRatingBar:
         ],
         ids=["lowest-floor", "highest-floor", "one-vote"],
     )
-    def test_the_bars_the_old_validator_accepted_are_restored(
-        self, gate: dict[str, object]
-    ) -> None:
+    def test_the_bars_the_old_validator_accepted_are_restored(self, gate: dict[str, Any]) -> None:
         """The inclusive edges of the accepted range, which the refusals above cannot pin.
 
         The old validator took ``1 <= threshold <= 100`` and ``secondary >= 1``, so every one
@@ -2152,6 +2187,186 @@ class TestRestoringALostRatingBar:
         """``services.profiles.active_policy`` must not raise on anything a hand-edited row
         can hold: it keeps the one page that fixes a broken policy reachable."""
         assert recover_rating_rules(raw) is None
+
+
+class TestTheBuiltinRewatchKeep:
+    """The built-in habitual-rewatch keep (``docs/history/REWATCH_PLAN.md``, Stage 1; the TV
+    lane joined once its formulation cleared the same bar, ``docs/LEARNINGS.md``): four
+    ``PolicyBody`` fields, translated into one ``KeepConfig`` by ``keep_configs()`` on both
+    lanes, with ``media_type`` carried for the lane's wording."""
+
+    def test_a_stored_body_missing_the_four_fields_thaws_to_the_defaults(self) -> None:
+        """A body saved before this release carries none of the four keys. Rule 1's spirit:
+        an omission is not an operator's explicit off, so it thaws to the keep direction."""
+        raw = _policy().model_dump(mode="json")
+        for key in (
+            "rewatch_keep_enabled",
+            "rewatch_keep_discount",
+            "rewatch_min_viewings",
+            "rewatch_recent_days",
+        ):
+            del raw[key]
+
+        body = PolicyBody.model_validate(raw)
+
+        assert body.rewatch_keep_enabled is True
+        assert body.rewatch_keep_discount == 20
+        assert body.rewatch_min_viewings == 10
+        assert body.rewatch_recent_days == 730
+
+    def test_a_movie_body_appends_exactly_one_rewatch_config(self) -> None:
+        """Bars off the shipped 10/730 default (rule 141), so this proves the config carries
+        the body's OWN numbers rather than the fallback they happen to share."""
+        body = _policy(
+            media_type="movie",
+            rewatch_keep_enabled=True,
+            rewatch_keep_discount=33,
+            rewatch_min_viewings=6,
+            rewatch_recent_days=400,
+        )
+
+        rewatch = [k for k in body.keep_configs() if k.name == REWATCH_KEEP]
+
+        assert len(rewatch) == 1
+        assert rewatch[0].field == REWATCH_KEEP
+        assert rewatch[0].max_discount == 33
+        assert rewatch[0].min_viewings == 6
+        assert rewatch[0].recent_days == 400
+        assert rewatch[0].media_type == "movie"
+
+    def test_a_movie_body_with_the_switch_off_appends_none(self) -> None:
+        body = _policy(media_type="movie", rewatch_keep_enabled=False)
+
+        assert all(k.name != REWATCH_KEEP for k in body.keep_configs())
+
+    def test_a_tv_body_appends_the_config_with_tv_wording(self) -> None:
+        """The TV lane joined when its formulation cleared the backtest bar
+        (``docs/LEARNINGS.md``, the TV entry). Bars off both shipped defaults (rule 141):
+        3/500 is neither the movie 10/730 nor the TV default 2, so this proves the config
+        carries the body's own numbers on this lane too."""
+        body = _policy(
+            media_type="tv",
+            rewatch_keep_enabled=True,
+            rewatch_min_viewings=3,
+            rewatch_recent_days=500,
+        )
+
+        rewatch = [k for k in body.keep_configs() if k.name == REWATCH_KEEP]
+
+        assert len(rewatch) == 1
+        assert rewatch[0].min_viewings == 3
+        assert rewatch[0].recent_days == 500
+        assert rewatch[0].media_type == "tv"
+
+    def test_a_tv_body_with_the_switch_off_appends_none(self) -> None:
+        body = _policy(media_type="tv", rewatch_keep_enabled=False)
+
+        assert all(k.name != REWATCH_KEEP for k in body.keep_configs())
+
+    def test_the_default_tv_policy_ships_the_validated_rewatch_bar(self) -> None:
+        """2 whole re-watches is the bar the TV backtest validated (``docs/LEARNINGS.md``);
+        the class default stays the movie lane's 10, so the default TV body must override
+        it or a fresh install ships a keep that fires on almost nothing."""
+        assert DEFAULT_TV_POLICY.rewatch_min_viewings == 2
+
+    def test_a_graded_keep_cannot_take_the_built_ins_name(self) -> None:
+        with pytest.raises(ValidationError, match="built-in rewatch keep"):
+            _policy(
+                graded_keeps=(
+                    GradedKeepSpec(
+                        name=REWATCH_KEEP,
+                        field="watchers_all_time",
+                        max_discount=10,
+                        floor=0,
+                        saturate_at=5,
+                    ),
+                )
+            )
+
+
+class TestTheRewatchOddsRow:
+    """The Stage 2 opt-in hold's policy row (``docs/history/REWATCH_PLAN.md``): unlike the Stage 1
+    keep, it carries no dedicated ``PolicyBody`` fields -- the operator's one knob is the
+    ``GateSetting.threshold`` an ordinary gate row already has. ``PolicyBody._rewatch_odds_row``
+    appends or strips the row instead."""
+
+    def test_a_movie_body_without_the_row_gets_it_appended_disabled_at_25(self) -> None:
+        """A stored body predating this release carries no ``rewatch_odds`` gate row at
+        all. It comes back with one, appended DISABLED at the shipped starting
+        percentage, so it changes no verdict until the operator turns it on."""
+        body = _policy(media_type="movie", gates=(GateSetting(gate=GateId.WHITELISTED),))
+
+        rows = [g for g in body.gates if g.gate is GateId.REWATCH_ODDS]
+
+        assert len(rows) == 1
+        assert rows[0].enabled is False
+        assert rows[0].threshold == 25
+
+    def test_a_movie_body_that_already_carries_the_row_keeps_the_operators_threshold(
+        self,
+    ) -> None:
+        """40 is off the shipped 25% default (rule 141), so this proves the row survives
+        validation as the operator's own number rather than the appended fallback."""
+        body = _policy(
+            media_type="movie",
+            gates=(
+                GateSetting(gate=GateId.WHITELISTED),
+                GateSetting(gate=GateId.REWATCH_ODDS, enabled=True, threshold=40),
+            ),
+        )
+
+        rows = [g for g in body.gates if g.gate is GateId.REWATCH_ODDS]
+
+        assert len(rows) == 1
+        assert rows[0].enabled is True
+        assert rows[0].threshold == 40
+
+    def test_a_tv_body_gets_the_row_appended_and_keeps_an_operators_threshold(self) -> None:
+        """The parity stage: season rows freeze real cohorts now, so a TV body carries the
+        row exactly as a movie body does -- appended disabled at 25 when missing, and an
+        operator's own 40 kept when present (rule 141). The old strip is gone; this class
+        used to prove it with the row explicitly present, and the same construction now
+        proves survival instead."""
+        appended = _policy(media_type="tv", gates=(GateSetting(gate=GateId.WHITELISTED),))
+        rows = [g for g in appended.gates if g.gate is GateId.REWATCH_ODDS]
+        assert len(rows) == 1
+        assert rows[0].enabled is False
+        assert rows[0].threshold == 25
+
+        kept = _policy(
+            media_type="tv",
+            gates=(
+                GateSetting(gate=GateId.WHITELISTED),
+                GateSetting(gate=GateId.REWATCH_ODDS, enabled=True, threshold=40),
+            ),
+        )
+        row = next(g for g in kept.gates if g.gate is GateId.REWATCH_ODDS)
+        assert row.enabled is True
+        assert row.threshold == 40
+
+    def test_the_row_changes_the_stored_hash_from_what_a_pre_upgrade_install_wrote(
+        self,
+    ) -> None:
+        """Rule 113: ``_rewatch_odds_row`` always appends the row to a movie body, so
+        there is no way to build a *validated* ``PolicyBody`` without it any more -- which
+        is exactly why the consequence has to be shown at the JSON level, the same level a
+        stored approval's hash is actually computed at. A body dict identical except for
+        the row hashes differently through the SAME canonicalisation ``policy_hash`` uses,
+        which is what voids a plan a pre-upgrade install approved and asks for a re-scan.
+        """
+        body = _policy(media_type="movie", gates=(GateSetting(gate=GateId.WHITELISTED),))
+        raw = body.model_dump(mode="json")
+        assert any(g["gate"] == "rewatch_odds" for g in raw["gates"])  # the row landed
+
+        pre_upgrade = {**raw, "gates": [g for g in raw["gates"] if g["gate"] != "rewatch_odds"]}
+
+        def _hash(payload: dict[str, object]) -> str:
+            canonical = json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            )
+            return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+        assert _hash(pre_upgrade) != _hash(raw) == body.policy_hash()
 
 
 class TestEveryReachSpanIsRoutedByName:
@@ -2187,7 +2402,7 @@ class TestEveryReachSpanIsRoutedByName:
         assert set(ReachSpan) == {ReachSpan.POPULARITY_WINDOW, ReachSpan.ITEM_LIFETIME}, (
             "A ReachSpan member was added or removed. Five sites decide what a span means "
             "and none of them can infer it: fields.reach_shortfall (which bound the mirror "
-            "is measured against), policy.inspect's lean loop (which span a graded keep's "
+            "is measured against), policy_warnings.inspect's lean loop (which span a graded keep's "
             "discount is charged to), inspect's two protect membership tests "
             "(owner_protect_on_window, and the ITEM_LIFETIME branch under it), each of "
             "which needs operator copy written for that span, and inspect's condemn-lane "
@@ -2613,7 +2828,7 @@ class TestTheCondemnLanesCoverage:
             if w.field in ("signals", "custom_condemn")
         ]
 
-    def _gate_off(self, **overrides: object) -> dict[str, object]:
+    def _gate_off(self, **overrides: object) -> dict[str, Any]:
         """The gate off, so the window is the 365-day fallback, beside a dormancy floor the
         reach clears. Without the second the floor keeps every item on age alone and every
         warning in this family is correctly silent."""
@@ -2933,7 +3148,7 @@ class TestAHoldTheWatchHistoryCannotEstablish:
     DORMANCY = 30
 
     def _tv(self, **overrides: object) -> PolicyBody:
-        base: dict[str, object] = {
+        base: dict[str, Any] = {
             "media_type": "tv",
             "gates": (GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),),
         }
@@ -3098,7 +3313,7 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
     DORMANCY = 30
 
     def _tv(self, **overrides: object) -> PolicyBody:
-        base: dict[str, object] = {
+        base: dict[str, Any] = {
             "media_type": "tv",
             "gates": (GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),),
             # The 90-day reach these tests use spans this hold, so the mid-binge lane is
@@ -3140,7 +3355,7 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
 
     def test_it_says_where_the_held_shows_go(self) -> None:
         """They are not lost, and a warning that did not say so would read far worse than the
-        truth. Every conflict carries ``shortfall``, so ``season_scan.guard_result`` marks each
+        truth. Every conflict carries ``shortfall``, so ``season_evidence.guard_result`` marks each
         as a comparison Reaper did not make and the show waits in "Needs a look", where a hand
         reap still condemns it. That is the string the switch's own help text one row up already
         puts on the operator's screen (rule 144)."""
@@ -3755,6 +3970,162 @@ class TestTheGradedKeepRemedyReadsAsASentence:
         )
 
 
+class TestOwnListMediaScope:
+    """Which policy a Plex list the operator curates by hand may keep on (#545).
+
+    A ``plex_collection`` lives in one library, so it holds that library's one type; a
+    ``plex_watchlist`` spans the account and holds both. Fail-open (rules 65/91): the scope
+    narrows a rule only when the library is known and single-typed, so an unsynced, renamed, or
+    ambiguous library keeps the rule on both.
+    """
+
+    def test_library_media_types_maps_title_to_the_policy_side(self) -> None:
+        """Plex names a TV library "show"; the policy side is "tv". Music and photo never reach
+        here, and a stray kind is skipped rather than mapped to a wrong side."""
+        libs = [
+            {"title": "Films", "kind": "movie"},
+            {"title": "Series", "kind": "show"},
+            {"title": "Tunes", "kind": "artist"},
+        ]
+        assert library_media_types(libs) == {
+            "films": frozenset({"movie"}),
+            "series": frozenset({"tv"}),
+        }
+
+    def test_two_same_titled_libraries_union_to_both(self) -> None:
+        """Case-folded on the title (rule 88): two libraries sharing a title but not a kind
+        become a two-typed entry, which the scope below reads as "cannot tell"."""
+        libs = [{"title": "Media", "kind": "movie"}, {"title": "media", "kind": "show"}]
+        assert library_media_types(libs) == {"media": frozenset({"movie", "tv"})}
+
+    @staticmethod
+    def _rows() -> list[tuple[str, str, str | None]]:
+        return [
+            ("plex_collection", "Keep Films", json.dumps({"library": "Films"})),
+            ("plex_collection", "Keep Series", json.dumps({"library": "Series"})),
+            ("plex_collection", "Keep Unsynced", json.dumps({"library": "Gone"})),
+            ("plex_watchlist", "My Watchlist", "{}"),
+            ("imdb", "Top 250", json.dumps({"preset": "top250"})),
+        ]
+
+    def test_a_collection_narrows_to_its_librarys_type(self) -> None:
+        lib_types = {"films": frozenset({"movie"}), "series": frozenset({"tv"})}
+        scope = own_list_media_scope(self._rows(), lib_types)
+        assert scope["keep films"] == frozenset({"movie"})
+        assert scope["keep series"] == frozenset({"tv"})
+
+    def test_an_unsynced_library_and_a_watchlist_keep_both(self) -> None:
+        """ "Gone" is in no synced library, so its collection keeps both; a watchlist always
+        does. The IMDb row is not the operator's own hand-curated list, so it is absent from
+        the map (the caller reads an absent name as both anyway)."""
+        scope = own_list_media_scope(self._rows(), {"films": frozenset({"movie"})})
+        assert scope["keep unsynced"] == frozenset({"movie", "tv"})
+        assert scope["my watchlist"] == frozenset({"movie", "tv"})
+        assert "top 250" not in scope
+
+    def test_an_ambiguous_library_keeps_both(self) -> None:
+        """A collection whose library title maps to two kinds cannot be pinned to one policy."""
+        scope = own_list_media_scope(
+            [("plex_collection", "Keep Films", json.dumps({"library": "Media"}))],
+            {"media": frozenset({"movie", "tv"})},
+        )
+        assert scope["keep films"] == frozenset({"movie", "tv"})
+
+    def test_an_empty_library_map_keeps_every_collection_on_both(self) -> None:
+        """The pre-scoping behavior: with nothing synced, every collection stays on both."""
+        scope = own_list_media_scope(self._rows(), {})
+        assert scope["keep films"] == frozenset({"movie", "tv"})
+        assert scope["keep series"] == frozenset({"movie", "tv"})
+
+    def test_two_collections_that_casefold_collide_union_to_both(self) -> None:
+        """rule 63: the scope key is a display name, which can always collide. ``list_config``'s
+        NOCASE UNIQUE and its ``func.lower`` pre-check fold ASCII only, but this key is a
+        full-Unicode ``casefold``, so a non-ASCII case pair is admitted as two rows that collapse
+        to one key. A movie-library and a show-library collection colliding there must UNION to
+        both -- overwriting would drop the loser's rule off the policy it keeps on."""
+        # "STRASSE".casefold() == "straße".casefold() == "strasse", but the two differ under
+        # NOCASE (ß is not folded), so both rows exist in the registry.
+        rows = [
+            ("plex_collection", "straße", json.dumps({"library": "Shows"})),
+            ("plex_collection", "STRASSE", json.dumps({"library": "Films"})),
+        ]
+        scope = own_list_media_scope(
+            rows, {"shows": frozenset({"tv"}), "films": frozenset({"movie"})}
+        )
+        assert scope["strasse"] == frozenset({"movie", "tv"})
+
+
+class TestAuthorableMediaScope:
+    """Which policy the list picker OFFERS a list on (#549). The fail-closed twin of
+    ``own_list_media_scope`` (rule 72): that scopes a legacy protection being CONVERTED and keeps
+    BOTH on an unreadable lookup so it never drops a live rule; this offers a NEW rule and gates
+    no deletion, so it WITHHOLDS a list whose type it cannot establish rather than offer it on a
+    type it may not hold. They agree wherever the type is actually known."""
+
+    @staticmethod
+    def _libs() -> dict[str, frozenset[str]]:
+        return {"films": frozenset({"movie"}), "series": frozenset({"tv"})}
+
+    def test_watchlist_offers_both_without_a_sync(self) -> None:
+        scope = authorable_media_scope("plex_watchlist", "{}", frozenset(), False, {})
+        assert scope == frozenset({"movie", "tv"})
+
+    def test_imdb_offers_movies_without_a_sync(self) -> None:
+        """Every sync stamps IMDb items movie, so the source is movies-only, run or not."""
+        scope = authorable_media_scope(
+            "imdb", json.dumps({"preset": "top250"}), frozenset(), False, {}
+        )
+        assert scope == frozenset({"movie"})
+
+    def test_a_collection_takes_its_library_type_without_a_sync(self) -> None:
+        movie = authorable_media_scope(
+            "plex_collection", json.dumps({"library": "Films"}), frozenset(), False, self._libs()
+        )
+        tv = authorable_media_scope(
+            "plex_collection", json.dumps({"library": "Series"}), frozenset(), False, self._libs()
+        )
+        assert movie == frozenset({"movie"})
+        assert tv == frozenset({"tv"})
+
+    def test_a_collection_with_an_unknown_library_falls_through_to_synced_content(self) -> None:
+        cfg = json.dumps({"library": "Gone"})
+        synced = authorable_media_scope(
+            "plex_collection", cfg, frozenset({"movie"}), True, self._libs()
+        )
+        never = authorable_media_scope("plex_collection", cfg, frozenset(), False, self._libs())
+        assert synced == frozenset({"movie"})  # content settled what the library could not
+        assert never == frozenset()  # neither the library nor a sync could say: withheld
+
+    def test_a_two_typed_library_falls_through_to_content(self) -> None:
+        """A title shared by a movie and a show library cannot pin the kind, so content decides."""
+        scope = authorable_media_scope(
+            "plex_collection",
+            json.dumps({"library": "Media"}),
+            frozenset({"tv"}),
+            True,
+            {"media": frozenset({"movie", "tv"})},
+        )
+        assert scope == frozenset({"tv"})
+
+    def test_a_tag_takes_its_synced_content(self) -> None:
+        one = authorable_media_scope("arr_tag", "{}", frozenset({"movie"}), True, {})
+        both = authorable_media_scope("arr_tag", "{}", frozenset({"movie", "tv"}), True, {})
+        assert one == frozenset({"movie"})
+        assert both == frozenset({"movie", "tv"})
+
+    def test_a_synced_but_empty_tag_is_offered_on_both(self) -> None:
+        """Verified and empty: a list the operator means to fill is protectable now (#549)."""
+        scope = authorable_media_scope("arr_tag", "{}", frozenset(), True, {})
+        assert scope == frozenset({"movie", "tv"})
+
+    def test_an_unsynced_tag_is_withheld_where_conversion_would_keep_both(self) -> None:
+        """The fail-closed / fail-open split (rule 72). No sync has read the tag, so its type is
+        unknown: the picker offers it on neither. A rule authored here could keep nothing, where
+        ``own_list_media_scope`` keeps an analogous unreadable list on both to hold a live rule."""
+        scope = authorable_media_scope("arr_tag", "{}", frozenset(), False, {})
+        assert scope == frozenset()
+
+
 class TestConvertListProtections:
     """The load shim for a body from before every list protected through its own keep rule.
 
@@ -3767,7 +4138,7 @@ class TestConvertListProtections:
     """
 
     @staticmethod
-    def _legacy(**over: object) -> dict[str, object]:
+    def _legacy(**over: object) -> dict[str, Any]:
         body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         body["protect_conditions"] = []
         body["keep_tags"] = ["reaper-keep"]
@@ -3778,21 +4149,26 @@ class TestConvertListProtections:
             *body["gates"],
         ]
         body.update(over)
-        return body
+        merged: dict[str, Any] = body
+        return merged
 
     @staticmethod
     def _convert(
         raw: object,
         *,
+        media_type: str = "movie",
         tag: str | None = "Tagged",
         imdb: str | None = "Top",
         collections: tuple[str, ...] = (),
-    ) -> dict[str, object] | None:
+        collection_scope: dict[str, frozenset[str]] | None = None,
+    ) -> dict[str, Any] | None:
         return convert_list_protections(
             raw,
+            media_type=media_type,
             tag_list_name=tag,
             imdb_list_name=imdb,
             collection_list_names=collections,
+            collection_media_scope=collection_scope,
         )
 
     def test_every_curated_by_hand_list_gets_its_own_rule(self) -> None:
@@ -3805,16 +4181,16 @@ class TestConvertListProtections:
         assert "whitelisted" not in self._gate_ids(converted)
 
     @staticmethod
-    def _rules(body: dict[str, object]) -> list[str]:
+    def _rules(body: dict[str, Any]) -> list[str]:
         return [
             str(c["value"])
-            for c in body.get("protect_conditions") or []  # type: ignore[union-attr]
+            for c in body.get("protect_conditions") or []
             if isinstance(c, dict) and c.get("field") == "on_list"
         ]
 
     @staticmethod
-    def _gate_ids(body: dict[str, object]) -> set[str]:
-        return {str(g.get("gate")) for g in body.get("gates") or [] if isinstance(g, dict)}  # type: ignore[union-attr]
+    def _gate_ids(body: dict[str, Any]) -> set[str]:
+        return {str(g.get("gate")) for g in body.get("gates") or [] if isinstance(g, dict)}
 
     def test_enabled_gates_become_rules_and_the_keys_leave(self) -> None:
         converted = self._convert(self._legacy())
@@ -3830,7 +4206,7 @@ class TestConvertListProtections:
         """The operator had the protection off; the Lists screen now says "not used by
         your policy" where the switch used to be."""
         legacy = self._legacy()
-        for gate in legacy["gates"]:  # type: ignore[union-attr]
+        for gate in legacy["gates"]:
             if gate["gate"] in ("whitelisted", "curated_list"):
                 gate["enabled"] = False
 
@@ -3854,8 +4230,17 @@ class TestConvertListProtections:
         refuses the scan on it rather than silently skipping (rule 38).
 
         The refusal is the operator's own words and names no gate id: they never saw
-        `whitelisted` on any screen, and what they can do about it is open Policy and save
-        (rule 21).
+        `whitelisted` on any screen (rule 21).
+
+        **What it tells them to do, and in which order, is the load-bearing part.** It used
+        to say to open Policy and save first, then add the list. Doing that loses the
+        protection for good: the save boundary holds Save while the row is there, so the only
+        way to reach a save is to take the row off, and the saved body then carries neither
+        the gate nor ``keep_tags`` -- nothing left for this conversion to fire on, and a list
+        added afterwards attaches no rule of its own. The order asserted here is the one
+        ``tests/test_api.py::TestPolicyPersistence::
+        test_adding_the_list_back_first_is_what_keeps_the_protection`` drives end to end, so
+        the sentence and the working sequence are one fact (rules 25, 144).
         """
         converted = self._convert(self._legacy(), tag=None, imdb=None)
 
@@ -3868,6 +4253,9 @@ class TestConvertListProtections:
             build_gates(PolicyBody.model_validate(converted))
         assert "whitelisted" not in str(raised.value)
         assert "curated_list" not in str(raised.value)
+        assert "Add the list back on Settings, Lists, then open Policy and save." in str(
+            raised.value
+        )
 
     def test_on_curated_list_rules_respell_as_on_list(self) -> None:
         legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
@@ -3893,6 +4281,72 @@ class TestConvertListProtections:
         assert converted is not None
         assert self._rules(converted) == ["  tagged ", "Top"]
 
+    def test_the_imdb_rule_lands_on_the_movie_body_only(self) -> None:
+        """#539: the IMDb chart is movies only, so converting a TV body must not add its
+        rule -- a TV rule naming it can never match a season and reads as a protection the
+        operator never chose (rule 38). The tag list spans both, so its rule lands on both."""
+        movie = self._convert(self._legacy(), media_type="movie")
+        tv = self._convert(self._legacy(), media_type="tv")
+
+        assert movie is not None and tv is not None
+        assert self._rules(movie) == ["Tagged", "Top"]
+        assert self._rules(tv) == ["Tagged"]
+
+    def test_the_curated_gate_strips_from_a_tv_body_with_no_replacement(self) -> None:
+        """The curated_list gate protected nothing on a TV body (IMDb is movies only), so it
+        strips clean even when no IMDb list can be named -- else a missing list would refuse
+        the TV scan over a protection that never fired there (#539, the movie body keeps
+        refusing, ``test_an_enabled_gate_with_no_target_list_keeps_its_row``)."""
+        converted = self._convert(self._legacy(), media_type="tv", imdb=None)
+
+        assert converted is not None
+        assert "curated_list" not in self._gate_ids(converted)
+        assert "Top" not in self._rules(converted)
+        # It still loads and scans: no unbuildable gate row is left behind.
+        assert build_gates(PolicyBody.model_validate(converted)) is not None
+
+    def test_an_unscoped_collection_lands_on_both_bodies(self) -> None:
+        """#545 fail-open: with no scope for it -- an unsynced, renamed, or ambiguous library --
+        a collection's rule lands on both bodies. Losing no data: an inert rule on the wrong
+        body keeps nothing, and the right body still protects. ``None`` scope is the behavior
+        before scoping existed."""
+        movie = self._convert(self._legacy(), media_type="movie", collections=("Never Reap",))
+        tv = self._convert(self._legacy(), media_type="tv", collections=("Never Reap",))
+
+        assert movie is not None and tv is not None
+        assert "Never Reap" in self._rules(movie)
+        assert "Never Reap" in self._rules(tv)
+
+    def test_a_movie_scoped_collection_lands_on_the_movie_body_only(self) -> None:
+        """#545: a collection in a movie library holds movies only, so its rule lands on the
+        movie body and NOT the TV one -- a TV rule naming it can never match a season and reads
+        as a protection the operator never chose (rule 38). Matched case-folded (rule 88)."""
+        scope = {"never reap": frozenset({"movie"})}
+        movie = self._convert(
+            self._legacy(), media_type="movie", collections=("Never Reap",), collection_scope=scope
+        )
+        tv = self._convert(
+            self._legacy(), media_type="tv", collections=("Never Reap",), collection_scope=scope
+        )
+
+        assert movie is not None and tv is not None
+        assert "Never Reap" in self._rules(movie)
+        assert "Never Reap" not in self._rules(tv)
+
+    def test_a_show_scoped_collection_lands_on_the_tv_body_only(self) -> None:
+        """The mirror of the movie case: a collection in a show library lands on TV alone."""
+        scope = {"never reap": frozenset({"tv"})}
+        movie = self._convert(
+            self._legacy(), media_type="movie", collections=("Never Reap",), collection_scope=scope
+        )
+        tv = self._convert(
+            self._legacy(), media_type="tv", collections=("Never Reap",), collection_scope=scope
+        )
+
+        assert movie is not None and tv is not None
+        assert "Never Reap" not in self._rules(movie)
+        assert "Never Reap" in self._rules(tv)
+
     def test_it_is_idempotent_on_a_converted_body(self) -> None:
         converted = self._convert(self._legacy())
         assert converted is not None
@@ -3901,6 +4355,7 @@ class TestConvertListProtections:
         assert (
             convert_list_protections(
                 json.loads(DEFAULT_MOVIE_POLICY.model_dump_json()),
+                media_type="movie",
                 tag_list_name="Tagged",
                 imdb_list_name="Top",
             )

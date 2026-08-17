@@ -93,20 +93,18 @@ walks the whole path through.
 
 ## How Reaper is built
 
-This is a hobby project, and you should know that before you point it at a library you
-care about.
+This is a hobby project. Know that before you point it at a library you care about.
 
-I work professionally in tech and have written Python for more than ten years. Software
-engineering is not my job title, and Reaper exists because I wanted it to exist and had
-the evenings to build it.
+I work in tech and I've been writing Python for over ten years. Software engineering
+isn't my job title. Reaper exists because I wanted it and had the evenings to build it.
 
-A large share of this codebase was written with AI assistance. I direct that work, read
-what comes back, and decide what ships. The architecture, the safety model, and the
-standard for what is good enough here are mine.
+A lot of this codebase was written with AI assistance. I steer the work, read what comes
+back, and decide what ships. The architecture, the safety model, and the bar for what's
+good enough are all mine.
 
-You are trusting this program with files you cannot get back. Safety is the top priority here,
-and the design decisions that come out of it are deliberate. If one of them is wrong, or could
-be better, reach out. A well-argued disagreement is welcome.
+You're trusting this program with files you can't get back. Safety comes first here, and
+the design choices that follow from that are on purpose. If you think one of them is
+wrong or you see a better way, tell me. I'd rather hear it so we can make Reaper better.
 
 ## Contributing
 

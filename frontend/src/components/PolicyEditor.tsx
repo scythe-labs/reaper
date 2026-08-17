@@ -44,11 +44,12 @@ import {
   type ProfileSettings,
   type RatingRule,
   type RatingSource,
+  type RewatchOddsFit,
   type SignalSetting,
 } from "../api";
 import { announce } from "../announce";
 import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
-import { useDocs } from "../docs/DocsContext";
+import { DocLink, HelpIcon } from "../docs/DocLink";
 import { bytes, count, humanDays } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
 import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
@@ -73,14 +74,11 @@ import {
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
-import { usePolicyProbe } from "../usePolicyProbe";
+import { SETTLE_MS, usePolicyProbe } from "../usePolicyProbe";
+import { useScanStatus } from "../useScanStatus";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
-import { SwitchConfirm } from "./SwitchConfirm";
-
-/** Re-exported from `format`, where it moved so `signalRamp` could read it without a cycle
- *  back through this module. Several sites import it from here. */
-export { humanDays };
+import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
 
 /** The DOM id of the `i`th warning rendered at one anchor. Both ends of the association are
  *  named by this one function, so the control's `aria-describedby` and the notice's `id` cannot
@@ -162,7 +160,8 @@ function WarnBlock({
 }
 
 /** The field name the server gives a warning about ONE setting of ONE protection.
- *  `engine/policy.py` builds every member of this family as `f"gates.{gate}.{setting}"`, where
+ *  `engine/policy_warnings.py` builds every member of this family as
+ *  `f"gates.{gate}.{setting}"`, where
  *  the setting is a field of the gate row itself -- which is why the suffix is typed off
  *  `GateSetting` rather than spelled out here: the shape both ends already share is the
  *  declaration, so a suffix the server cannot send does not compile (rule 144).
@@ -179,15 +178,30 @@ function gateWarningField(gate: string, setting: keyof Omit<GateSetting, "gate">
 function GateRow({
   gate,
   onChange,
+  onRemove,
   warnings,
 }: {
   gate: GateSetting;
   onChange: (g: GateSetting) => void;
+  /** Take the row out of the body entirely. What "off" means for a retired id: there is no
+   *  such protection to store in either position, and the save boundary refuses the id
+   *  whether it is on or off (`GateSettingIn._must_be_authorable`). */
+  onRemove: () => void;
   /** Every warning rendered at the `gates` anchor, unfiltered. `warningsDescribing` numbers
    *  ids by position within THAT list, so narrowing before handing it over would point each
    *  box at the wrong notice. */
   warnings: PolicyWarning[];
 }) {
+  // Sibling of the simulator's spared-by row (rule 72), and the two fallbacks deliberately
+  // DIFFER. There, an id appears once in a tally, so `UNNAMED_GATE_LABEL` reads correctly:
+  // "Another protection, 7". Here it names a switch, and two ids this build has no copy for
+  // would draw two controls carrying one name and no help, leaving the operator unable to
+  // tell which protection they were turning off -- so the label stays per-id. Prefer a
+  // title-cased slug the operator can at least tell apart over rule 21's nicer sentence,
+  // because a control has to be identifiable before it can be plain.
+  // Unreachable for every id the engine has (`GATE_META` covers all of `GateId`), and the SPA
+  // ships inside the server's own image, so reaching this at all needs a browser holding a
+  // stale bundle against a newer server. Rule 66's fallback, not a surface anyone should meet.
   const meta = GATE_META[gate.gate] ?? { label: titleCase(gate.gate), help: "" };
   // What this row's boxes point `aria-describedby` at. The block rendering these sits under
   // the whole list, so reaching one meant browsing the page in document order: a keyboard
@@ -202,7 +216,22 @@ function GateRow({
       <label className="toggle rule-toggle">
         <Switch
           checked={gate.enabled}
-          onChange={(enabled) => onChange({ ...gate, enabled })}
+          // The only switch in the product that removes its own row, so it is the only one
+          // that has to say where focus goes afterwards. Sibling of `RatingFloorRow`'s bar
+          // removal 280 lines below, which wears the same marker for the same reason
+          // (rule 72): activating a control that unmounts itself drops focus to `<body>` and
+          // the next Tab restarts at the top of a form this long (#173).
+          removesRow={meta.retired}
+          // Turning a RETIRED row off takes it out of the body rather than storing it off,
+          // because there is nothing to store: the save boundary refuses the id in either
+          // position, so `{...gate, enabled: false}` left the page unsavable and the notice
+          // below naming an exit that did not work (#627). Every live protection keeps the
+          // ordinary two-position switch, and `meta.retired` is exactly the server's
+          // "no policy row can carry this id" -- `tests/test_api_type_mirror.py` pins the two
+          // sets against each other, both directions.
+          onChange={(enabled) =>
+            meta.retired && !enabled ? onRemove() : onChange({ ...gate, enabled })
+          }
           describedBy={describes("enabled")}
         />
         <span className="rule-name">{meta.label}</span>
@@ -214,21 +243,22 @@ function GateRow({
           (`ScanConfigError`). The row rendered through the ordinary path with a live-sounding
           label and no warning, so the one switch that was stopping every scan looked like an
           ordinary healthy protection. Said beside that switch, which is what fixes it
-          (rules 25, 42). */}
+          (rules 25, 42). The sentence says what the switch now does, since the row leaves the
+          page on that click and nothing else on screen would account for it. */}
       {meta.retired && gate.enabled && (
         <Notice tone="warn" inline>
           A leftover from an older version, and Reaper won&apos;t scan while it is on. Add its list
-          again on Settings → Lists, or turn this off to stop protecting those titles.
+          again on Settings → Lists, or turn it off to remove it and stop protecting those titles.
         </Notice>
       )}
 
       {gate.enabled && meta.unit === "days" && (
         <div className="rule-control">
-          <span>at least</span>
+          <span>{meta.lead ?? "at least"}</span>
           <QuantityInput
             value={gate.threshold}
             units={TIME_UNITS}
-            min={5}
+            min={meta.min ?? 5}
             ariaLabel={`${meta.label} threshold`}
             describedBy={describes("threshold")}
             onChange={(v) => onChange({ ...gate, threshold: v })}
@@ -262,7 +292,7 @@ function GateRow({
               value={gate.window_days}
               units={TIME_UNITS}
               min={1}
-              ariaLabel="How far back recent plays count"
+              ariaLabel={meta.window.aria}
               describedBy={describes("window_days")}
               onChange={(v) => onChange({ ...gate, window_days: v })}
             />
@@ -323,7 +353,7 @@ function describeBar(rule: RatingRule): string {
 }
 
 /** The field name the server gives a warning about ONE setting of ONE rating bar.
- *  `engine/policy.py` builds every member of this family as
+ *  `engine/policy_warnings.py` builds every member of this family as
  *  `f"keep_rating_rules.{source}.{setting}"`, the same shape as the `gates.` family above and
  *  for the same reason: the source keys the row uniquely, because `PolicyBody` refuses two
  *  rules on one source. The suffix is typed off `RatingRule` so a setting the server cannot
@@ -971,42 +1001,6 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
   );
 }
 
-// ---------------------------------------------------------------------------
-// The owner's own rules: sentences in, sentences out.
-// ---------------------------------------------------------------------------
-
-export const OP_LABELS: Record<string, string> = {
-  gte: "is at least",
-  lte: "is at most",
-  eq: "is",
-  in: "is one of",
-  contains: "contains",
-};
-
-// A vocabulary field already handled by a built-in protection above -> not offered as a
-// custom rule, so the two never say the same thing twice. Only fields with no built-in gate
-// (size, all-time watchers, vote count, season rank) remain to be authored here.
-export const FIELD_TO_GATE: Record<string, string> = {
-  days_unwatched: "min_dormancy",
-  recent_watchers: "server_popularity",
-  imdb_rating: "rating_floor",
-  streaming_now: "streaming_now",
-  // `whitelisted` and `on_curated_list` were here, mapped to the two list gates. Both gates
-  // are retired -- every list now protects through an `on_list` keep rule the operator
-  // authors -- so their fields stay authorable and nothing filters them.
-};
-
-// The built-in signals already cover these fields, so they are not offered as custom
-// "remove" rules -- the two never say the same thing twice. That leaves the new metadata
-// fields (genre, requested, quality, release age, show ended) to be authored here.
-export const FIELD_TO_SIGNAL: Record<string, string> = {
-  days_unwatched: "unwatched",
-  recent_watchers: "few_watchers",
-  imdb_rating: "low_rating",
-  season_rank: "season_rank",
-  size_bytes: "size",
-};
-
 /** Live advisory beside the keep-last input: how many shows a keep-last-N value fully
  *  protects, computed from the last scan's season shape -- no re-scan, since the shape does
  *  not depend on the keep-last value.
@@ -1101,28 +1095,6 @@ const SECTIONS = [
 ] as const;
 export type PolicySectionId = (typeof SECTIONS)[number]["id"];
 type SectionId = PolicySectionId;
-
-/** A button that opens the in-app docs to a page, and optionally a section within it. The
- *  header wears it as "Help"; each section wears it as a "Learn more" that lands on the
- *  matching part of the guide. */
-function DocLink({
-  doc,
-  anchor,
-  className,
-  children,
-}: {
-  doc: string;
-  anchor?: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  const { openDoc } = useDocs();
-  return (
-    <button type="button" className={className} onClick={() => openDoc(doc, anchor)}>
-      {children}
-    </button>
-  );
-}
 
 /** A mount condition one of the anchors below sits under. An anchor claims its fields only
  *  while its guard holds, so on the other branch they fall to the catch-all stack instead of
@@ -1235,24 +1207,183 @@ export function anchorClaims(anchor: WarningAnchor, field: string): boolean {
   );
 }
 
+/** One dormancy edge in plain years: "1", "1.5", "3". The six canonical buckets
+ *  (services/rewatch.py) land on round fractions of a year, and the monotonicity merge only
+ *  ever joins adjacent ones, so every lo/hi the ladder and the echo read is still one of
+ *  those six edges. */
+function rewatchYears(days: number): string {
+  const years = Math.round((days / 365) * 2) / 2;
+  return Number.isInteger(years) ? String(years) : years.toFixed(1);
+}
+
+/** The edge above, with its unit: "1 year", "1.5 years", "5 years". */
+function rewatchYearsPhrase(days: number): string {
+  const label = rewatchYears(days);
+  return `${label} ${label === "1" ? "year" : "years"}`;
+}
+
+/** One ladder row's dormancy range in plain words: "sat under 1 year", "1 to 1.5 years",
+ *  "over 5 years". */
+function rewatchRangeLabel(lo: number, hi: number | null): string {
+  if (hi === null) return `over ${rewatchYearsPhrase(lo)}`;
+  return lo === 0
+    ? `sat under ${rewatchYearsPhrase(hi)}`
+    : `${rewatchYears(lo)} to ${rewatchYearsPhrase(hi)}`;
+}
+
+/** Why the ladder or the echo cannot show a real number right now, or `null` when the fit
+ *  is ready to read (rule 17: a fit that cannot be read says so beside the control, never a
+ *  silent absence). Shared by both, so the two cannot describe the same failure two ways.
+ *
+ *  No reload advice on the error branch (#195): this sits inside an editor whose savebar
+ *  may be holding unsaved policy edits, and a reload takes them with no ask -- the same
+ *  reason the caps-and-grace read below states its own failure bare. */
+function rewatchFitStatus(
+  fit: RewatchOddsFit | undefined,
+  isPending: boolean,
+  isError: boolean,
+  mediaType: "movie" | "tv",
+): string | null {
+  if (isPending) return "Reading your library's rewatch numbers…";
+  if (isError) return "Couldn't read your library's rewatch numbers.";
+  if (!fit || fit.blocks.length === 0) {
+    const noun = mediaType === "tv" ? "shows" : "titles";
+    return fit && fit.total_items > 0
+      ? `Not enough scanned ${noun} yet to show your library's own numbers.`
+      : "Run a scan first to see your library's own numbers.";
+  }
+  return null;
+}
+
+/** The library's own fitted rewatch ladder, read before the operator decides where to set
+ *  the percentage below it. Not itself a sub-control (rule 41): it renders whenever the fit
+ *  has something to show, switch on or off, since it is what the operator reads BEFORE
+ *  turning the hold on. */
+function RewatchLadder({
+  fit,
+  isPending,
+  isError,
+  mediaType,
+}: {
+  fit: RewatchOddsFit | undefined;
+  isPending: boolean;
+  isError: boolean;
+  mediaType: "movie" | "tv";
+}) {
+  const status = rewatchFitStatus(fit, isPending, isError, mediaType);
+  if (status || !fit) return <p className="help rule-help">{status}</p>;
+  return (
+    <dl className="rewatch-ladder">
+      {[...fit.blocks]
+        .sort((a, b) => a.lo_days - b.lo_days)
+        .map((block) => (
+          <div key={`${block.lo_days}-${String(block.hi_days)}`}>
+            <dt>{rewatchRangeLabel(block.lo_days, block.hi_days)}</dt>
+            <dd>{Math.round((100 * block.k) / block.n)}%</dd>
+          </div>
+        ))}
+    </dl>
+  );
+}
+
+/** The consequence echo beside the percentage box: what the current threshold protects,
+ *  recomputed from the fetched fit rather than read off the stored gate, so it tracks the
+ *  box as it moves, before Save. `fit.blocks` sorts ascending by dormancy, and the
+ *  monotonicity merge that built them makes the rate non-increasing with it, so the
+ *  cleared set is the leading run whose upper bound still clears the bar. */
+function rewatchEchoSentence(
+  fit: RewatchOddsFit,
+  thresholdPct: number,
+  mediaType: "movie" | "tv",
+): string {
+  const noun = mediaType === "tv" ? "shows" : "titles";
+  // Every clearing block counts, not just the leading run: the gate fires per block, and
+  // the merge only makes point RATES monotone -- an upper bound can invert across blocks
+  // of very different cohort sizes, and an echo that stopped at the first miss would then
+  // undercount what the gate actually protects (rule 62's class: the number beside a
+  // control derives from the same set the server acts on).
+  const sorted = [...fit.blocks].sort((a, b) => a.lo_days - b.lo_days);
+  const cleared = sorted.filter((block) => block.upper_bound_pct >= thresholdPct);
+  const protectedItems = cleared.reduce((sum, block) => sum + block.items, 0);
+  if (cleared.length === 0) {
+    return `At ${thresholdPct}%, nothing in your library clears that bar yet, 0 of ${count(fit.total_items)}.`;
+  }
+  const last = cleared[cleared.length - 1]!;
+  // The "under about N years" clause is only true of a contiguous leading run; on the rare
+  // non-contiguous clear, the count stands alone rather than claiming a range it isn't.
+  const contiguous = cleared.length === sorted.indexOf(last) + 1;
+  const range =
+    last.hi_days === null
+      ? "at any age"
+      : contiguous
+        ? `unwatched under about ${rewatchYearsPhrase(last.hi_days)}`
+        : null;
+  return range === null
+    ? `At ${thresholdPct}%, this protects ${count(protectedItems)} of ${count(fit.total_items)} ${noun}.`
+    : `At ${thresholdPct}%, this protects ${noun} ${range}, ${count(protectedItems)} of ${count(fit.total_items)}.`;
+}
+
 export function PolicyEditor({
   focus,
+  mediaType,
+  onMediaTypeChange,
+  section,
+  onSectionChange,
 }: {
   /** A cross-page jump target ("Turn it on in Policy → Deletion" lands on the Deletion
-   *  section). The nonce makes each jump fire once, however often the caller re-renders. */
+   *  section). The nonce makes each jump fire once, however often the caller re-renders, and it
+   *  is what separates an instruction to SCROLL from the report of where the page is scrolled to.
+   *  A jump can arrive with this page already mounted: the safety banner is on every screen. */
   focus?: { section: PolicySectionId; nonce: number } | null;
+  /** Which policy is being edited. Movies and TV are tuned separately -- keep-last-N seasons and
+   *  season rank only make sense for TV -- so this decides both the controls the page draws and
+   *  the numbers in them. Owned by `App` for the same reason `section` is: it is half of where
+   *  the operator is, and a URL naming only the other half reopens the page with the wrong
+   *  numbers on it. */
+  mediaType: "movie" | "tv";
+  /** Reported when the Movies/TV switch goes through, which is after the unsaved-edits confirm
+   *  where there is one. */
+  onMediaTypeChange: (next: "movie" | "tv") => void;
+  /** Which section is being read. Owned by `App`, not here: the rail's `aria-current` and the
+   *  address bar (`/policy/tv/deletion`) are one fact, and the URL is written where every other
+   *  nav is written. */
+  section: PolicySectionId;
+  /** Reported on a rail click, on a jump, and as the page is scrolled past a heading. */
+  onSectionChange: (next: PolicySectionId) => void;
 }) {
   const queryClient = useQueryClient();
   // Save and Discard both unmount the bar holding the pressed button (#173). Declared here,
   // above the `if (!draft)` return further down, because a hook below an early return is a
   // different hook order on the renders that take it (rule 146).
   const bar = useSavebarFocus();
-  // Movies and TV are tuned separately -- keep-last-N seasons and season rank only make
-  // sense for TV -- so this toggle picks which policy you are editing.
-  const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
+  // Where focus lands when a leftover protection's switch removes its own row. Declared with
+  // the other focus hooks for rule 146's reason, and the fallback is Save because it is the
+  // only place it CAN be: `useRemovalFocus` looks for the marked control that took the removed
+  // one's index, and only a retired row wears the marker, so the marked set is always empty
+  // afterwards and the fallback is the whole answer here rather than an edge case. Save is the
+  // right target anyway -- the removal is a draft edit and pressing it is what makes the edit
+  // real, which is the same "stable neighbour and the only thing left to do" the hook's own
+  // add-a-row fallbacks are. It is mounted whenever this can fire: the body that carries a
+  // leftover always arrives with a repair, and `dirty` counts repairs.
+  const saveRef = useRef<HTMLButtonElement>(null);
+  const protections = useRemovalFocus(saveRef);
   const { data: saved, isError: policyFailed } = useQuery({
     queryKey: ["policy", mediaType],
     queryFn: () => api.policy(mediaType),
+  });
+
+  // The rewatch card's own fitted ladder and consequence echo (#554 stage 2), on both
+  // lanes: the hold half below now renders for TV too, since a TV body carries its own
+  // rewatch_odds gate row the same way a movie body does. Keyed and refetched on
+  // `mediaType` so a lane switch never shows the other lane's fit. Independent of `draft`
+  // -- it reads the last scan's frozen numbers, not anything a save would change.
+  const {
+    data: rewatchFit,
+    isPending: rewatchFitPending,
+    isError: rewatchFitError,
+  } = useQuery({
+    queryKey: ["rewatch-odds", mediaType],
+    queryFn: () => api.rewatchOddsFit(mediaType),
   });
 
   const [draft, setDraft] = useState<PolicyBody | null>(null);
@@ -1323,7 +1454,7 @@ export function PolicyEditor({
     const id = setTimeout(() => {
       setDebounced(draft);
       setDebouncedUnmeasured(draftedUnmeasured);
-    }, 250);
+    }, SETTLE_MS);
     return () => clearTimeout(id);
   }, [draft, draftedUnmeasured]);
 
@@ -1409,11 +1540,7 @@ export function PolicyEditor({
   const gateWarnings = warningsAt("gates");
 
   // A background scan, so the "Scan now" button in the stale notice actually does something.
-  const { data: scanState } = useQuery({
-    queryKey: ["scanStatus"],
-    queryFn: api.scanStatus,
-    refetchInterval: (query) => (query.state.data?.running ? 1000 : false),
-  });
+  const scanState = useScanStatus();
   const scanning = scanState?.running ?? false;
   // No running->stopped effect here. This panel used to carry its own copy, invalidating
   // `simulate`, `snapshot` and `validate` off its own ref -- the first two already refreshed by
@@ -1516,22 +1643,14 @@ export function PolicyEditor({
 
   // The Movies/TV switch the owner asked for while the draft still holds unsaved edits.
   // Switching re-seeds the draft from the other saved policy, which would silently throw
-  // those edits away -- so it waits here for the same two-step confirm the rest of the
-  // app uses (never a native confirm()).
-  const [pendingSwitch, setPendingSwitch] = useState<"movie" | "tv" | null>(null);
-  // See SwitchConfirm.tsx: a repeat press of the same segment changes no state, so focus is
-  // keyed on this rather than on `pendingSwitch`.
-  const [switchNonce, setSwitchNonce] = useState(0);
-
-  // The notice only exists because there are edits to lose, so it goes when they do -- by
-  // Discard, or by a Save that stores them. It used to survive both, still warning that a
-  // switch "discards them" and still offering a red "Discard and switch" for changes that
-  // no longer existed (B-31). Keyed on `dirty` rather than on the Discard handler so the
-  // save path is covered too; the switch itself is left to the operator, who asked to
-  // discard, not to discard and go.
-  useEffect(() => {
-    if (!dirty) setPendingSwitch(null);
-  }, [dirty]);
+  // those edits away, so it waits for the same two-step confirm the rest of the app uses
+  // (never a native confirm()). `useSwitchConfirm` is the shared caller half.
+  //
+  // The confirm stays HERE while the value it commits lives in `App`: `dirty` is this
+  // component's, and the draft it guards is too. `App` is handed the switch only once the
+  // operator has said the edits can go, so the address bar cannot name a policy that is not on
+  // screen (rule 146).
+  const confirmSwitch = useSwitchConfirm(mediaType, dirty, onMediaTypeChange);
 
   // Section jump targets for the rail. Memoized (the refs themselves are stable) so the
   // cross-page-jump effect below can depend on the record without refiring every render.
@@ -1543,20 +1662,39 @@ export function PolicyEditor({
     () => ({ flags: flagsRef, kept: keptRef, pace: paceRef, deletion: deletionRef }),
     [],
   );
-  const [activeSection, setActiveSection] = useState<SectionId>("flags");
+  // A rail click and a cross-page jump both STATE a section. The spy below measures one, and the
+  // two disagree wherever a click lands on the last screenful: scrolling to "Pace and limits"
+  // reaches the end of the document, and that is the same position as scrolling down to read
+  // Deletion. The rects are identical, so the spy cannot tell them apart and it overwrote the
+  // click, marking a section nobody asked for (#795). What was stated holds until the page moves
+  // again, which is the one thing that does separate the two.
+  // The position a click or a jump left the page at. Which section it named is already in
+  // `section`, so only the position is kept.
+  const statedAt = useRef<number | null>(null);
+  const goToSection = useCallback(
+    (id: SectionId) => {
+      // Instant, not smooth: smooth scrolling silently no-ops in some environments, and a jump
+      // that always lands beats an animation that sometimes doesn't happen at all. It also
+      // finishes before the next line runs, so the position recorded is where the page ended up.
+      sectionRefs[id].current?.scrollIntoView({ block: "start" });
+      statedAt.current = window.scrollY;
+      onSectionChange(id);
+    },
+    [sectionRefs, onSectionChange],
+  );
 
-  // A cross-page jump lands on a specific section. The editor may still be loading when
-  // the jump arrives (the headings do not exist until the draft renders), so the draft is
-  // a dependency: once it loads, this refires and consumes the nonce exactly once.
+  // A cross-page jump lands on a specific section, and so does a cold load on a URL naming one
+  // (`/policy/tv/deletion`). `App` seeds the same aim from both, so they scroll through one path.
+  // The editor may still be loading when the aim arrives (the headings do not exist until the
+  // draft renders), so the draft is a dependency: once it loads, this refires and consumes the
+  // nonce exactly once.
   const handledFocus = useRef(0);
   useEffect(() => {
     if (!focus || draft === null || focus.nonce === handledFocus.current) return;
-    const target = sectionRefs[focus.section]?.current;
-    if (!target) return;
+    if (!sectionRefs[focus.section]?.current) return;
     handledFocus.current = focus.nonce;
-    target.scrollIntoView({ block: "start" });
-    setActiveSection(focus.section);
-  }, [focus, sectionRefs, draft]);
+    goToSection(focus.section);
+  }, [focus, sectionRefs, draft, goToSection]);
 
   // The rail states the section being READ, which is what its aria-current="page" claims.
   // Until this effect existed that claim only held for someone who had clicked the rail:
@@ -1573,7 +1711,13 @@ export function PolicyEditor({
   // document ends first, so Deletion -- the section that arms a removal, and the one this
   // finding named -- would have stayed unmarkable. Measuring from positions has no such
   // dead zone. The cost is four rect reads, at most once a frame, and only while this page
-  // is mounted; an unchanged section is a React state bail-out, not a re-render.
+  // is mounted; an unchanged section is a React state bail-out, not a re-render. That still
+  // holds now the section lives in `App`: a scroll frame that reports the section already on
+  // screen hands the same value to the same setter, and React drops it without rendering.
+  //
+  // `section` is deliberately not a dependency below. A dependency re-registers the listeners,
+  // and registering runs `pick` again, which on a page too short to scroll answers "the first
+  // section" and would take a rail click straight back off the section it just landed on.
   const ready = draft !== null;
   useEffect(() => {
     if (!ready) return;
@@ -1584,11 +1728,19 @@ export function PolicyEditor({
     if (first === undefined) return;
 
     const pick = () => {
+      // A click or a jump named this section and the page has not moved since, so nothing
+      // measured here is more current than what was asked for. One pixel of slack, because a
+      // scroll position is fractional on a zoomed page.
+      const said = statedAt.current;
+      if (said !== null) {
+        if (Math.abs(window.scrollY - said) <= 1) return;
+        statedAt.current = null;
+      }
       // A page that does not scroll is read whole, so the first section is the one you are
       // on; there is no "further down" to have reached.
       const scrollable = document.documentElement.scrollHeight > window.innerHeight + 1;
       if (!scrollable) {
-        setActiveSection(first[0]);
+        onSectionChange(first[0]);
         return;
       }
       // At the very bottom nothing more can reach the line, so the last heading on screen
@@ -1601,7 +1753,7 @@ export function PolicyEditor({
         const top = el.getBoundingClientRect().top;
         if (atBottom ? top < window.innerHeight : top <= line + 1) current = id;
       }
-      setActiveSection(current);
+      onSectionChange(current);
     };
 
     let frame = 0;
@@ -1622,7 +1774,7 @@ export function PolicyEditor({
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
     };
-  }, [ready, sectionRefs]);
+  }, [ready, sectionRefs, onSectionChange]);
 
   // The draft only ever seeds from a successful read, so a failed one would otherwise
   // leave the whole workspace saying "Loading…" for good. Say what happened instead.
@@ -1681,19 +1833,32 @@ export function PolicyEditor({
   const policyHeldBecause =
     pointsLeft !== 0 ? "the points add up to 100" : 'the "Can\'t save this" problem is fixed';
 
-  const switchMediaType = (next: "movie" | "tv") => {
-    if (next === mediaType) return;
-    if (dirty) {
-      setPendingSwitch(next);
-      setSwitchNonce((n) => n + 1);
-    } else {
-      setPendingSwitch(null);
-      setMediaType(next);
-    }
-  };
-
   const kind = mediaType === "tv" ? "TV" : "movie";
   const otherKind = mediaType === "tv" ? "movie" : "TV";
+
+  // The rewatch card's lane-dependent copy, both halves. `bar` and `barLabel` are one
+  // sentence in two places, the span and the screen reader's label, so they are written
+  // together.
+  const rewatchCopy =
+    mediaType === "tv"
+      ? {
+          name: "Keep shows most likely to be rewatched",
+          help: "A show people here keep coming back to will probably be watched again. It only lowers the score.",
+          bar: "watched again by anyone at least",
+          barLabel: "Watched again by anyone at least",
+          holdName: "Keep shows most likely to be rewatched above a percentage",
+          holdHelp:
+            "Keeps a show outright, whatever it scored, when its chance of being watched again is at or above your percentage.",
+        }
+      : {
+          name: "Keep titles most likely to be rewatched",
+          help: "A title people here keep coming back to will probably be watched again. It only lowers the score.",
+          bar: "watched by anyone at least",
+          barLabel: "Watched by anyone at least",
+          holdName: "Keep titles most likely to be rewatched above a percentage",
+          holdHelp:
+            "Keeps a title outright, whatever it scored, when its chance of being watched again is at or above your percentage.",
+        };
   const preset = activePreset(draft);
   const presetHelp =
     PRESETS.find((p) => p.id === preset)?.help ?? "Custom: your own tuning, not a preset.";
@@ -1796,11 +1961,11 @@ export function PolicyEditor({
             </p>
           </div>
           <div className="policy-head-actions">
-            {/* switchMediaType holds the two-step confirm when the draft has unsaved edits. */}
+            {/* The request is refused into the two-step confirm when the draft has edits. */}
             <Segmented
               fill
               value={mediaType}
-              onChange={switchMediaType}
+              onChange={confirmSwitch.request}
               label="Which policy"
               options={[
                 ["movie", "Movies"],
@@ -1808,21 +1973,7 @@ export function PolicyEditor({
               ]}
             />
             <DocLink doc="understanding-policy" className="doc-help">
-              <svg
-                viewBox="0 0 24 24"
-                width="15"
-                height="15"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="9" />
-                <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4" />
-                <path d="M12 17h.01" />
-              </svg>
+              <HelpIcon />
               Help
             </DocLink>
           </div>
@@ -1842,17 +1993,14 @@ export function PolicyEditor({
             {notice.text}
           </Notice>
         ))}
-        {pendingSwitch !== null && (
+        {confirmSwitch.pending !== null && (
           <SwitchConfirm
-            nonce={switchNonce}
+            nonce={confirmSwitch.nonce}
             message={`You have unsaved ${kind} policy changes. Switching to ${
-              pendingSwitch === "tv" ? "TV" : "Movies"
+              confirmSwitch.pending === "tv" ? "TV" : "Movies"
             } discards them.`}
-            onDiscard={() => {
-              setPendingSwitch(null);
-              setMediaType(pendingSwitch);
-            }}
-            onKeep={() => setPendingSwitch(null)}
+            onDiscard={confirmSwitch.discard}
+            onKeep={confirmSwitch.keep}
           />
         )}
 
@@ -1860,21 +2008,15 @@ export function PolicyEditor({
           {SECTIONS.map((s) => (
             <button
               key={s.id}
-              className={activeSection === s.id ? "settings-tab active" : "settings-tab"}
+              className={section === s.id ? "settings-tab active" : "settings-tab"}
               // Reserve the bold (active) width so switching sections never shifts the rail.
               data-label={s.label}
               // The section being read is stated, not just colored, the same as the
               // masthead and the settings rail. True on a scroll as well as a click: the
               // observer above keeps activeSection on whatever heading has reached the
               // read line.
-              aria-current={activeSection === s.id ? "page" : undefined}
-              onClick={() => {
-                // Instant, not smooth: smooth scrolling silently no-ops in some
-                // environments, and a jump that always lands beats an animation that
-                // sometimes doesn't happen at all.
-                sectionRefs[s.id].current?.scrollIntoView({ block: "start" });
-                setActiveSection(s.id);
-              }}
+              aria-current={section === s.id ? "page" : undefined}
+              onClick={() => goToSection(s.id)}
             >
               {s.label}
             </button>
@@ -2048,19 +2190,38 @@ export function PolicyEditor({
           only ever <em>keep</em> a file, never mark one for removal.
         </p>
 
-        <ul className="rule-list">
+        <ul className="rule-list" ref={protections.ref as RefObject<HTMLUListElement>}>
           {draft.gates.map((gate, i) => {
             const setGate = (g: GateSetting) => {
               const gates = [...draft.gates];
               gates[i] = g;
               update({ gates });
             };
+            // Only a retired row reaches this, and it is the one edit that is a REMOVAL: the
+            // id cannot be saved in either switch position, so taking it off means taking it
+            // out. By index rather than by id, like `setGate` above.
+            //
+            // `removing(0)`, never `removing(i)`: the index is into the MARKED controls, and
+            // only a retired row wears the marker, so its position among all the protections
+            // is not its position among the removable ones. That mismatch is the hazard
+            // `useRemovalFocus`'s other call sites avoid by marking every row.
+            const dropGate = () => {
+              protections.removing(0);
+              update({ gates: draft.gates.filter((_, j) => j !== i) });
+            };
             // A protection that carries its own settings renders as a card below the plain
-            // rows (the rating card), so the visual weight says which protections have more
-            // to configure. It is skipped here.
-            if (gate.gate === "rating_floor") return null;
+            // rows (the rating card, and the rewatch-odds hold folded into stage 1's rewatch
+            // card), so the visual weight says which protections have more to configure.
+            // Both are skipped here.
+            if (gate.gate === "rating_floor" || gate.gate === "rewatch_odds") return null;
             return (
-              <GateRow key={gate.gate} gate={gate} onChange={setGate} warnings={gateWarnings} />
+              <GateRow
+                key={gate.gate}
+                gate={gate}
+                onChange={setGate}
+                onRemove={dropGate}
+                warnings={gateWarnings}
+              />
             );
           })}
         </ul>
@@ -2284,6 +2445,126 @@ export function PolicyEditor({
           </div>
         )}
 
+        {/* Both halves live on both lanes: the keep scores a TV body off show-level
+            re-watch counts and a movie body off title-level ones (`keep_configs()`,
+            engine/policy.py), and `PolicyBody._rewatch_odds_row` appends a rewatch_odds
+            gate row to either body, so the hold's `findIndex` below finds it on both. */}
+        <div className="rules-card">
+          <div className="card-head">
+            <label className="toggle">
+              <Switch
+                checked={draft.rewatch_keep_enabled}
+                onChange={(rewatch_keep_enabled) => update({ rewatch_keep_enabled })}
+              />
+              <span className="rule-name">{rewatchCopy.name}</span>
+            </label>
+            <DocLink doc="understanding-policy" anchor="rewatch-keep" className="doc-learn">
+              Learn more
+            </DocLink>
+          </div>
+          <p className="help rule-help">{rewatchCopy.help}</p>
+          {draft.rewatch_keep_enabled && (
+            <>
+              <div className="rule-control">
+                <span>{rewatchCopy.bar}</span>
+                <FixedQuantity
+                  value={draft.rewatch_min_viewings}
+                  suffix="times"
+                  min={1}
+                  max={1000}
+                  width="narrow"
+                  ariaLabel={rewatchCopy.barLabel}
+                  onChange={(v) => update({ rewatch_min_viewings: v })}
+                />
+              </div>
+              <div className="rule-control">
+                <span>most recently within</span>
+                <QuantityInput
+                  value={draft.rewatch_recent_days}
+                  units={TIME_UNITS}
+                  min={1}
+                  ariaLabel="Most recently within"
+                  onChange={(v) => update({ rewatch_recent_days: v })}
+                />
+              </div>
+              <div className="rule-control">
+                <span>lowers the score by</span>
+                <FixedQuantity
+                  value={draft.rewatch_keep_discount}
+                  suffix="points"
+                  min={1}
+                  max={50}
+                  width="narrow"
+                  ariaLabel="Lowers the score by"
+                  onChange={(v) => update({ rewatch_keep_discount: v })}
+                />
+              </div>
+            </>
+          )}
+
+          {/* The hold, stage 2's opt-in hard companion (#554): the grouped card's second
+              half, on both lanes now -- same grammar as movies, per "Approved with the
+              mockups, 2026-08-13" in docs/history/REWATCH_PLAN.md. Wired to draft.gates the
+              same way RatingFloorRow is above, by index. */}
+          {(() => {
+            const gi = draft.gates.findIndex((g) => g.gate === "rewatch_odds");
+            const hold = gi >= 0 ? draft.gates[gi] : undefined;
+            // Always present on a loaded body on either lane (PolicyBody._rewatch_odds_row
+            // appends it on load), so undefined only guards a body this editor has not
+            // re-seeded yet.
+            if (!hold) return null;
+            const setHold = (g: GateSetting) => {
+              const gates = [...draft.gates];
+              gates[gi] = g;
+              update({ gates });
+            };
+            const status = rewatchFitStatus(
+              rewatchFit,
+              rewatchFitPending,
+              rewatchFitError,
+              mediaType,
+            );
+            return (
+              <>
+                <div className="policy-divider" />
+                <label className="toggle rule-toggle">
+                  <Switch
+                    checked={hold.enabled}
+                    onChange={(enabled) => setHold({ ...hold, enabled })}
+                  />
+                  <span className="rule-name">{rewatchCopy.holdName}</span>
+                </label>
+                <p className="help rule-help">{rewatchCopy.holdHelp}</p>
+                <RewatchLadder
+                  fit={rewatchFit}
+                  isPending={rewatchFitPending}
+                  isError={rewatchFitError}
+                  mediaType={mediaType}
+                />
+                {hold.enabled && (
+                  <>
+                    <div className="rule-control">
+                      <span>kept when the chance is at least</span>
+                      <FixedQuantity
+                        value={hold.threshold}
+                        suffix="%"
+                        min={1}
+                        max={99}
+                        width="narrow"
+                        ariaLabel="Kept when the chance is at least"
+                        onChange={(v) => setHold({ ...hold, threshold: v })}
+                      />
+                    </div>
+                    <p className="help rule-help">
+                      {status ?? rewatchEchoSentence(rewatchFit!, hold.threshold, mediaType)}
+                    </p>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </div>
+
         <KeepRulesEditor
           conditions={draft.protect_conditions}
           keeps={draft.graded_keeps}
@@ -2296,7 +2577,7 @@ export function PolicyEditor({
         />
         {/* Both lanes of this card, because both can be warned about and the card is the
             one surface either can be fixed from. `protect_conditions` carries the
-            gate-off popularity window (`engine/policy.py:inspect`), which has nowhere
+            gate-off popularity window (`engine/policy_warnings.py inspect`), which has nowhere
             else to go: with that protection off its window control is not rendered. */}
         <WarnBlock anchor="keep_rules" warnings={warningsAt("keep_rules")} />
 
@@ -2480,8 +2761,13 @@ export function PolicyEditor({
                   )}
                   onChange={(v) => updatePace({ max_unmeasured_per_run: v })}
                 />
+                {/* The clause about deleting is the only one an operator reads BEFORE
+                    raising this, since the server's warning fires once it is already above
+                    zero. Without it the help explained a keep and the control did the
+                    opposite (#688). */}
                 <span className="help">
-                  Kept by default. Size caps can't measure them. Set 0 to always keep, 25 at most.
+                  Kept by default. Size caps can't measure them. Above 0, Reaper can delete that
+                  many. 25 at most.
                 </span>
                 <WarnBlock
                   anchor="max_unmeasured_per_run"
@@ -2548,9 +2834,14 @@ export function PolicyEditor({
                   which is built by re-validating the draft and so can never carry anything about
                   how the policy loaded. No guard against the louder `fell_back` is needed: that
                   one is returned alone (`services/profiles.py`), because nothing of the stored
-                  body survived for a second repair to be about. */}
+                  body survived for a second repair to be about.
+
+                  `standing`, for the reason the `top` half already carries: a repair is carried
+                  by the fetch, so it is the state of the page from its first paint and not a
+                  reply to anything the operator pressed. Without it this half was an alert that
+                  interrupted the moment the bar appeared, while its twin stayed silent. */}
               {repairNotices.savebar.map(({ id, notice }) => (
-                <Notice key={id} tone={notice.tone} className="budget-notice" as="span">
+                <Notice key={id} tone={notice.tone} className="budget-notice" as="span" standing>
                   {notice.text}
                 </Notice>
               ))}
@@ -2572,6 +2863,7 @@ export function PolicyEditor({
             </button>
             <button
               className="primary"
+              ref={saveRef}
               // Enabled when EITHER half can be written. A blocked policy no longer holds
               // pace and limits hostage (PR-7); the line above says which half is waiting.
               disabled={(!willSavePolicy && !willSavePace) || saving}

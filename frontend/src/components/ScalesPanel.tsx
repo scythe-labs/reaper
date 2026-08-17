@@ -9,36 +9,28 @@
 // its real card in Review, exactly like the old reclaimable chips did.
 
 import { useId, useState } from "react";
-import { useSlowWait } from "../announce";
 import type { PersonDetail, PersonTitle, QuotaLine, Verdict } from "../api";
 import { bytes, carriesYear, count, date, itemBytes, titleWithYear } from "../format";
+import { BalanceBar } from "./BalanceBar";
+import { PosterFallback } from "./PosterFallback";
+import { ExternalMark } from "./queueIcons";
 import { UnmatchedList } from "./UnmatchedList";
 import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
-import { WhyShell } from "./WhyShell";
-import { Notice } from "./Notice";
+import { PanelFallback, WhyShell } from "./WhyShell";
 
 function initial(name: string): string {
   const c = name.trim()[0];
   return c ? c.toUpperCase() : "?";
 }
 
-/** The film-strip mark a title falls back to when it has no poster, or the image fails. */
-export function PosterFallback() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
-      <path d="M4 5h16v14H4z" stroke="currentColor" strokeWidth="1.6" />
-      <path
-        d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4"
-        stroke="currentColor"
-        strokeWidth="1.2"
-      />
-    </svg>
-  );
-}
-
 /** The title's poster, proxied from Plex through /api/poster, with the film-strip mark as a
  *  fallback when there is no poster key or the image cannot load. */
 function Poster({ url }: { url: string | null }) {
+  // No reset effect, unlike the queue's poster and the two backdrops (`useArtFallback`). The
+  // row key this sits under carries the title's id when it has one, so a different title is
+  // a different component and the flag starts false. That key falls back to a display title,
+  // which rule 19 forbids, so the first branch is what holds this up. Change it and the flag
+  // latches: one failed load leaves the film strip on every title the row is reused for.
   const [failed, setFailed] = useState(false);
   return (
     <span className="scales-poster" aria-hidden="true">
@@ -92,22 +84,7 @@ function ProfileName({ id, name, href }: { id: string; name: string; href: strin
       title="Open this person in the request portal"
     >
       <h2 id={id}>{name}</h2>
-      <svg
-        className="scales-ext"
-        viewBox="0 0 16 16"
-        width="13"
-        height="13"
-        fill="none"
-        aria-hidden="true"
-      >
-        <path
-          d="M6 3h7v7M13 3L4 12"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      <ExternalMark className="scales-ext" />
     </a>
   );
 }
@@ -233,9 +210,6 @@ export function ScalesPanel({
   const headingId = useId();
   const granted = detail.gb_granted_bytes;
   const reclaim = detail.reclaimable_bytes;
-  const used = Math.max(0, granted - reclaim);
-  const usedPct = granted > 0 ? (100 * used) / granted : 100;
-  const reclaimPct = granted > 0 ? (100 * reclaim) / granted : 0;
   // How far Reaper can see into this person's watching, from the one derivation the board's
   // cards also read (rule 72). Null where there is no reading to report -- no Plex account
   // behind the request account, or an empty mirror -- because `played_by_them` is then
@@ -290,18 +264,7 @@ export function ScalesPanel({
 
       <section className="block">
         <h3>The balance</h3>
-        <div
-          className="fair-balance"
-          role="img"
-          aria-label={
-            hasReclaim
-              ? `${bytes(used)} kept, ${bytes(reclaim)} the scan would reclaim`
-              : `${bytes(used)} kept, nothing reclaimable`
-          }
-        >
-          <i className="used" style={{ width: `${usedPct}%` }} />
-          {reclaimPct > 0 && <i className="reclaim" style={{ width: `${reclaimPct}%` }} />}
-        </div>
+        <BalanceBar granted={granted} reclaim={reclaim} hasReclaim={hasReclaim} />
         <div className="scales-tiles">
           <div className="fair-stat">
             <span className="fair-stat-num">{bytes(granted)}</span>
@@ -417,36 +380,16 @@ export function ScalesPanel({
 }
 
 /** What the panel's column shows while the breakdown is loading, or when it could not be
- *  loaded. The column is reserved the moment a person is picked, so a blank would read as a
- *  hang; and it keeps its own close, or a failed fetch would strand the reader in split view.
- *  Mirrors the why-panel's fallback. */
+ *  loaded. `PanelFallback` in `WhyShell.tsx` is the whole of it, `WhyPanelFallback` its twin,
+ *  and these three strings all that differ. */
 export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
-  const headingId = useId();
-  // Null on the failure arm, which reaches `Notice`'s `role="alert"` and speaks for itself.
-  // Mirrors `WhyPanelFallback` (rule 72).
-  useSlowWait(error ? null : "Still gathering this person's requests.");
   return (
-    <WhyShell headingId={headingId} onClose={onClose}>
-      {error ? (
-        <>
-          <div className="why-head">
-            <h2 id={headingId}>Something went wrong</h2>
-          </div>
-          <Notice tone="error">
-            Couldn't load this person's requests. Close this panel and click the card to try again.
-          </Notice>
-        </>
-      ) : (
-        // Live region dropped, sentence moved to `announce.tsx` (#332), as in `WhyPanelFallback`.
-        <div className="why-loading">
-          <span className="spinner spinner-lg" aria-hidden="true" />
-          {/* The loading branch has no heading to point at, so the lead carries the name. A
-              panel named "Gathering their requests…" is what is true at that moment. */}
-          <p className="why-loading-lead" id={headingId}>
-            Gathering their requests…
-          </p>
-        </div>
-      )}
-    </WhyShell>
+    <PanelFallback
+      error={error}
+      onClose={onClose}
+      waiting="Still gathering this person's requests."
+      loading="Gathering their requests…"
+      failure="Couldn't load this person's requests. Close this panel and click the card to try again."
+    />
   );
 }

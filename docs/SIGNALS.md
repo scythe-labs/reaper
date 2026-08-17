@@ -58,24 +58,38 @@ data, same code, different denominator.
 Of films last played *N* days before the cutoff, the share played again within the
 following year — over the **correct** population:
 
-| Dormant for | Rewatched within a year |
-|---|---|
-| 0–365 days | **~61%** |
-| 365–548 | ~31% |
-| 548–730 | ~32% |
-| 730–1095 | ~30% |
-| 1095–1825 | ~19% |
-| 1825+ | **~13%** |
+The second column is a de-identified Tautulli dump from a different server, 1,904 movies
+and 84,235 plays, replayed the same way at the same cutoff (2026-08-16).
+
+| Dormant for | First library | Second library |
+|---|---|---|
+| 0–365 days | **~61%** | ~28% |
+| 365–548 | ~31% | ~20% |
+| 548–730 | ~32% | ~19% |
+| 730–1095 | ~30% | ~15% |
+| 1095–1825 | ~19% | ~12% |
+| 1825+ | **~13%** | ~8% |
 
 ### There is no cliff. Nothing is ever free to delete.
 
 A film dormant for **five years** still has a double-digit chance of being watched next
-year. An active library really is active: the share of films that had *never* been
-played at all was under one percent, and a film watched in the past year is more likely
-than not to be watched again.
+year on the first library, and close to one in twelve on the second. Deletion is never
+free on either. There is only **cheaper** and **dearer**. Any tool that tells you a
+five-year-old file is safe to remove is guessing.
 
-Deletion is never free here. There is only **cheaper** and **dearer**. Any tool that
-tells you a five-year-old file is safe to remove is guessing.
+### The shape carries across servers. The rates do not.
+
+Every rate on the second library is about half the first, and the ordering is identical:
+the curve falls with dormancy, slowly, and never reaches zero. So the shape is a property
+of how people watch, and the rates are a property of one audience. A number tuned against
+the first library sits somewhere else on the second, which is why `MinDormancyGate`
+enforces the operator's own stored threshold and nothing in the app fits a curve to it.
+
+The two servers also disagree about what a library holds. On the first, under one percent
+of films had never been played at all. On the second it was 24%, and those films were not
+free either: 7.4% of them were played in the year after the cutoff. Reaper measures their
+dormancy from the day they arrived (`engine/dormancy.reference_instant`), which is what
+keeps a quarter of that library out of a five-decade dormancy reading.
 
 ---
 
@@ -88,6 +102,12 @@ Measured on one library; the direction of each change is the point, not the digi
 | Original (size weighted, no dormancy gate) | 18% | 22% | +18% |
 | Current default | **12%** | 17% | **+26%** |
 | **Dormancy alone** | 12% | 17% | **+27%** |
+
+The second library was backtested the same way, shipped defaults only. It condemned 537 of
+1,761 films and 7.8% of them were played in the following year, against 15.1% for every film
+present. Among the films that cleared the dormancy gate the rate was 9.8%, so the score
+removed a fifth of the regret the gate alone left. Lower regret than the first library and
+lower lift, which is what a flatter rewatch curve does to both numbers at once.
 
 Three things follow.
 
@@ -125,18 +145,26 @@ countdown itself holds nothing back.)
 
 ## How to check any future signal
 
-The backtest reports **lift**: the regret rate of the condemned set versus what you
-would expect by picking randomly among films **of the same age**.
+Every *verdict* above — worth doing, contributing nothing, worse than nothing — came from
+**lift**: the regret rate of the condemned set versus what you would expect by picking
+randomly among films **of the same age**. The rewatch table and the regret rates it is
+computed from are raw probabilities, not lift, which is the distinction the population
+warning below turns on.
 
 ```
 lift = (age_matched_expected_regret − actual_regret) / age_matched_expected_regret
 ```
 
-- **lift > 0.05** — the scorer picks better than age alone. This is the code's own bar
-  (`backtest.beats_random`): at or below it the backtest prints "not beating age alone,
-  do not arm this policy," so a merely positive lift does not earn its keep.
+- **lift > 0.05** — the scorer picks better than age alone. Below that bar a signal does
+  not earn its keep, because it is not beating the one thing you get for free.
 - **lift ≈ 0** — the signal adds nothing dormancy was not already carrying.
 - **lift < 0** — the signal displaces dormancy, and the scorer does worse than age alone.
+
+**Reaper does not compute this, and there is no plan for it to.** The engine that did was a
+lab instrument for building Reaper, and it was deleted rather than wired: it had banked its
+finding, which is this file. Measuring a new signal means measuring it the way these were —
+off a real library's history, outside the app. #553 and #554 are the successors, and neither
+is this: they weigh a returned title down and estimate a future rewatch, both live.
 
 **Before believing any of it, check the population.** If the baseline is computed over
 a different set of items than the scorer judges, the number is not merely imprecise —
@@ -148,13 +176,12 @@ The rewatch curve varies with **the audience that produced it**: how many people
 how often they return. Every curve in this file was measured on one library, so its shape
 carries that library's viewing habits.
 
-**Today every prior in use is the one above.** `engine/calibration.derive` can fit a curve
-from the owner's own Tautulli history, and is tested, but it has **no caller anywhere in
-`src/`** — not even the backtest, which imports only `RewatchPrior` and `NotCalibratedError`
-from it. Its only callers are the tests, and the backtest that would consume it is itself
-unreachable (see `docs/STATUS.md`, M3c and M3g). So `backtest.FALLBACK_REWATCH_PRIOR` is
-what anything actually reads, and it is one library's curve.
+**The curve behind the score is still borrowed.** Every gate and signal above reads only
+the table on this page, and nothing in the scorer refits it. Stage 2 of #554 changed the
+*display*, not the score: at every scan, Reaper now fits a rewatch-probability curve from
+the operator's own watch history and shows it, block by block, in the why-panel and the
+Policy page, never feeding a score or a gate's default.
 
-Treat the numbers here as a shape to reason about, never as a measurement of *your* server.
-The machinery to label a borrowed curve exists (`backtest.prior_is_derived`) and will start
-reporting the moment the backtest gets a route.
+Treat the numbers here as a shape to reason about, never as a measurement of *your* server:
+they are what the scorer still uses, not what your library's own fit shows. #554 is where
+that fit lives now, for display and its one opt-in protective hold.

@@ -13,6 +13,7 @@ import { api, type LogLine } from "../api";
 import { count } from "../format";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
+import { SetRow } from "./SetRow";
 
 const LEVEL_RANK: Record<string, number> = {
   DEBUG: 10,
@@ -273,45 +274,54 @@ export function LogsPanel() {
       <div className="set-group log-level-group">
         <h3>Logging</h3>
         <div className="set-rows">
-          <div className="set-row">
-            <span className="set-label">Logging level</span>
-            <p className="help">
-              How much Reaper writes, both here and in the container output. Info is the everyday
-              setting. Debug is chatty and best while chasing a problem. Takes effect immediately,
-              no restart.
-            </p>
-            <div className="set-control">
-              <select
-                value={recordLevel ?? "INFO"}
-                disabled={setLevel.isPending || recordLevel === null}
-                aria-label="Logging level"
-                onChange={(e) => setLevel.mutate(e.target.value)}
-              >
-                <option value="DEBUG">Debug</option>
-                <option value="INFO">Info</option>
-                <option value="WARNING">Warning</option>
-              </select>
-            </div>
-          </div>
+          <SetRow
+            label="Logging level"
+            help={
+              <>
+                How much Reaper writes, both here and in the container output. Info is the everyday
+                setting. Debug is chatty and best while chasing a problem. Takes effect immediately,
+                no restart.
+              </>
+            }
+          >
+            <select
+              value={recordLevel ?? "INFO"}
+              disabled={setLevel.isPending || recordLevel === null}
+              aria-label="Logging level"
+              onChange={(e) => setLevel.mutate(e.target.value)}
+            >
+              <option value="DEBUG">Debug</option>
+              <option value="INFO">Info</option>
+              <option value="WARNING">Warning</option>
+              {/* REAPER_LOG_LEVEL also takes ERROR, which this picker does not offer:
+                  hiding warnings from a tool that deletes files serves nobody. Render it
+                  while it is the live level anyway, or a box with no matching option shows
+                  blank and the picker stops saying what Reaper is recording. Picking any
+                  other level stores that one and drops this option (#700). */}
+              {recordLevel === "ERROR" && <option value="ERROR">Error</option>}
+            </select>
+          </SetRow>
           {/* A button, not a box, so it releases the control track (`.set-row-plain`). */}
-          <div className="set-row set-row-plain">
-            <span className="set-label">Log files</span>
-            <p className="help">
-              Save the whole log to your computer, handy for a bug report.
-              {logs.data
-                ? ` Reaper keeps the newest ${count(logs.data.files_kept)} files on the server, a fuller trail than the window above.`
-                : " Reaper keeps a fuller trail on the server than the window above."}
-            </p>
-            <div className="set-control">
-              <button
-                className="primary"
-                onClick={() => download.mutate()}
-                disabled={download.isPending}
-              >
-                {download.isPending ? "Preparing…" : "Download logs"}
-              </button>
-            </div>
-          </div>
+          <SetRow
+            variant="plain"
+            label="Log files"
+            help={
+              <>
+                Save the whole log to your computer, handy for a bug report.
+                {logs.data
+                  ? ` Reaper keeps the newest ${count(logs.data.files_kept)} files on the server, a fuller trail than the window above.`
+                  : " Reaper keeps a fuller trail on the server than the window above."}
+              </>
+            }
+          >
+            <button
+              className="primary"
+              onClick={() => download.mutate()}
+              disabled={download.isPending}
+            >
+              {download.isPending ? "Preparing…" : "Download logs"}
+            </button>
+          </SetRow>
         </div>
         {setLevel.error && <Notice tone="error">{setLevel.error.message}</Notice>}
         {download.error && (

@@ -19,6 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api, type Run, type RunReport } from "../api";
+import { DegradedDocLink } from "../docs/DocLink";
 import { bytes, count, date, souls } from "../format";
 import { reapBlockers } from "../reapReadiness";
 import { usePlexTrash, trashWarning } from "../usePlexTrash";
@@ -49,8 +50,15 @@ function Steps({ run }: { run: Run }) {
   // the table used to render every one of them synchronously -- on plan build, and again on
   // every history-row click (P-9). The first 50 are the ones that matter: the plan is ordered
   // smallest first, so step 0 is the canary the whole run turns on.
+  //
+  // The server now sends that window rather than the whole journal, so the slice below is a
+  // second bound on a list already bounded, kept because `LIST_CAP` is what THIS table draws
+  // and the two are not the same decision. `more` reads `step_count`, never `steps.length`:
+  // the response no longer carries the rows it is counting, so subtracting the page from
+  // itself would silently zero the line below and leave the operator reading 50 rows with
+  // nothing saying the plan is 500.
   const shown = run.steps.slice(0, LIST_CAP);
-  const more = run.steps.length - shown.length;
+  const more = run.step_count - shown.length;
   return (
     // The Request column holds a full API path and a JSON body, so the table has a wider
     // minimum than a phone. The wrapper keeps that scroll sideways inside the table instead
@@ -119,7 +127,7 @@ function Steps({ run }: { run: Run }) {
 
 function Report({ report }: { report: RunReport }) {
   // "stopped", not "aborted": one word for one mechanism. The docs say caps stop the whole
-  // run, and the app-wide reap bar already reports this exact state as "Stopped." (App.tsx).
+  // run, and the app-wide reap bar already reports this exact state as "Stopped." (`ReapBar.tsx`).
   // "Abort" was operator vocabulary nowhere else in the product (U-15).
   if (report.state === "aborted") {
     return (
@@ -297,10 +305,15 @@ export function ReapPlan({
         // route in is `useScanSettled` invalidating that key off the shell's 15s poll, which a
         // scheduled scan reaches with nothing pressed. `ScanBar` says the same thing about the
         // same field and moves with it (rule 72).
-        <Notice tone="warn" standing>
-          <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You can
-          still look at it, but Reaper won't act on it, so a plan can't be built. Fix the source and
-          scan again.
+        <Notice tone="warn" standing as="div" className="notice-doc">
+          <span>
+            <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You
+            can still look at it, but Reaper won't act on it, so a plan can't be built. Fix the
+            source and scan again.
+          </span>
+          {/* Nothing renders for a degradation with no page, which is most of them. `ScanBar`
+              carries the same pair (rule 72). */}
+          <DegradedDocLink doc={latestSnapshot?.degraded_doc ?? null} />
         </Notice>
       )}
 
@@ -345,7 +358,11 @@ export function ReapPlan({
             {/* Informational here, and acknowledged in the sheet. Execute only opens the
                 sheet, so nothing irreversible is one click from this row. */}
             {planTrash.show && (
-              <PlexTrashNotice known={planTrash.known} unreadable={planTrash.unreadable} />
+              <PlexTrashNotice
+                known={planTrash.known}
+                unreadable={planTrash.unreadable}
+                autoEmpties={planTrash.autoEmpties}
+              />
             )}
             {staleRun && (
               // `standing`: this turns true when a newer scan lands under a plan already on

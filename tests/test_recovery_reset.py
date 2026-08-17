@@ -38,7 +38,7 @@ NEW_PASSWORD = "a-brand-new-admin-password"
 def _make(tmp_path: Path, *, recovery: bool = False) -> Settings:
     """Settings over ``tmp_path``. Call it again on the same path for a second BOOT of the
     same install: ``create_all`` is idempotent, so only the flags change."""
-    settings = Settings(data_dir=tmp_path, secret_key="k", recovery=recovery)  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k", recovery=recovery)
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -246,6 +246,7 @@ class TestARecoverySessionCanSetANewPassword:
 
         saved = client.post("/api/settings/admin-password", json={"password": NEW_PASSWORD})
         assert saved.status_code == 200, saved.text
+        assert saved.json() == {"ok": True}
 
         # It really is the password now: it arms deletion, and the old one does not.
         assert (
@@ -326,7 +327,7 @@ class TestARecoverySessionCanSetANewPassword:
         """Rule 12/75 is not relaxed by the excusal. A recovery reset is still a credential
         change, so the sessions the OLD password could have authorized all stop working --
         which is the point when the reason for the lockout was a stolen cookie."""
-        other = TestClient(client.app)  # type: ignore[arg-type]
+        other = TestClient(client.app)
         other.headers["X-Reaper-CSRF"] = "1"
         signed_in = other.post(
             "/api/auth/local", json={"username": "tester", "password": TEST_PASSWORD}

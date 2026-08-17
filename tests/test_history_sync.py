@@ -15,62 +15,28 @@ can assert the `after` filter was used rather than a full walk.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
+from structlog.testing import capture_logs
 
+from reaper.clients.base import IntegrationError, transport_failure
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.session import create_engine
 from reaper.services import history_sync
 from reaper.services.history_sync import HistoryRegressionError, sync
+from tests._fakes import PagingTautulli
 
 NOW = int(utcnow().timestamp())
 DAY = 86_400
-
-
-class FakeTautulli:
-    """Records the ``after`` argument of each history() call and serves canned rows.
-
-    ``rows`` is the full history newest-first (as Tautulli returns it). When ``after`` is
-    given, only rows on/after that date are served -- mimicking the real filter -- so a
-    test can assert an incremental sync fetched few rows, not all of them.
-    """
-
-    def __init__(self, rows: list[dict[str, Any]], *, total: int | None = None) -> None:
-        self.rows = rows
-        self.total = total if total is not None else len(rows)
-        self.after_calls: list[str | None] = []
-
-    async def history(
-        self, *, length: int = 100, start: int = 0, after: str | None = None, **_: Any
-    ) -> dict[str, Any]:
-        # The length=1 probe used by the regression check does not count as a page fetch.
-        if length > 1:
-            self.after_calls.append(after)
-
-        served = self.rows
-        if after is not None:
-            cutoff = _date_to_epoch(after)
-            served = [r for r in self.rows if int(r["date"]) >= cutoff]
-
-        window = served[start : start + length]
-        return {
-            "data": window,
-            "recordsFiltered": len(served),
-            "recordsTotal": self.total,
-        }
-
-
-def _date_to_epoch(date_str: str) -> int:
-    from datetime import UTC, datetime
-
-    return int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC).timestamp())
 
 
 def _row(row_id: int | None, days_ago: int) -> dict[str, Any]:
@@ -87,7 +53,7 @@ def _row(row_id: int | None, days_ago: int) -> dict[str, Any]:
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
 
@@ -99,9 +65,9 @@ async def _count(engine: AsyncEngine) -> int:
 
 class TestIncrementalSyncFetchesOnlyTheDelta:
     async def test_the_first_sync_walks_everything(self, engine: AsyncEngine) -> None:
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 11)])
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 11)])
 
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         assert await _count(engine) == 10
         # A fresh mirror has nothing to be "after", so the walk is unfiltered.
@@ -111,15 +77,15 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         """The incremental sync must pass an ``after`` date, so Tautulli returns the
         delta instead of the full history."""
         history = [_row(i, days_ago=i) for i in range(1, 11)]
-        fake = FakeTautulli(history)
-        await sync(engine, fake)  # type: ignore[arg-type]
+        fake = PagingTautulli(history)
+        await sync(engine, fake)
 
         # A new play arrives; re-sync.
         history.insert(0, _row(11, days_ago=0))
         fake.total = 11
         fake.after_calls.clear()
 
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         assert await _count(engine) == 11  # the new row landed
         # It asked with an `after` date (not a full walk from the start of history).
@@ -127,19 +93,19 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
 
     async def test_a_full_sync_re_walks_everything(self, engine: AsyncEngine) -> None:
         """The nightly sweep that catches backfilled old events must NOT use `after`."""
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 6)])
-        await sync(engine, fake)  # type: ignore[arg-type]
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 6)])
+        await sync(engine, fake)
         fake.after_calls.clear()
 
-        await sync(engine, fake, full=True)  # type: ignore[arg-type]
+        await sync(engine, fake, full=True)
 
         assert fake.after_calls[0] is None
 
     async def test_a_live_session_with_no_row_id_is_skipped(self, engine: AsyncEngine) -> None:
         """row_id is null only for in-progress sessions -- not history yet."""
-        fake = FakeTautulli([_row(None, days_ago=0), _row(1, days_ago=1), _row(2, days_ago=2)])
+        fake = PagingTautulli([_row(None, days_ago=0), _row(1, days_ago=1), _row(2, days_ago=2)])
 
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         assert await _count(engine) == 2  # the live session was not recorded
 
@@ -157,14 +123,14 @@ class TestThePageLoopFetchesEveryRow:
         and 0 ended the loop after page one, silently keeping a single page of history."""
         monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
 
-        class _NoTotal(FakeTautulli):
+        class _NoTotal(PagingTautulli):
             async def history(self, **kwargs: Any) -> dict[str, Any]:
                 page = await super().history(**kwargs)
                 page.pop("recordsFiltered")
                 return page
 
         rows = [_row(n, days_ago=n) for n in range(1, 8)]
-        await sync(engine, _NoTotal(rows), full=True)  # type: ignore[arg-type]
+        await sync(engine, _NoTotal(rows), full=True)
 
         assert await _count(engine) == 7
 
@@ -174,7 +140,7 @@ class TestThePageLoopFetchesEveryRow:
         """Advancing by the constant walked `start` past rows nobody had fetched."""
         monkeypatch.setattr(history_sync, "PAGE_SIZE", 4)
 
-        class _ShortSecondPage(FakeTautulli):
+        class _ShortSecondPage(PagingTautulli):
             def __init__(self, rows: list[dict[str, Any]]) -> None:
                 super().__init__(rows)
                 self.pages = 0
@@ -189,7 +155,7 @@ class TestThePageLoopFetchesEveryRow:
                 return page
 
         rows = [_row(n, days_ago=n) for n in range(1, 13)]
-        await sync(engine, _ShortSecondPage(rows), full=True)  # type: ignore[arg-type]
+        await sync(engine, _ShortSecondPage(rows), full=True)
 
         assert await _count(engine) == 12
 
@@ -201,7 +167,7 @@ class TestThePageLoopFetchesEveryRow:
         monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
         monkeypatch.setattr(history_sync, "MAX_HISTORY_PAGES", 3)
 
-        class _Endless(FakeTautulli):
+        class _Endless(PagingTautulli):
             async def history(self, **kwargs: Any) -> dict[str, Any]:
                 page = await super().history(**kwargs)
                 if kwargs.get("length", 100) > 1:
@@ -210,50 +176,268 @@ class TestThePageLoopFetchesEveryRow:
                 return page
 
         rows = [_row(n, days_ago=n) for n in range(1, 8)]
-        await sync(engine, _Endless(rows), full=True)  # type: ignore[arg-type]
+        await sync(engine, _Endless(rows), full=True)
 
         assert await _count(engine) == 2  # it stopped, and kept what it read
+
+
+class _TimingOutTautulli(PagingTautulli):
+    """A Tautulli that answers a page of at most ``serves`` rows and fails on anything
+    larger, recording every length it was asked for.
+
+    The failure is built by the production mapper (``clients.base.transport_failure``), so
+    what the walk sees here is what a real timeout arrives as (rule 119)."""
+
+    def __init__(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        serves: int,
+        error: type[httpx2.TimeoutException],
+    ) -> None:
+        super().__init__(rows)
+        self.serves = serves
+        self.error = error
+        self.lengths: list[int] = []
+
+    async def history(self, **kwargs: Any) -> dict[str, Any]:
+        length = int(kwargs.get("length", 100))
+        if length > 1:  # the regression check's length=1 probe is not a page
+            self.lengths.append(length)
+            if length > self.serves:
+                raise transport_failure("tautulli", self.error("the page did not finish"))
+        return await super().history(**kwargs)
+
+
+class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
+    """The full sweep is the only thing that catches a row Tautulli backfills with an old
+    timestamp, so a sweep that stops running leaves a watched title reading never watched --
+    the condemn direction, three days at a time until someone notices.
+
+    It used to stop for good on a source that merely got slower. ``PAGE_SIZE`` was 25,000
+    against a 30s read budget each page already spent most of, and ``transient_retry``
+    re-sends the *identical* oversized page rather than a smaller one, so a persistently
+    slower Tautulli failed every sweep from then on (#780)."""
+
+    async def test_a_read_timeout_on_the_first_page_shrinks_and_keeps_paging(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every row still lands. The walk halves the page and carries on from the same
+        offset, rather than losing the whole sweep to the first oversized request.
+
+        The page cap is set to exactly the number of pages the walk needs, so a shrink that
+        charged itself against it would run the mirror short: that is the claim the comment
+        on ``MAX_HISTORY_PAGES`` makes, and nothing else pins it."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        monkeypatch.setattr(history_sync, "MAX_HISTORY_PAGES", 3)
+        fake = _TimingOutTautulli(
+            [_row(n, days_ago=n) for n in range(1, 13)], serves=4, error=httpx2.ReadTimeout
+        )
+
+        await sync(engine, fake, full=True)
+
+        assert await _count(engine) == 12
+        assert fake.lengths == [8, 4, 4, 4]
+
+    async def test_a_failure_that_is_not_a_read_timeout_still_aborts_at_once(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same source, same page sizes, only the timeout kind differs. A connect timeout
+        is a host that never answered, and a smaller page cannot fix that, so the walk must
+        not spend a shrink cycle on one."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        fake = _TimingOutTautulli(
+            [_row(n, days_ago=n) for n in range(1, 13)], serves=4, error=httpx2.ConnectTimeout
+        )
+
+        with pytest.raises(IntegrationError, match=r"timed out \(ConnectTimeout\)"):
+            await sync(engine, fake, full=True)
+
+        assert fake.lengths == [8]  # asked once, never shrank
+
+    async def test_a_source_too_slow_for_the_smallest_page_raises_at_the_floor(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shrink is bounded. At ``MIN_PAGE_SIZE`` the source is not merely slow, so the
+        walk raises and the scheduler records a failed sweep, rather than halving forever."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        fake = _TimingOutTautulli(
+            [_row(n, days_ago=n) for n in range(1, 13)], serves=1, error=httpx2.ReadTimeout
+        )
+
+        with pytest.raises(IntegrationError, match=r"timed out \(ReadTimeout\)"):
+            await sync(engine, fake, full=True)
+
+        assert fake.lengths == [8, 4, 2]
+
+
+class TestTheSweepCarriesItsOwnReadBudget:
+    """A page of the sweep asks for tens of thousands of rows and the calls beside it on the
+    same client answer a browser, so the budget cannot be a property of the client. #780 is
+    what happens when it is: the page size was cut to 5,000 because that was the only place
+    the margin could be bought, and it cost 68 extra requests a sweep on a six-figure history.
+    """
+
+    async def test_every_page_asks_with_the_sweeps_budget_and_the_probe_does_not(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The value is patched away from the shipped one, so a hardcoded number or an
+        omitted argument fails here rather than reading the same either way (rule 141)."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 4)
+        monkeypatch.setattr(history_sync, "PAGE_READ_TIMEOUT", 7.5)
+        fake = PagingTautulli([_row(n, days_ago=n) for n in range(1, 10)])
+
+        await sync(engine, fake, full=True)
+
+        # First call is the regression check's one-row probe, which keeps the client's
+        # shared budget. Every page after it carries the sweep's.
+        assert fake.read_timeouts[0] is None
+        assert set(fake.read_timeouts[1:]) == {7.5}
+        assert len(fake.read_timeouts) > 2  # it really did page
+
+
+class TestOnlyOneWalkOfTheHistoryRunsAtATime:
+    """The scan's incremental sync and the full sweep are on independent schedules and both
+    write ``watch_event``. Overlapping, they doubled the load on Tautulli and met on the cache
+    write lock, which one page now holds 1,876ms at 25,000 rows against a 5s busy timeout.
+
+    The sweep is never the one that yields: a sweep that skips whenever something else is
+    running is a sweep that stops running (#780), and the scan cron is the operator's, so
+    "skip if busy" can quietly mean "never again". So the second caller waits.
+    """
+
+    async def test_a_second_sync_cannot_start_while_one_is_in_flight(
+        self, engine: AsyncEngine
+    ) -> None:
+        """**The control half is the whole test.** "The scan had not reached Tautulli" only
+        means the lock held it if the scan would otherwise have got there, and every await
+        inside ``_sync`` before its first request goes out to a thread. So the same pump is
+        run first with nothing in flight, where it must arrive. Without that, this passed
+        with the lock deleted -- it was reading its own scheduling (rule 119)."""
+        gate = asyncio.Event()
+        holding = asyncio.Event()
+        reached: list[str] = []
+
+        class _Gated(PagingTautulli):
+            def __init__(self, rows: list[dict[str, Any]], name: str, *, blocks: bool) -> None:
+                super().__init__(rows)
+                self.name = name
+                self.blocks = blocks
+
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                reached.append(self.name)
+                if self.blocks:
+                    holding.set()
+                    await gate.wait()
+                return await super().history(**kwargs)
+
+        async def pump() -> None:
+            # Real database round trips, not bare `sleep(0)`: the awaits a sync makes before
+            # its first request are executor hops, which a loop yielding only to itself does
+            # not advance.
+            for _ in range(20):
+                await _count(engine)
+
+        # The pump reads `watch_event`, so the table has to exist before it runs: otherwise
+        # the pump races the first sync's own `ensure_schema` and the test fails on its own
+        # harness rather than on the lock.
+        await history_sync.ensure_schema(engine)
+        rows = [_row(n, days_ago=n) for n in range(1, 6)]
+
+        uncontended = asyncio.create_task(sync(engine, _Gated(rows, "control", blocks=False)))
+        await pump()
+        assert "control" in reached, "the pump is too short to prove anything about the lock"
+        await uncontended
+        reached.clear()
+
+        sweep = asyncio.create_task(sync(engine, _Gated(rows, "sweep", blocks=True), full=True))
+        await holding.wait()  # the sweep is inside the lock and parked on its first request
+        scan = asyncio.create_task(sync(engine, _Gated(rows, "scan", blocks=False)))
+        await pump()
+
+        # Same pump, and this time the scan has not reached Tautulli at all -- not even the
+        # regression check's probe, which is inside the lock because it reads the stored
+        # total and writes it back.
+        assert set(reached) == {"sweep"}
+        assert not scan.done()
+
+        gate.set()
+        await sweep
+        await scan
+        # Every one of the sweep's calls precedes every one of the scan's: the two walks did
+        # not interleave, which is the property the cache write lock needs.
+        assert reached == ["sweep"] * reached.count("sweep") + ["scan"] * reached.count("scan")
+
+    async def test_the_waiting_caller_says_so(self, engine: AsyncEngine) -> None:
+        """A scan that sits on "syncing watch history" for minutes needs a reason in the log,
+        or the wait reads as a hang."""
+        gate = asyncio.Event()
+        entered = asyncio.Event()
+
+        class _Blocking(PagingTautulli):
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                entered.set()
+                await gate.wait()
+                return await super().history(**kwargs)
+
+        rows = [_row(n, days_ago=n) for n in range(1, 4)]
+        sweep = asyncio.create_task(sync(engine, _Blocking(rows), full=True))
+        await entered.wait()
+        with capture_logs() as events:
+            scan = asyncio.create_task(sync(engine, PagingTautulli(rows)))
+            for _ in range(50):
+                await asyncio.sleep(0)
+            waited = [e for e in events if e["event"] == "history.sync_waiting"]
+
+        gate.set()
+        await sweep
+        await scan
+        # The waiter is the scan, and it says which kind of sync is waiting.
+        assert [e["full"] for e in waited] == [False]
 
 
 class TestRegressionDetection:
     async def test_the_first_sync_sets_a_baseline_and_does_not_raise(
         self, engine: AsyncEngine
     ) -> None:
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 6)], total=5)
-        await sync(engine, fake)  # type: ignore[arg-type]  # must not raise
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 6)], total=5)
+        await sync(engine, fake)  # must not raise
         assert await history_sync._last_tautulli_total(engine) == 5
 
     async def test_a_shrunk_history_raises(self, engine: AsyncEngine) -> None:
         """Tautulli's total drops sharply -- reset, prune or restore. Every 'never
         watched' verdict is now suspect, so the sync stops before writing."""
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
-        await sync(engine, fake)  # type: ignore[arg-type]
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
+        await sync(engine, fake)
 
         # Tautulli now reports far fewer rows.
-        shrunk = FakeTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
+        shrunk = PagingTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
 
         with pytest.raises(HistoryRegressionError, match="shrank from 100"):
-            await sync(engine, shrunk)  # type: ignore[arg-type]
+            await sync(engine, shrunk)
 
     async def test_a_small_wobble_does_not_raise(self, engine: AsyncEngine) -> None:
         """Grouping can nudge the reported count by a row or two; that is not a reset."""
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
-        await sync(engine, fake)  # type: ignore[arg-type]
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
+        await sync(engine, fake)
 
-        nudged = FakeTautulli([_row(i, days_ago=i) for i in range(1, 100)], total=98)
-        await sync(engine, nudged)  # type: ignore[arg-type]  # 98 >= 100*0.95, fine
+        nudged = PagingTautulli([_row(i, days_ago=i) for i in range(1, 100)], total=98)
+        await sync(engine, nudged)  # 98 >= 100*0.95, fine
 
     async def test_the_check_is_not_fooled_by_our_growing_mirror(self, engine: AsyncEngine) -> None:
         """The old check compared our mirror's row count, which only grows -- so a real
         Tautulli shrink was invisible. This asserts the check keys on Tautulli's total:
         our mirror still has 100 rows, but Tautulli reporting 10 must still raise."""
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
-        await sync(engine, fake)  # type: ignore[arg-type]
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
+        await sync(engine, fake)
         assert await _count(engine) == 100
 
-        shrunk = FakeTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
+        shrunk = PagingTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
         with pytest.raises(HistoryRegressionError):
-            await sync(engine, shrunk)  # type: ignore[arg-type]
+            await sync(engine, shrunk)
 
         # Our mirror is untouched -- we preserve what we hold.
         assert await _count(engine) == 100
@@ -266,15 +450,15 @@ class TestOverlapNeverDropsARow:
         """`after` is date-granular, so the overlap must re-ask for our newest day, or a
         play recorded later that same day would fall in the gap and be lost forever."""
         newest = _row(1, days_ago=0)
-        fake = FakeTautulli([newest])
-        await sync(engine, fake)  # type: ignore[arg-type]
+        fake = PagingTautulli([newest])
+        await sync(engine, fake)
 
         # Another play the SAME day, a few hours later (higher row_id, same date bucket).
         later_same_day = dict(newest, row_id=2, rating_key=999, date=newest["date"] + 3600)
         fake.rows.insert(0, later_same_day)
         fake.total = 2
 
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         assert await _count(engine) == 2  # the same-day play was not missed
 
@@ -289,11 +473,12 @@ class TestTheIngestClockIsSeparateFromTheWatchingClock:
     async def test_a_sync_that_returned_nothing_still_moves_the_clock(
         self, engine: AsyncEngine
     ) -> None:
-        """Nobody watched anything, so `latest` stays empty. The ingest ran, so the sync
-        clock moves. Degrading a scan on `latest` would call this library broken."""
-        await sync(engine, FakeTautulli([]))  # type: ignore[arg-type]
+        """Nobody watched anything, so the newest event stays empty. The ingest ran, so the
+        sync clock moves. Degrading a scan on the newest event would call this library
+        broken."""
+        await sync(engine, PagingTautulli([]))
 
-        assert await history_sync.latest(engine) is None
+        assert (await history_sync.state(engine)).latest is None
         synced = await history_sync.last_synced_at(engine)
         assert synced is not None
         assert abs((utcnow() - synced).total_seconds()) < 60
@@ -321,20 +506,20 @@ class TestAnUnreportedCompletionIsStoredAsUnknown:
     async def test_a_missing_status_is_stored_as_null(self, engine: AsyncEngine) -> None:
         row = _row(1, days_ago=1)
         del row["watched_status"]
-        await sync(engine, FakeTautulli([row]))  # type: ignore[arg-type]
+        await sync(engine, PagingTautulli([row]))
 
         assert await self._status(engine, 1) is None
 
     async def test_an_empty_status_is_stored_as_null(self, engine: AsyncEngine) -> None:
         """Tautulli sends "" rather than omitting the key on some rows."""
-        await sync(engine, FakeTautulli([dict(_row(1, days_ago=1), watched_status="")]))  # type: ignore[arg-type]
+        await sync(engine, PagingTautulli([dict(_row(1, days_ago=1), watched_status="")]))
 
         assert await self._status(engine, 1) is None
 
     async def test_a_reported_zero_round_trips_as_zero(self, engine: AsyncEngine) -> None:
         """The other direction: a real "started it, did not finish" must not become
         unknown. Pinning only the NULL side would let `None` swallow both facts."""
-        await sync(engine, FakeTautulli([dict(_row(1, days_ago=1), watched_status=0)]))  # type: ignore[arg-type]
+        await sync(engine, PagingTautulli([dict(_row(1, days_ago=1), watched_status=0)]))
 
         assert await self._status(engine, 1) == 0.0
 
@@ -344,7 +529,7 @@ class TestAnUnreportedCompletionIsStoredAsUnknown:
         del unknown["watched_status"]
         rows = [unknown, dict(_row(2, days_ago=2), watched_status=0)]
 
-        await sync(engine, FakeTautulli(rows))  # type: ignore[arg-type]
+        await sync(engine, PagingTautulli(rows))
 
         assert await self._status(engine, 1) is None
         assert await self._status(engine, 2) == 0.0

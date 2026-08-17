@@ -146,7 +146,7 @@ def _protection_entries(value: object) -> tuple[list[dict[Any, Any]], bool]:
     and a hand reap condemned a file whose kept-reasons nobody could read -- evidence we
     cannot see turned into evidence that nothing was wrong. The list is judged before it is
     filtered, and an unreadable entry holds the reap exactly as a bad Plex match does
-    (rule 96). ``api.routes._has_blocked_protections`` reads the same stored block with the
+    (rule 96). ``api.simulate._has_blocked_protections`` reads the same stored block with the
     same posture and says so in its own docstring; these two must not disagree, because the
     permissive one is the one on the destructive path.
 

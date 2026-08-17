@@ -104,12 +104,16 @@ read it starts, so a synchronous query after it asserts on markup that has not a
 
 **141. A fixture that pins the same value as the production default cannot prove the value was
 passed.** An omission and a correct pass produce identical output, so the assertion holds either
-way: `backtest.run` used `score()`'s 365-day default while every fixture pinned that same 365,
-behind 2,578 green tests. So **choose fixture values that differ from the default, and sweep more
-than one.** One non-default value proves the argument reaches the callee; a sweep proves the
-*right* one does, and catches a caller passing a constant. Exclude the default from a sweep
-deliberately and say why, or it silently
-contributes a case that cannot fail. Read the captured value with `.get` and assert on the value,
+way: a caller used `score()`'s 365-day default while every fixture pinned that same 365,
+behind 2,578 green tests, and the omission was found by reading the caller rather than by any
+test. So **choose fixture values that differ from the default, and sweep more than one.** One
+non-default value proves the argument reaches the callee; a sweep proves the *right* one does,
+and catches a caller passing a constant. Exclude the default from a sweep deliberately and say
+why, or it silently contributes a case that cannot fail. **A sweep that lives on the wrong lane
+is the same hole** — that 365 sat on a lab engine, and deleting it left the live scan with no
+non-default window under test at all until one was written
+(`test_scan_pipeline.py::TestTheWindowScoredAgainstIsThePolicysOwn`).
+Read the captured value with `.get` and assert on the value,
 never `kwargs["name"]`: an omission there raises `KeyError`, failing for the wrong reason and
 pinning *that* an argument was passed rather than *which* (rule 118, for defaulted arguments).
 
@@ -126,10 +130,12 @@ declaration was deleted from one of them, because the single page state it drove
 happened to hold the condition, and the deletion took the only case naming the anchor away with
 it — 40 green instead of 41 red (#167). So where a member's behavior forks on a branch, drive
 every branch, and treat the branch the default state hands you for free as the one a missing
-declaration hides behind. Scope the walk, too: `rglob`
-descends into gitignored agent worktrees, whole repo copies inside the repo root, so match skips
-on the REPO-relative path, never on `path.parts` of the absolute one, which matches the worktree
-the suite is *running in* and silently empties the walk.
+declaration hides behind. Scope the walk, too: `rglob` honors no ignore file, so it descends
+into gitignored agent worktrees, whole repo copies inside the repo root, and into session
+scratch beside them. `_repo_text_files` asks git for the checkout's files instead, which is the
+form to copy: a skip list hand-kept beside `.gitignore` goes stale every time the ignore file
+grows. A skip list has to match on the REPO-relative path besides, since `path.parts` of the
+absolute one matches the worktree the suite is *running in* and silently empties the walk.
 
 **147. A guard that scans SOURCE TEXT is bounded by the syntax it can parse, so it is proven
 against every FORM the tree spells the thing in, not only against every member the walk found.**

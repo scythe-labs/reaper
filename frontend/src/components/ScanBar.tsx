@@ -10,13 +10,17 @@
 // A scan is read-only: it reads from the *arr and Tautulli, scores, and writes rows to
 // Reaper's own database. GuardedTransport would refuse a mutating call even if one were tried.
 
-import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type ScheduledJob, type Snapshot } from "../api";
+import { DegradedDocLink } from "../docs/DocLink";
 import { bytes, count, totalBytes } from "../format";
+import { useScanStatus } from "../useScanStatus";
 import { JobStatus, useJobFlash } from "./JobStatus";
 import { Notice } from "./Notice";
+import { ProgressBar } from "./ProgressBar";
+import { SCANNING_LABEL } from "./ScanLine";
 
 //: Friendly names for the scan's internal phases, so the status line reads in English.
 //  Exported because the first-run wizard shows the same progress line; one table keeps
@@ -35,10 +39,6 @@ export const PHASE_LABELS: Record<string, string> = {
 export function phaseLabel(phase: string): string {
   return PHASE_LABELS[phase] ?? phase;
 }
-
-/** What the wait is called: the progress bar's name, and the lead of the sentence said when a
- *  scan starts. One string for both (rule 144). */
-const SCANNING_LABEL = "Scanning your library";
 
 /** The line under the bar, shown and said. For an operation that can run for many minutes, the
  *  fact that walking away does not cancel it is the most useful thing an operator can be told,
@@ -102,12 +102,7 @@ export function ScanRow({
 }) {
   const queryClient = useQueryClient();
 
-  const { data: status } = useQuery({
-    queryKey: ["scanStatus"],
-    queryFn: api.scanStatus,
-    // Poll only while a scan is actually running; otherwise sit quiet.
-    refetchInterval: (query) => (query.state.data?.running ? 1000 : false),
-  });
+  const status = useScanStatus();
 
   const scanning = status?.running ?? false;
   const wasScanning = useRef(false);
@@ -283,19 +278,7 @@ export function ScanRow({
 
         {scanning ? (
           <>
-            {/* A bare div with an inline width is a picture of a number and nothing else.
-                `ScanLine` was the correct twin in the tree and this was not swept
-                with it (#177, rule 72); the deletion path's pair went the same way in #170. */}
-            <div
-              className="bar"
-              role="progressbar"
-              aria-label={SCANNING_LABEL}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={pct ?? 0}
-            >
-              <div className="bar-fill" style={{ width: `${pct ?? 0}%` }} />
-            </div>
+            <ProgressBar label={SCANNING_LABEL} percent={pct ?? 0} />
             <div className="jobrow-sched">{KEEPS_RUNNING}</div>
           </>
         ) : (
@@ -327,17 +310,23 @@ export function ScanRow({
             row, under its progress bar, where "This scan" reads as the one in flight -- and the
             operator starting a rescan has already answered it. The other two sit on pages with no
             scan in view and stay: `ReapPlan`'s is why Build is disabled over that snapshot, and
-            `App.tsx`'s freshness line is the age of the queue rendered below it, both still true
+            `ScanFreshness.tsx`'s freshness line is the age of the queue rendered below it, both still true
             for as long as that snapshot is the one on hand. */}
         {snapshot?.degraded && !supersededSnapshot && (
-          <Notice tone="warn" standing>
+          <Notice tone="warn" standing as="div" className="notice-doc">
             {/* What it means before why it happened. The consequence clause was dropped from
                 here and from the Review page's line, leaving `ReapPlan` the only one of the
                 three still saying it, and whether the operator saw it at all then depended on
                 which source had failed: only `library_index`'s reasons carry "Nothing may be
                 deleted from this scan" in their own text (rules 21, 72, 144). */}
-            <strong>This scan came back incomplete.</strong> Reaper won&apos;t act on it.{" "}
-            {snapshot.degraded_reason}
+            <span>
+              <strong>This scan came back incomplete.</strong> Reaper won&apos;t act on it.{" "}
+              {snapshot.degraded_reason}
+            </span>
+            {/* Nothing renders for a degradation with no page, which is most of them, so this
+                notice looks exactly as it did unless the scan named one. `ReapPlan` carries the
+                same pair (rule 72). */}
+            <DegradedDocLink doc={snapshot.degraded_doc} />
           </Notice>
         )}
       </div>

@@ -1,4 +1,9 @@
 {
+  "permissions": {
+    "deny": [
+      "Bash(sleep:*)"
+    ]
+  },
   "hooks": {
     "InstructionsLoaded": [
       {

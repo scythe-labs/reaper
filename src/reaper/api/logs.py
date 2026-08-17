@@ -76,7 +76,13 @@ async def get_logs(
     )
 
 
-@router.get("/logs/download")
+# A text file, not JSON. Same published-shape correction as ``api/poster.py`` and
+# ``api/backup.py``'s download (rule 72).
+@router.get(
+    "/logs/download",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/plain": {}}}},
+)
 async def download_logs(request: Request) -> StreamingResponse:
     """The full log as one downloadable text file.
 
@@ -132,10 +138,12 @@ async def put_log_level(request: Request, payload: LogLevelIn) -> LogsOut:
     """Change how much Reaper records. Applies immediately and persists.
 
     Only the levels the UI offers are accepted; hiding warnings from a tool that
-    deletes files is not a choice we sell.
+    deletes files is not a choice we sell. ``logbuffer.LEVELS`` is wider than that on
+    purpose, since ``REAPER_LOG_LEVEL`` may carry ERROR (#700), so this narrows to
+    ``UI_LEVELS`` rather than to whatever the normalizer will take.
     """
     canonical = logbuffer.normalize_level(payload.level)
-    if canonical is None:
+    if canonical is None or canonical not in logbuffer.UI_LEVELS:
         raise HTTPException(422, "Pick Debug, Info, or Warning.")
     factory = request.app.state.session_factory
     async with factory() as session:

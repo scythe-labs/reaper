@@ -16,6 +16,13 @@ declare const process: { env: Record<string, string | undefined> };
 // together or neither does; the default is the one documented in CLAUDE.md and README.md.
 const apiPort = process.env.REAPER_PORT ?? "8420";
 
+// What the dev server binds to. Loopback by default, which is every ordinary session. A
+// headless box is the case this exists for: the browser is on another machine, so a server
+// bound to 127.0.0.1 cannot be reached at all and there is no local browser to fall back on.
+// `REAPER_WEB_HOST=0.0.0.0` opens it to the LAN. Left unset it changes nothing, and it is
+// never read by a build: `vite build` emits ./dist and FastAPI serves it.
+const webHost = process.env.REAPER_WEB_HOST;
+
 // In development the SPA is served by Vite and /api is proxied to the Python app.
 // In production `vite build` emits ./dist, which FastAPI serves via app.frontend().
 // Both paths therefore speak to the API at a *same-origin* /api, so there is no CORS
@@ -23,6 +30,7 @@ const apiPort = process.env.REAPER_PORT ?? "8420";
 export default defineConfig({
   plugins: [react()],
   server: {
+    ...(webHost ? { host: webHost } : {}),
     port: 5173,
     // Fail on a taken port instead of quietly taking the next one. Vite's default is to slide
     // to 5174 and say so only in its own log, so a second launcher that also omits REAPER_PORT

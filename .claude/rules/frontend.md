@@ -73,7 +73,16 @@ allowance via `useHoldsBackUnmeasured()`, and every stored override state — he
 
 **66. Server-defined lists render from the server response.** A hardcoded frontend copy of a
 backend id list (jobs, phases, states) is a blocker when the server already returns the list;
-fallback copy handles unknown ids only.
+fallback copy handles unknown ids only. **A map from those ids to operator copy is the same
+mirror, and rule 103's drift guard binds it here** — that rule sits in `.claude/rules/backend.md`
+and never loads for the file carrying the copy, so the obligation is restated where the mirror
+lives: derive the keys from one declaration, or a test fails when the set changes. `GATE_META`
+is the worked case (`policyMeta.ts` types itself off a `GateId` union that
+`test_api_type_mirror.py` pins against the enum), and it is what four missing labels cost
+before it existed: two ids that fire on ordinary scans reached the fallback, so the simulator
+answered "why was this kept" with `season_progression` and `custom`, title-cased (#551, rule
+21). The fallback is not the safety net here — it is what makes a missing member silent.
+`SIGNAL_META`, `RAMPS` and `BUILTIN_SIGNAL_IDS` are the same shape and still unguarded.
 
 **85. Success copy fires on settled state.** A toast, timestamp, or "done" indicator is set only
 after the operation it describes has actually completed (refetch settled, final chunk streamed),
@@ -149,9 +158,10 @@ not once on open:** a list that refilters as you type changes width while it is 
 leftward only and stops at the near gutter — a popover pushed right of its anchor loses the line
 back to the control that opened it, and one dragged off the left loses the side every label starts
 on. Two popovers answer this another way and are correct as they are: `.user-dropdown` is
-`right: 0` in a corner it never leaves, and the spare-length menu clamps its own `position: fixed`
-coordinates (`OverrideControls.toggleMenu`). A new popover left-aligned to an anchor with no fit
-pass is a blocker, and so is fixing one of these and leaving its twin (rule 72).
+`right: 0` in a corner it never leaves, and the spare-length menu and the collection picker both
+clamp their own `position: fixed` coordinates through the shared `useFixedMenu` hook
+(`components/popoverFit.ts`). A new popover left-aligned to an anchor with no fit pass is a
+blocker, and so is fixing one of these and leaving its twin (rule 72).
 
 **139. Text the operator did not choose is given a break opportunity.** A requester handle, a
 title, a path, a host — anything arriving from a portal, a file system, or someone else's

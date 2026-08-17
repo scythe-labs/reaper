@@ -82,12 +82,26 @@ class TestALoggerFrozenByAnEarlierTestIsStillCapturable:
 
 class TestTheGuardReachesEveryLoggerInTheTree:
     """A guard that SCANS is proven against the population it claims to cover, not against
-    one member of it (rule 145). The count is reconciled by hand: 49 files under
+    one member of it (rule 145). The count is reconciled by hand: 53 files under
     ``src/reaper`` declare a module-level logger, and ``grep -rl`` over the tree agrees.
 
-    47 until ``services/list_config.py`` (the operator's own protection lists) landed with a
-    logger and this number did not move with it, which is what the guard is for; 49 with
-    ``services/list_rules.py`` (the keep rules a list acts through)."""
+    It was 47 before ``services/list_config.py`` (the operator's own protection lists) landed
+    with a logger and this number did not move with it, which is what the guard is for, then 49
+    with ``services/list_rules.py`` (the keep rules a list acts through), 47 again once the two
+    retired lab engines left and took theirs, and 48 with ``api/plex.py``. Then 50, when the old
+    single API routes module became five: three of the five log, so one logger left and three
+    arrived. ``api/vocabulary.py`` and ``api/about.py`` declare none, because neither logs --
+    a split inherits its parent's logger only where it inherited something to say. Then 49:
+    ``clients/arr.py`` declared one and never logged through it, and the line went with the
+    duplication it sat above. Then 50 again, when the admin-password gate moved from
+    ``api/auth.py`` to ``api/deps.py``: the logging function moved with it and ``api/auth.py``
+    still logs three other things, so this is the one shape that only ever adds. Then 51, when
+    ``config.py`` gained one to say which seed variable a half-configured instance is missing
+    (#658); it had none because nothing in it used to have anything to tell the operator. Then
+    52 with ``services/library_seen.py`` (#553), which logs an unreadable stored key set and
+    the scan whose crop of returns the population cap refused. Then 53 with
+    ``services/identity_churn.py`` (#809), which logs every scan's share of the library that
+    changed Plex identity, so the ordinary rate can be read off a second library's logs."""
 
     @staticmethod
     def _modules_declaring_a_logger() -> set[str]:
@@ -103,7 +117,14 @@ class TestTheGuardReachesEveryLoggerInTheTree:
         return found
 
     def test_the_count_is_the_one_reconciled_by_hand(self) -> None:
-        assert len(self._modules_declaring_a_logger()) == 49
+        declared = self._modules_declaring_a_logger()
+        assert len(declared) == 53, (
+            f"expected 53 modules declaring a logger, found {len(declared)}. Bump the number "
+            "here AND in this class's docstring above, which restates it and which nothing "
+            "else asserts (rule 144). Those are the only two live copies. The archived "
+            "simplification plan restates the figure too, and it is frozen history, so its "
+            "copy stays at the number it measured."
+        )
 
     def test_every_declared_logger_is_reachable_from_the_walk(self) -> None:
         """Imported first, because the walk can only see loaded modules -- which is also

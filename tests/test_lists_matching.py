@@ -48,30 +48,15 @@ from reaper.services.lists import (
     sync,
 )
 from reaper.services.snapshot import protection_sync_degradations
+from tests._fakes import FakeSonarr
 from tests.test_engine_invariants import _ALL_READABLE
 
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
-
-
-class _FakeSonarr:
-    """A Sonarr stand-in: not a RadarrClient, so ``ArrTagRule`` takes the series path."""
-
-    service = "sonarr"
-
-    def __init__(self, tags: list[dict[str, object]], series: list[dict[str, object]]) -> None:
-        self._tags = tags
-        self._series = series
-
-    async def tags(self) -> list[dict[str, object]]:
-        return self._tags
-
-    async def series(self) -> list[dict[str, object]]:
-        return self._series
 
 
 class _FakePlexServer:
@@ -155,20 +140,20 @@ class TestEveryConfiguredKeepTagMustResolve:
     read healthy. An absent tag and a renamed one are the same fetch, so both fail."""
 
     @staticmethod
-    def _sonarr(*labels: str, tagged: bool = True) -> _FakeSonarr:
+    def _sonarr(*labels: str, tagged: bool = True) -> FakeSonarr:
         tags = [{"id": i, "label": label} for i, label in enumerate(labels, start=1)]
         series = [{"title": "A", "tvdbId": 10, "tags": [1]}] if tagged and tags else []
-        return _FakeSonarr(tags, series)
+        return FakeSonarr(tag_rows=tags, series_rows=series)
 
     async def test_a_missing_tag_under_any_keeps_the_stored_membership(
         self, engine: AsyncEngine
     ) -> None:
-        rule = ArrTagRule(self._sonarr("keep", "gold"), ("keep", "gold"), "any")  # type: ignore[arg-type]
+        rule = ArrTagRule(self._sonarr("keep", "gold"), ("keep", "gold"), "any")
         assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
 
         # "gold" was renamed upstream. "keep" still resolves, which is exactly the case
         # that used to sync happily and drop everything the renamed tag protected.
-        renamed = ArrTagRule(self._sonarr("keep"), ("keep", "gold"), "any")  # type: ignore[arg-type]
+        renamed = ArrTagRule(self._sonarr("keep"), ("keep", "gold"), "any")
         with pytest.raises(IntegrationError) as caught:
             await sync(engine, renamed, kind=ListKind.WHITELIST)
 
@@ -183,7 +168,7 @@ class TestEveryConfiguredKeepTagMustResolve:
         is read as a genuinely empty first sync. Routing the partial case there would store
         the SURVIVING tag's members as [] and report the list healthy, so the tags that do
         resolve would protect nothing. It is a plain failure instead, and the scan degrades."""
-        rule = ArrTagRule(self._sonarr("keep"), ("keep", "gold"), "any")  # type: ignore[arg-type]
+        rule = ArrTagRule(self._sonarr("keep"), ("keep", "gold"), "any")
 
         with pytest.raises(IntegrationError):
             await sync(engine, rule, kind=ListKind.WHITELIST)
@@ -201,7 +186,7 @@ class TestEveryConfiguredKeepTagMustResolve:
         *arr, and nothing is protecting anything yet, so a first sync that finds NO
         configured tag stays an empty success. Making that an error would leave every new
         install un-scannable out of the box."""
-        rule = ArrTagRule(self._sonarr("other"), ("reaper-keep",), "any")  # type: ignore[arg-type]
+        rule = ArrTagRule(self._sonarr("other"), ("reaper-keep",), "any")
 
         assert await sync(engine, rule, kind=ListKind.WHITELIST) == 0
 
@@ -211,10 +196,10 @@ class TestEveryConfiguredKeepTagMustResolve:
         """Rule 27's other side: the tag exists and nothing carries it. That is an empty
         list, not a missing container, and it must be able to empty the stored membership --
         otherwise un-tagging your last title could never take effect."""
-        rule = ArrTagRule(self._sonarr("keep"), ("keep",), "any")  # type: ignore[arg-type]
+        rule = ArrTagRule(self._sonarr("keep"), ("keep",), "any")
         assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
 
-        untagged = ArrTagRule(self._sonarr("keep", tagged=False), ("keep",), "any")  # type: ignore[arg-type]
+        untagged = ArrTagRule(self._sonarr("keep", tagged=False), ("keep",), "any")
         assert await sync(engine, untagged, kind=ListKind.WHITELIST) == 0
 
         index = await load_membership_index(engine)
@@ -226,15 +211,15 @@ class TestEveryConfiguredKeepTagMustResolve:
         """Rule 90, the third state: the tag resolves, titles carry it, and not one of them
         can be identified. A non-empty fetch that filters to zero is a failure, never an
         empty success, or the swap wipes a keep list over an upstream id outage."""
-        rule = ArrTagRule(self._sonarr("keep"), ("keep",), "any")  # type: ignore[arg-type]
+        rule = ArrTagRule(self._sonarr("keep"), ("keep",), "any")
         assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
 
-        idless = _FakeSonarr(
-            [{"id": 1, "label": "keep"}],
-            [{"title": "A", "tags": [1]}],  # no tvdbId, no imdbId
+        idless = FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "A", "tags": [1]}],  # no tvdbId, no imdbId
         )
         with pytest.raises(ContainerMissingError):
-            await sync(engine, ArrTagRule(idless, ("keep",), "any"), kind=ListKind.WHITELIST)  # type: ignore[arg-type]
+            await sync(engine, ArrTagRule(idless, ("keep",), "any"), kind=ListKind.WHITELIST)
 
         index = await load_membership_index(engine)
         assert index.lookup(media_type="tv", tvdb_id=10)
@@ -244,7 +229,7 @@ class TestEveryConfiguredKeepTagMustResolve:
     ) -> None:
         """Unchanged, and deliberately: under ALL an absent tag rules every title out, so an
         empty membership is the arithmetically correct answer when nothing is stored yet."""
-        rule = ArrTagRule(self._sonarr("keep"), ("keep", "gold"), "all")  # type: ignore[arg-type]
+        rule = ArrTagRule(self._sonarr("keep"), ("keep", "gold"), "all")
 
         with pytest.raises(ContainerMissingError):
             await rule.fetch()
@@ -267,10 +252,10 @@ class TestTheNameAKeepRuleMatches:
     """
 
     @staticmethod
-    def _sonarr() -> _FakeSonarr:
-        return _FakeSonarr(
-            [{"id": 1, "label": "reaper-keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+    def _sonarr() -> FakeSonarr:
+        return FakeSonarr(
+            tag_rows=[{"id": 1, "label": "reaper-keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         )
 
     @staticmethod
@@ -285,7 +270,7 @@ class TestTheNameAKeepRuleMatches:
         fixture reaches for: an unnamed instance appends nothing and matched all along
         (rule 141)."""
         rule = ArrTagRule(
-            self._sonarr(),  # type: ignore[arg-type]
+            self._sonarr(),
             ("reaper-keep",),
             "any",
             instance_id=1,
@@ -310,7 +295,7 @@ class TestTheNameAKeepRuleMatches:
         it is, which is what the Lists screen and the degraded-scan sentence name when one
         instance's check fails."""
         rule = ArrTagRule(
-            self._sonarr(),  # type: ignore[arg-type]
+            self._sonarr(),
             ("reaper-keep",),
             "any",
             instance_id=1,
@@ -338,7 +323,7 @@ class TestTheNameAKeepRuleMatches:
             await sync(
                 engine,
                 ArrTagRule(
-                    self._sonarr(),  # type: ignore[arg-type]
+                    self._sonarr(),
                     ("reaper-keep",),
                     "any",
                     instance_id=instance_id,
@@ -361,7 +346,7 @@ class TestTheNameAKeepRuleMatches:
         rule name, and reads as its display name -- which is exactly what it was matched by
         then, so widening never withdraws a protection that was working."""
         rule = ArrTagRule(
-            self._sonarr(),  # type: ignore[arg-type]
+            self._sonarr(),
             ("reaper-keep",),
             "any",
             list_id=7,

@@ -40,14 +40,16 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import (
-    _contribution,
-    _fired_gates,
-    _has_blocked_protections,
-    _policy_out,
-    _to_body,
+from reaper.api.policy import _policy_out, _to_body
+from reaper.api.review import _contribution
+from reaper.api.schemas import (
+    ConditionIn,
+    GateSettingIn,
+    PolicyBodyOut,
+    PolicyIn,
+    SignalSettingIn,
 )
-from reaper.api.schemas import ConditionIn, GateSettingIn, PolicyIn, SignalSettingIn
+from reaper.api.simulate import _fired_gates, _has_blocked_protections
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -128,7 +130,7 @@ def _healthy(**overrides: Any) -> str:
 #: Signals whose contributions are stored as three different types. Only one is a number,
 #: and it is deliberately not first: a sort that cannot compare the three raised a
 #: TypeError, and one that silently kept the stored order would pick the wrong reason.
-MIXED_SIGNALS = [
+MIXED_SIGNALS: list[dict[str, Any]] = [
     {
         "id": "unwatched",
         "contribution": "not a number",
@@ -252,7 +254,7 @@ EXPECTED = dict(Counter(r.bucket for r in ROWS))
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot carrying every explanation shape in ``ROWS``."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -404,7 +406,7 @@ class TestTheQueueSurvivesAMixedSignalBlock:
         can read."""
         response = client.get("/api/candidates", params={"verdict": "condemn"})
         assert response.status_code == 200
-        rows = {str(r["media_key"]): r for r in response.json()}
+        rows = {str(r["media_key"]): r for r in response.json()["items"]}
         assert rows["radarr:1:9"]["reason"] == "poorly rated where it is rated"
 
 
@@ -505,8 +507,8 @@ def test_the_fixture_gates_and_signals_are_the_wire_shapes() -> None:
 def test_a_retired_gate_is_refused_at_the_save_boundary() -> None:
     """A draft naming ``whitelisted`` is operator input asking for a protection that no
     longer exists as a gate, so the boundary says so. A STORED body naming it converts on
-    load instead (``policy.convert_list_protections``); refusing the stored copy would take
-    the install offline, and dropping the draft silently would hide the typo."""
+    load instead (``policy_migrations.convert_list_protections``); refusing the stored copy
+    would take the install offline, and dropping the draft silently would hide the typo."""
     with pytest.raises(ValueError, match="whitelisted"):
         GateSettingIn.model_validate({"gate": "whitelisted"})
 
@@ -575,7 +577,7 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
     stored scores; the stored evidence hash is exactly the draft's, so the frozen Facts are
     still what a scan would gather and the replay is allowed.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -769,7 +771,7 @@ def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
     override, so ``was`` is condemn for all three and the only thing that moves them is the
     draft's own protections firing on the frozen facts.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -895,7 +897,7 @@ class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
         payload = REPLAY_PAYLOAD.model_copy(
             update={"gates": [GateSettingIn.model_validate(g) for g in gates]}
         )
-        return payload.model_dump()  # type: ignore[no-any-return]
+        return payload.model_dump()
 
     def test_the_panel_answers_instead_of_asking_for_a_scan(
         self, replay_client: TestClient
@@ -935,7 +937,8 @@ class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
 
 
 class TestTheWireRoundTripPreservesBothHashes:
-    """A body that survives ``PolicyBody -> PolicyIn -> _to_body`` keeps both simulator hashes.
+    """A body surviving ``PolicyBody -> PolicyBodyOut -> PolicyIn -> _to_body`` keeps both
+    simulator hashes.
 
     This is the test whose absence let the simulator die silently. ``_policy_out`` builds the
     wire body field by field, so a ``PolicyBody`` field it forgets is not merely missing from
@@ -950,9 +953,16 @@ class TestTheWireRoundTripPreservesBothHashes:
 
     @staticmethod
     def _round_trip(body: PolicyBody) -> PolicyBody:
-        """Through the real response builder and the real request parser, not a copy."""
+        """Through the real response builder and the real request parser, not a copy.
+
+        The re-parse is the request parser, not ceremony. ``_policy_out`` answers with
+        ``PolicyBodyOut``, which is deliberately wider than what a save accepts, and the
+        browser posts that same body back: FastAPI validates it as a ``PolicyIn`` before any
+        route sees it. Handing the served model straight to ``_to_body`` would skip the one
+        hop where a body the operator cannot save is caught (#627).
+        """
         out = _policy_out(body, "Movies", requests_app_configured=True, settings=ProfileSettings())
-        return _to_body(out.body)
+        return _to_body(PolicyIn.model_validate(out.body.model_dump(mode="json")))
 
     def test_a_body_stored_under_an_older_schema_version_still_simulates(self) -> None:
         stored = DEFAULT_MOVIE_POLICY.model_copy(update={"schema_version": SCHEMA_VERSION - 1})
@@ -973,7 +983,7 @@ def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
     the request will carry that same policy back through the wire schema. Nothing here is
     contrived except the version number: this is what every upgraded install looks like.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -1037,7 +1047,10 @@ class TestAnUpgradedInstallStillGetsNumbers:
     """
 
     @staticmethod
-    def _simulate(client: TestClient, body: PolicyIn) -> dict[str, Any]:
+    def _simulate(client: TestClient, body: PolicyBodyOut) -> dict[str, Any]:
+        """Takes the SERVED body, which is what these tests hand back: the request boundary
+        is the route's own, and posting something it refuses is the failure, not a type error
+        here."""
         r = client.post(
             "/api/policy/simulate",
             json=body.model_dump(mode="json"),
@@ -1108,7 +1121,7 @@ def _reach_client(
     which is exactly what a row frozen before ``Facts.history_reach_days`` existed looks
     like on disk.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -1234,7 +1247,7 @@ SPARED_ROWS: tuple[tuple[str, str, str], ...] = (
 @pytest.fixture
 def spared_client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot whose every row carries a hand spare, on the stored-score tier."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -1426,7 +1439,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         """
         assert _simulate(client, 40)["exact"] is True
 
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             session.execute(sa_update(Snapshot).values(list_config_hash=None))
@@ -1451,7 +1464,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         """
         assert _simulate(client, 40)["exact"] is True
 
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             session.execute(sa_update(Snapshot).values(list_config_hash=None))

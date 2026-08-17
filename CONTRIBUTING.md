@@ -27,6 +27,13 @@ If you want to know who writes this and how, the README has an honest answer und
 - **Ask a question.** [Discussions](https://github.com/scythe-labs/reaper/discussions) is the
   place for setup help, ideas that are still forming, and anything that is not yet an issue.
 - **Fix the docs.** Instructions that did not work are a bug.
+- **Send a watch-history dump.** Reaper's scoring is tuned against real libraries, and it has
+  been tuned against very few of them. `scripts/tautulli_anon_dump.py` reads your Tautulli and
+  writes a file holding the numbers the engine reads, with no titles, usernames, email
+  addresses, IP addresses or file paths in it. It is one file, it imports nothing from Reaper,
+  and it needs no install, so you can read all of it first. `--dry-run` prints a sample and
+  writes nothing. The script's own header says exactly what it keeps, what it rounds off, and
+  what it cannot hide.
 - **Try a pull request.** Every push builds an image, so a change can be run before it lands:
   `scripts/try-image.sh up --pr <number> --port 8421` on any machine with docker. It runs
   beside whatever else is on that host, and `--data copy:<volume-or-path>` gives it a copy of
@@ -121,8 +128,8 @@ and it is the one that has to be green before a pull request can merge. Seeing j
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src/reaper                 # src only; tests are not type-checked
-uv run pytest -n auto                  # what CI runs; ~45s against ~5min single-threaded
+uv run mypy src/reaper tests/          # both trees; pass src/reaper, or tests/ checks nothing
+uv run pytest -n auto                  # what CI runs; ~80s on 8 cores, minutes on one
 uv run alembic upgrade head            # then `alembic check` for model/migration drift
 
 npm --prefix frontend run lint         # eslint
@@ -135,7 +142,7 @@ Run the writing form of both formatters before you stage: `uv run ruff format .`
 `npm --prefix frontend run format`. Formatting is the most common reason CI goes red.
 
 **Pass `-n auto`.** The suite is a few thousand tests and one worker takes minutes where the
-whole machine takes seconds, which is the difference between running it before every commit
+whole machine takes about one, which is the difference between running it before every commit
 and running it once at the end. Drop the flag only to debug a single test, where `-s` and
 `--pdb` need one worker. A test that fails only under `-n auto` is a test leaking
 process-global state into the next worker, not a reason to stop using it.
@@ -307,10 +314,11 @@ migrations fail and the only repair is rewriting the entire migration history.
 
 `tests/test_migrations.py` guards both halves. It imports the real naming convention and
 proves a named constraint can be dropped under batch mode, and it runs the real
-`alembic/env.py` to capture what that file passes to `context.configure()` at both the
-offline and online call sites. Flipping `render_as_batch` to `False` fails that test today,
-which is a great deal better than discovering it years from now in the first migration that
-needs it.
+`alembic/env.py` to capture what that file passes to `context.configure()`. There is one call
+site: the offline (`--sql`) branch had no invoker and could not have worked, since 9
+revisions call `op.get_bind()`, so it was removed rather than kept as a second path nothing
+exercises. Flipping `render_as_batch` to `False` fails that test today, which is a great deal
+better than discovering it years from now in the first migration that needs it.
 
 ### Reading git history
 

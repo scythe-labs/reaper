@@ -22,12 +22,19 @@ from structlog.testing import capture_logs
 
 from reaper.clock import utcnow
 from reaper.engine import identity
-from reaper.engine.gates import GateConfig, GateId, ServerPopularityGate
+from reaper.engine.gates import Facts, GateConfig, ServerPopularityGate
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.verdict import decide_verdict
 from reaper.services import lists
-from reaper.services.snapshot import RawItem, ScanContext, _reported_size, build_facts
+from reaper.services.imdb_dataset import ImdbRating
+from reaper.services.snapshot import (
+    RawItem,
+    ScanContext,
+    _raw_items,
+    _reported_size,
+    build_facts,
+)
 
 _EMPTY_INDEX = lists.MembershipIndex({}, {}, {}, {})
 
@@ -43,7 +50,6 @@ def _raw(**overrides: object) -> RawItem:
         "tmdb_id": 1,
         "plex_rating_key": 10,
         "added_at": datetime(2020, 1, 1, tzinfo=UTC),
-        "has_file": True,
     }
     base.update(overrides)
     return RawItem(**base)  # type: ignore[arg-type]
@@ -52,15 +58,15 @@ def _raw(**overrides: object) -> RawItem:
 def _facts(
     item: RawItem,
     *,
-    imdb: dict[str, object] | None = None,
+    imdb: dict[str, ImdbRating] | None = None,
     membership_index: lists.MembershipIndex | None = None,
     last_played: dict[int, datetime] | None = None,
-):
+) -> Facts:
     return build_facts(
         item,
         ScanContext(horizon=datetime(2019, 1, 1, tzinfo=UTC)),
         membership_index=membership_index or _EMPTY_INDEX,
-        imdb=imdb or {},  # type: ignore[arg-type]
+        imdb=imdb or {},
         last_played=last_played if last_played is not None else {},
         watchers_window={10: 0},
         watchers_all_time={10: 0},
@@ -159,6 +165,42 @@ class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
 
         assert facts.is_whitelisted == Known(value=False, source="lists")
 
+    def test_radarrs_unknown_id_sentinel_does_not_shadow_the_one_plex_matched(self) -> None:
+        """The fallback above is an ``or``, and ``"tt0000000"`` is truthy.
+
+        Some sources emit ``tt0000000`` / ``tt0`` for "unknown" (``identity._clean_imdb``).
+        A sentinel reaching ``RawItem.imdb_id`` raw means the lookup runs under an id no
+        list row carries and the ``or`` never reaches the id Plex matched, so the keep list
+        is defeated in exactly the case it was written for. Driven through ``_raw_items``,
+        because that is the site that has to filter it.
+        """
+        plex = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=10,
+                    title="A title",
+                    year=2020,
+                    added_at=datetime(2020, 1, 1, tzinfo=UTC),
+                    ids=identity.ExternalIds.of(tmdb=7, imdb="tt0000042"),
+                )
+            ]
+        )
+        movie = {
+            "id": 1,
+            "title": "A title",
+            "year": 2020,
+            "tmdbId": 7,
+            "imdbId": "tt0000000",
+            "hasFile": True,
+            "sizeOnDisk": 8_000_000_000,
+        }
+        item = _raw_items([movie], plex, instance_id=1)[0]
+        assert item.plex_imdb_id == "tt0000042"
+
+        facts = _facts(item, membership_index=self._keep_list_stored_under_imdb_only())
+
+        assert facts.is_whitelisted == Known(value=True, source="Never Reap")
+
 
 class TestAMatchedItemWithNoArrivalDateIsWarned:
     """Matched to Plex but nothing to measure dormancy from, so the item abstains and shows
@@ -219,7 +261,7 @@ class TestASizeWeCouldNotReadIsUnknown:
     def test_an_unreadable_size_reaches_the_score_as_unknown(self) -> None:
         """As ``Known(0)`` it would read as a real measurement: maximum pressure on a
         size signal, and any "keep large files" rule silently stops protecting it."""
-        facts = _facts(_raw(size_bytes=None, has_file=True))
+        facts = _facts(_raw(size_bytes=None))
 
         assert isinstance(facts.size_bytes, Unknown)
 
@@ -292,9 +334,7 @@ class TestTheScanRecordsHowFarBackItsHistoryReaches:
         months ago, which is inside the year-long window and outside the mirror. The scan
         sees a zero, and must not call it one.
         """
-        gate = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-        )
+        gate = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
         facts = build_facts(
             _raw(),
             ScanContext(horizon=utcnow() - timedelta(days=90)),
@@ -400,7 +440,7 @@ class TestARepairedPolicyCannotExecute:
         """``active_policy`` repairs rather than raising, and every caller can still tell
         that it did. A repair that looked identical to a clean load would put the scan on
         an unapproved policy silently, which is the whole risk."""
-        from reaper.engine.policy import PolicyRepair
+        from reaper.engine.policy_migrations import PolicyRepair
         from reaper.services.profiles import ActivePolicy
 
         assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine").repaired is False
@@ -414,7 +454,7 @@ class TestARepairedPolicyCannotExecute:
         reasonable and is wrong: an operator's own policy is very often *called* "default",
         so their rescaled policy was reported as unreadable and the editor stopped offering
         to save it. The name carries no such meaning; only the flags do."""
-        from reaper.engine.policy import PolicyRepair
+        from reaper.engine.policy_migrations import PolicyRepair
         from reaper.services.profiles import ActivePolicy
 
         theirs = ActivePolicy(DEFAULT_MOVIE_POLICY, "default", (PolicyRepair.RESCALED,))

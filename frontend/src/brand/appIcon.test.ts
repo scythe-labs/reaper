@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 //
 // The committed icon files (public/favicon.svg and the rasterized PNGs) are snapshots of
 // appIconSvg at the default accent, produced by `npm run icons`. This guards them against

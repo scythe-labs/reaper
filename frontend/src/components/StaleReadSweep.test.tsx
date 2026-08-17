@@ -13,7 +13,6 @@
 //
 // `AppStaleRead.test.tsx`, `SettingsStaleRead.test.tsx` and the describe appended to
 // `PlexPanel.test.tsx` are the same pass over the setup gates and the settings panels.
-import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import type { QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
@@ -23,6 +22,7 @@ import type {
   Candidate,
   FairnessReport,
   Group,
+  GroupRollup,
   Instance,
   PlexLibrary,
   RootFolder,
@@ -30,31 +30,24 @@ import type {
   UnmatchedRequest,
   Vocabulary,
 } from "../api";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE, IDLE_SCAN, seedSettings } from "../test/apiFixtures";
+import {
+  DEFAULT_GENERAL,
+  DEFAULT_PROFILE,
+  DEFAULT_SNAPSHOT,
+  IDLE_SCAN,
+  seedSettings,
+} from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Fairness } from "./Fairness";
 import { NotInScanPanel } from "./NotInScanPanel";
 import { RemoveRulesEditor } from "./PolicyRuleEditors";
 import { ReviewQueue } from "./ReviewQueue";
 import { ServiceModal } from "./ServiceModal";
-import { ServicesPanel } from "./Settings";
+import { ServicesPanel } from "./ServicesPanel";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    candidates: vi.fn(),
-    fairness: vi.fn(),
-    general: vi.fn(),
-    group: vi.fn(),
-    instanceRootFolders: vi.fn(),
-    instanceSeerrServices: vi.fn(),
-    instances: vi.fn(),
-    plexLibraries: vi.fn(),
-    profile: vi.fn(),
-    scanStatus: vi.fn(),
-    updateInstance: vi.fn(),
-    vocabulary: vi.fn(),
-    vocabularyValues: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -71,6 +64,8 @@ beforeEach(() => {
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
+  // Every card's collection picker reads this unconditionally now (#816 phase 4/5).
+  apiMock.latestSnapshot.mockResolvedValue(DEFAULT_SNAPSHOT);
 });
 
 /** The shared sentence with any noun in it. `what` is the one thing a caller varies, so each
@@ -90,7 +85,7 @@ const WHAT_HINT =
 
 function renderWithClient(ui: ReactElement): QueryClient {
   const client = seedSettings(testQueryClient());
-  render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  renderWithProviders(ui, { client });
   return client;
 }
 
@@ -112,12 +107,12 @@ async function blink(
  *
  *  The shared sentence ends "so what's BELOW may be out of date", which is a claim about
  *  placement and not only about wording: a caller that emits it after its content points the
- *  operator at whatever follows instead. `Settings.tsx` moved the jobs line above its rows for
+ *  operator at whatever follows instead. `JobsPanel.tsx` moved the jobs line above its rows for
  *  this reason and states that every other call site does the same, so that sentence is only
  *  true while something checks it. */
 const PLACEMENT_HINT =
   "The stale line must render ABOVE the content it describes -- it says what's below may be " +
-  "out of date. See the note on the jobs line in Settings.tsx.";
+  "out of date. See the note on the jobs line in JobsPanel.tsx.";
 
 function precedes(first: Element, second: Element): boolean {
   return Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -474,14 +469,10 @@ function showSeason(): Candidate {
     requested_by: null,
     group_key: "sonarr:5:42",
     group_title: "Example Show",
-    group_condemned_count: null,
-    group_condemned_bytes: null,
-    group_unknown_size: null,
     video_resolution: null,
     library: null,
     dormant_for: null,
     reason: null,
-    spared: false,
     override: null,
     override_own: null,
     show_override: null,
@@ -492,20 +483,29 @@ function showSeason(): Candidate {
     chip: null,
     show_status: null,
     season_number: 3,
-    group_seasons: [
-      {
-        id: 3,
-        season: 3,
-        verdict: "abstain",
-        override: null,
-        override_effective: null,
-        size_bytes: 1024 ** 3,
-        spare_expires_at: null,
-        spare_covers_until: null,
-      },
-    ],
   };
 }
+
+/** The show's one season, which the strip draws. It belongs to the show, so it rides the
+ *  page's rollup rather than each row. */
+const SHOW_ROLLUP: GroupRollup = {
+  group_key: "sonarr:5:42",
+  condemned_count: 0,
+  condemned_bytes: 0,
+  unknown_size: 0,
+  seasons: [
+    {
+      id: 3,
+      season: 3,
+      verdict: "abstain",
+      override: null,
+      override_effective: null,
+      size_bytes: 1024 ** 3,
+      spare_expires_at: null,
+      spare_covers_until: null,
+    },
+  ],
+};
 
 const GROUP: Group = {
   group_key: "sonarr:5:42",
@@ -541,11 +541,12 @@ function renderQueue(firstRead: "ok" | Error = "ok"): QueryClient {
   else
     apiMock.candidates.mockResolvedValue({
       items,
+      groups: [SHOW_ROLLUP],
       total: items.length,
-      totalBytes: 1024 ** 3,
-      unknownSize: 0,
+      total_bytes: 1024 ** 3,
+      unknown_size: 0,
       offset: 0,
-      snapshotId: 1,
+      snapshot_id: 1,
     });
   return renderWithClient(
     <ReviewQueue
@@ -613,15 +614,18 @@ describe("the expanded season list through a failed refetch", () => {
 
 // --- the add-a-rule form ------------------------------------------------------------------
 
+/** A real condemn field, movie lane, that no built-in signal filters out of the composer. It
+ *  was an invented `runtime_minutes` of type `"int"`, and `VocabField.type` typed as `string`
+ *  is what let a type the server cannot serve sit in a fixture (rule 119). */
 const VOCAB: Vocabulary = {
   lane: "condemn",
   fields: [
     {
-      key: "runtime_minutes",
-      label: "Runtime",
-      help_text: "How long the movie runs.",
-      type: "int",
-      unit_suffix: "min",
+      key: "release_age",
+      label: "Age since release",
+      help_text: "How long ago the title was released.",
+      type: "days",
+      unit_suffix: "days",
       ops: ["gte", "lte"],
     },
   ],
@@ -633,13 +637,13 @@ describe("the add-a-rule form through a failed refetch", () => {
     const client = renderWithClient(
       <RemoveRulesEditor condemn={[]} onCondemn={() => {}} mediaType="movie" />,
     );
-    expect(await screen.findByRole("option", { name: "Runtime" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Age since release" })).toBeInTheDocument();
 
     // `SetupWizard` fires a bare `invalidateQueries()`, so every key refetches: this arrives
     // without the operator touching the policy page at all.
     await blink(client, apiMock.vocabulary, ["vocabulary"]);
 
-    expect(screen.getByRole("option", { name: "Runtime" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Age since release" })).toBeInTheDocument();
     expect(screen.queryByText(/couldn't load the things a rule can look at/i)).toBeNull();
   });
 

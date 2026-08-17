@@ -49,17 +49,41 @@ export type NavIntent =
        *  Spelled `| undefined` because callers forward their own optional straight through, and
        *  `exactOptionalPropertyTypes` counts an explicit `undefined` as a value. */
       search?: string | undefined;
+      /** Open the collection screen on this collection, in place of the lane tabs (#816 phase
+       *  5). Omitted leaves the queue on whatever it was already showing -- a lane, or a
+       *  collection already open. There is no way to CLOSE one through a jump: that is the
+       *  queue's own back link and browser Back, both local to `ReviewQueue`. */
+      collection?: string;
     }
   | { view: "policy"; section?: PolicySectionId }
   | { view: "reap" }
   | { view: "fairness" }
   | { view: "settings"; panel?: Panel };
 
-/** A one-shot instruction to a mounted view, and the shape all three of them take.
+/** A one-shot instruction to a mounted view: what the app is currently aimed at, and which view
+ *  the aim is for.
  *
  *  A destination is not a prop a view can just read: `App` holds it until the view is mounted
  *  and the view acts on it once, so revisiting that page later never replays the jump that got
- *  you there the first time. The nonce is what "once" is counted with -- the view remembers the
- *  last one it handled. `T` is whatever that view is aimed with (a policy section, a settings
- *  panel, a search term). */
-export type Focus<T> = T & { nonce: number };
+ *  you there the first time. The nonce is what "once" is counted with, and the view remembers
+ *  the last one it handled.
+ *
+ *  **One value, keyed on `view`, and that is what makes the clearing structural.** `App` used
+ *  to hold three of these in parallel, one per aimable view, and an aim then had to be dropped
+ *  by name on the way off screen. Both incidents in `App`'s own clearing effect are that list
+ *  going stale. A focus that names its view cannot be read by another view, and it outlives its
+ *  own by exactly the commit that changes `view`. The drop runs in an effect, so `App` reads
+ *  every aim through a check on the name rather than trusting the state to be clean. A third
+ *  destination is a member here and nothing else.
+ *
+ *  **Settings' member is the ASK, not the panel.** Which panel is open is `App` state, so the
+ *  address bar can name it, and a place you can come back to is not a one-shot aim. A jump that
+ *  wants a different panel is: it fires once, and Settings may refuse it, because the panel it
+ *  would leave can be holding unsaved edits. So `App` names a destination here instead of setting
+ *  the panel, and the panel moves only when the confirm inside Settings lets it (#794). Everything
+ *  in this union fires once. The search box seeded by a jump must not refill itself on the way
+ *  back, and a policy section is a scroll position on one long page. */
+export type Focus =
+  | { view: "review"; search: string; collection?: string | undefined; nonce: number }
+  | { view: "policy"; section: PolicySectionId; nonce: number }
+  | { view: "settings"; panel: Panel; nonce: number };

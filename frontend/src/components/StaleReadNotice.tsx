@@ -40,7 +40,7 @@ import { Notice } from "./Notice";
  *  Security is the one whose clock always runs: `useSafety` refetches every 15 seconds whatever
  *  the app is doing, so its form met this state without the operator doing anything at all. Jobs
  *  has a clock too and it is the conditional one -- 1500ms, only while something is running
- *  (`Settings.tsx`) -- which is why the paragraph below says "most callers" rather than "all but
+ *  (`JobsPanel.tsx`) -- which is why the paragraph below says "most callers" rather than "all but
  *  Security". Backup is the one where the
  *  never-loaded sentence was actively harmful rather than merely wrong: it says to reload, and a
  *  reload does not run the restore card's unmount cleanup, so the staged archive is orphaned by
@@ -56,7 +56,7 @@ import { Notice } from "./Notice";
  *  with no ask. Nothing honest was available to put in its place: `main.tsx` sets
  *  `refetchOnWindowFocus: false` app-wide, and the only interval anywhere behind one of these
  *  reads is Security's, which runs always (`useSafety`, 15s), and Jobs', which runs only while a
- *  job is running (`Settings.tsx`, 1500ms) -- so a line promising Reaper keeps trying would be
+ *  job is running (`JobsPanel.tsx`, 1500ms) -- so a line promising Reaper keeps trying would be
  *  false on most callers and, on Jobs, false exactly half the time, which is worse than plainly
  *  wrong. (The flat "only Security has an interval" this used to say was simply untrue; the
  *  conclusion it was arguing for still holds. #196.) A retry the operator can press without

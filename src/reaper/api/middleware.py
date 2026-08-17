@@ -507,9 +507,9 @@ class AuthGuard:
         if digest is None or not hmac.compare_digest(provided_digest, digest):
             locked_for = api_key_throttle.record_failure(throttle_key)
             # The lockout crossing is a warning, matching its sibling on the local-login
-            # path (`api.auth.auth.local_locked_out`): repeated bad keys against an
-            # internet-facing install is something the operator should see without having
-            # turned anything on. The individual failures stay at DEBUG.
+            # path (the `auth.local_locked_out` event in `api/auth.py`): repeated bad keys
+            # against an internet-facing install is something the operator should see without
+            # having turned anything on. The individual failures stay at DEBUG.
             if locked_for > 0:
                 log.warning(
                     "auth.api_key_locked_out",
