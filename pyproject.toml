@@ -11,7 +11,7 @@ license = "AGPL-3.0-or-later"
 requires-python = ">=3.13"
 authors = [{ name = "Scythe Labs" }]
 
-# Version floors are the exact releases verified on PyPI on 2026-07-23.
+# Every floor is an exact release that exists on PyPI. Dependabot raises them.
 dependencies = [
     # Web
     "fastapi>=0.141.1",          # >=0.138 for app.frontend(), >=0.135 for fastapi.sse
