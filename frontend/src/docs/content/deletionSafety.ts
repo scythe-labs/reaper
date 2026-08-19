@@ -7,19 +7,19 @@ export const deletionSafety: Doc = {
   group: "Safety",
   title: "How a delete is kept safe",
   summary:
-    "The path a file takes from candidate to deleted, and the safeties that protect every step of it.",
+    "This is the path a file takes from candidate to deleted, along with the safeties that protect every step.",
   body: [
     p(
-      "Reaper removes irreplaceable files from a server other people depend on, so every time something is unclear, the file is kept.",
+      "Reaper removes irreplaceable files from a server other people depend on, so the app keeps any file that's unclear.",
     ),
     callout(
       "tip",
-      "**Every file Reaper removes leaves through Sonarr or Radarr.** Anything neither one manages stays untouched. A new install is read-only until you arm it with a password.",
+      "**Every file Reaper removes leaves through Sonarr or Radarr.** Reaper won't touch anything that neither one manages. Your new install stays read-only until you arm it with a password.",
     ),
 
     h2("The path a delete takes", "the-path"),
     p(
-      "Each step has its own gate. You can stop at any point, and most of them change nothing on disk.",
+      "Each step has its own gate. You can stop at any point, and most steps won't change anything on your disk.",
     ),
     diagram({
       title: "The operator's path",
@@ -62,28 +62,28 @@ export const deletionSafety: Doc = {
 
     h2("Two locks keep it off", "two-locks"),
     p(
-      "The connection every request to your servers travels through carries a deletion only when both of these are true.",
+      "Every request to your servers travels through one connection. That connection carries a deletion only when both of these are true.",
     ),
     ul([
-      "**Deletion is armed.** The switch you set in Policy, Deletion. It lives in the database and defaults to off.",
-      "**The delete was declared first.** Every removal is written to a record before it is sent. A request that skipped that step is refused, even while armed.",
+      "**Deletion is armed.** This is the switch you set in Policy, Deletion. It's stored in the database and defaults to off.",
+      "**The delete was declared first.** Reaper writes every removal to a record before it's sent. It'll refuse any request that skips that step, even while armed.",
     ]),
     p(
-      "The two are independent, so either one alone still refuses the delete. A brand-new feature is safe by existing, because it travels through that same guarded connection. Plex is reached through a separate connection with the same two locks, and it holds back even a library refresh, because on some servers a refresh empties the trash.",
+      "The two are independent, so either one alone still refuses the delete. A brand-new feature is safe by existing, because it travels through that same guarded connection. Reaper reaches Plex through a separate connection with the same two locks, and it holds back even a library refresh, because on some servers a refresh empties the trash.",
     ),
 
     h2("Judged on frozen, complete evidence", "frozen"),
     p(
-      "Everything is gathered and frozen before anything is scored, so no item's fate depends on a source timing out partway through a scan. If a source that could condemn something was unreachable, the scan is marked incomplete. You can look at it, but nothing can be run against it.",
+      "Everything's gathered and frozen before the scoring starts. This means no item's fate depends on a source timing out halfway through a scan. If a source that could condemn something was unreachable, the scan is marked incomplete. You can look at it, but you can't run anything against it.",
     ),
     callout(
       "note",
-      "**Not knowing can only ever protect.** A missing rating, a viewer Reaper cannot match, a source that failed, none of them count against a title.",
+      "**Not knowing can only ever protect.** A missing rating, a viewer Reaper cannot match, or a source that failed won't count against a title.",
     ),
 
     h2("Checked again at the moment of deletion", "at-delete"),
     p(
-      "Everything above is reversible; the reap is not. So each file runs one last set of checks, live, right before it goes, and every check keeps the file when it is unsure.",
+      "You can reverse everything above, but the reap isn't reversible. Each file runs one last set of checks live right before it goes. Every check keeps the file when it's unsure.",
     ),
     diagram({
       title: "One file, at the moment of deletion",
@@ -143,26 +143,26 @@ export const deletionSafety: Doc = {
       ],
     }),
     ul([
-      "**The test file goes first.** The smallest file with a known size goes alone and is verified before any other is touched. If it does not behave exactly as expected, the whole run halts. Files spared or still being watched are skipped first. A later file misbehaving is recorded and the run carries on.",
-      "**Removed so it stays gone.** Turn on the import exclusion for a Radarr instance and a movie it removes is kept off your lists, so it will not quietly re-download. It is off until you set it, and you set it per instance. A season is unmonitored first, and Reaper confirms that took before touching a file, so Sonarr will not pull it back.",
-      '**The caps hold, while they are on.** A run over its per-run or 30-day limit stops the whole run. It never removes just the part that fits. Switching off "Limit how much each run removes" in Policy leaves the password, your typed confirmation, and every live check standing.',
+      "**The test file goes first.** The smallest file with a known size goes alone and is verified before any other is touched. If it doesn't behave exactly as expected, the whole run halts. Files spared or still being watched are skipped first. If a later file misbehaves, it's recorded and the run carries on.",
+      "**Removed so it stays gone.** Turn on the import exclusion for a Radarr instance so a movie it removes stays off your lists and won't quietly re-download. It's off by default until you set it per instance. Reaper unmonitors the season first and confirms that took before it touches a file, so Sonarr won't pull it back.",
+      '**The caps hold, while they are on.** If a run goes over its per-run or 30-day limit, the whole run stops. It never removes just the part that fits. Switching off "Limit how much each run removes" in Policy leaves the password, your typed confirmation, and every live check standing.',
     ]),
 
     h2("Grace: a window to catch it before it's gone", "grace"),
     p(
-      "When a title is first condemned, a countdown starts, 14 days by default. Turn on the Leaving Soon shelf and Reaper marks it in Plex, so your users can keep a title they still want by simply watching it. A Discord heads-up can go out too.",
+      "When a title is first condemned, a countdown starts. It's 14 days by default. Turn on the Leaving Soon shelf and Reaper marks it in Plex so your users can keep a title they still want by simply watching it. You can also send a Discord heads-up.",
     ),
     callout(
       "caution",
-      "**The countdown is the time your users have to catch it.** When it ends, the title is simply ready for your next review, and you still start every deletion by hand. To keep a title, watch it or spare it. Both win at the moment of deletion, through the live checks above.",
+      "**The countdown is the time your users have to catch it.** Once it ends, the title is ready for your next review, but you still start every deletion by hand. Watch it or spare it to keep a title. Both win at the moment of deletion through the live checks above.",
     ),
 
     h2("Sharp edges", "edges"),
     ul([
-      "**A scripted deploy can start armed.** The password gate covers the switch in the app. Setting `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true` in the environment turns deletion on at first boot with no password. That is meant for infrastructure-as-code installs.",
-      "**That environment setting is the default until you use the switch.** The moment you turn deletion on or off in the app, the app's switch wins for good. To return a running install to read-only, use Policy, Deletion.",
-      "**A few read failures keep files, and the scan carries on.** If Reaper cannot list a service's folders, it refuses to match the items it is unsure about, and those files are kept. Not every hiccup shows as an incomplete-scan banner.",
-      '**The Leaving Soon shelf is off until you turn it on,** and updating it in Plex needs deletion armed unless you also turn on "Update while read-only" in Settings, Plex. It only reaches people who browse or pinned that library. Wire up the Discord webhook to warn everyone else.',
+      "**A scripted deploy can start armed.** The password gate covers the switch in the app. You can turn deletion on at first boot without a password by setting `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true` in the environment. This is meant for infrastructure-as-code installs.",
+      "**That environment setting is the default until you use the switch.** Once you turn deletion on or off in the app, the app's switch wins for good. Use Policy, Deletion to return a running install to read-only.",
+      "**A few read failures keep files, and the scan carries on.** If Reaper can't list a service's folders, it won't match the items it's unsure about, so those files are kept. You won't always see an incomplete-scan banner for every hiccup.",
+      '**The Leaving Soon shelf is off until you turn it on.** To update it in Plex, you need deletion armed unless you also turn on "Update while read-only" in Settings, Plex. It only reaches people who browse or pinned that library. Wire up the Discord webhook to warn everyone else.',
     ]),
   ],
 };

@@ -6,7 +6,7 @@ export const cheatSheet: Doc = {
   id: "cheat-sheet",
   group: "Policy",
   title: "Tuning cheat sheet",
-  summary: "The defaults and the habits that keep you safe, at a glance.",
+  summary: "Here are the defaults and habits that keep you safe.",
   body: [
     callout(
       "tip",
@@ -25,7 +25,7 @@ export const cheatSheet: Doc = {
       ],
     ),
     p(
-      "Points must total **100** or Save is blocked. Never weight size: it aims at your biggest, most-loved files.",
+      "Your points must total **100** or the Save button is blocked. Don't weight size because it aims at your biggest, most-loved files.",
     ),
 
     h2("Protections", "protections"),
@@ -42,7 +42,7 @@ export const cheatSheet: Doc = {
       ],
     ),
     p(
-      'Your lists (Settings, Lists) protect through **keep rules** here: a list you add protects nothing until you give it a rule, and you pick whether it keeps every title outright or only leans that way. Shipped lists come with a keep-everything rule: "Titles you\'ve tagged" (the `reaper-keep` tag), and IMDb Top 250.',
+      'Your lists (Settings, Lists) protect through **keep rules**. A list you add protects nothing until you give it a rule, and you pick whether it keeps every title outright or only leans that way. Shipped lists come with a keep-everything rule: "Titles you\\\'ve tagged" (the `reaper-keep` tag) and IMDb Top 250.',
     ),
 
     h2("Pace and limits, defaults", "pace"),
@@ -61,14 +61,14 @@ export const cheatSheet: Doc = {
     // "stop", matching understandingPolicy's line about the same mechanism. "Abort" was the
     // only place in the product an operator met that word (U-15).
     p(
-      'Caps stop the whole run when crossed. They never remove just the part that fits. Leave "Limit how much each run removes" on: switching it off drops both rows above. Unknown-size items are still held back, and the countdown still runs.',
+      'Caps stop the whole run when crossed. They never remove just the part that fits. Leave "Limit how much each run removes" on, because switching it off drops both rows above. Unknown-size items are still held back, and the countdown still runs.',
     ),
 
     h2("Habits that keep you safe", "habits"),
     ul([
-      "To remove more, lower the line. Don't switch off a protection.",
+      "Lower the line to remove more. Don't switch off a protection.",
       "Pace, grace, and Leaving Soon first. Arm deletion last.",
-      "Keep a vote floor on ratings. A high score from few votes is noise.",
+      "Set a vote floor on ratings. A high score from few votes is noise.",
       "Never weight size.",
     ]),
   ],

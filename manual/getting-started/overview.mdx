@@ -9,29 +9,29 @@ sidebar_position: 1
     Source:     the "overview" doc in frontend/src/docs/content/
     Regenerate: npm --prefix frontend run gen-manual */}
 
-Your library grows faster than your disk. Reaper reads your watch history and hands you a reviewed list. Each item carries a plain explanation of why it is a candidate, and every protection Reaper checked. You skim, approve, and it removes the files through Sonarr and Radarr, then refreshes Plex.
+Your library grows faster than your disk. Reaper reads your watch history and gives you a reviewed list. Each item has a plain explanation of why it's a candidate and every protection Reaper checked. You skim, approve, and it removes the files through Sonarr and Radarr, then refreshes Plex.
 
 <Callout tone={"tip"}>
 
-**It ships read-only.** A new install can scan, score, and explain, until you arm deletion with a password, or a deploy sets it on at first boot.
+**It ships read-only.** A new install can scan, score, and explain until you arm deletion with a password or a deploy sets it on at first boot.
 
 </Callout>
 
 ## Why you can trust it {#trust}
 
-- **Missing evidence can only ever protect.** Anything Reaper couldn't read adds no pressure to the score, and a protection it couldn't check keeps the file outright.
-- **Never touches something being watched.** A file in play, or played since you approved, drops off the list.
-- **Only works through Sonarr and Radarr.** Every removal is a request to one of them.
-- **Gives you time to change your mind.** Anything on its way out gets a countdown first, and you still start every deletion by hand.
-- **A reap is a person at the keyboard.** Deleting needs a signed-in browser, deletion armed, and a phrase you type that matches the exact plan. An API key is refused, every time.
-- **Your keys never come back out.** Every credential is encrypted before it is stored and redacted from the logs, and the API will only ever tell you whether one is set.
+- **Missing evidence can only ever protect.** If Reaper couldn't read something, it adds no pressure to the score. If it couldn't check a protection, it keeps the file outright.
+- **Never touches something being watched.** If a file is currently in play or has been played since you approved it, it drops off the list.
+- **Only works through Sonarr and Radarr.** Every removal is a request sent to one of them.
+- **Gives you time to change your mind.** Anything on its way out gets a countdown first. You still start every deletion by hand.
+- **A reap is a person at the keyboard.** To delete, you need a signed-in browser, deletion armed, and a phrase you type that matches the exact plan. An API key is refused every time.
+- **Your keys never come back out.** Reaper encrypts every credential before storing it and redacts it from the logs. The API only tells you whether a credential is set.
 
 ## What it connects to {#connections}
 
 - **Tautulli** tells Reaper who watched what, and when.
-- **Sonarr** manages your TV shows. Reaper removes them through it.
-- **Radarr** manages your movies. Reaper removes them through it.
-- **Seerr** (Overseerr or Jellyseerr) tells Reaper who asked for a title, so you can see it, filter by it, and write a rule that keeps requests.
-- **Plex** is your library. Reaper reads it, and refreshes it after a cleanup.
+- **Sonarr** manages your TV shows, and Reaper removes them through it.
+- **Radarr** manages your movies, and Reaper removes them through it.
+- **Seerr** (Overseerr or Jellyseerr) tells Reaper who requested a title. You can see the requester, filter by them, or write a rule to keep their requests.
+- **Plex** is your library. Reaper reads it and refreshes it after you clean up.
 
 Tautulli plus Sonarr or Radarr is enough to start scanning.
