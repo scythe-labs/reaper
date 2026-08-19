@@ -76,7 +76,6 @@ jobs:
       release: ${{ steps.decide.outputs.release }}
       publish: ${{ steps.decide.outputs.publish }}
       sha: ${{ steps.decide.outputs.sha }}
-      ref: ${{ steps.decide.outputs.ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -91,16 +90,13 @@ jobs:
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
           short="$(git rev-parse --short HEAD)"
-          build=true; release=false; publish=false; ref=""
+          build=true; release=false; publish=false
           version="dev-${short}"
 
           if [ -n "${CALL_VERSION}" ]; then
             # Called from release.yml: the caller owns publication.
             version="${CALL_VERSION}"; release=true
           elif [ "${EVENT}" = "schedule" ] || [ "${EVENT}" = "workflow_dispatch" ]; then
-            # Pin every later checkout to this exact commit, so a push to dev
-            # mid-run cannot split the build across two commits.
-            ref="${sha}"
             if [ "${EVENT}" = "schedule" ] || [ "${DISPATCH_PUBLISH}" = "true" ]; then
               publish=true
               last="$(gh release view dev-build --json targetCommitish -q .targetCommitish 2>/dev/null || echo none)"
@@ -124,7 +120,6 @@ jobs:
             echo "release=${release}"
             echo "publish=${publish}"
             echo "sha=${sha}"
-            echo "ref=${ref}"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -143,9 +138,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Pin to the commit that started the run, so a push to dev mid-run cannot
+      # split the build across two commits. github.sha is that commit on every
+      # trigger here, including the workflow_call from release.yml, where the
+      # context is the caller's. Do not route it back through a plan output.
+      # CodeQL cannot see into a run step, so a ref arriving as needs.*.outputs.*
+      # reads to it as attacker-controlled and the cache-poisoning query fires.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.plan.outputs.ref }}
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -334,7 +335,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.plan.outputs.ref }}
+          ref: ${{ github.sha }}
 
       # The build job's own Bake provenance step carries why these two differ on the
       # output path and the interpreter, and why folding them together breaks one.
@@ -429,7 +430,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.plan.outputs.ref }}
+          ref: ${{ github.sha }}
 
       - name: Build, push, and fold into :dev
         run: |
