@@ -7,20 +7,18 @@ sidebar_position: 1
 
 # Configuration
 
-Two homes. **`.env` holds only what must exist *before* the database,
-or be changeable *without* the web UI.** Everything else lives in the database, encrypted, and
-is edited in the UI.
+Settings live in two places. Your **`.env`** file holds only what must exist _before_ the database, or be changeable _without_ the web UI. Everything else lives in the database, encrypted, and you edit it in the UI.
 
-| Where | What | Why there |
-| --- | --- | --- |
-| `.env` | `REAPER_SECRET_KEY`, `REAPER_SECRET_KEY_OLD` (both optional) | They decrypt the database's secrets, so they cannot live inside it |
-| `.env` | data dir, host, port, logging | Needed before anything else exists |
-| `.env` | `REAPER_RECOVERY` | Must work when the UI has locked you out, so it has no setting in the UI |
-| `launcher.conf` | the same `REAPER_` keys, on Windows, macOS, and the snap | Those installs are started by a double-click or by snapd, and receive no environment variables |
-| `.env` | `REAPER_ALLOW_UNARMED_LEAVING_SOON` | Seeds the first run only. After that the UI owns it, under Settings, Plex, as "Update while read-only" |
-| `.env` | `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` | Seeds the first run only. The UI owns it after that |
-| `.env` | `REAPER_SERVE_SPA` | On by default. Turn it off in development so Vite serves the UI |
-| **Database**, encrypted | Instance URLs and API keys, the Discord webhook, policies, schedules, whitelist | Editable and rotatable without a redeploy |
+| Where                   | What                                                                            | Why there                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `.env`                  | `REAPER_SECRET_KEY`, `REAPER_SECRET_KEY_OLD` (both optional)                    | They decrypt the database's secrets, so they cannot live inside it                                     |
+| `.env`                  | data dir, host, port, logging                                                   | Needed before anything else exists                                                                     |
+| `.env`                  | `REAPER_RECOVERY`                                                               | Must work when the UI has locked you out, so it has no setting in the UI                               |
+| `launcher.conf`         | the same `REAPER_` keys, on Windows, macOS, and the snap                        | Those installs are started by a double-click or by snapd, and receive no environment variables         |
+| `.env`                  | `REAPER_ALLOW_UNARMED_LEAVING_SOON`                                             | Seeds the first run only. After that the UI owns it, under Settings, Plex, as "Update while read-only" |
+| `.env`                  | `REAPER_DESTRUCTIVE_ACTIONS_ENABLED`                                            | Seeds the first run only. The UI owns it after that                                                    |
+| `.env`                  | `REAPER_SERVE_SPA`                                                              | On by default. Turn it off in development so Vite serves the UI                                        |
+| **Database**, encrypted | Instance URLs and API keys, the Discord webhook, policies, schedules, whitelist | Editable and rotatable without a redeploy                                                              |
 
 ## Seeding services from the environment
 
@@ -33,24 +31,19 @@ REAPER_SONARR_4K_URL=https://sonarr-4k.example.net
 REAPER_SONARR_4K_API_KEY=...
 ```
 
-Each one is imported and encrypted the first time Reaper sees it, and Reaper then logs that the
-variable can be removed. The import runs on *every* start, so a service added to the environment
-later is picked up on the next restart.
+Reaper imports and encrypts each one the first time it sees it, then logs that the variable can be removed. The import runs on _every_ start so Reaper picks up a service added to the environment on your next restart.
 
-The label between the service and the field, `HD` above, is yours to choose. Its case is ignored,
-so `hd` and `HD` are one service, not two.
+You can choose whatever label goes between the service and the field, like `HD`. The case doesn't matter, so `hd` and `HD` are treated as the same service.
 
 <Callout tone="note">
-  **The database is the source of truth regardless.** An instance that already exists is never
-  overwritten from the environment, so rotating a key in the UI cannot be silently clobbered by
-  a stale `.env`.
+  **The database is the source of truth regardless.** An instance that already
+  exists is never overwritten from the environment, so rotating a key in the UI
+  cannot be silently clobbered by a stale `.env`.
 </Callout>
 
-Plex is added with **Sign in with Plex** in the setup wizard, which discovers your server and
-its token for you.
+Use **Sign in with Plex** in the setup wizard to add Plex. It'll find your server and its token for you.
 
 ## Also in this section
 
-- [The encryption key](/configuration/encryption-key), and how to rotate it without bricking
-  your stored credentials.
-- [The deletion switch](/configuration/deletion-switch), which is deliberately asymmetric.
+- [The encryption key](/configuration/encryption-key), and how you can rotate it without breaking your stored credentials.
+- [The deletion switch](/configuration/deletion-switch), which is asymmetric by design.

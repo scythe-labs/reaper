@@ -6,51 +6,44 @@ sidebar_position: 3
 
 # Unraid
 
-Open the **Apps** tab, search for **Reaper**, and install it. Community Applications carries
-the template.
+Go to the **Apps** tab, search for **Reaper**, and install it. You'll find the template in Community Applications.
 
-Installing asks which channel you want. Take **Default**, which follows releases.
+When you install, it'll ask which channel you want. Take **Default** to follow releases.
 
-Not in the search results yet? The same template lives in the repository. Copy
-`contrib/unraid/my-Reaper.xml` to:
+Can't find it in the search results? You can find the same template in the repository. Copy `contrib/unraid/my-Reaper.xml` to:
 
 ```
 /boot/config/plugins/dockerMan/templates-user/
 ```
 
-Then add the container from the template dropdown in the Docker tab.
+Add the container from the template dropdown in the Docker tab.
 
 ## Ownership
 
-The template ships **`PUID` `99`** and **`PGID` `100`**, so the appdata folder stays owned by
-`nobody:users`, which is what the rest of Unraid expects. Keep them.
+The template ships with **`PUID` `99`** and **`PGID` `100`** so your appdata folder stays owned by `nobody:users` like the rest of Unraid expects. Keep them.
 
 <Callout tone="note">
-  The container starts as root only to take ownership of its data folder, then drops to that
-  user before it opens the database.
+  The container starts as root only to take ownership of its data folder, then
+  drops to that user before it opens the database.
 </Callout>
 
 ## Where the data goes
 
-One path, Reaper's own database. The default in the template puts it under your appdata share.
-Reaper needs no access to your media shares, so leave them unmapped.
+One path, Reaper's own database. The default in the template puts it under your appdata share. Reaper needs no access to your media shares, so leave them unmapped.
 
 ## The dev channel
 
-To run the dev channel, pick **dev** when you install. Dev builds change often. Releases are the
-steadier channel.
+Pick **dev** when you install to run the dev channel. Dev builds change often. Releases are the steadier channel.
 
-The channel is only offered while installing. To move an install you already have, edit the
-container and change the tag at the end of the **Repository** field from `:latest` to `:dev`.
+You can only choose the channel during installation. To move an existing install, edit the container and change the tag at the end of the **Repository** field from `:latest` to `:dev`.
 
-Want both at once? Install Reaper a second time, pick **dev**, and give that one its own name,
-port, and appdata folder. 
+If you want both at once, install Reaper a second time. Pick **dev**, and give that one its own name, port, and appdata folder.
 
 <Callout tone="caution">
-  Two containers sharing one appdata folder will break your database. **Do not do this!**
+  Two containers sharing one appdata folder will break your database. **Do not
+  do this!**
 </Callout>
 
 ## Next
 
-[First run](/getting-started/first-run), in order. The first account to sign in claims the
-install, so it matters who does it.
+Follow the [First run](/getting-started/first-run) steps in order. The first account that signs in claims the install, so make sure you know who's doing it.

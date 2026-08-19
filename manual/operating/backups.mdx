@@ -7,72 +7,60 @@ sidebar_position: 1
 
 # Back this up
 
-Reaper's data folder holds what you cannot regenerate.
-[Where it is](/getting-started/install#where-the-data-lives) depends on the install.
+Your Reaper data folder holds things you can't regenerate. [Where it is](/getting-started/install#where-the-data-lives) depends on your install.
 
-| File | Why it matters |
-| --- | --- |
-| `reaper.db` | Your policies, decisions, whitelist and audit trail. |
-| `secret.key` | The master key, when Reaper generated one. Absent if you supply `REAPER_SECRET_KEY`. |
-| `secret.salt` | Minted per install, and paired with that key. Both are needed to decrypt. |
+| File            | Why it matters                                                                          |
+| --------------- | --------------------------------------------------------------------------------------- |
+| `reaper.db`     | Your policies, decisions, whitelist and audit trail.                                    |
+| `secret.key`    | The master key, when Reaper generated one. Absent if you supply `REAPER_SECRET_KEY`.    |
+| `secret.salt`   | Minted per install, and paired with that key. Both are needed to decrypt.               |
 | `launcher.conf` | Windows, macOS and the snap only. The port and bind address live here and nowhere else. |
 
 <Callout tone="caution">
-  **The key and the salt only work as a pair.** The key is stretched with `secret.salt` before
-  anything is decrypted, so a backup carrying one without the other reads exactly like a backup
-  carrying neither. Take them together, every time.
+  **The key and the salt only work as a pair.** The key is stretched with
+  `secret.salt` before anything is decrypted, so a backup carrying one without
+  the other reads exactly like a backup carrying neither. Take them together,
+  every time.
 </Callout>
 
 ## Let Reaper do it
 
-Settings, Backup produces one archive, which removes the chance of taking three files out of
-four by hand. It leaves out `secret.key` when the key comes from `REAPER_SECRET_KEY`, because
-there is no file to take: restoring that archive needs the same variable set.
+Settings, Backup produces one archive so you don't accidentally take three files out of four by hand. It leaves out `secret.key` if your key comes from `REAPER_SECRET_KEY` because there's no file to take. Restoring that archive needs you to have the same variable set.
 
-`launcher.conf` travels whenever your install has one, so rebuilding on the same kind of
-install keeps the port and bind address you set. Restoring turns recovery mode off inside it.
+If your install has a `launcher.conf`, it travels with it. Rebuilding on the same kind of install keeps your set port and bind address. Restoring turns recovery mode off inside it.
 
-Restoring that archive asks for your admin password. Downloading it asks only that you are
-signed in.
+Restoring that archive requires your admin password. Downloading it only requires that you're signed in.
 
 <Callout tone="caution">
-  **Treat the archive and `reaper.db` as sensitive.** They hold the credentials for every
-  service Reaper talks to, including a Plex token that grants full control of your Plex account.
-  Encryption at rest guards the file on disk. Keep it out of public issue reports and support
-  threads all the same.
+  **Treat the archive and `reaper.db` as sensitive.** They hold the credentials
+  for every service Reaper talks to, including a Plex token that grants full
+  control of your Plex account. Encryption at rest guards the file on disk. Keep
+  it out of public issue reports and support threads all the same.
 </Callout>
 
 ## The one Reaper takes on its own
 
-Most updates only add to the database. When one has to change or remove something instead,
-Reaper copies the database into a `pre-migration` folder beside it before the update runs, and
-keeps the newest three. If it cannot write that copy, it stops and does not run the update.
+Most updates only add to the database. If an update needs to change or remove something, Reaper copies the database into a `pre-migration` folder beside it before the update runs and keeps the newest three. If it can't write that copy, it stops and doesn't run the update.
 
-Those files are ordinary Reaper backups, so Settings, Backup restores one the same way it
-restores any other. Treat them as sensitive: each carries the same credentials the archive
-above does.
+These are ordinary Reaper backups. Settings, Backup restores them just like any other. Treat them as sensitive because each carries the same credentials as the archive above.
 
 ## The one you can throw away
 
-`cache.db` sits next to them and is disposable. It is other people's data mirrored
-locally, meaning watch history and the IMDb dataset, and Reaper rebuilds it.
+You can delete `cache.db` whenever you want. It's just a local mirror of watch history and the IMDb dataset, so Reaper will rebuild it for you.
 
-Nothing in `cache.db` is a source of truth, which is why it stays out of the backup.
+Reaper keeps `cache.db` out of the backup because nothing in it is a source of truth.
 
 ## Restoring
 
-Put the files back in the data folder and start Reaper. Migrations run before the app
-accepts a connection, so a database from an older version is brought forward on the way up.
+Move your files back into the data folder and start Reaper. Migrations run before the app accepts a connection so an older database is brought forward as it starts up.
 
-Going the other way, Reaper stops instead. A database a newer version set up will not open on
-an older one, because the older code cannot read it safely. Put the newer version back, or
-restore a backup made with the older one.
+If you go the other way, Reaper stops. A database a newer version set up won't open on an older one because the older code can't read it safely. Put the newer version back, or restore a backup made with the older one.
 
-Restore `reaper.db` without its matching key and salt and every stored credential is
-unreadable and must be entered again. The policies, decisions and audit trail survive.
+If you restore `reaper.db` without its matching key and salt, every stored credential becomes unreadable and you'll have to enter them again. Your policies, decisions and audit trail will survive.
 
 <Callout tone="caution">
-  **Re-entering a credential against the wrong key destroys the good one.** If services come
-  back unreadable, put the right key and salt in place first. Saving over an unreadable
-  credential writes new ciphertext under the wrong key, and the original is then gone.
+  **Re-entering a credential against the wrong key destroys the good one.** If
+  services come back unreadable, put the right key and salt in place first.
+  Saving over an unreadable credential writes new ciphertext under the wrong
+  key, and the original is then gone.
 </Callout>

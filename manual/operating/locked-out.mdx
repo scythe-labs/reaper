@@ -7,33 +7,34 @@ sidebar_position: 2
 
 # Not getting locked out
 
-**Reaper always keeps at least one working local admin.** The last one cannot be deactivated,
-and first run creates it.
+**Reaper always keeps at least one working local admin.** The first run creates it, and you can't deactivate the last one.
 
-A plex.tv outage, a revoked token, or a rebuilt Plex server each breaks Plex sign-in.
+A plex.tv outage, a revoked token, or a rebuilt Plex server will break your Plex sign-in.
 
 <Callout tone="tip">
-  **You already have one.** The password you set on first run created your local account.
+  **You already have one.** The password you set on first run created your local
+  account.
 </Callout>
 
 ## Two ways back in
 
 <Steps>
   <Step title="Recovery mode.">
-    Works on every install, including the Windows and macOS apps. Reaper writes a single-use
-    sign-in code to a file you can open, you paste it in, and you set a new password without
-    the old one. The steps are below.
+    Works on every install, including the Windows and macOS apps. Reaper writes
+    a single-use sign-in code to a file you can open, you paste it in, and you
+    set a new password without the old one. The steps are below.
   </Step>
   <Step title="The command line.">
-    `reaper-admin` talks to the database directly, so it works while the UI is broken. It ships
-    with **Docker and the snap only**, not with the Windows or macOS apps. Run
-    `docker compose exec reaper reaper-admin --help` for the full command set.
+    `reaper-admin` talks to the database directly, so it works while the UI is
+    broken. It ships with **Docker and the snap only**, not with the Windows or
+    macOS apps. Run `docker compose exec reaper reaper-admin --help` for the
+    full command set.
   </Step>
 </Steps>
 
 ## Recovering an install, step by step
 
-Recovery mode has no UI setting: it has to work when the UI is what locked you out.
+Recovery mode doesn't have a UI setting because it has to work even when the UI is what locked you out.
 
 <Steps>
   <Step title="Turn recovery mode on.">
@@ -46,6 +47,7 @@ Recovery mode has no UI setting: it has to work when the UI is what locked you o
 
     The first run already wrote `launcher.conf` with this line in it, commented out. Delete
     the `#` in front of it and save.
+
   </Step>
   <Step title="Read the code.">
     Reaper mints one code at startup and puts it in two places.
@@ -56,6 +58,7 @@ Recovery mode has no UI setting: it has to work when the UI is what locked you o
       `snap logs scythe-labs-reaper` on the snap.
 
     The code lasts 15 minutes. If it expires, restart Reaper for a new one.
+
   </Step>
   <Step title="Sign in with it.">
     Go to `/recover`, for example `http://localhost:8420/recover`, and paste the code.
@@ -69,26 +72,20 @@ Recovery mode has no UI setting: it has to work when the UI is what locked you o
 </Steps>
 
 <Callout tone="caution">
-  **Recovery mode is a way in, so it is a way in for anyone who can reach the host.** Turn it off once
-  you have a working password again.
+  **Recovery mode is a way in, so it is a way in for anyone who can reach the
+  host.** Turn it off once you have a working password again.
 </Callout>
 
 ## Reaper cannot delete while recovery mode is on
 
-Deletion is held off while the flag is set, whatever your settings say, and turning it on is
-refused until you turn recovery mode off.
+Deletion is held off while the flag is set, regardless of your settings. You can't turn it on until you turn recovery mode off.
 
-An install that was armed before the lockout comes back **read-only**. Turn deletion on again
-in Policy, Deletion when you are ready.
+If an install was armed before the lockout, it'll come back **read-only**. Turn Deletion on again in Policy, Deletion when you're ready.
 
 ## Why the code is not in the link
 
-You get a **URL and a separate code**, rather than one link that signs you in. A code baked
-into the URL would be recorded verbatim in every reverse proxy's access log.
+You'll get a **URL and a separate code** instead of a single sign-in link. This keeps the code from being recorded in your reverse proxy's access logs.
 
 ## If there is no admin account at all
 
-Recovery mode signs you in as an existing admin, so an install nobody has set up yet has
-nothing for it to sign you in as. Sign in with Plex instead: the first account to sign in
-claims the server, provided it owns it. On Docker and the snap you can also run
-`reaper-admin create-admin --username admin`.
+Recovery mode signs you in as an existing admin. A new install has nothing to sign you in as yet. Sign in with Plex instead. The first account to sign in claims the server if it owns it. If you're using Docker or the snap, you can also run `reaper-admin create-admin --username admin`.
