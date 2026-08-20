@@ -14,10 +14,12 @@ import { themes } from "prism-react-renderer";
 
 const ORG = "scythe-labs";
 const REPO = "reaper";
+// The site header and the footer say this same line, so it is declared once.
+const TAGLINE = "Grave decisions, clearly explained";
 
 const config: Config = {
   title: "Reaper",
-  tagline: "Grave decisions, clearly explained",
+  tagline: TAGLINE,
   favicon: "img/favicon.svg",
 
   // GitHub Pages for a project repository serves under /<repo>/. Both halves are read by the
@@ -90,7 +92,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: "Reaper is AGPL-3.0-or-later. Every ambiguity resolves toward keeping the file.",
+      copyright: `Reaper is AGPL-3.0-or-later. ${TAGLINE}.`,
     },
     prism: {
       theme: themes.github,

@@ -4,13 +4,32 @@
 // emphasis, the verdict colors) lives here and reuses the app's tokens, so a doc reads as
 // part of Reaper. Add a block variant in blocks.ts, then a case here; nowhere else.
 
-import { Fragment, type ReactNode } from "react";
+import { createContext, Fragment, type ReactNode, useContext } from "react";
 import type { Block, CalloutTone, DiagramBlock, DiagramNode } from "./blocks";
 
-const INLINE = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]\n]+\]\([a-z0-9-]+(?:#[a-z0-9-]+)?\))/g;
+/** `[text](doc-id#section)`. The target is a doc id, never a URL, so a cross-reference can
+ *  only ever point inside the docs; `manual.links.test.ts` fails on an id or section that
+ *  does not exist, which is what keeps the two surfaces from shipping a dead link. */
+const REF = /^\[([^\]]+)\]\(([a-z0-9-]+)(?:#([a-z0-9-]+))?\)$/;
 
-/** Parse the tiny inline subset (`**bold**`, `` `code` ``) into React nodes. Never HTML:
- *  it builds elements, so a doc string cannot inject markup. */
+/** How a cross-reference opens, supplied by whatever is rendering the doc. The docs modal
+ *  passes its own navigator so a link moves within the open modal; anything rendering a doc
+ *  without one gets the link text as plain prose rather than a button that does nothing. */
+const NavCtx = createContext<((id: string, anchor?: string) => void) | null>(null);
+
+function DocRef({ doc, anchor, text }: { doc: string; anchor?: string | undefined; text: string }) {
+  const navigate = useContext(NavCtx);
+  if (navigate === null) return <>{text}</>;
+  return (
+    <button type="button" className="doc-ref" onClick={() => navigate(doc, anchor)}>
+      {text}
+    </button>
+  );
+}
+
+/** Parse the tiny inline subset (`**bold**`, `` `code` ``, `[text](doc-id#section)`) into
+ *  React nodes. Never HTML: it builds elements, so a doc string cannot inject markup. */
 export function inline(text: string): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
@@ -19,7 +38,14 @@ export function inline(text: string): ReactNode[] {
     if (m.index > last) out.push(text.slice(last, m.index));
     const tok = m[0];
     if (tok.startsWith("**")) out.push(<strong key={key++}>{tok.slice(2, -2)}</strong>);
-    else out.push(<code key={key++}>{tok.slice(1, -1)}</code>);
+    else if (tok.startsWith("[")) {
+      // INLINE only matches the shape REF parses, so the destructure always lands. Rendering
+      // the raw token on the impossible branch keeps a future edit to either pattern visible
+      // as text rather than as a link that silently goes nowhere.
+      const [, label, target, anchor] = REF.exec(tok) ?? [];
+      if (label === undefined || target === undefined) out.push(tok);
+      else out.push(<DocRef key={key++} doc={target} anchor={anchor} text={label} />);
+    } else out.push(<code key={key++}>{tok.slice(1, -1)}</code>);
     last = m.index + tok.length;
   }
   if (last < text.length) out.push(text.slice(last));
@@ -223,20 +249,19 @@ function renderBlock(b: Block, key: number): ReactNode {
       );
     case "diagram":
       return <DocDiagram key={key} block={b} />;
-    case "defs":
-      return (
-        <dl key={key} className="doc-defs">
-          {b.items.map((d, i) => (
-            <div key={i}>
-              <dt>{d.term}</dt>
-              <dd>{inline(d.text)}</dd>
-            </div>
-          ))}
-        </dl>
-      );
   }
 }
 
-export function DocBody({ blocks }: { blocks: Block[] }) {
-  return <>{blocks.map((b, i) => renderBlock(b, i))}</>;
+export function DocBody({
+  blocks,
+  onNavigate,
+}: {
+  blocks: Block[];
+  onNavigate?: (id: string, anchor?: string) => void;
+}) {
+  return (
+    <NavCtx.Provider value={onNavigate ?? null}>
+      {blocks.map((b, i) => renderBlock(b, i))}
+    </NavCtx.Provider>
+  );
 }

@@ -24,8 +24,6 @@ export type StepItem = { title: string; text: string };
 export type Steps = { kind: "steps"; items: StepItem[] };
 /** A table. `hi` is the zero-based column to emphasize (the shipped-default column). */
 export type TableBlock = { kind: "table"; head: string[]; rows: string[][]; hi?: number };
-export type DefItem = { term: string; text: string };
-export type Defs = { kind: "defs"; items: DefItem[] };
 
 /** A flowchart, drawn from the app's own tokens (no Mermaid / vendor dependency). It is a
  *  vertical spine of nodes with optional side branches, so a safety flow reads at a glance
@@ -46,7 +44,7 @@ export type DiagramBlock = {
   steps: DiagramStep[];
 };
 
-export type Block = Heading | Para | Callout | ListBlock | Steps | TableBlock | Defs | DiagramBlock;
+export type Block = Heading | Para | Callout | ListBlock | Steps | TableBlock | DiagramBlock;
 
 export type Doc = {
   id: string;
@@ -87,7 +85,6 @@ export const table = (head: string[], rows: string[][], hi?: number): TableBlock
   rows,
   ...(hi !== undefined ? { hi } : {}),
 });
-export const defs = (items: DefItem[]): Defs => ({ kind: "defs", items });
 export const diagram = (spec: Omit<DiagramBlock, "kind">): DiagramBlock => ({
   kind: "diagram",
   ...spec,

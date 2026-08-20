@@ -12,6 +12,7 @@
 // site's in the other.
 
 import type { Block, Doc, DiagramBlock, TableBlock } from "./blocks";
+import { DOCS } from "./registry";
 
 /** The first line of every generated page. It is what marks a file as machine-written, so
  *  `manual.pages.test.ts` can tell a generated page from a hand-written one sitting beside it in
@@ -47,10 +48,26 @@ export function manualPath(doc: Doc): string {
  *  are one ordinary sentence away, so escape them before they become a build failure nobody can
  *  place. Code spans are left alone: MDX does not interpolate inside them, and escaping there
  *  would put a backslash on the operator's screen. */
+/** `[text](doc-id#section)` carries a doc id, which is the app's address for a page and not
+ *  the site's. The manual needs the path the page is written to, so the id is resolved through
+ *  the same `manualPath` the generator uses: one mapping, so a link and the file it points at
+ *  cannot disagree. An id with no doc is left as written for `manual.links.test.ts` to fail on,
+ *  rather than being silently dropped or pointed at a guess. */
+function resolveRefs(text: string): string {
+  return text.replace(
+    /\[([^\]\n]+)\]\(([a-z0-9-]+)(#[a-z0-9-]+)?\)/g,
+    (whole, label: string, id: string, anchor: string | undefined) => {
+      const target = DOCS.find((d) => d.id === id);
+      if (target === undefined) return whole;
+      return `[${label}](/${manualPath(target).replace(/\.mdx$/, "")}${anchor ?? ""})`;
+    },
+  );
+}
+
 function escapeText(text: string): string {
   // The backslash is in the class so a literal one cannot pair with the next character
   // as an MDX escape; one pass keeps the escaping characters from re-escaping each other.
-  return text
+  return resolveRefs(text)
     .split(/(`[^`]*`)/g)
     .map((part) => (part.startsWith("`") ? part : part.replace(/[\\{}<>]/g, (c) => `\\${c}`)))
     .join("");
@@ -158,14 +175,6 @@ function blockToMdx(b: Block): string {
       );
     case "table":
       return tableToMdx(b);
-    case "defs":
-      return wrap(
-        "<Definitions>",
-        b.items
-          .map((d) => wrap(`<Def term=${jsxAttr(d.term)}>`, escapeText(d.text), "</Def>"))
-          .join("\n\n"),
-        "</Definitions>",
-      );
     case "diagram":
       return diagramToMdx(b);
   }

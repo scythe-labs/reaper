@@ -30,7 +30,7 @@ export const understandingPolicy: Doc = {
       "**Protections are hard lines that always win.** They only ever keep a file and can never remove one. If any single protection fires, the title stays regardless of its score.",
     ),
     p(
-      "**Caps stop a run; grace is the heads-up.** Pace and limits below sets both. Grace shows every flagged title as leaving for a set number of days. You keep a title by watching it or sparing it. Nothing goes until you run a reap yourself.",
+      "**Caps stop a run; grace is the heads-up.** [Pace and limits](understanding-policy#pace) sets both. Grace shows every flagged title as leaving for a set number of days. You keep a title by watching it or sparing it. Nothing goes until you run a reap yourself.",
     ),
     p(
       "**Missing information can only protect, never delete.** The score is pressure that adds up from zero. If Reaper can't read something, like an outage, a stale ratings file, or a title it cannot match, it adds no pressure.",

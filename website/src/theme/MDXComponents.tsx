@@ -15,7 +15,6 @@ import MDXComponents from "@theme-original/MDXComponents";
 import Tabs from "@theme/Tabs";
 import TabItem from "@theme/TabItem";
 import { Callout } from "@site/src/components/Callout";
-import { Def, Definitions } from "@site/src/components/Definitions";
 import { Diagram } from "@site/src/components/Diagram";
 import { Step, Steps } from "@site/src/components/Steps";
 
@@ -24,8 +23,6 @@ export default {
   Callout,
   Steps,
   Step,
-  Definitions,
-  Def,
   Diagram,
   // Docusaurus ships these but does not register them, so every page that wants tabs
   // normally opens with two import lines. Registering them keeps the install pages
