@@ -315,7 +315,12 @@ opens in the why-panel.
 
 ### Stage 4 — extract the UI catalog
 
-**Status:** not started.
+**Status:** in execution. The gates and the workflow landed first (2026-08-20, PR #848):
+`i18n-extraction.test.ts` fails on any user-visible literal left in a file its CONVERTED
+list declares extracted, `i18n-keys.test.ts` fails on a referenced key missing from the
+catalog, an orphaned catalog key, and a message ICU cannot parse, and
+`.claude/workflows/i18n-stage4-extract.js` is the committed per-surface harness. Surfaces
+follow, each group its own PR, with only the merge step editing `en.json` and CONVERTED.
 
 The mechanical bulk: ~1,200 strings, `Settings.tsx` and the seven panels split out of it (142
 between them, measured before the split) and `WhyPanel.tsx` (70) heaviest. The shell kept a share
