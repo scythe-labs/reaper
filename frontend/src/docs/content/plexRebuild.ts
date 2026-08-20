@@ -36,7 +36,7 @@ export const plexRebuild: Doc = {
     ),
     callout(
       "caution",
-      "**When you press Forget, you give something up.** Reaper keeps a record of the most watch history it has ever seen for each title, and that press throws it away. Without it, a title whose plays went unreadable reads exactly like one nobody ever watched. The protections that were holding those titles stop, and the next scan can flag them for removal.",
+      "**When you press Forget, you give something up.** Reaper keeps a record of the most watch history it has ever seen for each title, and forgetting all the history throws it away. Without it, a title whose plays went unreadable reads exactly like one nobody ever watched. The protections that were holding those titles stop, and the next scan can flag them for removal. Read that scan carefully before you approve anything.",
     ),
     p("Run a scan again afterward. Reaper starts from what Tautulli can see today."),
   ],
