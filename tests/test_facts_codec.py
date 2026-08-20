@@ -150,9 +150,9 @@ class TestTheWireDecoderNeverRaises:
     def test_a_blob_nested_past_any_real_reason_degrades_instead_of_recursing(self) -> None:
         """Rule 96 for the reason decoder. The engine writes at most three levels of
         nesting, so a deeply nested stored blob is corruption -- and an unbounded recursion
-        raises ``RecursionError``, which no reader's except tuple names
-        (``api.simulate.SeasonEvidenceCache.for_show`` chose its exceptions by hand), so it
-        would raise a row off the queue instead of degrading."""
+        raises ``RecursionError``, which no reader's except tuple names -- the season
+        bundle reader above ``api.simulate._season_guard_replay`` chose its exceptions by
+        hand -- so it would raise a row off the queue instead of degrading."""
         blob: dict[str, object] = {"k": "x"}
         for _ in range(2000):
             blob = {"k": "x", "p": {"inner": blob}}
