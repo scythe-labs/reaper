@@ -119,9 +119,16 @@ export interface Candidate {
   /** How long the item has sat unwatched ("5 years, 9 months"), for the amber pill.
    *  Null hides the pill. */
   dormant_for: string | null;
+  /** The raw dormancy day count of a fresh row; the frontend composes the span. Null on
+   *  a legacy row, whose `dormant_for` carries the baked span instead. Optional so a
+   *  fixture built before the field existed still typechecks (the server always sends it). */
+  dormant_days?: number | null;
   /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
-   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis. */
+   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis.
+   *  Legacy rows only; a fresh row serves `reason_key` and the card composes it. */
   reason: string | null;
+  /** The typed "why" of a fresh row, composed via `why.ts`; null on a legacy row. */
+  reason_key?: ReasonKey | null;
   /** The manual decision *in effect* -- "spare", "reap", or null -- own or inherited from
    *  the show. It colors the row's chip and score (the item's real fate). Set the moment they
    *  click, so the card shows the pending intent before the next scan bakes it in. To decide
@@ -202,6 +209,8 @@ export interface Group {
   /** The show-level status line and chip: those of the season that most wants the
    *  owner's attention, else the highest-scoring one. */
   reason: string | null;
+  /** The lead season's typed "why", exactly as on the candidate; null on a legacy row. */
+  reason_key?: ReasonKey | null;
   /** The show's Plex library (section), shared by all its seasons. Null when unknown.
    *  Drives the show panel's library chip. */
   library: string | null;
@@ -294,11 +303,23 @@ export interface CandidateQuery {
  *  only one that lowers coverage, and the only one the panel renders amber. */
 export type SignalState = "adds" | "argues_keep" | "not_applicable" | "unreadable";
 
+/** A typed detail on the wire: the catalog key under `why.*` plus its raw params.
+ *  `frontend/src/why.ts` composes it; params may nest further keys (a blocked check's
+ *  cause, the rating gate's per-bar clauses). Rows frozen before the conversion carry
+ *  prose `detail` instead, rendered verbatim (docs/I18N_PLAN.md §5). */
+export interface ReasonKey {
+  k: string;
+  p?: Record<string, unknown> | null;
+}
+
 export interface SignalContribution {
   id: string;
   contribution: number;
   weight: number;
-  detail: string;
+  /** Legacy prose, on rows frozen before details were typed; null on fresh rows. */
+  detail: string | null;
+  /** The typed detail of a fresh row; null on a legacy one. */
+  detail_key?: ReasonKey | null;
   /** False means the input was Unknown. Its weight still counts in the denominator, so
    *  an unevaluated signal drags the score DOWN, never up. */
   evaluated: boolean;
@@ -320,7 +341,10 @@ export interface SignalContribution {
 
 export interface GateOutcome {
   gate: string;
-  detail: string;
+  /** Legacy prose, on rows frozen before details were typed; null on fresh rows. */
+  detail: string | null;
+  /** The typed detail of a fresh row; null on a legacy one. */
+  detail_key?: ReasonKey | null;
   /** Whether the comparison behind a hold is one Reaper actually made. Only the season
    *  keep-rule guard sets it, where a conflict can also mean "a count nobody could read"
    *  or "a watch history too short to stand behind the counts" -- shapes that must never
@@ -383,7 +407,9 @@ export interface KeepContribution {
   name: string;
   discount: number;
   max_discount: number;
-  detail: string;
+  /** Legacy prose / typed detail, the same pair every explanation row carries. */
+  detail: string | null;
+  detail_key?: ReasonKey | null;
   evaluated: boolean;
 }
 

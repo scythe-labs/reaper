@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ast
 import json
-import re
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import timedelta
@@ -37,6 +36,7 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot
+from reaper.engine import fields as fields_registry
 from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import (
@@ -53,6 +53,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.reason import Reason, legacy, to_wire
 from reaper.engine.signals import Score
 from reaper.main import create_app
 from reaper.services.condemned import (
@@ -67,11 +68,14 @@ from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
 from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
 
 from ._auth import login
+from ._reasons import catalog
+from ._reasons import text as reason_text
 
-#: A named reason that cannot reach the why panel's CAUSE slot, and why. ``CAUSE_COPY`` fills
-#: the tail of "could not check {what}: {reason}", which only a BLOCKED gate produces, so a
-#: reason the operator meets somewhere else is not a gap. Everything else the walk finds must
-#: have panel copy. Each excuse is a claim about wiring, so
+#: A named reason that cannot reach a rendered surface, and why. The catalog's
+#: ``why.cause.*`` entries compose both the blocked "could not check {check}: {cause}" tail
+#: and a season's own "why kept" row, so a reason the operator meets through neither is not
+#: a gap -- and per rule 25 it must NOT have an entry, which would claim a route that does
+#: not exist. Each excuse is a claim about wiring, so
 #: ``test_the_reason_with_no_panel_route_still_has_one_way_out`` checks it rather than
 #: trusting it; classified in writing rather than silenced (rule 103).
 _NO_PANEL_ROUTE = {
@@ -82,19 +86,6 @@ _NO_PANEL_ROUTE = {
     "executor._NO_APPROVED_SIZE_REASON": (
         "a run step's own skip reason, already a finished sentence the report prints as it "
         "stands; it never rides on a gate outcome"
-    ),
-    "season_pruning.PROGRESS_UNESTABLISHABLE_REASON": (
-        "a ProtectedSeason.reason, shown on the season list as why that season is kept, and "
-        "already plain: it answers 'why kept', not 'what could not be checked'"
-    ),
-    "season_pruning.PROGRESS_UNREADABLE_REASON": ("its twin above, same surface and same shape"),
-    "season_pruning.PROGRESS_UNMATCHED_REASON": (
-        "the third of the same set, same surface and same shape (#472)"
-    ),
-    "season_pruning.PROGRESS_SHOW_UNMATCHED_REASON": (
-        "the fourth of the same set, same surface and same shape (#489). The whole-show twin "
-        "of the one above: it is a ProtectedSeason.reason answering 'why kept', never the "
-        "tail of a 'could not check {what}' detail"
     ),
     "preview.NOT_PROBED_REASON": (
         "the facts a policy probe leaves out. probe_signal answers one route with a number "
@@ -115,33 +106,49 @@ _NO_PANEL_ROUTE = {
     ),
 }
 
-#: Panel copy whose backend producer is gone, and why the entry stays. ``CAUSE_COPY`` renders
-#: STORED explanations, so an entry outliving its producer is back-compat rather than dead
-#: code -- but only while a stored row can still reach it, which is a claim about wiring and is
-#: written down here rather than assumed (rule 103), the same way ``_NO_PANEL_ROUTE`` above
-#: writes down the other direction's excuses.
+#: Catalog cause entries whose backend producer is gone, and why each stays. The panel
+#: composes STORED evidence too -- ``facts_codec.LEGACY_REASON_IDS`` maps a frozen prose
+#: reason forward to its id on thaw -- so an entry outliving its producer is back-compat
+#: rather than dead code, but only while a stored row can still reach it, which is a claim
+#: about wiring and is written down here rather than assumed (rule 103), the same way
+#: ``_NO_PANEL_ROUTE`` above writes down the other direction's excuses.
 _PANEL_COPY_WITHOUT_A_PRODUCER = {
-    "season has no rank": (
+    "no_season_rank": (
         "season_scan records a season with no rank as Absent now (a special genuinely has no "
-        "rank slot), so no fresh scan can build this detail. A snapshot frozen before that "
-        "fix survives an upgrade -- migrations only add -- and the queue renders the latest "
-        "snapshot until the next scan replaces it, so an operator who upgrades before "
-        "re-scanning can still open a row carrying it. Deleting the entry would print the raw "
-        "backend phrase at exactly that operator, which is what #282 closed."
+        "rank slot), so no fresh scan can produce this cause. A snapshot frozen before that "
+        "fix survives an upgrade -- migrations only add -- and its stored prose reason "
+        "('season has no rank') thaws to this id, so an operator who upgrades before "
+        "re-scanning can still open a row carrying it. Deleting the entry would print the "
+        "raw id at exactly that owner, which is the class #282 closed."
     ),
 }
 
+#: Cause ids composed in code rather than named as ``*_REASON`` constants, each with its
+#: producer. The constant walk below cannot discover these -- they are built at the call
+#: site with params -- so they are pinned here by hand and reconciled against the catalog
+#: in both directions (rule 145).
+_COMPOSED_CAUSE_IDS = {
+    "reach_not_recorded": "gates.history_shortfall, on a reach the scan did not record",
+    "history_reach_short": "gates.history_shortfall, naming the reach",
+    "history_not_that_far": "gates.history_shortfall, inside the naming margin",
+    "added_at_not_recorded": "gates.lifetime_shortfall, with no arrival date",
+    "window_not_recorded": "fields.reach_shortfall, with no popularity window stated",
+    "error": "fields.evaluate, wrapping a comparison error verbatim",
+}
 
-def _cause_copy_source() -> str:
-    """The ``CAUSE_COPY`` map as it is spelled in ``WhyPanel.tsx``.
 
-    Read as source text rather than imported, because the walks either side of this file's
-    tree boundary have no other way to see a TSX literal. Three tests read it, so it is
-    derived once (rule 119)."""
-    panel = (
-        Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
-    ).read_text(encoding="utf-8")
-    return panel.split("const CAUSE_COPY", 1)[1].split("};", 1)[0]
+def _catalog_causes() -> dict[str, str]:
+    """The catalog's ``why.cause`` entries -- the copy every cause id composes into.
+
+    Read off the real ``ui.json`` (``tests/_reasons.catalog``), so the walks either side of
+    this file's tree boundary see the copy the app really ships. Three tests read it, so it
+    is derived once (rule 119). ``WhyPanel.tsx``'s ``CAUSE_COPY``/``CHECK_COPY`` maps are
+    deliberately NOT walked any more: they are frozen legacy renderers for rows stored
+    before reasons were typed, serve no live producer, and never gain an entry.
+    """
+    causes = catalog()["cause"]
+    assert isinstance(causes, dict)
+    return {k: v for k, v in causes.items() if isinstance(v, str)}
 
 
 def _reason_constants() -> dict[str, str]:
@@ -171,8 +178,8 @@ def _reason_constants() -> dict[str, str]:
     return found
 
 
-def _conflict_detail(*, kept_watchers: int | None = 0, shortfall: str | None = None) -> str:
-    """A real keep-rule conflict's stored detail, from the one producer that words it.
+def _conflict_reason(*, kept_watchers: int | None = 0, shortfall: str | None = None) -> Reason:
+    """A real keep-rule conflict's typed detail, from the one producer that shapes it.
 
     Built rather than transcribed (rule 119): a hand-typed copy of this sentence had
     already drifted from ``PruneConflict.message``, which is how the chip below it went
@@ -190,9 +197,16 @@ def _conflict_detail(*, kept_watchers: int | None = 0, shortfall: str | None = N
         kept_season=1,
         pruned_watchers=2,
         kept_watchers=kept_watchers,
-        kept_reason="within the last 2 seasons (rank 1)",
-        shortfall=shortfall,
+        kept_reason=Reason("season_keep.keep_last", {"keep_last": 2, "rank": 1}),
+        shortfall=None if shortfall is None else legacy(shortfall),
     ).message
+
+
+def _conflict_detail(*, kept_watchers: int | None = 0, shortfall: str | None = None) -> str:
+    """The same conflict as its composed English sentence -- what a row frozen BEFORE
+    reasons were typed stored verbatim, so the legacy-row fixtures stay derived from the
+    one producer rather than transcribed."""
+    return reason_text(_conflict_reason(kept_watchers=kept_watchers, shortfall=shortfall))
 
 
 #: The counted shape: a comparison really was made, so the chip may state it.
@@ -375,7 +389,9 @@ class TestKeptChipWording:
         ],
     )
     def test_phrase(self, gate: str, detail: str, phrase: str) -> None:
-        assert _kept_phrase(gate, detail) == phrase
+        # The prose column drives the LEGACY arm -- rows frozen before reasons were typed.
+        # Fresh rows take the id arm, driven by the writer-connected tests below.
+        assert _kept_phrase(gate, legacy(detail)) == phrase
 
 
 class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
@@ -503,9 +519,9 @@ class TestChip:
     )
     def test_the_card_reason_for_a_conflicted_match(self, media_type: str, expected: str) -> None:
         """The Reap-page line, swept with the chip (rule 72): both read the same status."""
-        assert _primary_reason(_exp(50, match_status="conflicted"), "abstain", 50, media_type) == (
-            expected
-        )
+        reason = _primary_reason(_exp(50, match_status="conflicted"), "abstain", 50, media_type)
+        assert reason is not None
+        assert reason_text(reason) == expected
 
     def test_season_conflict_wants_eyes(self) -> None:
         """The keep-rule conflict is a deliberate left-for-you flag, not a plumbing
@@ -762,7 +778,7 @@ class TestChip:
         made = GateResult(
             GateId.SEASON_PROGRESSION,
             ABSTAIN,
-            detail=_conflict_detail(kept_watchers=1),
+            detail=_conflict_reason(kept_watchers=1),
             blocked=True,
             defers_to_owner=True,
         )
@@ -799,7 +815,7 @@ class TestChip:
         made = GateResult(
             GateId.SEASON_PROGRESSION,
             ABSTAIN,
-            detail=_conflict_detail(kept_watchers=1),
+            detail=_conflict_reason(kept_watchers=1),
             blocked=True,
             defers_to_owner=True,
         )
@@ -857,7 +873,7 @@ class TestChip:
         never_ran = guard_result(
             SeriesPrunePlan(series_title="Show", prunable=[2]),
             2,
-            progress_unknown_reason="Plex has not matched this season",
+            progress_unknown_reason="plex_season_unmatched",
         )
         frozen = json.loads(
             _explain(
@@ -882,7 +898,9 @@ class TestChip:
         unknown = panel.body.protections_unknown
         assert [o.gate for o in unknown] == ["season_progression"]
         assert unknown[0].unestablishable is True
-        assert unknown[0].detail == never_ran.detail
+        assert unknown[0].detail is None
+        assert unknown[0].detail_key is not None
+        assert unknown[0].detail_key.model_dump() == to_wire(never_ran.detail)
 
     def test_the_chip_and_the_reap_decision_never_disagree(self) -> None:
         """Rule 92 held end to end: no chip may promise a reap the engine will refuse.
@@ -971,7 +989,7 @@ class TestChip:
         assert result.blocked is True
 
         chip = _chip(
-            _exp(82, unknown=[{"gate": result.gate.value, "detail": result.detail}]),
+            _exp(82, unknown=[{"gate": result.gate.value, "detail_key": to_wire(result.detail)}]),
             "abstain",
             82,
         )
@@ -1114,7 +1132,7 @@ class TestTheCameBackChip:
         )
         result = ReturnedGate(config=GateConfig(threshold=hold)).evaluate(facts)
         assert result.outcome == PROTECT
-        return {"gate": result.gate.value, "detail": result.detail}
+        return {"gate": result.gate.value, "detail_key": to_wire(result.detail)}
 
     def test_the_chip_states_how_long_is_left(self) -> None:
         chip = _chip(_exp(20, fired=[self._fired(days_ago=35, by_reaper=True)]), "protect", 20)
@@ -1175,9 +1193,9 @@ class TestTheCameBackChip:
     def test_the_phrase_helper_words_it_too(self) -> None:
         # Rule 66: a member with no arm falls to "a protection applies", which is what makes
         # a missing one silent.
-        assert _kept_phrase("returned", "this left your library and came back, 1 year left") != (
-            "a protection applies"
-        )
+        assert _kept_phrase(
+            "returned", legacy("this left your library and came back, 1 year left")
+        ) != ("a protection applies")
 
 
 class TestTheReasonLineAgreesWithTheChip:
@@ -1201,8 +1219,9 @@ class TestTheReasonLineAgreesWithTheChip:
 
         assert chip is not None
         assert chip.text == "Too little of it could be checked"
-        assert reason == "Kept to be safe: too little of it could be checked."
-        assert "threshold" not in (reason or "")
+        assert reason is not None
+        assert reason_text(reason) == "Kept to be safe: too little of it could be checked."
+        assert "threshold" not in reason_text(reason)
 
     def test_a_genuinely_low_score_still_says_so(self) -> None:
         """The other arm: below the threshold, the score really is the reason, and the
@@ -1213,7 +1232,8 @@ class TestTheReasonLineAgreesWithTheChip:
 
         assert chip is not None
         assert chip.text == "Scored 42, under your 70"
-        assert reason == "Scored below your threshold."
+        assert reason is not None
+        assert reason_text(reason) == "Scored below your threshold."
 
     def test_a_blocked_check_still_outranks_both(self) -> None:
         """The coverage branch sits last, so it can only be reached past every blocked
@@ -1222,7 +1242,9 @@ class TestTheReasonLineAgreesWithTheChip:
             82,
             unknown=[{"gate": "min_dormancy", "detail": "could not check x: y"}],
         )
-        assert _primary_reason(exp, "abstain", 82) == "could not check x: y"
+        blocked = _primary_reason(exp, "abstain", 82)
+        assert blocked is not None
+        assert reason_text(blocked) == "could not check x: y"
 
     def test_an_explanation_with_no_threshold_falls_back_rather_than_guessing(self) -> None:
         """A stored row predating the threshold key, or carrying a malformed one, has no
@@ -1231,7 +1253,7 @@ class TestTheReasonLineAgreesWithTheChip:
         for raw in ("{}", json.dumps({"threshold": "seventy"}), json.dumps({"threshold": None})):
             exp = _decode_explanation(raw)
             assert exp is not None
-            assert _primary_reason(exp, "abstain", 82) == "Scored below your threshold."
+            assert _primary_reason(exp, "abstain", 82) == Reason("below_threshold")
 
 
 class TestChipWhy:
@@ -1726,30 +1748,51 @@ class TestTheMatchStatusVocabulary:
     def test_the_season_guard_names_a_check_the_panel_can_word(self) -> None:
         """Rule 144 for the other half of the sentence, run off the producer.
 
-        ``CAUSE_COPY`` is walked wholesale above; ``CHECK_COPY`` cannot be, because its keys
-        are composed at the call site rather than named as constants, and the map degrades
-        into the backend's own label. That deferral is fine for a gate's short noun phrase
-        and thin here: this key is the one a season guard writes, it sits in a list beside
-        four gate labels, and a fallback would have the app answering one question in two
-        registers.
-
-        So the phrase is taken from ``guard_result`` itself rather than typed here (rule
-        104). Rewording the producer without the panel fails, and the message says which file
-        to open.
+        The check id is taken from ``guard_result`` itself rather than typed here (rule
+        104): re-id the producer without the catalog and this fails, and the message says
+        which file to open. The panel composes the check slot from ``why.check.*``, so an
+        id with no entry renders as its bare id beside four labels written for the
+        operator.
         """
         plan = SeriesPrunePlan(series_title="Show", prunable=[2])
-        detail = guard_result(
-            plan, 2, progress_unknown_reason="Plex has not matched this season"
-        ).detail
-        what = detail.removeprefix("could not check ").split(":", 1)[0]
-        panel = (
-            Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
-        ).read_text(encoding="utf-8")
-        check_copy = panel.split("const CHECK_COPY", 1)[1].split("};", 1)[0]
-        assert f'"{what}":' in check_copy, (
-            f"the season guard writes 'could not check {what}: ...', and CHECK_COPY in\n"
-            "frontend/src/components/WhyPanel.tsx has no entry for it, so the panel prints\n"
-            "the backend's own phrase beside four gate labels written for the operator."
+        detail = guard_result(plan, 2, progress_unknown_reason="plex_season_unmatched").detail
+        assert detail.id == "blocked"
+        check = detail.params["check"]
+        assert isinstance(check, Reason)
+        what = check.id.removeprefix("check.")
+        assert what in catalog()["check"], (
+            f"the season guard writes check id {what!r}, and the catalog's why.check has no\n"
+            "entry for it (frontend/src/locales/en/ui.json), so the panel prints the bare id."
+        )
+
+    def test_every_field_and_fixed_check_has_catalog_copy(self) -> None:
+        """The check-slot drift guard the retired ``CHECK_COPY`` deferral promised.
+
+        Check ids come from two closed sets: the per-field ids (``fields.BY_KEY``, whose
+        blocked conditions and keeps pass ``check.<key>``) and the fixed ids the gates pass
+        by hand. Every member of both needs a ``why.check.*`` entry, or a blocked row
+        renders its bare id; the fixed list is pinned here and reconciled by hand against
+        the ``blocked_reason``/``keep_unchecked`` call sites (rule 145). Field ids also
+        need their ``why.field.*`` subject, which the condition sentences compose.
+        """
+        checks = set(catalog()["check"])
+        field_entries = set(catalog()["field"])
+        fixed = {
+            "imdb_rating",
+            "imdb_votes",
+            "active_streams",
+            "watch_history",
+            "watch_horizon",
+            "last_watched",
+            "recent_watchers_window",
+            "season_progress",
+            "lists",
+        }
+        missing = (fixed | set(fields_registry.BY_KEY)) - checks
+        assert not missing, f"check ids with no why.check entry: {sorted(missing)}"
+        assert set(fields_registry.BY_KEY) - field_entries == set(), (
+            "field keys with no why.field entry: "
+            f"{sorted(set(fields_registry.BY_KEY) - field_entries)}"
         )
 
     def test_every_backend_cause_has_operator_copy_in_the_panel(self) -> None:
@@ -1768,9 +1811,11 @@ class TestTheMatchStatusVocabulary:
         the panel raw, and a tuple of the constants somebody had thought to add could not
         say so. The population is **discovered** now -- every module-level ``*_REASON``
         string under ``src/reaper`` -- so a new reason is covered the moment it is named,
-        and the only way out is an entry in ``_NO_PANEL_ROUTE`` that says why.
+        and the only way out is an entry in ``_NO_PANEL_ROUTE`` that says why. The copy
+        lives in the catalog since the typed-reason conversion (docs/I18N_PLAN.md §5), so
+        the walk reads ``why.cause`` instead of ``WhyPanel.tsx``.
         """
-        cause_copy = _cause_copy_source()
+        causes = _catalog_causes()
         discovered = _reason_constants()
         assert discovered, "the *_REASON walk found nothing, so this test proves nothing"
         checked = {name: value for name, value in discovered.items() if name not in _NO_PANEL_ROUTE}
@@ -1789,12 +1834,12 @@ class TestTheMatchStatusVocabulary:
                     },
                 }.items()
             )
-            if f'"{value}"' not in cause_copy
+            if value not in causes
         ]
         assert not missing, (
-            "these reasons reach the why-panel with no plain-language entry in CAUSE_COPY\n"
-            "(frontend/src/components/WhyPanel.tsx), so the box prints the raw backend\n"
-            "string at the owner:\n  " + "\n  ".join(missing)
+            "these reasons reach the why-panel with no plain-language entry under why.cause\n"
+            "(frontend/src/locales/en/ui.json), so the box prints the raw id at the owner:\n  "
+            + "\n  ".join(missing)
         )
 
     def test_every_panel_cause_has_a_live_producer(self) -> None:
@@ -1814,38 +1859,34 @@ class TestTheMatchStatusVocabulary:
         producer spelled some other way is therefore invisible here and reads as orphaned --
         the failure direction that costs a written line, not a wrong claim at the operator.
 
-        Scoped to ``CAUSE_COPY``, with ``CHECK_COPY`` deferred in writing (rule 72): its keys
-        are gate and field labels composed at the call site (``could not check {what}``), not
-        module constants, so this discovery cannot see them and covering that map needs a
-        different walk. ``CHECK_COPY`` also degrades harmlessly -- an unmatched check falls
-        back to the backend's own label, which is already a plain noun phrase.
+        The composed-cause family (``_COMPOSED_CAUSE_IDS``) is the population the constant
+        discovery cannot see -- ids built at the call site with params -- so it is pinned by
+        hand beside its producers and counted into this reconciliation (rule 145).
         """
-        cause_copy = _cause_copy_source()
-        keys = re.findall(r'^\s*"([^"]+)":', cause_copy, re.M)
-        # Rules 145 and 147: pin what the matcher COLLECTS, not just that it found something.
-        # It reads a double-quoted key at the start of a line followed by a colon -- which is
-        # how prettier spells every entry, including the four whose value wraps to the next
-        # line. It would not see a computed key or a key sharing a line with the entry before
-        # it, and a flag-shaped assertion could not tell that from a map that complies.
-        assert len(keys) == 20, (
-            f"CAUSE_COPY parsed to {len(keys)} entries. If you added or removed one, bump this\n"
-            "count; if it moved unexpectedly, the matcher above stopped seeing a spelling."
+        keys = set(_catalog_causes())
+        # Rule 145: pin what the walk covers, reconciled by hand against the catalog.
+        assert len(keys) == 30, (
+            f"why.cause holds {len(keys)} entries. If you added or removed one, bump this\n"
+            "count deliberately."
         )
         producers = set(_reason_constants().values())
         producers |= set(MOVIE_NO_KEY_REASONS.values()) | set(SEASON_NO_KEY_REASONS.values())
+        producers |= set(_COMPOSED_CAUSE_IDS)
         orphaned = [
-            k for k in keys if k not in producers and k not in _PANEL_COPY_WITHOUT_A_PRODUCER
+            k
+            for k in sorted(keys)
+            if k not in producers and k not in _PANEL_COPY_WITHOUT_A_PRODUCER
         ]
         assert not orphaned, (
-            "this why-panel copy translates a reason nothing in src/reaper writes any more\n"
-            "(frontend/src/components/WhyPanel.tsx). Either delete the entry, or add it to\n"
+            "this catalog cause copy translates a reason nothing in src/reaper writes any\n"
+            "more (frontend/src/locales/en/ui.json). Either delete the entry, or add it to\n"
             "_PANEL_COPY_WITHOUT_A_PRODUCER here saying which stored rows still reach it:\n  "
             + "\n  ".join(repr(k) for k in orphaned)
         )
         for key, why in _PANEL_COPY_WITHOUT_A_PRODUCER.items():
             assert why.strip(), f"{key!r} is exempt with no reason written"
             assert key in keys, (
-                f"{key!r} is listed as panel copy outliving its producer, but CAUSE_COPY has "
+                f"{key!r} is listed as catalog copy outliving its producer, but why.cause has "
                 "no such entry. The exemption is stale."
             )
             assert key not in producers, (
@@ -1857,7 +1898,7 @@ class TestTheMatchStatusVocabulary:
         """The exemption above is a claim about wiring, so it is checked rather than trusted
         (rule 25): a reason excused from needing panel copy must have no entry either, or the
         excuse is stale and the copy it does have is unreachable."""
-        cause_copy = _cause_copy_source()
+        causes = _catalog_causes()
         discovered = _reason_constants()
         assert set(_NO_PANEL_ROUTE) <= set(discovered), (
             "_NO_PANEL_ROUTE names a constant that no longer exists: "
@@ -1865,7 +1906,7 @@ class TestTheMatchStatusVocabulary:
         )
         for name, why in _NO_PANEL_ROUTE.items():
             assert why.strip(), f"{name} is exempt with no reason written"
-            assert f'"{discovered[name]}"' not in cause_copy, (
-                f"{name} is exempt from needing panel copy because {why}, but CAUSE_COPY has "
-                "an entry for it. One of the two is wrong."
+            assert discovered[name] not in causes, (
+                f"{name} is exempt from needing panel copy because {why}, but why.cause has "
+                "an entry for it. One of the two is wrong (rule 25)."
             )

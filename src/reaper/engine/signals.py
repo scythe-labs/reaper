@@ -663,7 +663,7 @@ def _rewatch_count(config: KeepConfig, viewings: Observation[int]) -> Reason:
     re-watches (``KeepConfig.media_type``), so the show phrasing says "again" everywhere
     the count appears. An unreadable count degrades to the "again and again" clause."""
     if isinstance(viewings, Known):
-        return Reason("rewatch_count", {"n": int(viewings.value), "tv": config.media_type == "tv"})
+        return Reason("rewatch_count", {"n": int(viewings.value), "media": config.media_type})
     return Reason("rewatch_count_many")
 
 
@@ -684,7 +684,7 @@ def _rewatch_miss_detail(config: KeepConfig, facts: Facts) -> Reason:
     if not isinstance(viewings, Known) or viewings.value == 0:
         # A show at zero was possibly watched once through -- its count is re-watches, not
         # plays -- so the honest zero there is "never again," not "never."
-        return Reason("rewatch_keep_never", {"tv": config.media_type == "tv"})
+        return Reason("rewatch_keep_never", {"media": config.media_type})
     n = int(viewings.value)
     count = _rewatch_count(config, viewings)
     if config.min_viewings is not None and n < config.min_viewings:

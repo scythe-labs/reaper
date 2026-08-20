@@ -149,6 +149,15 @@ export function humanDays(days: number): string {
     .join(", ");
 }
 
+/** A window length phrased for "in the last {window}": `humanDays`, except a single-unit
+ *  window drops the redundant "1" -- you say "in the last year", not "in the last 1 year".
+ *  A multi-unit window ("1 year, 6 months") keeps it. Mirrors the retired
+ *  `clock.humanize_window`, whose sentences moved into the catalog (docs/I18N_PLAN.md §5). */
+export function humanWindow(days: number): string {
+  const text = humanDays(days);
+  return text.startsWith("1 ") && !text.includes(",") ? text.slice(2) : text;
+}
+
 const dayFormat = perLocale(
   (locale) => new Intl.DateTimeFormat(locale, { year: "numeric", month: "short", day: "numeric" }),
 );

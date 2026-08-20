@@ -1260,9 +1260,12 @@ class TestAStoredSizeSaysWhereItCameFrom:
         assert rows["sonarr:1:42:2"].verdict == "abstain"
         assert rows["sonarr:1:42:3"].verdict == "abstain"
         # And it says so in the operator's words rather than reporting a count it never
-        # established.
-        assert "cannot tell whether Season 2 is watched more than" in (
-            rows["sonarr:1:42:2"].explanation_json or ""
+        # established: the stored row carries the shortfall conflict, whose catalog entry
+        # opens "Reaper cannot tell whether Season {pruned} is watched more than ...".
+        held_exp = json.loads(rows["sonarr:1:42:2"].explanation_json or "{}")
+        assert any(
+            (entry.get("detail_key") or {}).get("k") == "conflict.shortfall"
+            for entry in held_exp["protections_unknown"]
         )
         # Held means held: nothing reached the grace clock, so nothing is queued to remove.
         flagged = {
@@ -1881,7 +1884,7 @@ class TestAnUnreadableRatingsDatasetKeepsInsteadOfCondemning:
             facts, _ = facts_from_dict(_json.loads(stored))
             rating = facts.imdb_rating_tenths
             assert isinstance(rating, Unknown), (key, rating)
-            assert "could not be read" in rating.reason, key
+            assert rating.reason == "imdb_unreadable", key
             assert isinstance(facts.imdb_votes, Unknown), key
 
         # And nothing is condemned on ratings nobody could read: Unknown blocks the

@@ -35,6 +35,7 @@ import {
   type SignalState,
 } from "../api";
 import { announce } from "../announce";
+import { blockedParts, composeReason } from "../why";
 import { useSuccessorFocus } from "../focus";
 import { coverage, itemBytes, list, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
@@ -860,7 +861,7 @@ function SignalRow({ row }: { row: Row }) {
           )}
         </span>
         <span className="sig-detail">
-          {signal.detail}
+          {rowText(signal)}
           {custom && <RuleTag />}
         </span>
       </span>
@@ -1078,9 +1079,22 @@ function Signals({ item }: { item: CandidateDetail }) {
   );
 }
 
-/** The backend words a custom-rule outcome as "your rule: {condition}" (fired) or
- *  "checked your rule: {condition}" (checked, didn't fire) -- see engine/fields.py.
- *  Reworded here for the panel; the stored detail stays untouched as the audit record. */
+/** One row's sentence, either age of row: composed from the catalog when the row carries
+ *  a typed `detail_key`, the stored prose verbatim when it predates typed details
+ *  (docs/I18N_PLAN.md §5). Callers with a legacy-only rewording pass it as `onLegacy`. */
+function rowText(
+  row: { detail: string | null; detail_key?: import("../api").ReasonKey | null },
+  onLegacy: (detail: string) => string = (detail) => detail,
+): string {
+  if (row.detail_key) return composeReason(row.detail_key);
+  return row.detail ? onLegacy(row.detail) : "";
+}
+
+/** LEGACY rows only: the backend used to word a custom-rule outcome as
+ *  "your rule: {condition}" (fired) or "checked your rule: {condition}" (checked, didn't
+ *  fire), and this rewords the stored prose for the panel. A fresh row's catalog entry
+ *  (`why.custom_fired` / `why.custom_checked`) says it directly, so nothing new parses
+ *  a sentence (rule 92); this parser serves frozen snapshots and never gains a pattern. */
 function customGateDetail(detail: string): string {
   if (detail.startsWith("your rule: ")) {
     return `Kept by your rule: ${detail.slice("your rule: ".length)}`;
@@ -1114,8 +1128,9 @@ function Gates({
             and duplicate keys would make React drop rows. */}
         {outcomes.map((outcome) => {
           const custom = outcome.gate === "custom";
+          const text = rowText(outcome, custom ? customGateDetail : undefined);
           return (
-            <li key={`${outcome.gate}:${outcome.detail}`} className={custom ? "gate-custom" : ""}>
+            <li key={`${outcome.gate}:${text}`} className={custom ? "gate-custom" : ""}>
               {/* Decoration: every row in this list is a pass, so the tick adds nothing a
                   reader needs and lands mid-sentence as a stray character (#177). Where a
                   list can hold BOTH outcomes -- the reap report's per-item checks -- the
@@ -1124,7 +1139,7 @@ function Gates({
                 ✓
               </span>
               <span className="gate-detail">
-                {custom ? customGateDetail(outcome.detail) : outcome.detail}
+                {text}
                 {custom && <RuleTag />}
               </span>
             </li>
@@ -1161,16 +1176,14 @@ function Gates({
   );
 }
 
-/** The backend words each unchecked protection as "could not check {check}: {cause}"
- *  (engine/gates.py `_blocked` and the custom-rule evaluator). Both vocabularies are
- *  closed and colon-free, so the first ": " splits them reliably; anything that doesn't
- *  parse (a season-order conflict, a named custom rule's wrapped detail) keeps its own
- *  row with the raw sentence, exactly as before.
- *
- *  Only the phrases that CHANGE are listed. The lookup below falls back to the backend's own
- *  words, so an entry mapping a phrase to itself ("watch history", "when it was last watched",
- *  "who else watched it") reads as a translation and produces the fallback's string. Add an
- *  entry when the backend's phrase is not what the operator should read. */
+/** LEGACY rows only. The backend used to word each unchecked protection as
+ *  "could not check {check}: {cause}" (the retired prose forms of `engine/gates._blocked`
+ *  and the custom-rule evaluator); a row frozen before typed details still carries that
+ *  sentence, and these two maps turn its halves into the operator's copy exactly as they
+ *  always did. A fresh row carries the halves structurally (`why.blockedParts`) and its
+ *  copy lives in the catalog (`why.check.*` / `why.cause.*`), so NEITHER MAP EVER GAINS
+ *  AN ENTRY: they are frozen with the snapshots they serve. Anything that doesn't parse
+ *  keeps its own row with the raw sentence, exactly as before. */
 const CHECK_COPY: Record<string, string> = {
   "the watch horizon": "how far back its history goes",
   "active streams": "whether anyone is watching",
@@ -1235,14 +1248,7 @@ function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
 
   const groups = new Map<string, { cause: string; checks: string[] }>();
   const rows: ({ kind: "group"; key: string } | { kind: "raw"; outcome: GateOutcome })[] = [];
-  for (const outcome of outcomes) {
-    const parsed = /^could not check (.+?): (.+)$/.exec(outcome.detail);
-    if (!parsed || !parsed[1] || !parsed[2]) {
-      rows.push({ kind: "raw", outcome });
-      continue;
-    }
-    const check = CHECK_COPY[parsed[1]] ?? parsed[1];
-    const cause = CAUSE_COPY[parsed[2]] ?? `${parsed[2]}.`;
+  const add = (check: string, cause: string) => {
     const group = groups.get(cause);
     if (group) {
       if (!group.checks.includes(check)) group.checks.push(check);
@@ -1250,6 +1256,22 @@ function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
       groups.set(cause, { cause, checks: [check] });
       rows.push({ kind: "group", key: cause });
     }
+  };
+  for (const outcome of outcomes) {
+    if (outcome.detail_key) {
+      const parts = blockedParts(outcome.detail_key);
+      if (parts) add(parts.check, parts.cause);
+      // A deliberate left-for-you sentence -- a season conflict, an unanswerable season
+      // hold -- keeps its own row, composed like every other fresh row.
+      else rows.push({ kind: "raw", outcome });
+      continue;
+    }
+    const parsed = /^could not check (.+?): (.+)$/.exec(outcome.detail ?? "");
+    if (!parsed || !parsed[1] || !parsed[2]) {
+      rows.push({ kind: "raw", outcome });
+      continue;
+    }
+    add(CHECK_COPY[parsed[1]] ?? parsed[1], CAUSE_COPY[parsed[2]] ?? `${parsed[2]}.`);
   }
 
   return (
@@ -1262,8 +1284,8 @@ function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
       <ul className="gates gates-unknown">
         {rows.map((row) =>
           row.kind === "raw" ? (
-            <li key={row.outcome.gate + row.outcome.detail}>
-              <span className="gate-detail">{row.outcome.detail}</span>
+            <li key={row.outcome.gate + rowText(row.outcome)}>
+              <span className="gate-detail">{rowText(row.outcome)}</span>
             </li>
           ) : (
             <li key={row.key}>
@@ -1532,7 +1554,7 @@ export function WhyPanel({
                     <span className="muted">/{keep.max_discount}</span>
                   </span>
                   <span className="signal-detail">
-                    {keep.detail}
+                    {rowText(keep)}
                     {/* Every graded keep except the built-in rewatch keep is operator-authored,
                         so every row but that one is yours. */}
                     {keep.name !== REWATCH_KEEP && <RuleTag />}

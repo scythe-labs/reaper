@@ -11,6 +11,7 @@
 import { useId } from "react";
 import type { Candidate, Group, Verdict } from "../api";
 import { itemBytes, totalBytes } from "../format";
+import { cardReason } from "../why";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { handFate, laneOf, showReapIsNoop } from "./reviewFate";
@@ -61,6 +62,7 @@ export function ShowPanel({
   const { setOverride, clearOverride } = useOverrideMutations();
   const showOverride = group.show_override;
   const headingId = useId();
+  const reason = cardReason(group);
 
   return (
     <WhyShell headingId={headingId} onClose={onClose}>
@@ -89,7 +91,7 @@ export function ShowPanel({
       <StatusChip chip={group.chip} />
       {/* The full sentence behind the chip -- a keep-rule conflict's complete wording,
           or whatever line put this show in front of you. */}
-      {group.reason && <p className="show-reason">{group.reason}</p>}
+      {reason && <p className="show-reason">{reason}</p>}
       {/* The Plex rows an abstain could not choose between, directly under the sentence
           naming the problem -- the same pairing the season why-panel uses (rule 72). The
           header's own Plex link above is built from the show's rating key, which is null on

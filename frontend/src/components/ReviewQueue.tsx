@@ -52,6 +52,7 @@ import { useGeneralSettings } from "../useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
+import { cardReason, dormantSpan } from "../why";
 import { useArtFallback } from "./artFallback";
 import { CardOpen } from "./CardOpen";
 import { CollectionChip } from "./CollectionChip";
@@ -433,9 +434,9 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
           title: item.group_title ?? item.title,
           year: item.year,
           poster: item.poster_url,
-          reason: item.reason,
+          reason: cardReason(item),
           requestedBy: item.requested_by,
-          dormantFor: item.dormant_for,
+          dormantFor: dormantSpan(item),
           library: item.library,
           collections: item.collections ?? null,
           matchedCollection: item.matched_collection ?? null,
@@ -453,9 +454,9 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
         title: item.title,
         year: item.year,
         poster: item.poster_url,
-        reason: item.reason,
+        reason: cardReason(item),
         requestedBy: item.requested_by,
-        dormantFor: item.dormant_for,
+        dormantFor: dormantSpan(item),
         library: item.library,
         collections: item.collections ?? null,
         matchedCollection: item.matched_collection ?? null,
@@ -784,7 +785,7 @@ function seasonDivergence(
     // short phrase, which beats a generic line -- so the row says WHY, e.g. that the season it
     // was compared against is kept because Sonarr is still downloading it.
     const why =
-      season.reason ?? chipWhy(season.chip) ?? "Reaper couldn't confirm it's safe to remove";
+      cardReason(season) ?? chipWhy(season.chip) ?? "Reaper couldn't confirm it's safe to remove";
     return {
       chip: <span className="status-chip status-reap-held">Kept for now</span>,
       reason: capitalizeSentence(why),
@@ -1086,8 +1087,8 @@ const MovieCard = memo(function MovieCard({
         </div>
         <CardStatusLine
           condemned={isCondemned(item)}
-          dormantFor={item.dormant_for}
-          reason={item.reason}
+          dormantFor={dormantSpan(item)}
+          reason={cardReason(item)}
           chip={item.chip}
           unmeasured={item.size_bytes === null}
         />

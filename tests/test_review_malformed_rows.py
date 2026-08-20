@@ -38,6 +38,7 @@ from reaper.db.models import Candidate, Snapshot, WhitelistEntry
 from reaper.main import create_app
 from reaper.services.condemned import reap_override_verdict
 from reaper.services.snapshot import HAND_SPARE_DETAIL
+from tests._reasons import text
 
 from ._auth import login
 
@@ -274,15 +275,18 @@ class TestThePanelAndTheReapAgreeOnUnreadable:
             for k, row in rows.items()
         }
 
-        # Pin both populations by hand (rule 145): five of the seven stored rows here cannot
-        # be rendered. Two can, and they are the ones that make this test discriminate --
+        # Pin both populations by hand (rule 145): four of the seven stored rows here cannot
+        # be rendered. Three can, and they are the ones that make this test discriminate --
         # ``radarr:1:6`` carries a non-dict ``match``, which ``Explanation._thaw_match`` reads
         # as an absent block rather than failing the document, so the panel renders it and its
-        # reap is held by the bad match instead. If either set moves, the table changed and
-        # the implication below may have gone vacuous.
+        # reap is held by the bad match instead; ``radarr:1:5``'s entry has no detail at all,
+        # which the typed-reason conversion made a legal row (a fresh row writes
+        # ``detail_key``; a legacy one ``detail``; one with neither renders no sentence), and
+        # its fired protection still resolves the reap to protect. If either set moves, the
+        # table changed and the implication below may have gone vacuous.
         assert len(rows) == 7
-        assert degraded == {f"radarr:1:{n}" for n in range(1, 6)}
-        assert rows.keys() - degraded == {"radarr:1:6", "radarr:1:7"}
+        assert degraded == {f"radarr:1:{n}" for n in range(1, 5)}
+        assert rows.keys() - degraded == {"radarr:1:5", "radarr:1:6", "radarr:1:7"}
 
         condemned_but_blank = sorted(k for k in degraded if reaps[k] == "condemn")
         assert not condemned_but_blank, (
@@ -307,7 +311,7 @@ class TestTheExtractorsThemselves:
             assert exp is None
             assert _primary_reason(exp, verdict, 50) is None
             assert _chip(exp, verdict, 50) is None
-            assert _dormant_for(exp) is None
+            assert _dormant_for(exp) == (None, None)
 
     def test_entries_that_are_not_objects_are_dropped(self) -> None:
         exp = _decode_explanation(MALFORMED["radarr:1:4"])
@@ -331,14 +335,15 @@ class TestTheExtractorsThemselves:
         exp = _decode_explanation(MALFORMED["radarr:1:6"])
         assert exp is not None
         reason = _primary_reason(exp, "abstain", 50)
-        assert reason == "Kept to be safe: Reaper couldn't read what this matched in Plex."
+        assert reason is not None
+        assert text(reason) == "Kept to be safe: Reaper couldn't read what this matched in Plex."
         # Still not an AttributeError, and still not claiming a status Plex reported.
-        assert "threshold" not in (reason or "")
+        assert "threshold" not in text(reason)
 
     def test_a_signals_block_that_is_not_a_list_hides_the_pill(self) -> None:
         exp = _decode_explanation(json.dumps({"signals": "nope"}))
         assert exp is not None
-        assert _dormant_for(exp) is None
+        assert _dormant_for(exp) == (None, None)
 
 
 class TestTheReapOverrideReadKeepsTheFile:

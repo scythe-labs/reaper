@@ -23,6 +23,7 @@ from reaper.engine.facts_codec import (
 )
 from reaper.engine.gates import ABSTAIN, PROTECT, Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.reason import legacy
 from reaper.ratings import Rating, RatingSource
 
 
@@ -95,12 +96,12 @@ class TestFactsRoundTrip:
         # once left it at ``False``, so the codec dropping the field compared equal on both
         # sides of the round trip and this test could not see the loss.
         results = (
-            GateResult(GateId.SEASON_PROGRESSION, PROTECT, detail="kept newest"),
+            GateResult(GateId.SEASON_PROGRESSION, PROTECT, detail=legacy("kept newest")),
             GateResult(
                 GateId.SEASON_PROGRESSION,
                 ABSTAIN,
                 blocked=True,
-                detail="conflict",
+                detail=legacy("conflict"),
                 defers_to_owner=True,
             ),
         )
@@ -118,7 +119,7 @@ class TestFactsRoundTrip:
             GateResult(
                 GateId.SEASON_PROGRESSION,
                 ABSTAIN,
-                detail="d",
+                detail=legacy("d"),
                 blocked=True,
                 defers_to_owner=True,
             )
