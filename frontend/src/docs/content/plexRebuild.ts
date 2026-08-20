@@ -36,7 +36,7 @@ export const plexRebuild: Doc = {
     ),
     callout(
       "caution",
-      "**You give something up.** Reaper can't tell the difference between a title with missing plays and one nobody ever watched. This means three protections stop holding those titles, and the next scan can put them on the list.",
+      "**You give something up.** Reaper keeps a record of the most watch history it has ever seen for each title. Pressing Forget throws that record away. Without it, a title whose plays went unreadable reads exactly like one nobody ever watched. The protections that were holding those titles stop, and the next scan can flag them for removal.",
     ),
     p("Run a scan again afterward. Reaper starts from what Tautulli can see today."),
   ],
