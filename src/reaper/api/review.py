@@ -58,7 +58,7 @@ from reaper.db.models import (
     Snapshot,
 )
 from reaper.engine import identity
-from reaper.engine.explanation import read_explanation
+from reaper.engine.explanation import read_explanation, thaw_reason_key
 from reaper.engine.gates import GateId, thaw_defers_to_owner
 from reaper.engine.reason import Reason, from_wire, legacy, to_wire
 from reaper.services import (
@@ -923,9 +923,17 @@ def _detail_reason(entry: dict[str, Any]) -> Reason | None:
     frozen before details were typed carries prose ``detail`` and comes back as a legacy
     reason, which every composer renders verbatim -- so the two ages take one code path
     everywhere downstream. ``None`` when the row carries neither, which is the old
-    "no detail" degrade."""
+    "no detail" degrade.
+
+    Whether a stored ``detail_key`` is legible is ``thaw_reason_key``'s call, the same one
+    the panel's models make (rule 104): a malformed dict here must degrade exactly as it
+    does there, to the prose fallback and never through ``from_wire``'s wrap-anything arm,
+    which would print the dict's repr at the operator (rule 21). That arm is right for
+    ``facts_json``'s single combined field, where a bare string is the only legacy shape;
+    this document splits the ages into two keys, so the legacy shape is only ever the
+    ``detail`` string."""
     key = entry.get("detail_key")
-    if isinstance(key, dict):
+    if isinstance(key, dict) and thaw_reason_key(key) is not None:
         return from_wire(key)
     detail = entry.get("detail")
     return legacy(str(detail)) if detail else None

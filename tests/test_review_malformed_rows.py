@@ -303,6 +303,19 @@ class TestThePanelAndTheReapAgreeOnUnreadable:
         assert reap_override_verdict(str(row.explanation_json), score=int(row.score)) == "condemn"
 
 
+def _shell(unknown: list[dict[str, object]]) -> dict[str, object]:
+    """A minimal stored explanation carrying only the unknown list under test."""
+    return {
+        "score": 50,
+        "threshold": 70,
+        "coverage": 1.0,
+        "signals": [],
+        "protections_fired": [],
+        "protections_checked": [],
+        "protections_unknown": unknown,
+    }
+
+
 class TestTheExtractorsThemselves:
     @pytest.mark.parametrize("verdict", ["protect", "condemn", "abstain"])
     def test_a_non_object_top_level_yields_nothing(self, verdict: str) -> None:
@@ -322,6 +335,23 @@ class TestTheExtractorsThemselves:
         exp = _decode_explanation(MALFORMED["radarr:1:5"])
         assert exp is not None
         assert _primary_reason(exp, "protect", 50) is None
+
+    def test_a_malformed_detail_key_degrades_like_the_panel_does(self) -> None:
+        """One stored byte, one legibility rule (rule 104). A ``detail_key`` dict without a
+        legible ``k`` must degrade exactly as ``thaw_reason_key`` degrades it for the panel's
+        models: to the prose fallback, or to nothing -- never through ``from_wire``'s
+        wrap-anything arm, which printed the dict's own repr at the operator (rule 21)."""
+        junk: dict[str, object] = {"gate": "min_dormancy", "detail_key": {"no_k": True}}
+        exp = _decode_explanation(json.dumps(_shell(unknown=[junk])))
+        assert exp is not None
+        assert _primary_reason(exp, "abstain", 50) is None
+
+        with_prose: dict[str, object] = {**junk, "detail": "could not check x: y"}
+        exp = _decode_explanation(json.dumps(_shell(unknown=[with_prose])))
+        assert exp is not None
+        reason = _primary_reason(exp, "abstain", 50)
+        assert reason is not None
+        assert text(reason) == "could not check x: y"
 
     def test_a_non_dict_match_says_it_could_not_be_read(self) -> None:
         """A match block that is THERE but unreadable holds a hand reap
