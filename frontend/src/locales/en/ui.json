@@ -1,0 +1,10 @@
+{
+  "safetyBanner": {
+    "unknown": "<strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm whether deletion is on. Until it can, treat this as armed and <btn>check Policy → Deletion</btn>.",
+    "unknownNoLink": "<strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm whether deletion is on. Until it can, treat this as armed and check Policy → Deletion once you're in the app.",
+    "recovery": "<strong>Recovery mode is on.</strong> Deletion is held off. Turn it off and restart once you're back in.",
+    "readOnly": "<strong>Read-only.</strong> Reaper can look but can't remove anything. <btn>Turn deletion on in Policy → Deletion</btn> when you're ready.",
+    "readOnlyNoLink": "<strong>Read-only.</strong> Reaper can look but can't remove anything. You turn deletion on later, in Policy → Deletion.",
+    "armed": "<strong>Deletion is on.</strong> Reaper can remove media you approve, through Sonarr and Radarr."
+  }
+}
