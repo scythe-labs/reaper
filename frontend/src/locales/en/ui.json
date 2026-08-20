@@ -77,7 +77,7 @@
     "rewatch_no_history": "Not enough watch history to say how often titles like this get watched.",
     "rewatch_thin": "Too few titles like this to say.",
     "rewatch_watched_again": "titles like this keep getting watched: {k} of {n} within a year",
-    "rewatch_under_floor": "Of {n} titles like this, {k} were watched again within a year, under the {floor_pct}% you keep.",
+    "rewatch_under_floor": "Of {n} titles like this, {k, plural, one {# was} other {# were}} watched again within a year, under the {floor_pct}% you keep.",
     "returned_no_record": "Reaper has nothing on record about this title leaving and coming back.",
     "returned_not_returned": "It has not left your library and come back.",
     "returned_past_hold": "It came back {days_span} ago, past the {hold_days_window} you keep a title that came back.",

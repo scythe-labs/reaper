@@ -11,6 +11,7 @@ two-way agreement between the ids the engine can emit and the entries the catalo
 from __future__ import annotations
 
 import json
+import math
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -59,8 +60,13 @@ def text(reason: Reason) -> str:
         else:
             params[name] = value
             if isinstance(value, int | float) and not isinstance(value, bool):
-                params[f"{name}_span"] = humanize_days(float(value))
-                params[f"{name}_window"] = humanize_window(float(value))
+                # Rounded half-up before the span builders, the way JS Math.round rounds
+                # inside format.ts's humanDays -- Python's round() banker's-rounds, and the
+                # twins disagreeing at exact .5-day boundaries would let a test here pin
+                # text the real composer never renders.
+                half_up = math.floor(float(value) + 0.5)
+                params[f"{name}_span"] = humanize_days(half_up)
+                params[f"{name}_window"] = humanize_window(half_up)
                 params[f"{name}_gb"] = f"{value / 1_000_000_000:.1f}"
                 params[f"{name}_tenths"] = f"{value / 10:.1f}"
                 params[f"{name}_fixed1"] = f"{value:.1f}"

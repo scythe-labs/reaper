@@ -64,26 +64,35 @@ def to_wire(reason: Reason) -> dict[str, Any]:
     return {"k": reason.id, "p": encoded}
 
 
-def from_wire(data: Any) -> Reason:
+#: The deepest stored nesting :func:`from_wire` will decode. The engine writes at most
+#: three levels (a conflict's cause inside its because-slot inside the row), so anything
+#: deeper is a corrupted or hand-built blob, and recursing into it unbounded raises
+#: ``RecursionError`` -- which is not in any reader's carefully-chosen except tuple and
+#: would raise a row off the queue, the one thing this decoder must never do (rule 96).
+_MAX_WIRE_DEPTH = 32
+
+
+def from_wire(data: Any, *, _depth: int = 0) -> Reason:
     """Rebuild a reason from :func:`to_wire` output, or from a stored legacy sentence.
 
     A bare string is a detail frozen before the conversion and comes back as
-    ``Reason("legacy")``. Anything else illegible degrades the same way, rendered raw
-    rather than raising a row off the queue (rule 96): a reason nobody can read still
-    holds whatever it was holding, it just stops being pretty.
+    ``Reason("legacy")``. Anything else illegible -- a malformed dict, or one nested past
+    ``_MAX_WIRE_DEPTH`` -- degrades the same way, rendered raw rather than raising a row
+    off the queue (rule 96): a reason nobody can read still holds whatever it was holding,
+    it just stops being pretty.
     """
     if isinstance(data, str):
         return legacy(data)
-    if not isinstance(data, dict) or not isinstance(data.get("k"), str):
+    if _depth > _MAX_WIRE_DEPTH or not isinstance(data, dict) or not isinstance(data.get("k"), str):
         return legacy(str(data))
     raw = data.get("p")
     params: dict[str, ReasonParam] = {}
     if isinstance(raw, dict):
         for key, value in raw.items():
             if isinstance(value, dict):
-                params[str(key)] = from_wire(value)
+                params[str(key)] = from_wire(value, _depth=_depth + 1)
             elif isinstance(value, list):
-                params[str(key)] = tuple(from_wire(v) for v in value)
+                params[str(key)] = tuple(from_wire(v, _depth=_depth + 1) for v in value)
             elif isinstance(value, str | int | float | bool):
                 params[str(key)] = value
             else:
