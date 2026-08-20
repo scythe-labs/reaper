@@ -3,7 +3,7 @@
 // The full policy guide. Every number here is a shipped default from engine/policy.py and
 // the frontend presets (PolicyEditor.tsx). When a default changes, change it here too.
 
-import { callout, defs, type Doc, h2, h3, p, steps, table, ul } from "../blocks";
+import { callout, type Doc, h2, h3, p, steps, table, ul } from "../blocks";
 
 export const understandingPolicy: Doc = {
   id: "understanding-policy",
@@ -16,7 +16,7 @@ export const understandingPolicy: Doc = {
     ),
     callout(
       "tip",
-      "**Start cautious, then tighten one nudge at a time.** You can always remove more later. It's reversible up to the moment of deletion.",
+      "**Start cautious, then tighten one nudge at a time.** You can always remove more later. You can never un-delete.",
     ),
 
     h2("The mental model", "mental-model"),
@@ -30,7 +30,7 @@ export const understandingPolicy: Doc = {
       "**Protections are hard lines that always win.** They only ever keep a file and can never remove one. If any single protection fires, the title stays regardless of its score.",
     ),
     p(
-      "**Caps stop a run; grace is the heads-up.** Caps limit how much any one run or any rolling 30 days can remove. The whole run stops once you cross a cap. Grace shows every flagged title as leaving for a set number of days. You keep a title by watching it or sparing it. Nothing goes until you run a reap yourself.",
+      "**Caps stop a run; grace is the heads-up.** Pace and limits below sets both. Grace shows every flagged title as leaving for a set number of days. You keep a title by watching it or sparing it. Nothing goes until you run a reap yourself.",
     ),
     p(
       "**Missing information can only protect, never delete.** The score is pressure that adds up from zero. If Reaper can't read something, like an outage, a stale ratings file, or a title it cannot match, it adds no pressure.",
@@ -288,7 +288,7 @@ export const understandingPolicy: Doc = {
       ],
     ),
     p(
-      'Caps stop the whole run when crossed, and the rolling 30-day limits count every run in the window. If you turn off "Limit how much each run removes", the first four rows above no longer apply. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.',
+      'Caps stop the whole run when crossed, and Reaper never removes just the part that fits. The rolling 30-day limits count every run in the window. If you turn off "Limit how much each run removes", the first four rows above no longer apply. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.',
     ),
 
     h3("Movies and TV are tuned separately", "movies-tv"),
@@ -327,14 +327,14 @@ export const understandingPolicy: Doc = {
     ]),
     callout(
       "caution",
-      "You've gone too far if the examples include titles you'd keep, or if you want to switch off a protection to \"find more.\" Turning off a protection is the most effective way to remove more, and it looks like simplification. If a one-step drop nearly doubles the count, stop there.",
+      "You've gone too far if the examples include titles you'd keep. If a one-step drop nearly doubles the count, stop there.",
     ),
 
     h2("Recipes", "recipes"),
     p("Starting points for common goals."),
     h3("Reclaim space without risk"),
     p(
-      "Use the Balanced defaults: line 70, the 3-year age line, keep well-rated (IMDb 7.5 with 1,000 votes), keep anything 3 or more people watched in the last year, caps on, and 14-day grace. Turn on Leaving Soon. Do not add size to the score. At review time, sort by size and approve the big ones first.",
+      "Use the Balanced defaults: line 70, the 3-year age line, keep well-rated (IMDb 7.5 with 1,000 votes), keep anything 3 or more people watched in the last year, caps on, and 14-day grace. Turn on Leaving Soon.",
     ),
     h3("Very cautious setup"),
     p(
@@ -354,42 +354,8 @@ export const understandingPolicy: Doc = {
       "**The points don't total 100, so the policy won't save.** If you lower a signal, its points get stranded and the policy stays half finished. Pace and grace still save. To keep a safe habit, give those freed points to another signal or removal rule before you save.",
       "**Forgetting that saving starts a fresh scan.** A policy change only takes effect after a scan, which begins by itself when you save. Safe habit: expect the rescan. Pace and grace apply immediately while policy changes wait for it.",
       "**Treating arming like tuning.** Editing a policy changes nothing about whether Reaper can delete. Safe habit: set caps, grace, and Leaving Soon first, then arm, then keep the first run supervised.",
-      "**Going aggressive on the first pass.** You're just one nudge away from removing more, and it's reversible until deletion. Make it a safe habit to start on Cautious and loosen it only as far as each supervised cycle proves safe.",
-      "**Switching off a protection to find more to delete.** This exposes titles the protection was keeping regardless of their score. To remove more, lower the line in the simulator and watch the number.",
+      "**Switching off a protection to find more to delete.** It is the most effective way to remove more, and it looks like simplification, but it exposes titles the protection was keeping regardless of their score. To remove more, lower the line in the simulator and watch the number.",
       "**Setting a rating bar with no vote floor.** A high rating from only a few hundred votes isn't reliable and could protect titles forever. It's a safe habit to keep a vote floor on any source that counts votes. The default is 1,000.",
     ]),
-
-    h2("Glossary", "glossary"),
-    defs([
-      {
-        term: "Policy",
-        text: "Your rulebook for one media type: the line, the signals, the protections.",
-      },
-      {
-        term: "Flag threshold",
-        text: "The score, out of 100, at or above which a title becomes a candidate for removal.",
-      },
-      {
-        term: "Signal",
-        text: "A signal is one reason to remove, and it adds up to its number of points to the score.",
-      },
-      {
-        term: "Protection",
-        text: "A hard line keeps a title regardless of its score and can never remove one.",
-      },
-      {
-        term: "Grace",
-        text: "The grace window is the number of days a flagged title shows as leaving so someone can watch it or you can spare it. You still start every removal by hand.",
-      },
-      {
-        term: "Cap",
-        text: 'If you turn on "Limit how much each run removes", you can set a limit for a single run or a rolling 30 days. The run stops once it crosses that limit.',
-      },
-    ]),
-
-    callout(
-      "tip",
-      "**Start cautious, watch a few real runs, and tighten one nudge at a time.** You can always remove more later. You can never un-delete.",
-    ),
   ],
 };

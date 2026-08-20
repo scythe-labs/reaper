@@ -142,7 +142,7 @@ export const deletionSafety: Doc = {
     ul([
       "**The test file goes first.** The smallest file with a known size goes alone and is verified before any other is touched. If it doesn't behave exactly as expected, the whole run halts. Files spared or still being watched are skipped first. If a later file misbehaves, it's recorded and the run carries on.",
       "**Removed so it stays gone.** Turn on the import exclusion for a Radarr instance so a movie it removes stays off your lists and won't quietly re-download. It's off by default until you set it per instance. Reaper unmonitors the season first, then confirms that it worked.",
-      '**The caps hold, while they are on.** A run that would cross your per-run or 30-day limit does not go ahead. Reaper never removes just the part that fits. Switching off "Limit how much each run removes" in Policy leaves the password, your typed confirmation, and every live check standing.',
+      '**The caps hold, while they are on.** A run that would cross your per-run or 30-day limit stops here. Switching off "Limit how much each run removes" in Policy leaves the password, your typed confirmation, and every live check standing.',
     ]),
 
     h2("Grace: a window to catch it before it's gone", "grace"),
