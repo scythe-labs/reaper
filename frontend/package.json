@@ -24,8 +24,11 @@
   },
   "dependencies": {
     "@tanstack/react-query": "5.101.4",
+    "i18next": "^26.4.0",
+    "i18next-icu": "^2.4.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-i18next": "^17.0.12",
     "react-markdown": "^10.1.0"
   },
   "devDependencies": {

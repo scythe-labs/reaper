@@ -8,7 +8,12 @@
 // reading no query at all, so a host armed by `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` was told
 // deletion was off on the one screen that was saying anything about it.
 
+import { Trans } from "react-i18next";
 import { useSafety } from "../useSafety";
+
+// The copy lives in `locales/en/ui.json` under `safetyBanner.*`, one message per rendered
+// sentence: the linked and link-less variants are separate whole messages, never a shared
+// stem with a bolted-on tail, because word order is the translator's to choose.
 
 /** The safety state, stated permanently and without euphemism.
  *
@@ -41,17 +46,13 @@ export function SafetyBanner({ onGoToDeletion }: { onGoToDeletion?: () => void }
       <div className="banner banner-unknown">
         <span className="banner-dot" aria-hidden="true" />
         <span>
-          <strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm whether
-          deletion is on. Until it can, treat this as armed and{" "}
           {onGoToDeletion ? (
-            <>
-              <button className="link" onClick={onGoToDeletion}>
-                check Policy → Deletion
-              </button>
-              .
-            </>
+            <Trans
+              i18nKey="safetyBanner.unknown"
+              components={{ btn: <button className="link" onClick={onGoToDeletion} /> }}
+            />
           ) : (
-            "check Policy → Deletion once you're in the app."
+            <Trans i18nKey="safetyBanner.unknownNoLink" />
           )}
         </span>
       </div>
@@ -71,8 +72,7 @@ export function SafetyBanner({ onGoToDeletion }: { onGoToDeletion?: () => void }
       <div className="banner banner-recovery">
         <span className="banner-dot" aria-hidden="true" />
         <span>
-          <strong>Recovery mode is on.</strong> Deletion is held off. Turn it off and restart once
-          you're back in.
+          <Trans i18nKey="safetyBanner.recovery" />
         </span>
       </div>
     );
@@ -83,16 +83,13 @@ export function SafetyBanner({ onGoToDeletion }: { onGoToDeletion?: () => void }
       <div className="banner banner-safe">
         <span className="banner-dot" aria-hidden="true" />
         <span>
-          <strong>Read-only.</strong> Reaper can look but can't remove anything.{" "}
           {onGoToDeletion ? (
-            <>
-              <button className="link" onClick={onGoToDeletion}>
-                Turn deletion on in Policy → Deletion
-              </button>{" "}
-              when you're ready.
-            </>
+            <Trans
+              i18nKey="safetyBanner.readOnly"
+              components={{ btn: <button className="link" onClick={onGoToDeletion} /> }}
+            />
           ) : (
-            "You turn deletion on later, in Policy → Deletion."
+            <Trans i18nKey="safetyBanner.readOnlyNoLink" />
           )}
         </span>
       </div>
@@ -103,8 +100,7 @@ export function SafetyBanner({ onGoToDeletion }: { onGoToDeletion?: () => void }
     <div className="banner banner-armed">
       <span className="banner-dot" aria-hidden="true" />
       <span>
-        <strong>Deletion is on.</strong> Reaper can remove media you approve, through Sonarr and
-        Radarr.
+        <Trans i18nKey="safetyBanner.armed" />
       </span>
     </div>
   );
