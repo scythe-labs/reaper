@@ -404,9 +404,17 @@ is `Run Stage N of docs/I18N_PLAN.md`. The session:
 3. Runs the stage's gate and the full verification set, each read by exit code (rule 134).
 4. Updates this plan in the same branch: the stage's Status line, and any §1 count the change
    invalidated.
-5. Opens the labeled PR against `i18n` and stops. The operator merges.
+5. Opens the labeled PR against `i18n`, confirms CI green (`gh pr checks`), and squash-merges
+   it itself. Only the final `i18n` to `dev` PR waits for the operator.
 
 Stage 4 repeats these five steps once per surface group, so it lands as several PRs.
+
+**Stage PR titles and bodies are short, concise, natural language.** A Conventional Commit
+title a person would say out loud, then a body of a few plain sentences: what changed and why,
+one block per change, nothing a reader has to read twice. CONTRIBUTING's conventions apply
+unchanged. The final `i18n` to `dev` PR is the only text that survives on `dev`, so it gets
+the most care: it summarizes the stages from this plan's Status lines, in the same plain
+voice.
 
 The stages run in numbered order. Stage 4 must follow Stage 3: `WhyPanel.tsx`'s copy maps
 retire into the catalog keyed by id, and extracting them as prose first would send strings to
