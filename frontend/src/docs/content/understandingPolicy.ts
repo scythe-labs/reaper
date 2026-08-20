@@ -314,7 +314,7 @@ export const understandingPolicy: Doc = {
       'An edit can be real and still move nothing. "Titles that change" is the row that tells you which of the two cases you\'re in. The two removal counts only move when a title crosses your line, so a protection can shuffle titles between spared and not judged while every other number holds still. When nothing moves at all, the panel says "Your changes leave every title as it is." That\'s an answer, not a failure. A protection can carry no weight on your library, which is worth knowing before you keep it on.',
     ),
     p(
-      "**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal\u2019s points, a rating bar, one of your own rules, a protection's switch and its own numbers, or any TV season rule updates the panel instantly.",
+      "**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, one of your own rules, a protection's switch and its own numbers, or any TV season rule updates the panel instantly.",
     ),
     p(
       "Some edits need a fresh scan first. The panel names which one and offers a Scan now button:",
