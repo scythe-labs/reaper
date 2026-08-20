@@ -59,11 +59,11 @@ export const deletionSafety: Doc = {
 
     h2("Two locks keep it off", "two-locks"),
     p(
-      "Every request to your servers travels through one connection. That connection carries a deletion only when both of these are true.",
+      "Every request to your servers goes through a guarded connection. It carries a deletion only when both of these are true.",
     ),
     ul([
       "**Deletion is armed.** This is the switch you set in Policy, Deletion. It's stored in the database and defaults to off.",
-      "**A plan must be made first.** Reaper writes every removal to a record before it's sent. It'll refuse any request that skips that step, even while armed.",
+      "**Every delete is written down before it is sent.** Reaper records the removal first, and the connection refuses anything that arrives without that record, even while armed.",
     ]),
     p(
       "The two are independent, so either one alone still refuses the delete. A brand-new feature is safe by existing, because it travels through that same guarded connection. Reaper reaches Plex through a separate connection with the same two locks, and it holds back even a library refresh, because on some servers a refresh empties the trash.",
@@ -141,8 +141,8 @@ export const deletionSafety: Doc = {
     }),
     ul([
       "**The test file goes first.** The smallest file with a known size goes alone and is verified before any other is touched. If it doesn't behave exactly as expected, the whole run halts. Files spared or still being watched are skipped first. If a later file misbehaves, it's recorded and the run carries on.",
-      "**Removed so it stays gone.** Turn on the import exclusion for a Radarr instance so a movie it removes stays off your lists and won't quietly re-download. It's off by default until you set it per instance. Reaper unmonitors the season first, then confirms that it worked.",
-      '**The caps hold, while they are on.** A run that would cross your per-run or 30-day limit stops here. Switching off "Limit how much each run removes" in Policy leaves the password, your typed confirmation, and every live check standing.',
+      "**Removed so it stays gone.** Turn on the import exclusion for a Radarr instance so a movie it removes stays off your lists and won't quietly re-download. It's off by default until you set it per instance. Reaper unmonitors the season and checks that it worked before it touches a file, so Sonarr cannot pull it back.",
+      '**The caps hold, while they are on.** A run over its per-run or 30-day limit stops before any file goes. Switching off "Limit how much each run removes" in Policy leaves the password, your typed confirmation, and every live check standing.',
     ]),
 
     h2("Grace: a window to catch it before it's gone", "grace"),

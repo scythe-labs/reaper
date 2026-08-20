@@ -50,8 +50,8 @@ export const cheatSheet: Doc = {
         ["Per run", "10 titles / 500 GB"],
         ["Per 30 days (rolling)", "100 titles / 2 TB"],
         // Named as the control is labeled in Policy, Pace and limits. What it actually does
-        // is carried by the glossary and the deletion-safety page: it shows a title as
-        // leaving, it does not hold it back.
+        // is carried by the mental model above and the deletion-safety page: it shows a title
+        // as leaving, it does not hold it back.
         ["Grace period", "14 days (min 7)"],
         ["Unknown-size items", "0 (held back)"],
       ],
@@ -59,7 +59,7 @@ export const cheatSheet: Doc = {
     // Never "abort" here: that was the only place in the product an operator met the word
     // (U-15).
     p(
-      'A run that would cross your limits does not go ahead. Reaper never removes just the part that fits. Leave "Limit how much each run removes" on so no run can take more than you expect. Unknown-size items are still held back, and the countdown still runs.',
+      'A run over your limits stops. Reaper never removes just the part that fits. Leave "Limit how much each run removes" on so no run can take more than you expect. Unknown-size items are still held back, and the countdown still runs.',
     ),
 
     h2("Habits that keep you safe", "habits"),
