@@ -35,6 +35,7 @@
 // threshold, and it is where the phrasing below was borrowed from.
 
 import { humanDays } from "../format";
+import i18next from "../i18n";
 
 /** How a signal's ramp is stored, which decides how many ends the operator can set.
  *
@@ -151,7 +152,10 @@ const RAMPS: Record<string, RampUnits> = {
     widest: "20",
     lead: "A season that is",
     shape: "direct",
-    say: (n) => (n === 1 ? "the newest season" : `the ${ordinal(n)}-newest season`),
+    // `saturate_at` takes no ceiling (`ge=1`, and the box passes only a `min`), so the
+    // catalog message words every number an operator can save, not just the twenty the
+    // scale draws: ICU selectordinal keys 11th and 13th apart from 21st and 23rd.
+    say: (n) => i18next.t("signals.nthNewestSeason", { n }),
     unit: "seasons",
     probeMax: 20,
     first: 1,
@@ -215,27 +219,6 @@ const RAMPS: Record<string, RampUnits> = {
     probeValue: (gb) => gb * 1e9,
   },
 };
-
-/** The far bound takes no ceiling on either side of the wire (`saturate_at` is `ge=1` and the
- *  box passes only a `min`), so this has to word every number an operator can save, not just
- *  the twenty the scale draws. The suffix keys on the last two digits first, because 11, 12
- *  and 13 take "th" where 21, 22 and 23 do not. */
-function ordinal(n: number): string {
-  if (n === 2) return "second";
-  if (n === 3) return "third";
-  const tens = n % 100;
-  if (tens >= 11 && tens <= 13) return `${n}th`;
-  switch (n % 10) {
-    case 1:
-      return `${n}st`;
-    case 2:
-      return `${n}nd`;
-    case 3:
-      return `${n}rd`;
-    default:
-      return `${n}th`;
-  }
-}
 
 /** What the operator can set on this signal, or `null` where this module has nothing to
  *  say -- a rule of their own, or a signal id it does not know. */

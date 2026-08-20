@@ -40,6 +40,10 @@ const run = {
   total_bytes: 1024 ** 3,
   held_back_unknown_size: 0,
   confirmation_phrase: "REAP 2 ITEMS 1 GB",
+  // The history list formats this through `date()`, and the server always sends it
+  // (`approved_at` is non-nullable and serialized with `isoformat()`). The `as Run` cast
+  // was hiding its absence here.
+  approved_at: "2026-01-02T00:05:00+00:00",
   step_count: 2,
   // Two steps, because `item_count` is 2: a run carrying a count with no steps under it is a
   // plan the planner cannot build, and the page renders `steps` unconditionally, so an empty

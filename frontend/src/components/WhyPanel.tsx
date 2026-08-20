@@ -36,7 +36,7 @@ import {
 } from "../api";
 import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
-import { coverage, itemBytes, since, spareRemaining } from "../format";
+import { coverage, itemBytes, list, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useArtFallback } from "./artFallback";
 import { CollectionChip } from "./CollectionChip";
@@ -1226,12 +1226,6 @@ const CAUSE_COPY: Record<string, string> = {
     "Reaper can no longer read the plays it recorded earlier.",
 };
 
-function joinChecks(checks: string[]): string {
-  if (checks.length === 1) return checks[0] ?? "";
-  if (checks.length === 2) return `${checks[0]} and ${checks[1]}`;
-  return `${checks.slice(0, -1).join(", ")}, and ${checks[checks.length - 1]}`;
-}
-
 /** "Left for you to decide", grouped by cause. Three rows all ending in "Plex has not
  *  matched this item" told the owner the same thing three times; one box states the cause
  *  once and lists what it blocked. Causes keep first-appearance order; unparseable details
@@ -1275,7 +1269,7 @@ function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
             <li key={row.key}>
               <strong>{row.key}</strong>
               <span className="gate-detail">
-                Couldn't check: {joinChecks(groups.get(row.key)?.checks ?? [])}.
+                Couldn't check: {list(groups.get(row.key)?.checks ?? [])}.
               </span>
             </li>
           ),

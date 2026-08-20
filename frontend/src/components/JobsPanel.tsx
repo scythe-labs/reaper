@@ -13,7 +13,8 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type Schedule, type ScheduledJob } from "../api";
 import { useBackCloseMirror, useBackGuard } from "../backnav";
-import { count } from "../format";
+import { count, weekday } from "../format";
+import i18next from "../i18n";
 import { shelfSkipIsCurrent } from "../shelfStatus";
 import { useGeneralSettings } from "../useGeneralSettings";
 import { JobStatus, useJobFlash } from "./JobStatus";
@@ -125,46 +126,45 @@ function whenText(iso: string | null): string {
   return new Date(iso).toLocaleString();
 }
 
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
+/** The clock as US 12-hour text, whatever the locale; the cron messages take it as a ready
+ *  string. Locale-aware time lands with this panel's catalog extraction (Stage 4). */
 function clockLabel(hour: number, minute: number): string {
   const period = hour < 12 ? "AM" : "PM";
   const hour12 = hour % 12 === 0 ? 12 : hour % 12;
   return `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
 }
 
-function ordinal(n: number): string {
-  const tens = n % 100;
-  if (tens >= 11 && tens <= 13) return `${n}th`;
-  const ones = n % 10;
-  return `${n}${ones === 1 ? "st" : ones === 2 ? "nd" : ones === 3 ? "rd" : "th"}`;
-}
-
 /** A cron line in plain words, for the shapes the presets and defaults produce. Anything
  *  outside those reads as its raw line rather than a confident wrong guess. */
 function describeCron(cron: string): string {
   const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return `Custom (${cron})`;
+  if (parts.length !== 5) return i18next.t("jobs.cron.custom", { cron });
   const [m = "", h = "", dom = "", mon = "", dow = ""] = parts;
   const numeric = (x: string) => /^\d+$/.test(x);
   const everyDay = dom === "*" && mon === "*" && dow === "*";
 
   const hourStep = /^\*\/(\d+)$/.exec(h);
-  if (numeric(m) && hourStep && everyDay) return `Every ${hourStep[1]} hours`;
-  if (numeric(m) && h === "*" && everyDay) return "Every hour";
-  if (!numeric(m) || !numeric(h)) return `Custom (${cron})`;
+  if (numeric(m) && hourStep && everyDay) {
+    return i18next.t("jobs.cron.everyNHours", { n: Number(hourStep[1]) });
+  }
+  if (numeric(m) && h === "*" && everyDay) return i18next.t("jobs.cron.everyHour");
+  if (!numeric(m) || !numeric(h)) return i18next.t("jobs.cron.custom", { cron });
 
   const at = clockLabel(Number(h), Number(m));
-  if (everyDay) return `Every day at ${at}`;
+  if (everyDay) return i18next.t("jobs.cron.everyDayAt", { at });
   const dayStep = /^\*\/(\d+)$/.exec(dom);
-  if (dayStep && mon === "*" && dow === "*") return `Every ${dayStep[1]} days at ${at}`;
+  if (dayStep && mon === "*" && dow === "*") {
+    return i18next.t("jobs.cron.everyNDaysAt", { n: Number(dayStep[1]), at });
+  }
   if (dom === "*" && mon === "*" && numeric(dow)) {
-    return `Every ${WEEKDAYS[Number(dow) % 7]} at ${at}`;
+    return i18next.t("jobs.cron.weeklyAt", { day: weekday(Number(dow) % 7), at });
   }
   if (numeric(dom) && mon === "*" && dow === "*") {
-    return `Monthly on the ${ordinal(Number(dom))} at ${at}`;
+    // The ordinal suffix lives inside the message (ICU selectordinal), so a locale can
+    // decline it with the noun instead of receiving a ready-made English "21st".
+    return i18next.t("jobs.cron.monthlyAt", { n: Number(dom), at });
   }
-  return `Custom (${cron})`;
+  return i18next.t("jobs.cron.custom", { cron });
 }
 
 function scanScheduleText(job: ScheduledJob | undefined, failed: boolean): string {
