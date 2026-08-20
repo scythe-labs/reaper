@@ -268,22 +268,22 @@ class RawItem:
 #: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one. ``None`` (a record
 #: from before the field shipped) takes the unmatched wording, which it has always read as.
 _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
-    identity.MatchStatus.UNMATCHED: "Plex has not matched this item",
-    identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this title",
-    identity.MatchStatus.CONFLICTED: "Plex and Radarr describe this file differently",
+    identity.MatchStatus.UNMATCHED: "plex_unmatched",
+    identity.MatchStatus.AMBIGUOUS: "plex_ambiguous",
+    identity.MatchStatus.CONFLICTED: "radarr_plex_disagree",
 }
 
 #: Why dormancy could not be measured: matched to Plex, but no arrival date AND no play, so
 #: there is no instant to measure from. A KEY into ``CAUSE_COPY`` exactly as the reasons
 #: above are, and named here rather than typed at each site so the same drift test covers it
 #: (rule 144) -- it was written twice by hand, on both sides of the tree, and nothing failed.
-NO_ADDED_AT_REASON = "no added-at date"
+NO_ADDED_AT_REASON = "no_added_at"
 
 #: Why a movie's size is unreadable: Radarr reported no size for the file. A KEY into
 #: ``CAUSE_COPY`` like the rest -- it reaches the panel through a keep rule on "Size on
 #: disk", the same route the request reasons take (rule 144). The season lane says this in
 #: its own words, so the two are named apart rather than shared.
-NO_SIZE_REASON = "the file's size was not reported"
+NO_SIZE_REASON = "no_file_size"
 
 
 def build_facts(
@@ -330,7 +330,7 @@ def build_facts(
     # file; only the words shown to the owner differ, and the wrong words send them to fix
     # the wrong thing. Each string is a key into WhyPanel's CAUSE_COPY (rule 144);
     # test_review_chips.py::TestTheMatchStatusVocabulary fails when one has no entry there.
-    no_key_reason = _NO_KEY_REASONS.get(item.match_status, "Plex has not matched this item")
+    no_key_reason = _NO_KEY_REASONS.get(item.match_status, "plex_unmatched")
 
     # --- dormancy -----------------------------------------------------------
     # THE derived field. "Days since last play" is null for exactly the items we care

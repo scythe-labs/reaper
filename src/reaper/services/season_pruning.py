@@ -102,16 +102,10 @@ SPECIALS_SEASON = 0
 #: one cause for four would send the operator to the wrong place. That is #489: a show that
 #: never bound to Plex was told its watch history was too short, which is true and is not the
 #: wall it is standing at -- no depth of mirror can read a place in a show that has no address.
-PROGRESS_UNESTABLISHABLE_REASON = "your watch history is too short to tell who is part-way through"
-PROGRESS_UNREADABLE_REASON = (
-    "some plays are no longer readable, so who is part-way through is unknown"
-)
-PROGRESS_UNMATCHED_REASON = (
-    "a season of this show is not matched in Plex, so who is part-way through is unknown"
-)
-PROGRESS_SHOW_UNMATCHED_REASON = (
-    "this show is not matched in Plex, so who is part-way through is unknown"
-)
+PROGRESS_UNESTABLISHABLE_REASON = "progress_history_short"
+PROGRESS_UNREADABLE_REASON = "progress_plays_unreadable"
+PROGRESS_UNMATCHED_REASON = "progress_season_unmatched"
+PROGRESS_SHOW_UNMATCHED_REASON = "progress_show_unmatched"
 
 #: Every reason above, for the caller that asks "was this held because we could not answer".
 #: A membership test against the constants in this module, never a prefix test on the wording

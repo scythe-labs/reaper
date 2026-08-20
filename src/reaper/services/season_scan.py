@@ -474,15 +474,15 @@ def series_genres(series: Mapping[str, Any]) -> Observation[str]:
 #: ``CAUSE_COPY``, named so the drift test covers it (rule 144). Its own wording, for the
 #: reason ``season_evidence._NO_KEY_REASONS`` keeps its own -- the subject is "this
 #: season", not "this item".
-NO_ADDED_AT_REASON = "no added-at date for this season"
+NO_ADDED_AT_REASON = "no_season_added_at"
 
 #: Why a season's size is unreadable: Sonarr reported no size on disk. Reaches the panel
 #: through a keep rule on "Size on disk"; the movie lane says it of a file, so the two are
 #: named apart (rule 144).
-NO_SIZE_REASON = "the season's size was not reported"
+NO_SIZE_REASON = "no_season_size"
 
 #: Why "has the show ended?" is unreadable: Sonarr sent neither a status nor an ended flag.
-SERIES_STATUS_REASON = "Sonarr did not report series status"
+SERIES_STATUS_REASON = "no_series_status"
 
 
 def build_season_facts(

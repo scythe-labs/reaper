@@ -397,9 +397,9 @@ def guard_result(
 #: there. Two maps rather than one shared with the movie lane because the subjects differ
 #: ("this season" against "this item", "this show" against "this title").
 _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
-    identity.MatchStatus.UNMATCHED: "Plex has not matched this season",
-    identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this show",
-    identity.MatchStatus.CONFLICTED: "Plex and Sonarr describe this show differently",
+    identity.MatchStatus.UNMATCHED: "plex_season_unmatched",
+    identity.MatchStatus.AMBIGUOUS: "plex_show_ambiguous",
+    identity.MatchStatus.CONFLICTED: "sonarr_plex_disagree",
 }
 
 
@@ -412,7 +412,7 @@ def no_key_reason(show_match_status: identity.MatchStatus | None) -> str:
     with two fallbacks is how the guard's sentence would come to name a different cause from
     the four gates printed beside it.
     """
-    return _NO_KEY_REASONS.get(show_match_status, "Plex has not matched this season")
+    return _NO_KEY_REASONS.get(show_match_status, "plex_season_unmatched")
 
 
 #: Every field of :class:`SeasonPruneInput`, and the codec key it is stored under. Written
