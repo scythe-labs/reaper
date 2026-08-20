@@ -6,13 +6,12 @@ sidebar_position: 2
 
 # Docker
 
-Every release publishes the image, so there is nothing to build. The package is public, so
-the pull needs no login.
+Every release publishes the image, so you don't need to build anything. The package is public, so pulling it doesn't require a login.
 
 <Callout tone="tip">
-  **The named volume below survives updates.** Docker creates `reaper-data` for you and keeps
-  it when the container is recreated or pulled fresh, so your policies, decisions and
-  encryption key carry over with no setup.
+  **The named volume below survives updates.** Docker creates `reaper-data` for
+  you and keeps it when the container is recreated or pulled fresh, so your
+  policies, decisions and encryption key carry over with no setup.
 </Callout>
 
 ## Installation
@@ -67,75 +66,63 @@ Reaper then serves on `http://localhost:8420`.
 </Tabs>
 
 <Callout tone="tip">
-  **No healthcheck to write.** The image declares its own against `/api/health`, so
-  `docker ps` reports real health with no extra configuration. That endpoint is open to
-  unauthenticated callers, so a checker needs no credentials.
+  **No healthcheck to write.** The image declares its own against `/api/health`,
+  so `docker ps` reports real health with no extra configuration. That endpoint
+  is open to unauthenticated callers, so a checker needs no credentials.
 </Callout>
 
 ## The volume
 
-One path, `/data`, holding Reaper's own database. Your media stays where it is.
+Reaper uses one path, `/data`, to hold its own database. Your media stays where it is.
 
-A named volume works with no setup and persists across updates and recreation, which is why the
-examples above use one.
+A named volume works without any setup and stays put even when you update or recreate things, so the examples above use one.
 
-Bind-mount a host directory instead, with `./data:/data`, when you want the files somewhere you
-can see and copy. That is what you want on a NAS, and it makes
-[backing up](/operating/backups) the three files a plain file copy rather than a trip through
-`docker volume`. Reaper's own Settings, Backup works either way.
+If you want to see and copy your files, bind-mount a host directory instead with `./data:/data`. This is what you'll want on a NAS. It makes [backing up](/operating/backups) the three files a plain file copy instead of a trip through `docker volume`. Reaper's own Settings, Backup works either way.
 
-No `chown` needed either way: the container starts as root, takes ownership of the folder, then
-drops to an unprivileged user before it opens the database. Set `PUID` and `PGID` to choose that
-user. To skip the root phase entirely, pin `user: "1000:1000"` and create the folder owned by
-1000 yourself.
+You don't need `chown` either way. The container starts as root to take ownership of the folder, then drops to an unprivileged user before it opens the database. Set `PUID` and `PGID` to choose that user. If you want to skip the root phase entirely, pin `user: "1000:1000"` and create the folder owned by 1000 yourself.
 
 ## Windows
 
-Docker on Windows runs Linux containers inside a small VM, through
-[Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) on the
-[WSL 2 backend](https://docs.docker.com/desktop/features/wsl/). Microsoft's
-[WSL install guide](https://learn.microsoft.com/en-us/windows/wsl/install) covers turning
-WSL on.
+When you use Docker on Windows, it runs Linux containers inside a small VM using [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) on the [WSL 2 backend](https://docs.docker.com/desktop/features/wsl/). You can follow Microsoft's [WSL install guide](https://learn.microsoft.com/en-us/windows/wsl/install) to turn WSL on.
 
 <Callout tone="caution">
-  **Keep the named volume on Windows.** The VM reaches Windows folders over a file share,
-  and that share cannot lock files. A media mount can live with that; a database cannot, so
-  a `/data` bind mount on a Windows folder will eventually corrupt Reaper's database, which
-  shows up as slow behavior and then crashes. The same goes for any container holding a
-  SQLite database, Sonarr and Radarr included. A named volume, like `reaper-data` in the
-  examples above, lives inside the VM, where locking works. If you want the files visible in
-  a normal folder, skip Docker and use [the Windows app](/getting-started/install/windows)
-  instead.
+  **Keep the named volume on Windows.** The VM reaches Windows folders over a
+  file share, and that share cannot lock files. A media mount can live with
+  that; a database cannot, so a `/data` bind mount on a Windows folder will
+  eventually corrupt Reaper's database, which shows up as slow behavior and then
+  crashes. The same goes for any container holding a SQLite database, Sonarr and
+  Radarr included. A named volume, like `reaper-data` in the examples above,
+  lives inside the VM, where locking works. If you want the files visible in a
+  normal folder, skip Docker and use [the Windows
+  app](/getting-started/install/windows) instead.
 </Callout>
 
 ## Common settings
 
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` | `false` | Whether a **brand new** install comes up able to delete. Seeds the first run only. |
-| `REAPER_LOG_LEVEL` | `INFO` | Set `DEBUG` when you are chasing something. Seeds the first run only; Settings, Logs owns it afterwards. |
-| `REAPER_LOG_JSON` | `false` | One JSON object per line, for a log collector. |
-| `PUID` / `PGID` | `1000` | Which user the app runs as. Unraid wants `99` / `100`. |
-| `REAPER_TIMEZONE` | host's zone | First-run default only. Settings, General owns it afterwards. |
-| `REAPER_PORT` | `8420` | The port **inside** the container. Moving it moves the healthcheck too. |
-| `REAPER_SECRET_KEY` | generated | See [the encryption key](/configuration/encryption-key). |
+| Variable                             | Default     | What it does                                                                                             |
+| ------------------------------------ | ----------- | -------------------------------------------------------------------------------------------------------- |
+| `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` | `false`     | Whether a **brand new** install comes up able to delete. Seeds the first run only.                       |
+| `REAPER_LOG_LEVEL`                   | `INFO`      | Set `DEBUG` when you are chasing something. Seeds the first run only; Settings, Logs owns it afterwards. |
+| `REAPER_LOG_JSON`                    | `false`     | One JSON object per line, for a log collector.                                                           |
+| `PUID` / `PGID`                      | `1000`      | Which user the app runs as. Unraid wants `99` / `100`.                                                   |
+| `REAPER_TIMEZONE`                    | host's zone | First-run default only. Settings, General owns it afterwards.                                            |
+| `REAPER_PORT`                        | `8420`      | The port **inside** the container. Moving it moves the healthcheck too.                                  |
+| `REAPER_SECRET_KEY`                  | generated   | See [the encryption key](/configuration/encryption-key).                                                 |
 
-Publishing Reaper on a different host port needs no variable. Change the left side of
-`8420:8420` and leave the right alone.
+If you want to publish Reaper on a different host port, you don't need a variable. Just change the left side of `8420:8420` and leave the right side alone.
 
 The full list is in [Configuration](/configuration).
 
 ## Which tag
 
-| Tag | Follows |
-| --- | --- |
-| `:latest` | the newest release. **Use this.** |
-| `:dev` | the `dev` branch, refreshed on every change, for testing what is coming. |
+| Tag       | Follows                                                                  |
+| --------- | ------------------------------------------------------------------------ |
+| `:latest` | the newest release. **Use this.**                                        |
+| `:dev`    | the `dev` branch, refreshed on every change, for testing what is coming. |
 
 These two are the only tags to put in a compose file.
 
-To run the dev channel, put `ghcr.io/scythe-labs/reaper:dev` in the compose file instead. Dev
-builds change often. Releases are the steadier channel.
+Put `ghcr.io/scythe-labs/reaper:dev` in your compose file to run the dev channel. Dev builds change often, so use Releases if you want a steadier channel.
 
 ## Updating
 
@@ -160,7 +147,7 @@ docker pull ghcr.io/scythe-labs/reaper:latest
 </TabItem>
 </Tabs>
 
-Migrations run on every start, before the app accepts a connection.
+Migrations run every time you start the app, before it accepts a connection.
 
 ## Building from source
 
@@ -172,5 +159,4 @@ docker compose up -d --build
 
 ## Next
 
-[First run](/getting-started/first-run), in order. The first account to sign in claims the
-install, so it matters who does it.
+Follow the [First run](/getting-started/first-run) steps in order. The first account that signs in claims the install, so make sure you know who's doing it.

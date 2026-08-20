@@ -1,7 +1,7 @@
 ---
 id: "plex-rebuild"
 title: "Rebuilding a Plex library"
-description: "A rebuilt library makes every title look unwatched. Here is why, and how to fix it."
+description: "Rebuilding your library makes every title look unwatched. This page explains why that happens and how you can fix it."
 sidebar_position: 6
 ---
 
@@ -9,16 +9,16 @@ sidebar_position: 6
     Source:     the "plex-rebuild" doc in frontend/src/docs/content/
     Regenerate: npm --prefix frontend run gen-manual */}
 
-Rebuilding or moving a Plex library gives every title in it a new id. Your watch history stays where it is, still filed under the old ids, so Reaper looks up the plays for a title and finds none.
+If you rebuild or move a Plex library, every title gets a new id. Your watch history stays where it is under the old ids, so Reaper looks up the plays for a title and finds none.
 
 ## What Reaper does about it {#what-reaper-does}
 
 Both of these keep your files.
 
-- **The scan comes back incomplete.** When a large share of the titles Reaper already knew turn up under new ids, it marks the scan incomplete. You can still look at it, but no plan can be built from it.
-- **Every watched title is held back.** Reaper remembers the most plays it has ever seen for a title, so a count that falls to zero means the plays stopped being readable, not that nobody watched it.
+- **The scan comes back incomplete.** Reaper marks a scan incomplete if a large share of the titles it already knew show up under new ids. You can still look at it, but you can't build a plan from it.
+- **Every watched title is held back.** Reaper tracks the highest play count it's ever seen for a title. If that count drops to zero, it means the plays stopped being readable rather than nobody watching it.
 
-The scan clears itself the next time one runs. The watch history does not.
+The scan clears itself the next time you run it, but your watch history stays.
 
 ## If a few titles moved {#a-few-titles}
 
@@ -26,13 +26,13 @@ The scan clears itself the next time one runs. The watch history does not.
 
 <Step title={"Fix them in Tautulli."}>
 
-Open the item in Tautulli and use Fix Metadata. Nothing else moves old plays onto the new id.
+Open the item in Tautulli and use Fix Metadata. This is the only way to move old plays onto the new id.
 
 </Step>
 
 <Step title={"Update Reaper's copy of the history."}>
 
-Go to Settings, Jobs and press Run now on Full watch-history update. That re-reads your whole history instead of only the new plays, which is how the corrected ids reach Reaper. It also runs on its own every three days.
+Go to Settings, then Jobs and press Run now on Full watch-history update. This re-reads your whole history instead of only new plays so the corrected ids reach Reaper. It also runs on its own every three days.
 
 </Step>
 
@@ -40,12 +40,12 @@ Go to Settings, Jobs and press Run now on Full watch-history update. That re-rea
 
 ## If the whole library was rebuilt {#whole-library}
 
-Fixing thousands of items one at a time is not realistic, so tell Reaper to forget what it measured instead. Go to Settings, Plex, find Recorded watch history, and press Forget. It asks for your admin password.
+Fixing thousands of items one at a time isn't realistic, so use this path to clear everything at once. Go to Settings, then Plex, find Recorded watch history, and press Forget. It'll ask for your admin password.
 
 <Callout tone={"caution"}>
 
-**You give something up.** Reaper can no longer tell a title whose plays went missing from one nobody ever watched, so three protections stop holding those titles and the next scan can put them on the list.
+**When you press Forget, you give something up.** Reaper keeps a record of the most watch history it has ever seen for each title, and forgetting all the history throws it away. Without it, a title whose plays went unreadable reads exactly like one nobody ever watched. The protections that were holding those titles stop, and the next scan can flag them for removal. Read that scan carefully before you approve anything.
 
 </Callout>
 
-Scan again afterwards. Reaper starts from what Tautulli can see today.
+Run a scan again afterward. Reaper starts from what Tautulli can see today.

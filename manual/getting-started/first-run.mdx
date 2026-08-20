@@ -9,63 +9,62 @@ sidebar_position: 3
 
 ## Signing in
 
-The first account to sign in claims the install and creates its admin in the same step,
-provided that account owns the server.
+The first account you sign in with claims the install and creates its admin in the same step, as long as that account owns the server.
 
-On a fresh install the button reads **Sign in with Plex to set up Reaper**.
+When you first install the app, click the **Sign in with Plex to set up Reaper** button.
 
 <Callout tone="note">
-  **Plex unreachable?** On a Docker install, create the account on the host instead:
-  `docker compose exec reaper reaper-admin create-admin --username admin`. Use this when
-  plex.tv is down, or when you would rather set Reaper up before linking it.
+  **Plex unreachable?** On a Docker install, create the account on the host
+  instead: `docker compose exec reaper reaper-admin create-admin --username
+  admin`. Use this when plex.tv is down, or when you would rather set Reaper up
+  before linking it.
 </Callout>
 
 ## The four steps
 
-Reaper then walks you through four cards, one decision at a time. It remembers where you got to
-on the server, so you can close the tab and come back to the step you left.
+Reaper walks you through four cards, one decision at a time. It remembers where you got to on the server so you can close the tab and come back to the step you left.
 
 <Steps>
   <Step title="Set your password.">
-    Reaper asks for this before anything else and waits for it. The password signs you in when
-    Plex is unreachable, it confirms every deletion, and a restore checks it. Twelve
-    characters minimum. Your local account is called `admin`.
+    Reaper asks for this before anything else and waits for it. The password
+    signs you in when Plex is unreachable, it confirms every deletion, and a
+    restore checks it. Twelve characters minimum. Your local account is called
+    `admin`.
   </Step>
   <Step title="Connect Plex.">
-    Pick the server and choose which libraries Reaper reads. Skipping it leaves Reaper able to
-    scan and show you what it would remove; removing anything waits until Plex is connected.
+    Pick the server and choose which libraries Reaper reads. Skipping it leaves
+    Reaper able to scan and show you what it would remove; removing anything
+    waits until Plex is connected.
   </Step>
   <Step title="Connect your library.">
-    Sonarr, Radarr, Tautulli, Seerr. Keys are entered here and stored encrypted, and the API
-    returns them redacted from then on. Reaper calls you scan-ready once **Tautulli plus at
-    least one of Radarr or Sonarr** exist. A movie-only or TV-only deployment is a real
-    deployment.
+    Sonarr, Radarr, Tautulli, Seerr. Keys are entered here and stored encrypted,
+    and the API returns them redacted from then on. Reaper calls you scan-ready
+    once **Tautulli plus at least one of Radarr or Sonarr** exist. A movie-only
+    or TV-only deployment is a real deployment.
   </Step>
   <Step title="Run your first scan.">
-    Deletion is off unless your deploy armed it, so this first scan reads and scores. Every candidate
-    shows its score, and every protection that was checked and did not fire.
+    Deletion is off unless your deploy armed it, so this first scan reads and
+    scores. Every candidate shows its score, and every protection that was
+    checked and did not fire.
   </Step>
 </Steps>
 
 <Callout tone="caution">
-  **That password is your way back in.** A plex.tv outage, a revoked token, or a rebuilt Plex
-  server each leave it as the key that still works. See
-  [Not getting locked out](/operating/locked-out).
+  **That password is your way back in.** A plex.tv outage, a revoked token, or a
+  rebuilt Plex server each leave it as the key that still works. See [Not
+  getting locked out](/operating/locked-out).
 </Callout>
 
 ## Turning deletion on
 
-Arming is a separate act, done later. Read
-[Turning deletion on](/safety/arming) when you trust what the scan is showing you.
+Arming is a separate step you do later. Read [Turning deletion on](/safety/arming) once you trust what the scan is showing you.
 
 ## Running more than one Plex server
 
-Reaper links one server at a time, so it asks which one rather than guessing.
+Reaper links one server at a time, so it'll ask you which one you want to use instead of guessing.
 
-Pick the server during sign-in, or pass `--server <name>` to `reaper-admin link-plex`. To change
-it later, unlink in Settings.
+Select your server when you sign in, or use `--server <name>` with `reaper-admin link-plex`. You can change it later by unlinking in Settings.
 
 ## Coming back to the wizard
 
-An install that predates the password step meets the wizard once more, on that step alone, with
-everything after it already satisfied.
+An install that predates the password step meets the wizard once more, on that step alone, with everything after it already satisfied.

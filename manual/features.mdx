@@ -7,25 +7,22 @@ sidebar_position: 1
 
 # What makes it different
 
-Every shipped default is the cautious one, and the
-logic that decides a removal cannot change without a test catching it.
+Every default setting is a cautious one. The logic that decides a removal won't change unless a test catches it.
 
 ## TV seasons, judged like a viewer would
 
-Reaper decides **per season**, and never removes a whole series in one action: a show you reap
-fans out into its seasons.
+Reaper decides **per season** and won't remove a whole series in one action. If you reap a show, it fans out into its seasons.
 
 <Callout tone="tip">
-  **It follows where each person actually is.** Someone part-way through a season keeps that
-  season. The moment they finish it, the hold moves to the next one.
+  **It follows where each person actually is.** Someone part-way through a
+  season keeps that season. The moment they finish it, the hold moves to the
+  next one.
 </Callout>
 
-That hold is one season or the other, not both. It only holds both when Reaper cannot read the
-episode counts. Two details that matter in a real library:
+That hold covers one season or the other, but not both. It only holds both when Reaper cannot read the episode counts. These two details matter in a real library:
 
-- It steps **over gaps**. Finish season 3 when only 3 and 5 are on disk and it holds 5.
-- It anchors on the **most recent play**, not the highest season number, so a re-watcher and
-  someone watching out of order are both protected.
+- It steps **over gaps**. If you finish season 3 but only have seasons 3 and 5 on disk, it holds 5.
+- It anchors on the **most recent play** instead of the highest season number. This protects re-watchers and people watching out of order.
 
 ### Keeping a cushion in front of a binge
 
@@ -35,80 +32,64 @@ season 1 with a cushion of 2 keeps seasons 1, 2 and 3. The cushion counts season
 disk, so it steps over gaps the same way the hold does.
 
 <Callout tone="note">
-  **The cushion starts at 0.** Raise it if your users binge faster than you scan, so Reaper is
-  never deleting the season someone reaches tomorrow.
+  **The cushion starts at 0.** Raise it if your users binge faster than you
+  scan, so Reaper is never deleting the season someone reaches tomorrow.
 </Callout>
 
-The partway-through hold lasts 180 days from that person's last play of the show. Set that
-window to `0` to hold indefinitely.
+The partway-through hold lasts 180 days from that person's last play of the show. Set that window to `0` to hold indefinitely.
 
-| Rule | Default |
-| --- | --- |
-| Always keep the newest seasons | 2, counting only seasons with files |
-| Always keep a show's first season | on, and it means the earliest on disk |
-| Never remove specials | on |
-| Keep seasons someone is partway through | on, 180 days |
-| Also keep seasons ahead of where they are | 0, no cushion |
+| Rule                                        | Default                                 |
+| ------------------------------------------- | --------------------------------------- |
+| Always keep the newest seasons              | 2, counting only seasons with files     |
+| Always keep a show's first season           | on, and it means the earliest on disk   |
+| Never remove specials                       | on                                      |
+| Keep seasons someone is partway through     | on, 180 days                            |
+| Also keep seasons ahead of where they are   | 0, no cushion                           |
 | Never remove a season with episodes missing | on, so a removal never races a download |
-| Ask me first when a removal looks unusual | on |
+| Ask me first when a removal looks unusual   | on                                      |
 
-"Ask me first" earns its row. If the keep rule would remove a season **more people watched**
-than one it is keeping, Reaper stops and asks you. A currently airing show's newest season is
-protected outright, with no switch to turn that off.
+The "Ask me first" row earns its place. Reaper stops and asks you if a keep rule would remove a season **more people watched** than the one it's keeping. It protects the newest season of a currently airing show outright, and there's no switch to turn that off.
 
 <Callout tone="caution">
-  **A short watch history holds everything.** Where your history does not reach as far back as
-  your library, Reaper cannot tell who is partway through, so it holds every prunable season.
-  Automatic TV pruning stays inert until the history catches up. If you are waiting for TV
-  pruning to start, that is why.
+  **A short watch history holds everything.** Where your history does not reach
+  as far back as your library, Reaper cannot tell who is partway through, so it
+  holds every prunable season. Automatic TV pruning stays inert until the
+  history catches up. If you are waiting for TV pruning to start, that is why.
 </Callout>
 
 ## It explains the keeps
 
 Every candidate carries the protections that were **checked and did not fire**, with the real
-numbers: *"Only 2 people watched it here in the last year (it takes 3 to keep on that
-alone)."* Every protection reports, even once the answer is settled.
+numbers: _"Only 2 people watched it here in the last year (it takes 3 to keep on that
+alone)."_ Every protection reports, even once the answer is settled.
 
-The panel separates what spared a title, what it cleared, and what Reaper could not check and
-is leaving to you.
+This panel shows you what spared a title, what it cleared, and what Reaper could not check and is leaving to you.
 
 ## Safety you do not configure
 
 These are always on, with no setting to get wrong:
 
-- **The test file.** The smallest measured item goes first, alone, and is verified before
-  anything else is touched. If it misbehaves, the whole run halts.
-- **A phrase bound to the plan.** You type `REAP 7 SOULS 214 GB`, recomputed on the server, so
-  a stale tab and muscle memory both fail.
+- **The test file.** The smallest measured item goes first, alone, and is verified before anything else is touched. If it misbehaves, the whole run halts.
+- **A phrase bound to the plan.** You type `REAP 7 SOULS 214 GB`, recomputed on the server, so a stale tab and muscle memory both fail.
 - **A practice run** that walks every interlock and sends nothing.
-- **Unknown sizes never go first.** An item Reaper could not measure can never be the test
-  item, and it is also held back from the run entirely. The unknown-size allowance on Policy
-  is the one setting that lets any of them through, and it starts at 0.
+- **Unknown sizes never go first.** An item Reaper could not measure can never be the test item, and it is also held back from the run entirely. The unknown-size allowance on Policy is the one setting that lets any of them through, and it starts at 0.
 - **The scheduler never deletes.** Scans are automatic; removals are not.
 
 ## What protects a title
 
-- **Your lists.** Set them up on Settings, Lists: a Plex collection or watchlist, a Sonarr or
-  Radarr tag, or an IMDb list. Each one protects through a keep rule on Policy: a list you add
-  protects nothing until you give it one, and you decide whether it keeps every title outright
-  or only leans that way. Two ship ready to use with a keep-everything rule already,
-  "Titles you've tagged" (the `reaper-keep` tag) and the IMDb Top 250.
-- **Well-rated titles**, with a vote floor so a handful of votes cannot protect forever.
+- **Your lists.** Go to Settings, Lists to set them up. You can use a Plex collection or watchlist, a Sonarr or Radarr tag, or an IMDb list. Each list protects your files through a keep rule on Policy. A list won't protect anything until you give it one, and you decide if it keeps every title outright or only leans that way. Two lists come ready to use with a keep-everything rule, "Titles you've tagged" (the `reaper-keep` tag) and the IMDb Top 250.
+- **Well-rated titles**, using a vote floor so a few votes won't protect a title forever.
 
 ## Things you turn on
 
 Off until you ask for them, so nothing surprises you:
 
-- **The Leaving Soon shelf**, a real Plex collection and label so your users can rescue a title
-  by watching it. It also needs deletion armed, unless you turn on "Update while read-only".
-- **Discord**, which announces one thing: what is leaving soon.
-- **HD/4K library mapping**, so Reaper can tell two copies of one title apart. Unmapped
-  duplicates are kept.
+- **The Leaving Soon shelf** is a Plex collection and label that lets your users rescue a title by watching it. You need to have deletion armed to use this, unless you turn on "Update while read-only".
+- **Discord** announces what is leaving soon.
+- **HD/4K library mapping** helps Reaper tell two copies of one title apart. Reaper keeps any unmapped duplicates.
 
 ## Before you commit to a change
 
-The simulator re-decides your last scan under a draft policy with no calls to your services, so
-you can move a number and watch the count, the space, and the named titles change.
+The simulator re-decides your last scan under a draft policy without calling your services. You can move a number and watch the count, the space, and the named titles change.
 
-When an edit changes what a *scan would gather*, it stops showing numbers and asks for a fresh
-scan instead of showing you a confident wrong figure.
+If an edit changes what a _scan would gather_, Reaper stops showing numbers and asks you for a fresh scan so you don't rely on a wrong figure.

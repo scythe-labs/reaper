@@ -132,7 +132,7 @@ export function DocsModal({
                 this rather than climbing back over the dialog's own title (#177). */}
             <h3>{doc.title}</h3>
             <p className="doc-summary">{doc.summary}</p>
-            <DocBody blocks={doc.body} />
+            <DocBody blocks={doc.body} onNavigate={onNavigate} />
           </article>
         </div>
       </div>

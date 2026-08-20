@@ -6,66 +6,50 @@ sidebar_position: 5
 
 # macOS
 
-Download `Reaper-<version>-macos-arm64.dmg` from
-[the releases page](https://github.com/scythe-labs/reaper/releases), open it, and drag Reaper
-to Applications. Apple Silicon only, macOS 14 or newer. A zip of the same app sits beside it
-for scripted installs.
+Download `Reaper-<version>-macos-arm64.dmg` from [the releases page](https://github.com/scythe-labs/reaper/releases), open it, and drag Reaper to Applications. You'll need Apple Silicon and macOS 14 or newer. There's a zip of the same app next to it if you're doing scripted installs.
 
 ## Which build
 
-| Download | Follows |
-| --- | --- |
-| the newest release | the stable channel. **Use this.** |
-| `dev-build` | the `dev` branch, refreshed nightly, for testing what is coming. |
+| Download           | Follows                                                          |
+| ------------------ | ---------------------------------------------------------------- |
+| the newest release | the stable channel. **Use this.**                                |
+| `dev-build`        | the `dev` branch, refreshed nightly, for testing what is coming. |
 
-To run the dev channel, download the same DMG from the `dev-build` prerelease on the releases
-page and install it the same way. Dev builds change often. Releases are the steadier channel.
+Download the same DMG from the `dev-build` prerelease on the releases page to run the dev channel and install it the same way. Dev builds change often. Releases are the steadier channel.
 
 ## First launch
 
 <Callout tone="note">
-  **macOS warns the first time you open it.** The app is not code-signed yet, so Gatekeeper
-  cannot verify it. Open System Settings, Privacy & Security, and choose **Open Anyway**; on
-  macOS 14 you can instead right-click the app and choose **Open**. Each update asks again.
+  **macOS warns the first time you open it.** The app is not code-signed yet, so
+  Gatekeeper cannot verify it. Open System Settings, Privacy & Security, and
+  choose **Open Anyway**; on macOS 14 you can instead right-click the app and
+  choose **Open**. Each update asks again.
 </Callout>
 
-Reaper then lives in the menu bar: no Dock icon and no window, just an icon offering
-**Open Reaper** and **Quit Reaper**. Your browser opens on `http://127.0.0.1:8420` once the
-server is ready. Closing the tab leaves the server running; Quit is what stops it.
+Reaper stays in your menu bar without a Dock icon or a window. You'll see an icon that lets you **Open Reaper** or **Quit Reaper**. Once the server is ready, your browser opens to `http://127.0.0.1:8420`. You can close the tab and the server keeps running, so use Quit to stop it.
 
-macOS also asks whether Reaper may accept incoming connections. Allow it if other machines
-should reach Reaper. Until the app is code-signed, it may ask again after an update.
+macOS will ask if Reaper can accept incoming connections. Allow it if you want other machines to reach Reaper. It might ask you again after an update until the app is code-signed.
 
 ## Where the data lives
 
-`~/Library/Application Support/Reaper` holds the database, the encryption keys, and
-`launcher.conf`. Back up `reaper.db`, `secret.key`, and `secret.salt`, covered in
-[Back this up](/operating/backups). Updates leave the folder alone.
+Your database, encryption keys, and `launcher.conf` are stored in `~/Library/Application Support/Reaper`. Back up `reaper.db`, `secret.key`, and `secret.salt` as described in [Back this up](/operating/backups). Updates won't touch this folder.
 
 ## Settings
 
-Reaper reads `launcher.conf` from the data folder. The first run writes it as a commented
-template: the port, the listening address, the browser launch, the update check, the menu bar icon,
-the Dock icon, and recovery mode each have a line. The two icons also have switches in the app, under
-Settings, General, Desktop app. Recovery mode is how you get back in if you cannot sign in,
-covered in [Not getting locked out](/operating/locked-out).
+Reaper reads `launcher.conf` from your data folder. On your first run, it writes a commented template with lines for the port, the listening address, the browser launch, the update check, the menu bar icon, the Dock icon, and recovery mode. You can find switches for those two icons in the app under Settings, General, Desktop app. Use recovery mode to get back in if you can't sign in, which is covered in [Not getting locked out](/operating/locked-out).
 
 ## Reaching it from other machines
 
-Reaper listens on every interface, the same as the container. Open `http://<host-ip>:8420`
-from the other machine; `127.0.0.1` is only what your own browser opens.
+Reaper listens on every interface, just like the container. Open `http://<host-ip>:8420` from your other machine. Use `127.0.0.1` only if your browser is on the same machine as Reaper.
 
 ## Starting at login
 
-Reaper runs while open and stops when you quit it. To start it with your Mac, add Reaper
-under System Settings, General, Login Items.
+Reaper runs while it's open and stops when you quit it. To start it with your Mac, add Reaper under System Settings, General, Login Items.
 
 ## Updating
 
-Drag the new app over the old one. The data folder is untouched. Settings, About says when a
-newer build exists.
+Drag the new app over the old one. Your data folder stays untouched. Settings, About tells you when a newer build exists.
 
 ## Next
 
-[First run](/getting-started/first-run), in order. The first account to sign in claims the
-install, so it matters who does it.
+Follow the [First run](/getting-started/first-run) steps in order. The first account that signs in claims the install, so make sure you know who's doing it.

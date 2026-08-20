@@ -8,31 +8,25 @@ slug: /
 
 # Reaper
 
-Reaper finds the movies and shows nobody watches, explains why it thinks each one is
-expendable, and removes them safely through Sonarr and Radarr.
+Reaper finds the movies and shows nobody watches. It explains why it thinks each one is expendable and removes them safely through Sonarr and Radarr.
 
 <Callout tone="tip">
-  **It ships read-only.** A new install can scan, score, and explain, and nothing else, until
-  you arm deletion with a password, or a deploy sets it on at first boot.
+  **It ships read-only.** A new install can scan, score, and explain, and
+  nothing else, until you arm deletion with a password, or a deploy sets it on
+  at first boot.
 </Callout>
 
 ## Start here
 
-- **[What Reaper does](/getting-started/overview)** if you are still deciding.
-- **[Install](/getting-started/install)** to get it running: Docker, Unraid, Windows, macOS,
-  or a snap.
-- **[First run](/getting-started/first-run)** for the order to do things in.
-- **[Understanding policy](/policy/understanding-policy)** once it is scanning and you want to
-  tune it.
+- Check **[What Reaper does](/getting-started/overview)** if you're still deciding.
+- **[Install](/getting-started/install)** it on Docker, Unraid, Windows, macOS, or a snap.
+- Follow the **[First run](/getting-started/first-run)** guide for the right order of steps.
+- Use **[Understanding policy](/policy/understanding-policy)** to tune things once it's scanning.
 
 ## Every verdict shows its work
 
-Reaper explains the keeps as well as the deletes. Every candidate carries the signals that
-counted against it **and** every protection that was checked and did not fire, with the real
-numbers behind each one.
+Reaper explains your keeps and your deletes. Every candidate shows the signals that counted against it **and** every protection that was checked and didn't fire, along with the real numbers for each one.
 
-Two independent layers sit under every deletion, and each is checked on its own. The refusal
-lives at the network layer, and a missing rating or an unreachable service can only ever
-protect a file.
+Two independent layers sit under every deletion and each is checked on its own. The refusal lives at the network layer. A missing rating or an unreachable service can only ever protect a file.
 
-[How a delete is kept safe](/safety/how-a-delete-is-kept-safe) walks the whole path through.
+[How a delete is kept safe](/safety/how-a-delete-is-kept-safe) walks you through the whole path.

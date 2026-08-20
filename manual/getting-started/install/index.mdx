@@ -7,36 +7,33 @@ sidebar_position: 1
 
 # Install
 
-Reaper needs no access to your media, whichever install you pick. It has no filesystem
-delete path: only Sonarr and Radarr do. Everything it keeps is one small data folder.
+Reaper doesn't need access to your media, regardless of which install you pick. It has no filesystem delete path. Only Sonarr and Radarr have a delete path. Everything Reaper keeps is just one small data folder.
 
 <Callout tone="caution">
-  **If you find yourself mounting your library, something is wrong.** Reaper never needs to see
-  your media files.
+  **If you find yourself mounting your library, something is wrong.** Reaper
+  never needs to see your media files.
 </Callout>
 
 ## Pick your install
 
-- **[Docker](/getting-started/install/docker)**, which is a single `docker compose up -d`.
-- **[Unraid](/getting-started/install/unraid)**, from Community Applications.
-- **[Windows](/getting-started/install/windows)**, an installer or a portable zip.
-- **[macOS](/getting-started/install/macos)**, a drag-to-Applications app.
-- **[Snap](/getting-started/install/snap)**, a service on any Linux with snapd.
+- **[Docker](/getting-started/install/docker)**, just run `docker compose up -d`.
+- **[Unraid](/getting-started/install/unraid)**, find it in Community Applications.
+- **[Windows](/getting-started/install/windows)**, use an installer or a portable zip.
+- **[macOS](/getting-started/install/macos)**, drag the app into your Applications folder.
+- **[Snap](/getting-started/install/snap)**, works on any Linux with snapd.
 
 Follow [First run](/getting-started/first-run) afterwards.
 
 ## Where the data lives
 
-| Install | Data folder |
-| --- | --- |
-| Docker | the `/data` volume |
-| Unraid | your appdata share |
-| Windows | `%LOCALAPPDATA%\Reaper` |
-| macOS | `~/Library/Application Support/Reaper` |
-| Snap | `/var/snap/scythe-labs-reaper/common` |
+| Install | Data folder                            |
+| ------- | -------------------------------------- |
+| Docker  | the `/data` volume                     |
+| Unraid  | your appdata share                     |
+| Windows | `%LOCALAPPDATA%\Reaper`                |
+| macOS   | `~/Library/Application Support/Reaper` |
+| Snap    | `/var/snap/scythe-labs-reaper/common`  |
 
 ## What to back up
 
-Three files in the data folder, covered in [Back this up](/operating/backups): `reaper.db`,
-`secret.key` and `secret.salt`. The key and the salt are useless apart. Set that up before you
-arm anything.
+You'll find three files in the data folder, covered in [Back this up](/operating/backups): `reaper.db`, `secret.key` and `secret.salt`. The key and the salt are useless apart. Set that up before you arm anything.

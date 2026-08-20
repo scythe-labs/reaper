@@ -14,10 +14,12 @@ import { themes } from "prism-react-renderer";
 
 const ORG = "scythe-labs";
 const REPO = "reaper";
+// The site header and the footer say this same line, so it is declared once.
+const TAGLINE = "Grave decisions, clearly explained";
 
 const config: Config = {
   title: "Reaper",
-  tagline: "Grave decisions, clearly explained",
+  tagline: TAGLINE,
   favicon: "img/favicon.svg",
 
   // GitHub Pages for a project repository serves under /<repo>/. Both halves are read by the
@@ -57,6 +59,32 @@ const config: Config = {
     ],
   ],
 
+  // Search is built into the site rather than served from one. Algolia DocSearch is the usual
+  // answer and it crawls the deployed site, which means the index only covers what is public
+  // and every query leaves the reader's browser. Reaper is self-hosted, and an operator
+  // reading this while deciding what to delete may be on a box with no route to the internet,
+  // so the index is generated at build time and shipped with the pages it describes.
+  //
+  // `hashed` puts a content hash in the index filename, so a reader who has the old site
+  // cached does not search yesterday's manual. `docsRouteBasePath` has to track the preset's
+  // `routeBasePath` above: the manual is served from the root, and the default here is
+  // "/docs", which indexes nothing.
+  themes: [
+    [
+      "@easyops-cn/docusaurus-search-local",
+      {
+        hashed: true,
+        // Both of these track the preset above: the manual is not in this directory, and it
+        // is served from the root. The defaults are "docs" and "/docs", and leaving either
+        // wrong costs a warning on every build, which is how a real one goes unread.
+        docsDir: "../manual",
+        docsRouteBasePath: "/",
+        indexBlog: false,
+        highlightSearchTermsOnTargetPage: true,
+      },
+    ],
+  ],
+
   themeConfig: {
     colorMode: { respectPrefersColorScheme: true },
     navbar: {
@@ -90,7 +118,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: "Reaper is AGPL-3.0-or-later. Every ambiguity resolves toward keeping the file.",
+      copyright: `Reaper is AGPL-3.0-or-later. ${TAGLINE}.`,
     },
     prism: {
       theme: themes.github,

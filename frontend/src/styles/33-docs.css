@@ -59,6 +59,23 @@
   text-decoration: underline;
 }
 
+/* A cross-reference inside doc prose. Same ink and hover as .doc-learn, which is the same
+   thing at the end of a heading row; this one sits in a sentence, so it takes no margin and
+   inherits the paragraph metrics rather than setting its own. */
+.doc-ref {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-text);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  text-underline-offset: 2px;
+}
+.doc-ref:hover {
+  text-decoration: underline;
+}
+
 /* --- the docs modal: wider than the standard modal, and it owns its own scrolling --- */
 .modal.docs-modal {
   width: min(1040px, 100%);
@@ -373,31 +390,6 @@
 .docs-content .doc-table td.hi {
   color: var(--accent-text);
   font-weight: var(--weight-semi);
-}
-
-/* definition lists (mental model, glossary) */
-.docs-content .doc-defs {
-  margin: 0.8rem 0;
-}
-.docs-content .doc-defs > div {
-  display: grid;
-  grid-template-columns: minmax(7rem, 9rem) 1fr;
-  gap: 0.4rem 1.1rem;
-  padding: var(--space-lg) 0;
-  border-top: 1px solid var(--border);
-  align-items: baseline;
-}
-.docs-content .doc-defs > div:last-child {
-  border-bottom: 1px solid var(--border);
-}
-.docs-content .doc-defs dt {
-  font-weight: var(--weight-semi);
-  font-size: var(--text-base);
-}
-.docs-content .doc-defs dd {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--text-base);
 }
 
 /* flowcharts (the `diagram` block). Hand-drawn from the app's tokens, no Mermaid dependency:
