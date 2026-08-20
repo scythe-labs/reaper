@@ -68,7 +68,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
-from reaper.engine.reason import Reason
+from reaper.engine.reason import Reason, to_wire
 from reaper.engine.signals import (
     CustomSignalConfig,
     KeepConfig,
@@ -2203,7 +2203,7 @@ def _explain(
                     "id": r.signal.value if isinstance(r.signal, SignalId) else r.signal,
                     "contribution": round(r.pressure, 1),
                     "weight": r.weight,
-                    "detail": r.detail,
+                    "detail_key": to_wire(r.detail),
                     "evaluated": r.evaluated,
                     # What the zero means. Four situations all land on a contribution of
                     # 0 and are otherwise identical on the wire; only the engine branch
@@ -2229,16 +2229,17 @@ def _explain(
                     "name": k.name,
                     "discount": round(k.discount, 1),
                     "max_discount": k.max_discount,
-                    "detail": k.detail,
+                    "detail_key": to_wire(k.detail),
                     "evaluated": k.evaluated,
                 }
                 for k in item_score.keep_results
             ],
             "protections_fired": [
-                {"gate": r.gate.value, "detail": r.detail} for r in evaluation.protectors
+                {"gate": r.gate.value, "detail_key": to_wire(r.detail)}
+                for r in evaluation.protectors
             ],
             "protections_checked": [
-                {"gate": r.gate.value, "detail": r.detail}
+                {"gate": r.gate.value, "detail_key": to_wire(r.detail)}
                 for r in evaluation.checked_and_did_not_fire
             ],
             # ``defers_to_owner`` is written on every entry, never omitted when False, so
@@ -2259,7 +2260,7 @@ def _explain(
             "protections_unknown": [
                 {
                     "gate": r.gate.value,
-                    "detail": r.detail,
+                    "detail_key": to_wire(r.detail),
                     "defers_to_owner": r.defers_to_owner,
                     "unestablishable": r.unestablishable,
                 }
