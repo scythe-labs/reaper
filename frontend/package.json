@@ -46,6 +46,7 @@
     "axe-core": "^4.12.1",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "intl-messageformat": "11.2.14",
     "globals": "^17.9.0",
     "jsdom": "^30.0.1",
     "prettier": "3.9.6",
