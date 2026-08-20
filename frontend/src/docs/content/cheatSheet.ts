@@ -24,9 +24,7 @@ export const cheatSheet: Doc = {
         ["Size on disk", "off", "off"],
       ],
     ),
-    p(
-      "Your points must total **100** or the Save button is blocked. Don't weight size because it aims at your biggest, most-loved files.",
-    ),
+    p("Your points must total **100** or the Save button is blocked."),
 
     h2("Protections", "protections"),
     table(
@@ -58,17 +56,17 @@ export const cheatSheet: Doc = {
         ["Unknown-size items", "0 (held back)"],
       ],
     ),
-    // "stop", matching understandingPolicy's line about the same mechanism. "Abort" was the
-    // only place in the product an operator met that word (U-15).
+    // Never "abort" here: that was the only place in the product an operator met the word
+    // (U-15).
     p(
-      'Caps stop the whole run when crossed. They never remove just the part that fits. Leave "Limit how much each run removes" on, because switching it off drops both rows above. Unknown-size items are still held back, and the countdown still runs.',
+      'A run that would cross your limits does not go ahead. Reaper never removes just the part that fits. Leave "Limit how much each run removes" on so no run can take more than you expect. Unknown-size items are still held back, and the countdown still runs.',
     ),
 
     h2("Habits that keep you safe", "habits"),
     ul([
       "Lower the line to remove more. Don't switch off a protection.",
       "Pace, grace, and Leaving Soon first. Arm deletion last.",
-      "Set a vote floor on ratings. A high score from few votes is noise.",
+      "Set a vote floor on ratings.",
       "Never weight size.",
     ]),
   ],
