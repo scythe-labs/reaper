@@ -36,11 +36,22 @@ const DYNAMIC: Record<string, string[]> = {
 
 const T_CALLEES = new Set(["t", "i18next.t", "i18n.t"]);
 
+// A `.ts` file parsed as TSX misreads generics as JSX, and a t() call inside the
+// misparsed region can drop out of the walk (see the twin note in i18n-extraction.test.ts).
+const scriptKind = (fileName: string) =>
+  fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+
 type Ref = { file: string; line: number; key: string };
 type Refs = { literal: Ref[]; dynamic: Ref[] };
 
 export function catalogRefs(fileName: string, text: string): Refs {
-  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const sf = ts.createSourceFile(
+    fileName,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind(fileName),
+  );
   const refs: Refs = { literal: [], dynamic: [] };
   const record = (node: ts.Node, key: string | null) => {
     const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
@@ -149,5 +160,12 @@ describe("the i18n key gate", () => {
     );
     expect(refs.literal.map((r) => r.key)).toEqual(["a.literal", "b.literal", "c.literal"]);
     expect(refs.dynamic.map((r) => r.line)).toEqual([4, 5, 6]);
+
+    // A .ts module: a generic call cannot swallow the t() beside it as phantom JSX.
+    const tsRefs = catalogRefs(
+      "probe.ts",
+      `const a = pick<Item>(rows); const b = t("ts.literal");`,
+    );
+    expect(tsRefs.literal.map((r) => r.key)).toEqual(["ts.literal"]);
   });
 });

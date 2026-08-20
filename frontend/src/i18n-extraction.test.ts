@@ -52,10 +52,21 @@ const T_CALLEES = new Set(["t", "i18next.t", "i18n.t"]);
 
 const hasLetter = (s: string) => /\p{L}/u.test(s);
 
+// A `.ts` file parsed as TSX misreads generics (`foo<T>(x)`) as JSX and invents phantom
+// text nodes: api.ts alone "gained" 187 of them when this gate was first drafted.
+const scriptKind = (fileName: string) =>
+  fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+
 type Leftover = { line: number; text: string };
 
 export function leftoverCopy(fileName: string, text: string): Leftover[] {
-  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const sf = ts.createSourceFile(
+    fileName,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind(fileName),
+  );
   const out: Leftover[] = [];
   const flag = (node: ts.Node, copy: string) => {
     const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
@@ -163,7 +174,7 @@ describe("the i18n extraction gate", () => {
   });
 
   it("catches every spelling the tree writes copy in (rule 147)", () => {
-    const flagged = (src: string) => leftoverCopy("probe.tsx", src).map((l) => l.text);
+    const flagged = (src: string, name = "probe.tsx") => leftoverCopy(name, src).map((l) => l.text);
 
     // Accepted spellings: each of the four populations, in the forms components use.
     expect(flagged(`const a = <p>Deletion is on.</p>;`)).toEqual(["Deletion is on."]);
@@ -187,6 +198,12 @@ describe("the i18n extraction gate", () => {
     expect(flagged(`const a = <span>{kind === "movie" ? one : two}</span>;`)).toEqual([]);
     expect(flagged(`announce(t("queue.saved", { n }));`)).toEqual([]);
     expect(flagged(`const a = <div title={t("a.b") + ":"} />;`)).toEqual([]);
+
+    // A .ts module: generics parse as generics, never as phantom JSX, and announce()
+    // copy is still read.
+    expect(flagged(`const a = fn<Item>(rows); announce("Saved.");`, "probe.ts")).toEqual([
+      "Saved.",
+    ]);
 
     // The named limit, pinned so nobody reads more coverage into the gate than it has:
     // a literal that reaches the operator through a plain call is not seen.
