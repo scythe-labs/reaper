@@ -26,6 +26,7 @@ from typing import Any
 
 from reaper.engine.gates import Facts, GateId, GateResult, thaw_defers_to_owner
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.reason import from_wire, to_wire
 from reaper.ratings import Rating, RatingSource
 
 #: The two ``Facts`` fields that are not observations, each serialized by hand above.
@@ -161,7 +162,7 @@ def _result_to_dict(r: GateResult) -> dict[str, Any]:
     return {
         "gate": r.gate.value,
         "outcome": r.outcome,
-        "detail": r.detail,
+        "detail": to_wire(r.detail),
         "blocked": r.blocked,
         "defers_to_owner": r.defers_to_owner,
         "unestablishable": r.unestablishable,
@@ -172,7 +173,9 @@ def _result_from_dict(d: dict[str, Any]) -> GateResult:
     return GateResult(
         gate=GateId(d["gate"]),
         outcome=d["outcome"],
-        detail=d["detail"],
+        # A str here is a detail frozen before reasons were typed; it thaws as a legacy
+        # reason and renders raw, exactly as it did before (docs/I18N_PLAN.md §5).
+        detail=from_wire(d["detail"]),
         blocked=d["blocked"],
         # The thaw, stated rather than left to a ``KeyError`` (rule 104): a row frozen before
         # the flag existed carries nothing that distinguishes a comparison that was made from

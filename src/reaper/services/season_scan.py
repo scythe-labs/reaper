@@ -82,6 +82,7 @@ from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import Facts, GateResult, lifetime_shortfall
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.reason import Reason
 from reaper.ratings import Rating, RatingSource, merge_by_source
 from reaper.services import (
     history_sync,
@@ -1927,7 +1928,7 @@ def _judge_series(
     # Plex never resolved has no arrival date here either, so it is unbounded on both
     # counts -- consistent, and the detector skips it for the count alone.
     watchers_by_season: dict[int, int | None] = {}
-    shortfall_by_season: dict[int, str | None] = {}
+    shortfall_by_season: dict[int, Reason | None] = {}
     reach = Known(value=float(reach_days), source="tautulli")
     for season in item.seasons:
         in_plex = item.seasons_in_plex.get(season.season_number)

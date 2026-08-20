@@ -68,6 +68,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
+from reaper.engine.reason import Reason
 from reaper.engine.signals import (
     CustomSignalConfig,
     KeepConfig,
@@ -1770,12 +1771,15 @@ class Display:
 #: The "no display fields" default, as a singleton so it is not constructed per call.
 _NO_DISPLAY = Display()
 
-#: What a hand spare reads as in the why-panel's "Protections that fired" list. A lowercase
-#: fragment with no trailing period, matching every gate protection ("someone is watching it
-#: right now", "on your keep list, never reaped"). A hand spare wears the whitelist gate id,
-#: so the review chip (``api.review._kept_phrase``) tells it apart from a real keep-list
-#: entry by this exact string. Every producer and that one reader import this constant;
-#: never re-type the literal.
+#: What a hand spare reads as in the why-panel's "Protections that fired" list. A hand spare
+#: wears the whitelist gate id, so the review chip (``api.review._kept_phrase``) and the
+#: simulator tally tell it apart from a real keep-list entry by this reason id. Every
+#: producer and reader imports the constant; never re-type the literal.
+HAND_SPARE_REASON = Reason("hand_spare")
+
+#: The sentence the same row carried before reasons were typed (docs/I18N_PLAN.md §5).
+#: Read-side comparisons accept it beside ``HAND_SPARE_REASON`` because stored explanations
+#: outlive the writer; nothing writes it any more.
 HAND_SPARE_DETAIL = "you spared this by hand"
 
 

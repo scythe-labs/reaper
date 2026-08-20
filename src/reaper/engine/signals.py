@@ -55,10 +55,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Literal, assert_never
 
-from reaper.clock import humanize_days, humanize_window
 from reaper.engine import fields
-from reaper.engine.gates import Facts
+from reaper.engine.gates import Facts, blocked_reason
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.reason import Reason
 from reaper.text import fold
 
 MAX_SCORE = 100
@@ -199,7 +199,7 @@ class KeepResult:
     discount: float
     """Points subtracted from the score, in [0, max_discount]."""
     max_discount: int
-    detail: str
+    detail: Reason
     evaluated: bool
     """False when the input was Unknown -- and an Unknown keep takes its MAXIMUM discount,
     so missing data pushes toward keeping the file."""
@@ -240,7 +240,7 @@ class SignalResult:
     pressure: float
     """In [0, weight]. Never negative."""
     weight: int
-    detail: str
+    detail: Reason
     evaluated: bool
     """False when the input was Unknown. The weight still counts toward the
     denominator, so an unevaluated signal drags the score down, never up."""
@@ -319,11 +319,16 @@ def _branch_signal(config: SignalConfig, facts: Facts, *, window_days: int) -> S
     """``evaluate_signal`` without the ramp stamp. Every return here leaves it unset."""
     if not config.enabled:
         return SignalResult(
-            config.signal, 0.0, 0, "disabled", evaluated=True, state=SignalState.NOT_APPLICABLE
+            config.signal,
+            0.0,
+            0,
+            Reason("disabled"),
+            evaluated=True,
+            state=SignalState.NOT_APPLICABLE,
         )
 
     raw: float | None
-    detail: str
+    detail: Reason
     # The observation the branch read, so the shared tail below can tell "we looked and
     # there is genuinely nothing" (Absent) from "we could not look" (Unknown). Only the
     # branch knows which fact it read, and that knowledge is gone by the tail.
@@ -334,20 +339,20 @@ def _branch_signal(config: SignalConfig, facts: Facts, *, window_days: int) -> S
             observation = facts.days_observed_unwatched
             raw = _numeric(observation)
             detail = (
-                f"not watched in {humanize_days(raw)}"
+                Reason("signal_unwatched", {"days": raw})
                 if raw is not None
-                else "no watch history to say how long it has gone unwatched"
+                else Reason("signal_unwatched_no_history")
             )
         case SignalId.SIZE:
             observation = facts.size_bytes
             size = _numeric(observation)
             raw = size / 1_000_000_000 if size is not None else None
             if raw is not None:
-                detail = f"{raw:.1f} GB on disk"
+                detail = Reason("signal_size", {"gb": round(raw, 1)})
             elif isinstance(observation, Absent):
-                detail = "no file size recorded"
+                detail = Reason("signal_size_none")
             else:
-                detail = "could not read the file size"
+                detail = Reason("signal_size_unreadable")
         case SignalId.SEASON_RANK:
             # A special (season 0) is deliberately left out of the newest->oldest ranking,
             # so its rank is Absent: we looked, and it genuinely has no rank slot. That is
@@ -361,7 +366,7 @@ def _branch_signal(config: SignalConfig, facts: Facts, *, window_days: int) -> S
                     config.signal,
                     0.0,
                     config.weight,
-                    "not one of the numbered seasons",
+                    Reason("signal_season_special"),
                     evaluated=True,
                     state=SignalState.NOT_APPLICABLE,
                 )
@@ -371,9 +376,9 @@ def _branch_signal(config: SignalConfig, facts: Facts, *, window_days: int) -> S
             # older season while charging it deletion pressure told the owner the
             # opposite of what the ranking means.
             detail = (
-                f"the {fields.describe_season_rank(raw)} on disk"
+                Reason("signal_season_rank", {"rank": int(raw)})
                 if raw is not None
-                else "could not tell which season this is"
+                else Reason("signal_season_unreadable")
             )
         case SignalId.FEW_WATCHERS:
             observation = facts.distinct_watchers
@@ -414,7 +419,6 @@ def _branch_signal(config: SignalConfig, facts: Facts, *, window_days: int) -> S
             # twin -- ``_blocked`` matches Unknown only, so an Absent count falls through
             # to the gate's shortfall arm and blocks -- while reporting coverage 1.0,
             # which is exactly the hole the branch above describes.
-            span = f"in the last {humanize_window(window_days)}"
             short = (
                 None
                 if isinstance(observation, Unknown)
@@ -425,19 +429,24 @@ def _branch_signal(config: SignalConfig, facts: Facts, *, window_days: int) -> S
                     config.signal,
                     0.0,
                     config.weight,
-                    f"could not tell who watched it {span}: {short}",
+                    Reason(
+                        "signal_watchers_unchecked",
+                        {"window_days": window_days, "cause": short},
+                    ),
                     evaluated=False,
                     state=SignalState.UNREADABLE,
                 )
             if watchers is None and isinstance(observation, Absent):
-                detail = "no watch history recorded for it"
+                detail = Reason("signal_watchers_no_history")
             elif watchers is None:
-                detail = "could not tell who watched it"
+                detail = Reason("signal_watchers_unreadable")
             elif watchers == 0:
-                detail = f"nobody watched it {span}"
+                detail = Reason("signal_watchers_none", {"window_days": window_days})
             else:
-                people = "person" if watchers == 1 else "people"
-                detail = f"only {watchers:.0f} {people} watched it {span}"
+                detail = Reason(
+                    "signal_watchers_few",
+                    {"count": int(watchers), "window_days": window_days},
+                )
         case SignalId.LOW_RATING:
             observation = facts.imdb_rating_tenths
             rating = _numeric(observation)
@@ -445,11 +454,11 @@ def _branch_signal(config: SignalConfig, facts: Facts, *, window_days: int) -> S
             # shortfall below saturate_at, so it stays in [0, weight].
             raw = max(0.0, float(config.saturate_at) - rating) if rating is not None else None
             if rating is not None:
-                detail = f"IMDb {rating / 10:.1f}"
+                detail = Reason("signal_imdb", {"value": rating})
             elif isinstance(observation, Absent):
-                detail = "no IMDb rating"
+                detail = Reason("signal_imdb_none")
             else:
-                detail = "could not read the IMDb rating"
+                detail = Reason("signal_imdb_unreadable")
         case _:
             # A new SignalId with no arm here leaves raw and observation unbound, so the
             # shared tail below dies with UnboundLocalError on the first scored item of the
@@ -526,11 +535,15 @@ def _branch_custom(
     """``evaluate_custom`` without the ramp stamp. Every return here leaves it unset."""
     if not config.enabled:
         return SignalResult(
-            config.name, 0.0, 0, "disabled", evaluated=True, state=SignalState.NOT_APPLICABLE
+            config.name,
+            0.0,
+            0,
+            Reason("disabled"),
+            evaluated=True,
+            state=SignalState.NOT_APPLICABLE,
         )
 
     spec = fields.BY_KEY.get(config.field)
-    label = spec.label if spec is not None else config.field
 
     if config.kind == "graded":
         observation = spec.read(facts) if spec is not None else None
@@ -544,7 +557,7 @@ def _branch_custom(
                 config.name,
                 0.0,
                 config.weight,
-                f"{label}: none recorded",
+                Reason("none_recorded", {"field": config.field}),
                 evaluated=True,
                 # We looked and there is genuinely nothing recorded. Nothing about the
                 # item argues for keeping it; the rule just has nothing to work with.
@@ -562,7 +575,7 @@ def _branch_custom(
                 config.name,
                 0.0,
                 config.weight,
-                f"could not read {label.lower()}",
+                Reason("field_unreadable", {"field": config.field}),
                 evaluated=False,
                 state=SignalState.UNREADABLE,
             )
@@ -588,7 +601,7 @@ def _branch_custom(
                 config.name,
                 0.0,
                 config.weight,
-                f"could not check {label.lower()}: {short}",
+                blocked_reason(config.field, short),
                 evaluated=False,
                 state=SignalState.UNREADABLE,
             )
@@ -597,7 +610,7 @@ def _branch_custom(
             config.name,
             fraction * config.weight,
             config.weight,
-            f"{label}: {raw:.0f}",
+            Reason("field_value", {"field": config.field, "value": round(raw)}),
             evaluated=True,
             # A real number below the ramp's floor: measured, and it argues for keeping.
             state=SignalState.ADDS if fraction > 0 else SignalState.ARGUES_KEEP,
@@ -609,7 +622,7 @@ def _branch_custom(
             config.name,
             0.0,
             config.weight,
-            "misconfigured rule",
+            Reason("misconfigured"),
             evaluated=False,
             state=SignalState.UNREADABLE,
         )
@@ -645,45 +658,42 @@ def _branch_custom(
 REWATCH_KEEP = "rewatch_habit"
 
 
-def _rewatch_count_phrase(config: KeepConfig, n: int) -> str:
-    """The lane-correct count: a movie's viewings are plays, a show's are whole re-watches
-    (``KeepConfig.media_type``), so the show phrasing says "again" everywhere the count
-    appears. Copy from the approved TV mockup."""
-    times = "time" if n == 1 else "times"
-    if config.media_type == "tv":
-        return f"Watched again {n} {times}"
-    return f"Watched {n} {times}"
+def _rewatch_count(config: KeepConfig, viewings: Observation[int]) -> Reason:
+    """The lane-correct count clause: a movie's viewings are plays, a show's are whole
+    re-watches (``KeepConfig.media_type``), so the show phrasing says "again" everywhere
+    the count appears. An unreadable count degrades to the "again and again" clause."""
+    if isinstance(viewings, Known):
+        return Reason("rewatch_count", {"n": int(viewings.value), "tv": config.media_type == "tv"})
+    return Reason("rewatch_count_many")
 
 
-def _rewatch_firing_detail(config: KeepConfig, facts: Facts) -> str:
-    """The figures behind a firing rewatch keep, then the claim. Draft copy from the
-    approved mockups; the recency figure is the last qualified play the condition read."""
-    viewings = facts.rewatch_viewings
-    count = (
-        _rewatch_count_phrase(config, int(viewings.value))
-        if isinstance(viewings, Known)
-        else "Watched again and again"
-    )
+def _rewatch_firing_detail(config: KeepConfig, facts: Facts) -> Reason:
+    """The figures behind a firing rewatch keep, then the claim. Copy from the approved
+    mockups lives in the catalog; the recency figure is the last qualified play the
+    condition read."""
+    count = _rewatch_count(config, facts.rewatch_viewings)
     last = facts.rewatch_last_play_days
     if isinstance(last, Known):
-        return (
-            f"{count}, most recently {humanize_days(last.value)} ago. Likely to be watched again."
-        )
-    return f"{count}, and recently. Likely to be watched again."
+        return Reason("rewatch_keep_fired_recent", {"count": count, "last_days": float(last.value)})
+    return Reason("rewatch_keep_fired", {"count": count})
 
 
-def _rewatch_miss_detail(config: KeepConfig, facts: Facts) -> str:
+def _rewatch_miss_detail(config: KeepConfig, facts: Facts) -> Reason:
     """Why the rewatch keep did not fire, with the item's own numbers."""
     viewings = facts.rewatch_viewings
     if not isinstance(viewings, Known) or viewings.value == 0:
         # A show at zero was possibly watched once through -- its count is re-watches, not
         # plays -- so the honest zero there is "never again," not "never."
-        return "Never watched again here." if config.media_type == "tv" else "Never watched here."
+        return Reason("rewatch_keep_never", {"tv": config.media_type == "tv"})
     n = int(viewings.value)
+    count = _rewatch_count(config, viewings)
     if config.min_viewings is not None and n < config.min_viewings:
-        return f"{_rewatch_count_phrase(config, n)} in all."
-    window = humanize_window(config.recent_days) if config.recent_days is not None else "window"
-    return f"{_rewatch_count_phrase(config, n)}, but not in the last {window}."
+        return Reason("rewatch_keep_few", {"count": count})
+    if config.recent_days is None:
+        # Half-configured rule: with no recency window there is no "not in the last ..."
+        # claim to make, so state the total alone.
+        return Reason("rewatch_keep_few", {"count": count})
+    return Reason("rewatch_keep_stale", {"count": count, "window_days": config.recent_days})
 
 
 def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
@@ -709,7 +719,7 @@ def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
             config.name,
             float(config.max_discount),
             config.max_discount,
-            "kept fully: could not check your watch history",
+            Reason("keep_unchecked", {"check": Reason("check.watch_history")}),
             evaluated=False,
         )
     if isinstance(viewings, Absent):
@@ -717,7 +727,7 @@ def _rewatch_keep(config: KeepConfig, facts: Facts) -> KeepResult:
         # the observation -- movies as qualified viewings, seasons as the show's replay
         # periods -- so a genuine Absent means the caller never gathered watch history, and
         # the keep has nothing to say there and discounts nothing.
-        return KeepResult(config.name, 0.0, config.max_discount, "Does not apply here.", True)
+        return KeepResult(config.name, 0.0, config.max_discount, Reason("does_not_apply"), True)
     met = (
         config.min_viewings is not None
         and config.recent_days is not None
@@ -751,13 +761,12 @@ def evaluate_keep(
     those, not the second (``window_days``, ``fields.reach_shortfall``).
     """
     if not config.enabled:
-        return KeepResult(config.name, 0.0, 0, "disabled", evaluated=True)
+        return KeepResult(config.name, 0.0, 0, Reason("disabled"), evaluated=True)
 
     if config.field == REWATCH_KEEP:
         return _rewatch_keep(config, facts)
 
     spec = fields.BY_KEY.get(config.field)
-    label = spec.label if spec is not None else config.field
     observation = spec.read(facts) if spec is not None else None
 
     if config.value is not None:
@@ -772,17 +781,17 @@ def evaluate_keep(
                 config.name,
                 float(config.max_discount) if on_it else 0.0,
                 config.max_discount,
-                f'on your list "{config.value}"' if on_it else f'not on your list "{config.value}"',
+                Reason("keep_on_list" if on_it else "keep_not_on_list", {"name": config.value}),
                 True,
             )
         if isinstance(observation, Absent):
-            return KeepResult(config.name, 0.0, config.max_discount, "on none of your lists", True)
+            return KeepResult(config.name, 0.0, config.max_discount, Reason("keep_no_lists"), True)
         # Unknown: the membership could not be read, so the full discount, fail-closed.
         return KeepResult(
             config.name,
             float(config.max_discount),
             config.max_discount,
-            "kept fully: could not check your lists",
+            Reason("keep_unchecked", {"check": Reason("check.lists")}),
             evaluated=False,
         )
 
@@ -794,14 +803,18 @@ def evaluate_keep(
     if raw is None:
         if isinstance(observation, Absent):
             return KeepResult(
-                config.name, 0.0, config.max_discount, f"{label}: none recorded", True
+                config.name,
+                0.0,
+                config.max_discount,
+                Reason("none_recorded", {"field": config.field}),
+                True,
             )
         # Unknown (or an unreadable field): fail-closed to the maximum keep.
         return KeepResult(
             config.name,
             float(config.max_discount),
             config.max_discount,
-            f"kept fully: could not check {label.lower()}",
+            Reason("keep_unchecked", {"check": Reason(f"check.{config.field}")}),
             evaluated=False,
         )
 
@@ -817,7 +830,10 @@ def evaluate_keep(
             config.name,
             float(config.max_discount),
             config.max_discount,
-            f"kept fully: could not check {label.lower()}: {short}",
+            Reason(
+                "keep_unchecked_cause",
+                {"check": Reason(f"check.{config.field}"), "cause": short},
+            ),
             evaluated=False,
         )
 
@@ -828,7 +844,7 @@ def evaluate_keep(
         config.name,
         fraction * config.max_discount,
         config.max_discount,
-        f"{label}: {raw:.0f}",
+        Reason("field_value", {"field": config.field, "value": round(raw)}),
         True,
     )
 

@@ -79,6 +79,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from reaper.clients.sonarr_stats import SeasonStats, rank_seasons
+from reaper.engine.reason import Reason, ReasonParam
 
 #: Default seasons to protect BEYOND a viewer's current position while they binge. 0 keeps
 #: exactly the season they are on (or the next one, if they finished the current). The policy
@@ -120,11 +121,16 @@ UNANSWERABLE_REASONS = frozenset(
     }
 )
 
+#: The same four as the reason ids ``_protection_reason`` returns them under: a season held
+#: because the guard could not be answered carries its cause as its "why kept" sentence, so
+#: the id lives in the catalog's ``why.cause.*`` namespace and both slots share one entry.
+_UNANSWERABLE_REASON_IDS = frozenset(f"cause.{r}" for r in UNANSWERABLE_REASONS)
+
 
 @dataclass(frozen=True)
 class ProtectedSeason:
     season_number: int
-    reason: str
+    reason: Reason
 
     unestablishable: bool = False
     """Whether this season is held because the guard could not be *answered*, rather than
@@ -144,29 +150,28 @@ class ProtectedSeason:
     told. Do not read this flag as buying a reap refusal; it does not."""
 
 
-def _because(kept_reason: str) -> str:
+#: The because-clause for each kept-season reason id. The clauses restate their reason,
+#: they never sharpen it: the mid-binge one used to rewrite "part-way through the show" as
+#: "part-way through *it*", which moves the claim onto this particular season -- and
+#: ``sequential_protections`` may have picked this season precisely because it is the
+#: untouched NEXT one (``_anchor_positions`` returns ``_next_after``), so the same sentence
+#: could say nobody has played it and that someone is midway through it.
+_BECAUSE_IDS: dict[str, str] = {
+    "season_keep.incomplete": "because.incomplete",
+    "season_keep.airing": "because.airing",
+    "season_keep.first": "because.first",
+    "season_keep.keep_last": "because.keep_last",
+    "season_keep.keep_all": "because.keep_last",
+    "season_keep.midbinge": "because.midbinge",
+}
+
+
+def _because(kept_reason: Reason) -> Reason:
     """Turn a kept season's protection reason into a "because ..." clause, so a conflict
     names *why* the season it was compared against is being kept -- not just "your keep
-    rule." Reads season_pruning's own closed vocabulary (the strings ``_protection_reason``
-    returns); anything unrecognized falls back to a safe generic clause, never an error.
-
-    The clauses restate their reason, they never sharpen it. The mid-binge one used to
-    rewrite "part-way through the show" as "part-way through *it*", which moves the claim
-    onto this particular season -- and ``sequential_protections`` may have picked this
-    season precisely because it is the untouched NEXT one (``_anchor_positions`` returns
-    ``_next_after``), so the same sentence could say nobody has played it and that someone
-    is midway through it."""
-    if kept_reason.startswith("episodes are missing"):
-        return "episodes are missing from it"
-    if kept_reason.startswith("the newest season of a show"):
-        return "it is the newest season of a show that is still running"
-    if kept_reason.startswith("the earliest season"):
-        return "it is the earliest season on disk, so there is somewhere to start"
-    if kept_reason.startswith("within the last") or kept_reason.startswith("this show has only"):
-        return "it is one of the newest seasons your rule keeps"
-    if kept_reason.startswith("a viewer is part-way"):
-        return "a viewer is part-way through the show"
-    return "your season rule keeps it"
+    rule." Keyed on the reason id, never its wording (rule 92); anything unrecognized
+    falls back to a safe generic clause, never an error."""
+    return Reason(_BECAUSE_IDS.get(kept_reason.id, "because.rule"))
 
 
 @dataclass(frozen=True)
@@ -185,9 +190,9 @@ class PruneConflict:
     produced a message asserting a count nobody ever took."""
     #: Why the kept season is being kept -- its ``ProtectedSeason.reason``, so the message
     #: can name the real protection ("episodes are missing") instead of a vague "keep rule."
-    kept_reason: str
+    kept_reason: Reason
 
-    shortfall: str | None = None
+    shortfall: Reason | None = None
     """Why the watch mirror cannot settle this comparison, or ``None`` when it can.
 
     A third conflict shape, and the one that is *not* a comparison Reaper made: both counts
@@ -206,7 +211,7 @@ class PruneConflict:
     are different things to tell someone choosing what to delete."""
 
     @property
-    def message(self) -> str:
+    def message(self) -> Reason:
         """The sentence the operator reads. All three shapes end the same way, and that is
         now the honest ending: a hand reap overrules every one of them.
 
@@ -223,30 +228,20 @@ class PruneConflict:
         reason -- where the pruned count is a lower bound it is never printed, whichever
         other thing also went wrong with the pair.
         """
-        viewers = "person" if self.pruned_watchers == 1 else "people"
+        common: dict[str, ReasonParam] = {
+            "pruned_season": self.pruned_season,
+            "kept_season": self.kept_season,
+            "because": _because(self.kept_reason),
+        }
         if self.shortfall is not None:
             # Deliberately ahead of the ``kept_watchers is None`` arm. A pruned count the
             # mirror cannot support reaches here with the kept count ALSO unreadable, and
             # that arm would print the bound as a measurement -- the one sentence this
             # whole reach fix exists to stop (rules 93, 140).
-            return (
-                f"Reaper cannot tell whether Season {self.pruned_season} is watched more "
-                f"than Season {self.kept_season}, since {self.shortfall}. Season "
-                f"{self.kept_season} is kept because {_because(self.kept_reason)}. "
-                "Left for you to decide instead of removing it."
-            )
+            return Reason("conflict.shortfall", {**common, "cause": self.shortfall})
         if self.kept_watchers is None:
-            return (
-                f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}. "
-                f"Reaper could not check who watched Season {self.kept_season}, which it "
-                f"is keeping because {_because(self.kept_reason)}. Left for you to decide "
-                "instead of removing it."
-            )
-        return (
-            f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}, more "
-            f"than watched Season {self.kept_season}, which Reaper is keeping because "
-            f"{_because(self.kept_reason)}. Left for you to decide instead of removing it."
-        )
+            return Reason("conflict.unread", {**common, "pruned_watchers": self.pruned_watchers})
+        return Reason("conflict.counted", {**common, "pruned_watchers": self.pruned_watchers})
 
 
 @dataclass(frozen=True)
@@ -479,7 +474,7 @@ def plan_series_prune(
     # (``engine.gates.lifetime_shortfall``, which the caller asks -- this module stays pure
     # and takes the answer). A season absent here is taken at face value, which is what a
     # caller passing no counts at all gets; see _detect_conflicts.
-    shortfall_by_season: Mapping[int, str | None] | None = None,
+    shortfall_by_season: Mapping[int, Reason | None] | None = None,
 ) -> SeriesPrunePlan:
     """Decide, for one series, which seasons may be pruned.
 
@@ -569,10 +564,10 @@ def plan_series_prune(
                 ProtectedSeason(
                     season_number=n,
                     reason=reason,
-                    # Compared against the constants the producer returned, in this one
+                    # Compared against the reason ids the producer returned, in this one
                     # module -- not a prefix test across a serialization boundary, which is
                     # the shape rule 142 forbids. What crosses to `guard_result` is the flag.
-                    unestablishable=reason in UNANSWERABLE_REASONS,
+                    unestablishable=reason.id in _UNANSWERABLE_REASON_IDS,
                 )
             )
 
@@ -609,7 +604,7 @@ def _protection_reason(
     progress_plays_unreadable: bool = False,
     progress_season_unmatched: bool = False,
     progress_show_unbound: bool = False,
-) -> str | None:
+) -> Reason | None:
     """Why this season is kept, or ``None`` if it may be pruned.
 
     Ordered safety-first: the checks that describe an *active* or *fragile* season come
@@ -623,7 +618,7 @@ def _protection_reason(
     n = season.season_number
 
     if n == SPECIALS_SEASON and keep_specials:
-        return "specials are never auto-pruned"
+        return Reason("season_keep.specials")
     # Each reason names what was OBSERVED, not what it is usually a sign of. These read as
     # facts about the show on a panel the operator is checking against Sonarr, so a reason
     # that overstates its evidence is routinely wrong out loud (rule 21):
@@ -639,21 +634,17 @@ def _protection_reason(
     #   never downloaded or was deleted by hand, season 2 was called "the first season" and
     #   keeping it does not let anyone start the show.
     if protect_incomplete and season.is_incomplete:
-        return "episodes are missing from this season"
+        return Reason("season_keep.incomplete")
     if n in airing:
-        return "the newest season of a show that is still running"
+        return Reason("season_keep.airing")
     if keep_first_season and n == first_real:
-        return "the earliest season on disk, so there is somewhere to start"
+        return Reason("season_keep.first")
     if apply_keep_last and rank is not None and rank <= keep_last:
         if keep_last >= total_ranked:
-            plural = "s" if total_ranked != 1 else ""
-            return (
-                f"this show has only {total_ranked} season{plural} on disk, so your keep-last-"
-                f"{keep_last} rule keeps all of them"
-            )
-        return f"within the last {keep_last} seasons (rank {rank})"
+            return Reason("season_keep.keep_all", {"total": total_ranked, "keep_last": keep_last})
+        return Reason("season_keep.keep_last", {"keep_last": keep_last, "rank": rank})
     if n in seq_protected:
-        return "a viewer is part-way through the show"
+        return Reason("season_keep.midbinge")
     # Last, so a season we can actually name a viewer for gets that sharper reason instead.
     # These are the honest sentences for the rest: the mid-binge guard was asked a question the
     # watch history cannot answer, and "we could not tell" holds the season.
@@ -675,19 +666,19 @@ def _protection_reason(
     if not held_by:
         return None
     if progress_show_unbound:
-        return PROGRESS_SHOW_UNMATCHED_REASON
+        return Reason(f"cause.{PROGRESS_SHOW_UNMATCHED_REASON}")
     if progress_unestablished:
-        return PROGRESS_UNESTABLISHABLE_REASON
+        return Reason(f"cause.{PROGRESS_UNESTABLISHABLE_REASON}")
     if progress_plays_unreadable:
-        return PROGRESS_UNREADABLE_REASON
-    return PROGRESS_UNMATCHED_REASON
+        return Reason(f"cause.{PROGRESS_UNREADABLE_REASON}")
+    return Reason(f"cause.{PROGRESS_UNMATCHED_REASON}")
 
 
 def _detect_conflicts(
     prunable: Sequence[int],
     protected: Sequence[ProtectedSeason],
     watchers_by_season: Mapping[int, int | None],
-    shortfall_by_season: Mapping[int, str | None],
+    shortfall_by_season: Mapping[int, Reason | None],
 ) -> list[PruneConflict]:
     """Flag any prunable season with strictly more viewers than a kept season.
 
