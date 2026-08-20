@@ -391,16 +391,20 @@ session can pick up any stage from this file alone.
 
 ### One stage, one session, one pull request
 
+All stages land on one integration branch, `i18n`, cut from `origin/dev` when Stage 1 starts.
+Stage PRs merge into `i18n`, so `dev` never carries a half-translated app. When the operator
+calls the work done, one final PR squash-merges `i18n` into `dev`.
+
 Each stage is run by a fresh Fable session, called the orchestrator below. The kickoff prompt
 is `Run Stage N of docs/I18N_PLAN.md`. The session:
 
-1. Branches off `origin/dev` and reads this plan, plus the rule files that govern the trees it
-   will touch.
+1. Branches off `origin/i18n` and reads this plan, plus the rule files that govern the trees
+   it will touch.
 2. Does the stage's work, with subagents only where the table below says so.
 3. Runs the stage's gate and the full verification set, each read by exit code (rule 134).
 4. Updates this plan in the same branch: the stage's Status line, and any §1 count the change
    invalidated.
-5. Opens the labeled PR and stops. The operator merges.
+5. Opens the labeled PR against `i18n` and stops. The operator merges.
 
 Stage 4 repeats these five steps once per surface group, so it lands as several PRs.
 
@@ -408,11 +412,15 @@ The stages run in numbered order. Stage 4 must follow Stage 3: `WhyPanel.tsx`'s 
 retire into the catalog keyed by id, and extracting them as prose first would send strings to
 translators that Stage 3 deletes.
 
+`dev` moves while `i18n` lives. Sync by merging `origin/dev` into `i18n` at each stage
+boundary where `dev` has moved, and always before the final PR, then re-run the gates on the
+result. Merge, never rebase: the branch is shared.
+
 ### Where a session ends, and what a handoff is
 
 - **Context is cleared at every merged PR.** The next stage starts a fresh session. A
   squash-merge lands a sha CI never tested, so the next session's gates must run on the merged
-  `dev` regardless, and a fresh session starts there by construction. Nothing in the old
+  `i18n` regardless, and a fresh session starts there by construction. Nothing in the old
   transcript is load-bearing once the PR exists.
 - **Never clear between gates-green and PR-open.** Those two belong to one sitting.
 - **A long session hands off through this file, never through its transcript.** Commit working
