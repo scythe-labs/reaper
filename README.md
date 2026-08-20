@@ -16,18 +16,18 @@
 <p align="center"><em>Grave decisions, clearly explained.</em></p>
 
 **Reaper** finds media nobody watches: things requested and never played, shows whose old
-seasons no one returns to, low-rated files quietly eating disk. It **explains why it thinks
-each item is expendable**, and removes it safely through
-[Sonarr](https://sonarr.tv) and [Radarr](https://radarr.video). It reads watch history from
-[Tautulli](https://tautulli.com), requests from [Seerr](https://github.com/seerr-team/seerr),
-and refreshes [Plex](https://plex.tv) when it is done.
+seasons no one returns to, and low-rated files quietly eating disk. It **explains why it thinks
+each item is expendable**, and removes it safely through [Sonarr](https://sonarr.tv) and
+[Radarr](https://radarr.video). It reads watch history from [Tautulli](https://tautulli.com),
+requests from [Seerr](https://github.com/seerr-team/seerr), and refreshes
+[Plex](https://plex.tv) when it is done.
 
 📖 **[Read the manual](https://scythe-labs.github.io/reaper/)** for install, configuration,
 policy tuning, and the safety model in full.
 
-> **Status: in development.** Deletion is implemented and tested, but it ships **off**: a
-> new install can only scan, score and explain until you deliberately arm it. Expect rough
-> edges, and read the [install guide](https://scythe-labs.github.io/reaper/getting-started/install)
+> **Status: in development.** Deletion is implemented and tested, but it ships **off**: a new
+> install can only scan, score and explain until you deliberately arm it. Expect rough edges,
+> and read the [install guide](https://scythe-labs.github.io/reaper/getting-started/install)
 > before you point it at a library you care about.
 
 ## Current features
@@ -41,25 +41,25 @@ policy tuning, and the safety model in full.
   `✓ Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first.` It
   explains the **keeps** as well as the deletes.
 - **Curated lists as protection.** Never reap anything in the IMDb Top 250.
-- **Keep tags**, in Sonarr and Radarr or as a Plex collection you curate from your phone.
+- **Keep tags** in Sonarr and Radarr, or a Plex collection you curate from your phone.
 - **A countdown your users can see**, surfaced as a *Leaving Soon* collection and label in
-  Plex. Watching a title keeps it; so does sparing it by hand.
-- **A simulator** that re-decides your last scan under a draft policy, with no calls to your
+  Plex. Watching a title keeps it, and so does sparing it by hand.
+- **A simulator** that re-decides your last scan under a draft policy with no calls to your
   services, so you can move a number and watch the outcome change.
 - **A test file first.** The smallest item goes alone and is verified before anything else is
   touched. If it misbehaves, the run halts.
-- **Sensible defaults, and deletion logic pinned by tests.** Every shipped default
-  errs toward keeping. The scoring and the protections are pinned by tests that fail the moment
-  a verdict changes, and the season rules, the caps and the live checks each have their own.
-- **Installs as a container, a desktop app, or a snap**, with no access to your media and
-  one small data folder.
+- **Sensible defaults, and deletion logic pinned by tests.** Every shipped default errs toward
+  keeping. The scoring and the protections are pinned by tests that fail the moment a verdict
+  changes, and the season rules, the caps and the live checks each have their own.
+- **Installs as a container, a desktop app, or a snap**, with no access to your media and one
+  small data folder.
 
 [What makes it different](https://scythe-labs.github.io/reaper/features) covers these in full,
 including the ones that ship switched off.
 
 ## Getting started
 
-Check out the documentation for instructions on how to install and run Reaper:
+Read the documentation to install and run Reaper:
 
 https://scythe-labs.github.io/reaper/getting-started/install
 
@@ -73,20 +73,19 @@ of them scored 91](docs/media/review-queue.png)
 Reaper deletes irreplaceable data from a server other people depend on.
 **Every ambiguity resolves toward keeping the file.**
 
-- **Off until you turn it on.** A new install starts read-only: it can scan, score and
-  explain, and nothing else. The refusal lives at the HTTP transport: while deletion is
-  off, a mutating request is blocked *before it is sent*, whatever the calling code
-  believes it is doing.
-- **Unknown never condemns.** A missing rating, an unmappable user, or a degraded
-  data source can only ever *protect* an item. This is enforced by the type system.
-- **Nothing is deleted while it is being streamed.** The active-session veto is
-  re-checked immediately before every single delete.
-- **Reaper only acts through Sonarr and Radarr.** It has no filesystem delete path.
-  Media that no *arr manages cannot be deleted, only reported.
+- **Off until you turn it on.** A new install starts read-only. It can scan, score and explain,
+  and nothing else. The refusal lives at the HTTP transport. While deletion is off, a mutating
+  request is blocked *before it is sent*, whatever the calling code believes it is doing.
+- **Unknown never condemns.** A missing rating, an unmappable user, or a degraded data source
+  can only ever *protect* an item. This is enforced by the type system.
+- **Nothing is deleted while it is being streamed.** The active-session veto is re-checked
+  immediately before every single delete.
+- **Reaper only acts through Sonarr and Radarr.** It has no filesystem delete path. Media that
+  no *arr manages cannot be deleted, only reported.
 
-> **The Plex token Reaper stores grants full administrative control of your Plex
-> account, including permanent deletion. Treat Reaper's database as equivalent to your
-> Plex password.** It is encrypted at rest and redacted from logs.
+> **The Plex token Reaper stores grants full administrative control of your Plex account,
+> including permanent deletion. Treat Reaper's database as equivalent to your Plex password.**
+> It's encrypted at rest and redacted from logs.
 
 [How a delete is kept safe](https://scythe-labs.github.io/reaper/safety/how-a-delete-is-kept-safe)
 walks the whole path through.
