@@ -112,7 +112,7 @@ auto-memory note to explain the product, move it here.
 | `DECISIONS.md` | knowledge | **live** — one section per daggered `STATUS.md` row |
 | `LEARNINGS.md` | knowledge | **live** — append by topic |
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
-| `I18N_PLAN.md` | state (one feature) | **live** — a proposal; nothing landed, no stage committed to |
+| `I18N_PLAN.md` | state (one feature) | **live** — in execution; stages land on the `i18n` branch, nothing on `dev` yet |
 | `brand/README.md` | reference | stable; nothing here ships |
 | `../manual/` | the operator's manual | **live** — half generated from the app's help content |
 | `../website/` | the manual's site | **live** — Docusaurus; owns no words of its own |

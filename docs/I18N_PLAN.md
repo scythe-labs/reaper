@@ -1,8 +1,9 @@
 # Translating Reaper: what it would take
 
-> **PROPOSAL — nothing here is landed, and no stage is committed to.** Written 2026-07-30 against
-> `frontend/src/` at 26,554 lines and `src/reaper/` at 100 files. It exists to be argued with
-> before any code moves.
+> **IN EXECUTION since 2026-08-20 — stages land on the `i18n` integration branch (§10), and
+> nothing reaches `dev` before the final PR.** Each stage's Status line below is the live
+> state. Written 2026-07-30 as a proposal, against `frontend/src/` at 26,554 lines and
+> `src/reaper/` at 100 files.
 >
 > **Reviewed 2026-08-20 against a tree a third larger** (123 non-test frontend files, 36,287
 > lines). Every load-bearing claim held: the three parse sites, the copy maps, the §4
@@ -231,7 +232,11 @@ state, and the session that changes a stage updates its line in the same PR.
 
 ### Stage 1 — the scaffold, and the test proof
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #845). The gate held: `SafetyBanner.test.tsx` passed
+unchanged, and a throwaway render check showed the converted banner's HTML byte-identical to
+the old one in all four states, linked and link-less. One finding for Stage 4: a `Trans`
+placeholder may not be named after an HTML void element (`<link>` swallowed the button's
+children), so name placeholders after the control, like `<btn>`.
 
 Add `i18next`, `react-i18next`, `i18next-icu`. Wire the provider, add `en.json`, pin `en-US` in
 the Vitest setup, and convert **one** component end to end. Set `<html lang>` from the active
