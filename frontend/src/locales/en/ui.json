@@ -6,5 +6,30 @@
     "readOnly": "<strong>Read-only.</strong> Reaper can look but can't remove anything. <btn>Turn deletion on in Policy → Deletion</btn> when you're ready.",
     "readOnlyNoLink": "<strong>Read-only.</strong> Reaper can look but can't remove anything. You turn deletion on later, in Policy → Deletion.",
     "armed": "<strong>Deletion is on.</strong> Reaper can remove media you approve, through Sonarr and Radarr."
+  },
+  "format": {
+    "sizeUnknown": "Size unknown",
+    "totalWithUnknown": "{known}, {n, plural, one {# size unknown} other {# sizes unknown}}",
+    "souls": "{n, plural, one {# soul} other {# souls}}",
+    "spareShort": "{n}d",
+    "spareLeft": "{n, plural, one {{n} day left} other {{n} days left}}",
+    "spareExpiredPhrase": "expired",
+    "spareUntil": "Kept until {date}",
+    "spareExpiredOn": "Your spare expired on {date}",
+    "spareStillKept": "{expiredOn}. Still kept until the next scan judges it again"
+  },
+  "jobs": {
+    "cron": {
+      "custom": "Custom ({cron})",
+      "everyNHours": "Every {n} hours",
+      "everyHour": "Every hour",
+      "everyDayAt": "Every day at {at}",
+      "everyNDaysAt": "Every {n} days at {at}",
+      "weeklyAt": "Every {day} at {at}",
+      "monthlyAt": "Monthly on the {n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}} at {at}"
+    }
+  },
+  "signals": {
+    "nthNewestSeason": "{n, selectordinal, =1 {the newest season} =2 {the second-newest season} =3 {the third-newest season} one {the #st-newest season} two {the #nd-newest season} few {the #rd-newest season} other {the #th-newest season}}"
   }
 }
