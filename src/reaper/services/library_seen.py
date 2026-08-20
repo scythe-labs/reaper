@@ -103,7 +103,7 @@ _CAP_APPLIES_ABOVE = 200
 #: (``test_review_chips.test_no_reason_is_typed_by_hand``). It reaches no why-panel CAUSE
 #: slot, because that slot is the tail of a BLOCKED gate's detail and ``ReturnedGate`` never
 #: blocks; the exemption is written down in that file's ``_NO_PANEL_ROUTE`` rather than assumed.
-NO_RETURN_RECORD_REASON = "Reaper has not seen this title in your library before"
+NO_RETURN_RECORD_REASON = "no_return_record"
 
 #: The journal kinds that actually remove a file. ``sonarr_unmonitor`` and
 #: ``sonarr_verify_unmonitor`` change monitoring alone and delete nothing, so a season Reaper

@@ -26,6 +26,7 @@ import pytest
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import utcnow
 from reaper.engine.policy import DEFAULT_TV_POLICY
+from reaper.engine.reason import Reason, legacy
 from reaper.services import season_evidence, season_scan
 
 AT = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
@@ -71,7 +72,7 @@ def _bundle(**edits: object) -> season_evidence.SeasonPruneInput:
         "episodes_unreadable": False,
         # `None` is "on disk, but never resolved in Plex" -- not a measured zero (rule 93).
         "watchers_by_season": {0: None, 1: 2},
-        "shortfall_by_season": {0: None, 1: "the mirror does not reach back that far"},
+        "shortfall_by_season": {0: None, 1: legacy("the mirror does not reach back that far")},
         "progress_unreadable": True,
         "progress_seasons_unmatched": False,
         "progress_unknown_reason": None,
@@ -272,7 +273,7 @@ class TestTheReplayExpiresAgainstTheScansOwnClock:
         plan = season_evidence.plan_from_frozen(self._scanned_long_ago(), policy=self._policy())
 
         held = {p.season_number: p.reason for p in plan.protected}
-        assert held.get(2) == "a viewer is part-way through the show", (
+        assert held.get(2) == Reason("season_keep.midbinge"), (
             "season 2 lost its mid-binge hold, so the expiry was measured against something "
             f"other than the bundle's own scan instant. protected={held}"
         )

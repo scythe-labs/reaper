@@ -35,6 +35,7 @@ from reaper.engine.policy import (
     ProfileSettings,
     join_and,
 )
+from reaper.engine.reason import Reason
 from reaper.engine.signals import MAX_SCORE, SignalId
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import is_percentage_source, source_label
@@ -95,6 +96,27 @@ def _protect_blocks_on_reach(cond: ConditionSpec) -> ReachSpan | None:
     if spec is None or spec.reach_span is None or cond.op is not Op.GTE:
         return None
     return spec.reach_span
+
+
+def _shortfall_text(short: Reason) -> str:
+    """The shortfall clause in English, for warning copy that stays backend-composed.
+
+    Policy warnings are server-composed operator copy and stay English until their own
+    surface is extracted (docs/I18N_PLAN.md §5 converts only the gate and signal details).
+    The catalog's ``why.cause.*`` entries carry the same sentences for the why-panel;
+    ``tests/test_review_chips.py`` pins the pair so the two cannot drift.
+    """
+    if short.id == "cause.history_reach_short":
+        days = short.params.get("reach_days")
+        if isinstance(days, int | float):
+            return f"your watch history only goes back {humanize_days(float(days))}"
+    return {
+        "cause.reach_not_recorded": (
+            "this scan did not record how far back your watch history goes"
+        ),
+        "cause.history_not_that_far": "your watch history does not go back that far",
+        "cause.added_at_not_recorded": "this scan did not record when it was added",
+    }.get(short.id, short.id)
 
 
 def inspect(
@@ -290,9 +312,10 @@ def inspect(
     # branch is that voice, and it cannot stack with the five, because it fires on precisely
     # the negation they are guarded on.
     if dormancy_floor is not None and history_reach_days is not None and not reach_clears_dormancy:
-        floor_short = history_shortfall(
+        floor_short_reason = history_shortfall(
             Known(value=history_reach_days, source="tautulli"), float(dormancy_floor.threshold)
         )
+        floor_short = "" if floor_short_reason is None else _shortfall_text(floor_short_reason)
         warn(
             f"gates.{GateId.MIN_DORMANCY.value}.threshold",
             "Nothing will be flagged for removal. Reaper waits "
@@ -313,9 +336,10 @@ def inspect(
     # because a graded keep on a window field is discounted whether the gate is on or off.
     window_short: str | None = None
     if history_reach_days is not None and reach_clears_dormancy:
-        window_short = history_shortfall(
+        window_short_reason = history_shortfall(
             Known(value=history_reach_days, source="tautulli"), float(window_days)
         )
+        window_short = None if window_short_reason is None else _shortfall_text(window_short_reason)
     short = window_short if (popularity is not None or owner_protect_on_window) else None
     if short is not None:
         window_text = humanize_window(window_days)
@@ -727,10 +751,11 @@ def inspect(
             )
             remedy = "Set a number of days, or turn this protection off."
         else:
-            hold_short = history_shortfall(
+            hold_short_reason = history_shortfall(
                 Known(value=history_reach_days, source="tautulli"),
                 float(body.in_progress_hold_days),
             )
+            hold_short = "" if hold_short_reason is None else _shortfall_text(hold_short_reason)
             # The hold is named BEFORE the cause clause, for the reason the window branch
             # names its span first: the in-margin arm is "does not go back that far".
             # ``humanize_days`` for the same reason as the dormancy branch above: "for year

@@ -68,6 +68,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
+from reaper.engine.reason import Reason, to_wire
 from reaper.engine.signals import (
     CustomSignalConfig,
     KeepConfig,
@@ -268,22 +269,22 @@ class RawItem:
 #: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one. ``None`` (a record
 #: from before the field shipped) takes the unmatched wording, which it has always read as.
 _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
-    identity.MatchStatus.UNMATCHED: "Plex has not matched this item",
-    identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this title",
-    identity.MatchStatus.CONFLICTED: "Plex and Radarr describe this file differently",
+    identity.MatchStatus.UNMATCHED: "plex_unmatched",
+    identity.MatchStatus.AMBIGUOUS: "plex_ambiguous",
+    identity.MatchStatus.CONFLICTED: "radarr_plex_disagree",
 }
 
 #: Why dormancy could not be measured: matched to Plex, but no arrival date AND no play, so
 #: there is no instant to measure from. A KEY into ``CAUSE_COPY`` exactly as the reasons
 #: above are, and named here rather than typed at each site so the same drift test covers it
 #: (rule 144) -- it was written twice by hand, on both sides of the tree, and nothing failed.
-NO_ADDED_AT_REASON = "no added-at date"
+NO_ADDED_AT_REASON = "no_added_at"
 
 #: Why a movie's size is unreadable: Radarr reported no size for the file. A KEY into
 #: ``CAUSE_COPY`` like the rest -- it reaches the panel through a keep rule on "Size on
 #: disk", the same route the request reasons take (rule 144). The season lane says this in
 #: its own words, so the two are named apart rather than shared.
-NO_SIZE_REASON = "the file's size was not reported"
+NO_SIZE_REASON = "no_file_size"
 
 
 def build_facts(
@@ -330,7 +331,7 @@ def build_facts(
     # file; only the words shown to the owner differ, and the wrong words send them to fix
     # the wrong thing. Each string is a key into WhyPanel's CAUSE_COPY (rule 144);
     # test_review_chips.py::TestTheMatchStatusVocabulary fails when one has no entry there.
-    no_key_reason = _NO_KEY_REASONS.get(item.match_status, "Plex has not matched this item")
+    no_key_reason = _NO_KEY_REASONS.get(item.match_status, "plex_unmatched")
 
     # --- dormancy -----------------------------------------------------------
     # THE derived field. "Days since last play" is null for exactly the items we care
@@ -1770,12 +1771,15 @@ class Display:
 #: The "no display fields" default, as a singleton so it is not constructed per call.
 _NO_DISPLAY = Display()
 
-#: What a hand spare reads as in the why-panel's "Protections that fired" list. A lowercase
-#: fragment with no trailing period, matching every gate protection ("someone is watching it
-#: right now", "on your keep list, never reaped"). A hand spare wears the whitelist gate id,
-#: so the review chip (``api.review._kept_phrase``) tells it apart from a real keep-list
-#: entry by this exact string. Every producer and that one reader import this constant;
-#: never re-type the literal.
+#: What a hand spare reads as in the why-panel's "Protections that fired" list. A hand spare
+#: wears the whitelist gate id, so the review chip (``api.review._kept_phrase``) and the
+#: simulator tally tell it apart from a real keep-list entry by this reason id. Every
+#: producer and reader imports the constant; never re-type the literal.
+HAND_SPARE_REASON = Reason("hand_spare")
+
+#: The sentence the same row carried before reasons were typed (docs/I18N_PLAN.md §5).
+#: Read-side comparisons accept it beside ``HAND_SPARE_REASON`` because stored explanations
+#: outlive the writer; nothing writes it any more.
 HAND_SPARE_DETAIL = "you spared this by hand"
 
 
@@ -2199,7 +2203,7 @@ def _explain(
                     "id": r.signal.value if isinstance(r.signal, SignalId) else r.signal,
                     "contribution": round(r.pressure, 1),
                     "weight": r.weight,
-                    "detail": r.detail,
+                    "detail_key": to_wire(r.detail),
                     "evaluated": r.evaluated,
                     # What the zero means. Four situations all land on a contribution of
                     # 0 and are otherwise identical on the wire; only the engine branch
@@ -2225,16 +2229,17 @@ def _explain(
                     "name": k.name,
                     "discount": round(k.discount, 1),
                     "max_discount": k.max_discount,
-                    "detail": k.detail,
+                    "detail_key": to_wire(k.detail),
                     "evaluated": k.evaluated,
                 }
                 for k in item_score.keep_results
             ],
             "protections_fired": [
-                {"gate": r.gate.value, "detail": r.detail} for r in evaluation.protectors
+                {"gate": r.gate.value, "detail_key": to_wire(r.detail)}
+                for r in evaluation.protectors
             ],
             "protections_checked": [
-                {"gate": r.gate.value, "detail": r.detail}
+                {"gate": r.gate.value, "detail_key": to_wire(r.detail)}
                 for r in evaluation.checked_and_did_not_fire
             ],
             # ``defers_to_owner`` is written on every entry, never omitted when False, so
@@ -2255,7 +2260,7 @@ def _explain(
             "protections_unknown": [
                 {
                     "gate": r.gate.value,
-                    "detail": r.detail,
+                    "detail_key": to_wire(r.detail),
                     "defers_to_owner": r.defers_to_owner,
                     "unestablishable": r.unestablishable,
                 }

@@ -211,12 +211,6 @@ _DISPLAY_ONLY_SPEC_ATTRS = frozenset(
         "label",
         "help_text",
         "unit_suffix",
-        "subject",
-        "true_phrase",
-        "false_phrase",
-        "value_phrase",
-        "value_render",
-        "bars",
     }
 )
 

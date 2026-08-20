@@ -36,6 +36,7 @@ from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
+from reaper.engine.reason import legacy
 from reaper.engine.signals import Score, SignalConfig
 from reaper.engine.signals import score as score_signals
 from reaper.ratings import Rating, RatingSource
@@ -45,6 +46,8 @@ from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import plan_series_prune
 from reaper.services.snapshot import _explain, _verdict, judge_facts
 from tests._fakes import FakeSonarr, FakeTautulli, show_library
+from tests._reasons import flat as reason_flat
+from tests._reasons import text as reason_text
 
 GB = 1024**3
 
@@ -428,7 +431,7 @@ class TestGuardResult:
 
         assert result.blocked is True
         assert result.defers_to_owner is False
-        assert not result.detail.startswith("could not check")
+        assert not reason_text(result.detail).startswith("could not check")
         assert _hand_reap(result) == "condemn"
 
     def test_a_readable_conflict_does_not_mask_a_refused_one_on_the_same_season(self) -> None:
@@ -461,7 +464,7 @@ class TestGuardResult:
         assert result.blocked is True
         assert result.defers_to_owner is False
         # The message names the season that could not be read, not the ones that could.
-        assert "could not check who watched Season 5" in result.detail
+        assert "could not check who watched Season 5" in reason_text(result.detail)
 
     def test_a_conflict_the_mirror_could_not_settle_is_flagged_as_refused(self) -> None:
         """The third shape. Season 1 was watched before Tautulli was installed, so its count
@@ -480,13 +483,13 @@ class TestGuardResult:
             keep_last=2,
             keep_first_season=False,
             watchers_by_season={1: 0, 2: 0, 3: 1, 4: 1},
-            shortfall_by_season={1: "your watch history only goes back 12 months"},
+            shortfall_by_season={1: legacy("your watch history only goes back 12 months")},
         )
         result = season_evidence.guard_result(plan, 1)
 
         assert result.blocked is True
         assert result.defers_to_owner is False
-        assert "cannot tell whether Season 1 is watched more than" in result.detail
+        assert "cannot tell whether Season 1 is watched more than" in reason_text(result.detail)
         assert _hand_reap(result) == "condemn"
 
     def test_a_settleable_conflict_is_not_masked_by_one_the_mirror_refused(self) -> None:
@@ -500,19 +503,19 @@ class TestGuardResult:
             keep_last=2,  # keeps 3, 4
             keep_first_season=False,
             watchers_by_season={1: 9, 2: 0, 3: 1, 4: 2},
-            shortfall_by_season={4: "your watch history only goes back 12 months"},
+            shortfall_by_season={4: legacy("your watch history only goes back 12 months")},
         )
         # The premise, asserted rather than assumed: the made comparison really does come
         # first for this season.
         assert [c.shortfall for c in plan.conflicts if c.pruned_season == 1] == [
             None,
-            "your watch history only goes back 12 months",
+            legacy("your watch history only goes back 12 months"),
         ]
 
         result = season_evidence.guard_result(plan, 1)
 
         assert result.defers_to_owner is False
-        assert "Season 4" in result.detail
+        assert "Season 4" in reason_text(result.detail)
 
 
 # ---------------------------------------------------------------------------
@@ -591,11 +594,11 @@ class TestBuildSeasonFacts:
         claims the show couldn't be found when the opposite is true."""
         facts = _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.AMBIGUOUS)
         assert isinstance(facts.days_observed_unwatched, Unknown)
-        assert facts.days_observed_unwatched.reason == "more than one Plex item matches this show"
+        assert facts.days_observed_unwatched.reason == "plex_show_ambiguous"
 
         unmatched = _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.UNMATCHED)
         assert isinstance(unmatched.days_observed_unwatched, Unknown)
-        assert unmatched.days_observed_unwatched.reason == "Plex has not matched this season"
+        assert unmatched.days_observed_unwatched.reason == "plex_season_unmatched"
 
     def test_a_season_unmatched_within_a_matched_show_is_warned(self) -> None:
         """The show bound to Plex but this season did not, so it abstains and shows only
@@ -2087,10 +2090,10 @@ class TestGatherEndToEnd:
         shallow = await _run(190)
         assert all(j.guard_result.outcome is PROTECT for j in shallow)
         assert {
-            j.guard_result.detail
+            reason_text(j.guard_result.detail)
             for j in shallow
             if j.media_key in {"sonarr:1:11:2", "sonarr:1:11:3"}
-        } == {"your watch history is too short to tell who is part-way through"}
+        } == {"Your watch history is too short to tell who's part-way through."}
 
         # ...and BLOCKED, not merely protecting. A plain PROTECT on this gate does not hold
         # a hand reap (`verdict.STRUCTURAL_GATES` carries neither), while the keep-rule
@@ -2204,7 +2207,7 @@ class TestGatherEndToEnd:
         control = await _run(clean)
         season_4 = control["sonarr:1:42:4"]
         assert season_4.guard_result.outcome is PROTECT
-        assert season_4.guard_result.detail == "a viewer is part-way through the show"
+        assert reason_text(season_4.guard_result.detail) == "a viewer is part-way through the show"
         assert _judge(season_4.facts, season_4.guard_result) == "protect"
         # ...and the siblings ARE condemnable evidence-wise, so the run below is not passing
         # on some unrelated abstain (rule 141).
@@ -2220,9 +2223,8 @@ class TestGatherEndToEnd:
         for n in (1, 2, 4, 5):
             judgment = broken[f"sonarr:1:42:{n}"]
             assert _judge(judgment.facts, judgment.guard_result) != "condemn"
-            assert judgment.guard_result.detail == (
-                "a season of this show is not matched in Plex, so who is part-way through "
-                "is unknown"
+            assert reason_text(judgment.guard_result.detail) == (
+                "A season of this show isn't matched in Plex, so who's part-way through is unknown."
             )
             # Blocked, not a plain keep: the guard could not be ANSWERED (rule 93), so the
             # panel says "couldn't check" rather than green, and a hand reap still overrules.
@@ -2299,9 +2301,8 @@ class TestGatherEndToEnd:
         assert len(by_key) == 5
         for judgment in by_key.values():
             assert judgment.plex_rating_key is None
-            assert judgment.guard_result.detail == (
-                "a season of this show is not matched in Plex, so who is part-way through "
-                "is unknown"
+            assert reason_text(judgment.guard_result.detail) == (
+                "A season of this show isn't matched in Plex, so who's part-way through is unknown."
             )
             assert judgment.guard_result.blocked is True
 
@@ -2364,7 +2365,9 @@ class TestGatherEndToEnd:
         # which is what makes `WhyPanel.LeftForYou` group all five under one heading instead
         # of opening a second box saying the same thing (rule 144).
         cause = season_evidence.no_key_reason(identity.MatchStatus.UNMATCHED)
-        assert guard.detail == f"could not check who is part-way through it: {cause}"
+        assert reason_flat(guard.detail) == (
+            f"blocked[check=check.season_progress cause=cause.{cause}]"
+        )
         unwatched = by_key["sonarr:1:77:2"].facts.days_observed_unwatched
         assert isinstance(unwatched, Unknown)
         assert unwatched.reason == cause
@@ -2617,8 +2620,8 @@ class TestShowLevelRewatchFacts:
         facts = next(j for j in judgments if j.media_key == "sonarr:1:3:1").facts
         assert isinstance(facts.rewatch_viewings, Unknown)
         assert isinstance(facts.rewatch_last_play_days, Unknown)
-        assert facts.rewatch_viewings.reason == "Plex has not matched this season"
-        assert facts.rewatch_last_play_days.reason == "Plex has not matched this season"
+        assert facts.rewatch_viewings.reason == "plex_season_unmatched"
+        assert facts.rewatch_last_play_days.reason == "plex_season_unmatched"
         # The cohort's Unknown carries the one shared reason (rewatch.NO_REWATCH_ESTIMATE_
         # REASON), not the match-status reason above: every "nothing to show" cause reads
         # the same to the operator (services.snapshot.build_facts's own comment).
@@ -2890,7 +2893,7 @@ class TestUserSeasonProgress:
         # Season 3 because she may still be on it, season 4 because she may have finished it:
         # with the position unknown, `_anchor_positions` cannot tell and holds both.
         assert plan.prunable == [1, 2]
-        held = {p.season_number: p.reason for p in plan.protected}
+        held = {p.season_number: reason_text(p.reason) for p in plan.protected}
         assert held[3] == "a viewer is part-way through the show"
         assert held[4] == "a viewer is part-way through the show"
 

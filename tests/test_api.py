@@ -1122,7 +1122,8 @@ class TestTheWhyPanel:
         not the first gate's engineer-speak."""
         abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
 
-        assert abstained[0]["reason"] == "Kept to be safe: it couldn't be found in Plex."
+        assert abstained[0]["reason"] is None  # fresh rows serve the typed key instead
+        assert abstained[0]["reason_key"] == {"k": "kept_safe.unmatched", "p": None}
 
     def test_a_missing_candidate_is_a_404(self, client: TestClient) -> None:
         assert client.get("/api/candidates/9999").status_code == 404

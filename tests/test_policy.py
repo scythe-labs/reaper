@@ -62,12 +62,14 @@ from reaper.engine.policy_migrations import (
     rebalance,
     recover_rating_rules,
 )
-from reaper.engine.policy_warnings import PolicyWarning, inspect
+from reaper.engine.policy_warnings import PolicyWarning, _shortfall_text, inspect
+from reaper.engine.reason import legacy
 from reaper.engine.signals import REWATCH_KEEP, Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 from reaper.services.scan_runner import GATE_TYPES, ScanConfigError, build_gates
 from reaper.services.season_pruning import plan_series_prune
+from tests._reasons import flat
 
 #: Every gate ``build_gates`` can construct from a policy row. RATING_FLOOR is not in
 #: ``GATE_TYPES`` because it takes a set of per-source bars rather than one GateConfig, so
@@ -1677,7 +1679,11 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         it now says what it drives.
         """
         reach = 90.0
-        expected = history_shortfall(Known(value=reach, source="tautulli"), float(self.WINDOW))
+        expected_reason = history_shortfall(
+            Known(value=reach, source="tautulli"), float(self.WINDOW)
+        )
+        assert expected_reason is not None
+        expected = _shortfall_text(expected_reason)
         # Truthy, not merely non-None: "" is a legal str that every ``in`` below accepts, so
         # a helper degrading to an empty sentence would satisfy this test vacuously.
         assert expected
@@ -1692,7 +1698,10 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         assert blocked.blocked is True  # the state the warning is describing
         assert expected in message
-        assert expected in blocked.detail
+        # The panel's copy of the same clause lives in the catalog now; the warning
+        # keeps its English through ``_shortfall_text``, and the two are held
+        # together by ``test_review_chips``'s shortfall pin.
+        assert flat(expected_reason) in flat(blocked.detail)
 
     def test_a_window_shorter_than_the_history_keeps_its_own_warning(self) -> None:
         """The opposite end of the same field, which had no test at all. A very short
@@ -3464,7 +3473,7 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
             watchers_by_season=dict.fromkeys(range(1, 6), 3),
             # Every season's count is a lower bound, which is the state this warning is about.
             shortfall_by_season=dict.fromkeys(
-                range(1, 6), "mirror starts after this season arrived"
+                range(1, 6), legacy("mirror starts after this season arrived")
             ),
         )
 

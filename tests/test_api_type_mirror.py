@@ -91,7 +91,7 @@ INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 #: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``). It is here
 #: because the collision assertion below is flag-shaped, and a flag cannot see a member that
 #: left the walk (rule 145).
-_EXPECTED_SERVER_MODELS = 143
+_EXPECTED_SERVER_MODELS = 144
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
 #: field sets are compared -- and the rename is the only reason a suffix rule cannot find it.
@@ -160,8 +160,8 @@ CLIENT_ONLY = {
 # Both +3 again for #554 stage 2's frontend step: `RewatchOdds` pairs with `RewatchOddsOut`,
 # `RewatchOddsFit` with `RewatchOddsFitOut`, and `RewatchOddsBlock` with `RewatchOddsBlockOut`,
 # all three on the plain suffix rule with no ALIAS entry needed.
-EXPECTED_INTERFACES = 97
-EXPECTED_PAIRS = 95
+EXPECTED_INTERFACES = 98
+EXPECTED_PAIRS = 96
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

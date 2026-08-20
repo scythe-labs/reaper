@@ -36,10 +36,10 @@ undercount a tree a third larger.
 | `announce()` call sites (live-region copy) | 56 |
 | In-app manual (`frontend/src/docs/content/*.ts`) | 6,509 words |
 | **Frontend test queries bound to English copy (`getBy*`/`findBy*`/`queryBy*` by Text/Role/Label)** | **2,434** |
-| Backend prose-bearing kwargs (`detail=`, `why=`, `text=`) | 61 |
+| Backend prose-bearing kwargs (`detail=`, `why=`, `text=`) | 39 (was 61; Stage 3 converted the gate, signal and keep details to ids) |
 | Backend helpers that compose English (`humanize_*`, `describe_*`) | 6 |
 | `raise HTTPException` sites | 83 |
-| Named `*_REASON` constants (were 14 hand-typed `Unknown(reason="…")` literals) | 22 |
+| Named `*_REASON` constants (values are stable ids since Stage 3) | 22 |
 | Python test assertions on `detail` † | ~47 |
 | CSS physical direction properties (`margin-left`, `left:`) | 101 |
 | CSS logical properties (`margin-inline`, `inset-inline`) | **1** |
@@ -274,7 +274,32 @@ reduced to a formatter, so it becomes ICU messages per cron shape.
 
 ### Stage 3 — the backend typed-reason conversion
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #847). The gate held: `uv run pytest` (4,720) and
+`uv run mypy src/reaper tests/` green, and a pre-conversion snapshot still renders, proven
+both ways: the untouched legacy fixtures across `WhyPanel.test.tsx` and the chip suite keep
+passing on stored prose, and new tests drive the fresh id+params path end to end. Details
+are a `Reason` (id + params, nesting for the blocked check/cause, the rating clauses and
+the conflict's because-slot); the explanation stores `detail_key`, legacy rows keep
+`detail`; the card serves `reason_key`/`dormant_days` and the frontend composes everything
+from the catalog's `why.*` namespace (`frontend/src/why.ts`).
+
+Three deviations from §5 as written, each deliberate. **The parse sites survive as frozen
+legacy renderers rather than being deleted**: `WhyPanel`'s maps and regexes (and
+`api.review`'s) now serve only rows stored before the conversion, because deleting them
+prints raw stored prose at an operator who upgrades before their next scan (#282's class).
+Nothing can produce new prose for them, so rule 92's hazard, a producer rewording what a
+consumer parses, is structurally gone; the maps are marked frozen and the walk no longer
+counts them. **§5's "the parse sites are all in `WhyPanel.tsx`" was stale**: `api.review`
+carried five regex parsers and two prefix tests over the same vocabulary, all re-keyed to
+ids with the prose kept as their legacy fallback. **Chip and card sentences the backend
+composes (`ChipOut.text`/`why`, the warning copy) stay English**: they now read ids and
+params instead of parsing prose, but extracting their own copy is Stage 4+ work, and
+`policy_warnings` renders the shared shortfall reason through one English helper
+(`_shortfall_text`) rather than a second sentence. Findings for later stages: the backend
+suite asserts operator sentences through a test-side composer over the real catalog
+(`tests/_reasons.py`), with `frontend/src/why.test.ts` holding the two composers to the
+same output, and `humanDays`/`humanWindow` (`format.ts`) are still English-only span
+builders, to be localized when a first non-English locale lands.
 
 §5. Convert `GateResult.detail` and `SignalResult.detail` to id + params; delete the three parse
 sites; retire `CHECK_COPY`/`CAUSE_COPY` into the catalog keyed by id. The `*_REASON` constants

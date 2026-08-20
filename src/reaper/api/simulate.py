@@ -67,7 +67,7 @@ from reaper.services.planner import MediaRef, PlanError
 from reaper.services.profiles import active_policy
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import SeriesPrunePlan
-from reaper.services.snapshot import HAND_SPARE_DETAIL, effective_fate, judge_facts
+from reaper.services.snapshot import HAND_SPARE_REASON, effective_fate, judge_facts
 
 log = structlog.get_logger(__name__)
 
@@ -381,7 +381,7 @@ async def _replay_simulation(
         merged_extra = replayed_extra
         if override == "spare":
             merged_extra.insert(
-                0, GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL)
+                0, GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_REASON)
             )
         judged = judge_facts(
             facts,
@@ -797,7 +797,7 @@ HAND_SPARE_TALLY_ID = "hand_spare"
 
 def _spared_by_id(result: GateResult) -> str:
     """The tally id for one protector: its gate, unless it is the injected hand spare."""
-    return HAND_SPARE_TALLY_ID if result.detail == HAND_SPARE_DETAIL else result.gate.value
+    return HAND_SPARE_TALLY_ID if result.detail.id == "hand_spare" else result.gate.value
 
 
 def _fired_gates(explanation_json: str) -> list[str]:

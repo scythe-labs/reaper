@@ -22,6 +22,7 @@ from reaper.engine.explanation import (
     GateOutcomeOut,
     KeepContributionOut,
     MatchOut,
+    ReasonKey,
     SignalContribution,
     thaw_threshold,
 )
@@ -233,12 +234,22 @@ class CandidateOut(BaseModel):
     None when unknown (unmatched, or a row from before this shipped); the chip is hidden."""
     dormant_for: str | None = None
     """How long the item has sat unwatched, as the humanized span from the dormancy
-    signal ("5 years, 9 months") -- the card's amber pill. None when the signal could
-    not be evaluated, and the pill is hidden."""
+    signal ("5 years, 9 months") -- the card's amber pill, on a row whose snapshot predates
+    typed reasons. None on every fresh row, where ``dormant_days`` carries the number and
+    the frontend composes the span in the active locale. The pill hides when both are
+    missing."""
+    dormant_days: float | None = None
+    """The raw dormancy day count on a fresh row, or ``None`` on a legacy one (see
+    ``dormant_for``)."""
     reason: str | None = None
     """The one-line "why", drawn from the explanation: the protection that keeps a spared
     item, or the top reason a reaped one scored. It is what the card shows in place of a plot
-    synopsis -- on the review queue you want to know why Reaper judged it, not what it is."""
+    synopsis -- on the review queue you want to know why Reaper judged it, not what it is.
+    Set only for a row whose snapshot predates typed reasons; a fresh row serves
+    ``reason_key`` instead, never both."""
+    reason_key: ReasonKey | None = None
+    """The typed "why" of a fresh row, composed from the catalog by the frontend
+    (``frontend/src/why.ts``). ``None`` on a legacy row."""
     override: str | None = None
     """The owner's manual decision *in effect* on this item -- ``"spare"``, ``"reap"``, or
     ``None``. Set the moment they click, so the card can show the pending intent before the
@@ -409,6 +420,9 @@ class GroupOut(BaseModel):
     """How many season rows have no size, and are therefore left out of the total above.
     Hidden at zero."""
     reason: str | None = None
+    """The lead season's ``reason`` -- legacy rows only, exactly as on the candidate."""
+    reason_key: ReasonKey | None = None
+    """The lead season's ``reason_key`` -- fresh rows only, exactly as on the candidate."""
     library: str | None = None
     """The show's Plex library (section), taken from its season rows (they all share it).
     None when no row carries one. Drives the show panel's library chip."""

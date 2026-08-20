@@ -1265,8 +1265,9 @@ ZONES: dict[str, Zone] = {
         module=Path("src/reaper/engine/gates.py"),
         functions=(
             "thaw_defers_to_owner",
-            "RatingRule.threshold_text",
             "RatingRule.describe_bar",
+            "_rating_value",
+            "blocked_reason",
             "RatingFloorGate.evaluate",
             "StreamingNowGate.evaluate",
             "history_shortfall",
@@ -1282,13 +1283,14 @@ ZONES: dict[str, Zone] = {
             # The eight the zone omitted while reporting a clean sweep of the gate layer
             # (#598). `_blocked` matters most in principle: it is the one fail-closed helper
             # every gate routes through, so deleting its `Unknown` guard withdraws the block
-            # from all five at once. `_miss_phrase` matters most in fact -- all three
-            # survivors a supplementary run found were in it, one live on a default policy.
+            # from all five at once. `_miss_reason` (né `_miss_phrase`) matters most in fact --
+            # all three survivors a supplementary run found were in it, one live on a default
+            # policy.
             # The four `Evaluation` properties carry no mutable token and report zero, which
             # is the honest answer `evaluate_all` already gave.
             "_blocked",
             "GateResult.fired",
-            "RatingFloorGate._miss_phrase",
+            "RatingFloorGate._miss_reason",
             "Evaluation.checked_and_did_not_fire",
             "Evaluation.protected",
             "Evaluation.blocked",
@@ -1360,7 +1362,7 @@ ZONES: dict[str, Zone] = {
         # `_protect_blocks_on_reach` decides one of `inspect`'s warnings and was undeclared, so
         # the zone's own "one function" note was true of the list rather than of the module.
         # `INSPECT_PROBE` reads the warnings out, so its mutants are answerable here.
-        functions=("inspect", "_protect_blocks_on_reach"),
+        functions=("inspect", "_protect_blocks_on_reach", "_shortfall_text"),
         tests=(
             "tests/test_policy.py",
             "tests/test_custom_condemn.py",
