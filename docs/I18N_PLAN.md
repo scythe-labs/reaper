@@ -247,7 +247,13 @@ and the rest of this plan needs re-costing before anything else moves.
 
 ### Stage 2 — `format.ts` and the Intl layer
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #846). The gate held: suite and build green, English output
+byte-identical except `since()`, which says "2 years ago" where it said "2.0 years ago"
+(nothing pinned the old form). One finding: `Intl.DateTimeFormat.format` throws on an invalid
+date where `toLocaleDateString` rendered "Invalid Date", so `date()`, `time()` and `since()`
+guard and return the raw value. Deferred in writing: `humanDays()` moves with the server's
+`clock.humanize_days` (Stage 3), and `JobsPanel`'s `clockLabel()`/`whenText()` with their
+surface (Stage 4).
 
 The single highest-value file: it already centralizes every number, byte, date and plural.
 `souls()`, `totalBytes()` and `spareRemaining()` hand-roll English plurals (`value === 1 ?
