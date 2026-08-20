@@ -19,7 +19,7 @@ export const arming: Doc = {
     h2("When you're ready", "steps"),
     ol([
       'Set your pace and your grace, then turn on the Leaving Soon shelf so your users get a warning. You should also turn on "Update while read-only" in Settings, Plex to see the shelf before you arm anything.',
-      "Go to Policy, Deletion and turn deletion on. It'll ask for the admin password you set during your first run. You can turn it back off whenever you want.",
+      "Go to Policy, Deletion and turn deletion on. It'll ask for the admin password you set during first setup. You can turn it back off whenever you want.",
       "Watch your first run yourself and read the exact list before you confirm the phrase.",
     ]),
     p(
