@@ -60,6 +60,7 @@ from reaper.engine.policy import (
 from reaper.engine.policy_migrations import PolicyRepair
 from reaper.engine.policy_warnings import inspect
 from reaper.engine.preview import UnprobableSignalError, probe_signal
+from reaper.engine.reason import to_wire
 from reaper.engine.signals import SignalConfig
 from reaper.services.history_sync import horizon
 from reaper.services.profiles import active_policy, active_policy_row, active_profile_settings
@@ -257,7 +258,7 @@ def _policy_out(
             # warnings: the editor renders warnings from re-validating the DRAFT, so
             # anything attached to the GET response never reaches the page at all. That
             # was a real silent drop.
-            PolicyWarningOut(field=w.field, message=w.message, severity=w.severity)
+            PolicyWarningOut(field=w.field, reason=to_wire(w.reason), severity=w.severity)
             # The operator's SAVED settings, not the defaults. Passing ProfileSettings()
             # here made every settings-based warning unreachable: the caps and the
             # approval switch live on the profile, so inspecting a stand-in meant the

@@ -723,7 +723,7 @@ export interface Vocabulary {
 
 export interface PolicyWarning {
   field: string;
-  message: string;
+  reason: ReasonKey;
   severity: string;
 }
 
