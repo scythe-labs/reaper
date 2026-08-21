@@ -34,7 +34,6 @@ from reaper.engine.policy import (
     GradedKeepSpec,
     PolicyBody,
     ProfileSettings,
-    join_and,
 )
 from reaper.engine.reason import Reason, ReasonParam
 from reaper.engine.signals import MAX_SCORE, SignalId
@@ -579,7 +578,10 @@ def inspect(
         move = ("wait_" if window_keeps else "") + ("remove" if headroom < 1 else "set")
         keep_params: dict[str, ReasonParam] = {
             "scope": scope,
-            "names": join_and([f'"{k.name}"' for k in contributors]),
+            # Each name is the operator's own text, quoted by ``why.rule_name`` and
+            # joined by the composer the way every reason list is, so no English
+            # joiner leaves the server.
+            "names": tuple(Reason("rule_name", {"name": k.name}) for k in contributors),
             "total": total,
             "rules": len(contributors),
             "move": move,

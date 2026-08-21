@@ -2725,7 +2725,7 @@ class TestTheOtherReachShortfallLanes:
         assert _msg(flagged).startswith("Nothing will be flagged for removal.")
         # Both contributors are named: the operator cannot act on a total alone, because
         # neither rule looks wrong on its own.
-        assert '"one" and "two"' in _msg(flagged)
+        assert '"one"; "two"' in _msg(flagged)
         assert "all 40 of their points" in _msg(flagged)
         assert "set their total to 30 points or less" in _msg(flagged)
 
@@ -2752,7 +2752,7 @@ class TestTheOtherReachShortfallLanes:
 
         assert _msg(flagged).startswith("Titles added before your watch history starts")
         assert "Nothing will be flagged" not in _msg(flagged)
-        assert '"recent" and "ever"' in _msg(flagged)
+        assert '"recent"; "ever"' in _msg(flagged)
 
     def test_a_lifetime_keep_alone_is_not_told_to_wait(self) -> None:
         """ "Wait for it to build up" is false on an ``ITEM_LIFETIME`` span, so it is not offered.

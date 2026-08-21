@@ -193,6 +193,7 @@
     "season_prunable": "checked: prunable by the keep-last / keep-first season rules",
     "custom_fired": "Kept by your rule: {cond}",
     "custom_checked": "Your rule didn't match: {cond}",
+    "rule_name": "\"{name}\"",
     "kept_safe": {
       "unmatched": "Kept to be safe: it couldn't be found in Plex.",
       "ambiguous": "Kept to be safe: it looks like more than one thing in Plex.",

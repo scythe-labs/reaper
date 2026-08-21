@@ -1107,7 +1107,7 @@ def record(name, body, **kwargs):
     except Exception as exc:
         cases[name] = f"RAISED {type(exc).__name__}: {' '.join(str(exc).split())[:160]}"
         return
-    # The typed reason's repr, not composed English (docs/history/I18N_PLAN.md #868): id
+    # The typed reason's repr, not composed English (#868): id
     # and params are what a mutant can actually change, and a repr is deterministic where a
     # composed sentence would need the frontend catalog this script does not load.
     cases[name] = [f"{w.severity}|{w.field}|{w.reason!r}" for w in got]
