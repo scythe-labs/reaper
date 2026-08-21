@@ -1,3 +1,4 @@
+import { Trans, useTranslation } from "react-i18next";
 import { ApiError, type Snapshot } from "../api";
 import { count, date } from "../format";
 import { Notice } from "./Notice";
@@ -22,18 +23,18 @@ export function ScanFreshness({
   error: unknown;
   onGoToJobs: () => void;
 }) {
+  const { t } = useTranslation();
   if (isPending) {
-    return <p className="scan-freshness muted">Checking the last scan…</p>;
+    return <p className="scan-freshness muted">{t("shell.scanFreshness.checking")}</p>;
   }
   if (!snapshot) {
     if (error instanceof ApiError && error.status === 404) {
       return (
         <p className="scan-freshness muted">
-          No scan has run yet.{" "}
-          <button className="link" onClick={onGoToJobs}>
-            Run one from Settings → Jobs
-          </button>{" "}
-          to fill the queue.
+          <Trans
+            i18nKey="shell.scanFreshness.noScanYet"
+            components={{ btn: <button className="link" onClick={onGoToJobs} /> }}
+          />
         </p>
       );
     }
@@ -47,13 +48,16 @@ export function ScanFreshness({
       // `useScanSettled` invalidates `["snapshot"]` off the shell's 15s poll -- a scheduled scan
       // finishing, with nothing pressed. It sits directly above the queue it describes.
       <Notice tone="error" className="scan-freshness" standing>
-        Couldn't read the last scan, so Reaper can't say how old this queue is.
+        {t("shell.scanFreshness.readFailed")}
       </Notice>
     );
   }
   return (
     <p className="scan-freshness muted">
-      Last scanned {date(snapshot.created_at)}, {count(snapshot.item_count)} items.
+      {t("shell.scanFreshness.lastScanned", {
+        date: date(snapshot.created_at),
+        count: count(snapshot.item_count),
+      })}
       {snapshot.degraded && (
         <>
           {" "}
@@ -78,16 +82,15 @@ export function ScanFreshness({
               hand, not a reply to anything the operator pressed. The scan that produces it
               announces itself from `ScanBar`, which is where the transition happens. */}
           <Notice as="span" tone="warn" standing className="freshness-warn">
-            The last scan came back incomplete, so Reaper won&apos;t act on it.{" "}
             {/* The only one of the three with no remedy in it, which is why this is the one
                 that grew a link (rule 72). `ScanBar`'s copy renders ON Settings → Jobs,
                 beside the Scan library button, so it would point at itself; `ReapPlan`'s
                 already ends "Fix the source and scan again" on a page whose remedy is the
                 source, not a rescan. Both were read and left as they are. */}
-            <button className="link" onClick={onGoToJobs}>
-              Go to Settings → Jobs
-            </button>{" "}
-            and rescan.
+            <Trans
+              i18nKey="shell.scanFreshness.degradedNotice"
+              components={{ btn: <button className="link" onClick={onGoToJobs} /> }}
+            />
           </Notice>
         </>
       )}

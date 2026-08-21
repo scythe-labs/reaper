@@ -12,6 +12,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { announce } from "./announce";
+import i18next from "./i18n";
 
 /** The caches a new snapshot actually changes, each with the surface it feeds.
  *
@@ -109,8 +110,8 @@ export function useScanSettled(scanning: boolean, error: string | null = null): 
       // the numbers are unchanged rather than only declining to claim they moved.
       announce(
         latestError.current === null
-          ? "A scan finished. The numbers on this page have been updated."
-          : "A scan stopped before it finished. The numbers on this page haven't changed.",
+          ? i18next.t("shell.scanSettled.finishedAnnounce")
+          : i18next.t("shell.scanSettled.stoppedAnnounce"),
       );
     }
     wasScanning.current = scanning;

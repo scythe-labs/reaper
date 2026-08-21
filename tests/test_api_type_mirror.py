@@ -1371,3 +1371,54 @@ class TestAWireModelReadsOnlyFieldsItsRecordCarries:
             f"the sites building a wire model off a service record are now {sorted(sites)}. "
             "Add or remove its pair in COLLAPSED_PAIRS above, then move this list."
         )
+
+
+class TestEveryPlanStepIdHasOperatorCopy:
+    """The plan table's kind and state cells read plain words, held to the server's sets.
+
+    ``stepKind``/``stepState`` (``frontend/src/components/ReapPlan.tsx``) turn stored step
+    ids into copy, with the raw id as the unknown-id fallback (#851). Rule 66: that
+    fallback is exactly what makes a missing member silent, so both maps are pinned here,
+    both directions. The literal request the page promises lives whole in the Request
+    column, which is what freed these cells to be copy.
+
+    ``StepState`` is an enum and mirrors directly. The kinds have no enum: the planner's
+    ``kind="..."`` literals are the declaration, parsed as source the way the jobs-page
+    guard reads ``JobsPanel`` (rule 147: quoted literals only, and a spelling either
+    matcher stops finding asserts rather than matching nothing).
+    """
+
+    REAP_PLAN_TSX = REPO / "frontend" / "src" / "components" / "ReapPlan.tsx"
+    PLANNER_PY = REPO / "src" / "reaper" / "services" / "planner.py"
+
+    def _frontend_cases(self, fn: str) -> set[str]:
+        source = self.REAP_PLAN_TSX.read_text(encoding="utf-8")
+        found = re.search(
+            rf"function {fn}\((?:kind|state): string\): string \{{(.*?)\n\}}", source, re.S
+        )
+        assert found is not None, (
+            f"ReapPlan.tsx no longer declares {fn} the way this guard reads it. "
+            "Re-point the matcher at the new spelling."
+        )
+        return set(re.findall(r'=== "([^"]+)"', found.group(1)))
+
+    def test_the_browser_words_every_step_state(self) -> None:
+        from reaper.db.models import StepState
+
+        assert self._frontend_cases("stepState") == {member.value for member in StepState}, (
+            "db.models.StepState and ReapPlan.tsx's stepState disagree. A state the browser "
+            "does not know renders as its raw id in the plan table (rule 21); a state the "
+            "server no longer stores is dead copy. Move both sides together."
+        )
+
+    def test_the_browser_words_every_step_kind_the_planner_emits(self) -> None:
+        emitted = set(re.findall(r'kind="([^"]+)"', self.PLANNER_PY.read_text(encoding="utf-8")))
+        assert emitted, (
+            "services/planner.py no longer spells any kind= as a quoted literal, so this "
+            "guard is reading nothing. Re-point it at the new spelling."
+        )
+        assert self._frontend_cases("stepKind") == emitted, (
+            "the planner's step kinds and ReapPlan.tsx's stepKind disagree. A kind the "
+            "browser does not know renders as its raw id in the plan table (rule 21); a "
+            "kind the planner no longer emits is dead copy. Move both sides together."
+        )

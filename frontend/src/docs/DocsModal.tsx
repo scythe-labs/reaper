@@ -5,6 +5,7 @@
 // built from the registry, so a new doc appears here with no change to this file.
 
 import { useEffect, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { ModalShell } from "../components/ModalShell";
 import { docSections } from "./blocks";
@@ -25,6 +26,7 @@ export function DocsModal({
   onClose: () => void;
   onNavigate: (id: string, anchor?: string) => void;
 }) {
+  const { t } = useTranslation();
   // DOCS is a non-empty constant, so the fallback always resolves to a real doc.
   const doc = getDoc(docId) ?? DOCS[0]!;
   const contentRef = useRef<HTMLDivElement>(null);
@@ -64,13 +66,13 @@ export function DocsModal({
   useEffect(() => {
     if (docId === saidDocRef.current) return;
     saidDocRef.current = docId;
-    announce(`Showing ${doc.title}.`);
-  }, [docId, doc.title]);
+    announce(t("shell.docsModal.showingDoc", { title: doc.title }));
+  }, [docId, doc.title, t]);
 
   return (
-    <ModalShell title={"Help & docs"} onClose={onClose} className="docs-modal">
+    <ModalShell title={t("shell.docsModal.title")} onClose={onClose} className="docs-modal">
       <div className="docs-body">
-        <nav className="docs-index" aria-label="Documentation">
+        <nav className="docs-index" aria-label={t("shell.docsModal.indexLabel")}>
           {groups.map((g) => (
             <div className="docs-index-group" key={g.group}>
               <p className="docs-index-h">{g.group}</p>
@@ -105,7 +107,7 @@ export function DocsModal({
               })}
             </div>
           ))}
-          <p className="docs-index-foot">More guides are added here as questions come up.</p>
+          <p className="docs-index-foot">{t("shell.docsModal.indexFooter")}</p>
         </nav>
 
         {/* `overflow-y: auto` with nothing focusable inside it is a pane a keyboard operator

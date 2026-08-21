@@ -24,6 +24,7 @@
 // the contract -- it imports `trapTab` from here, so Tab containment has one definition.
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { useModalLayer } from "../backnav";
 import { FOCUSABLE, useDialogFocus } from "../focus";
 import { usePageScrollLock } from "../pageScrollLock";
@@ -69,6 +70,7 @@ export function ModalShell({
   className?: string;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   const headingId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -146,7 +148,12 @@ export function ModalShell({
       >
         <header className="modal-head">
           <h2 id={headingId}>{title}</h2>
-          <button className="icon-btn" onClick={close} disabled={!canClose} aria-label="Close">
+          <button
+            className="icon-btn"
+            onClick={close}
+            disabled={!canClose}
+            aria-label={t("shell.modalShell.close")}
+          >
             ✕
           </button>
         </header>

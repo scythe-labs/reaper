@@ -33,29 +33,71 @@ import { sourceText } from "./test/sources";
 // Files fully extracted to the catalog, src-relative. Grown by the Stage 4 merge step,
 // one surface at a time, never by an extraction agent (the list is shared state).
 const CONVERTED = [
+  "App.tsx",
   "components/AboutPanel.tsx",
   "components/BackupPanel.tsx",
+  "components/BalanceBar.tsx",
+  "components/CollectionChip.tsx",
   "components/DeletionToggle.tsx",
   "components/DiscordModal.tsx",
+  "components/Fairness.tsx",
   "components/GeneralPanel.tsx",
   "components/JobStatus.tsx",
   "components/JobsPanel.tsx",
   "components/ListModal.tsx",
   "components/ListsPanel.tsx",
+  "components/Login.tsx",
   "components/LogsPanel.tsx",
+  "components/ModalShell.tsx",
+  "components/NotInScanPanel.tsx",
+  "components/Notice.tsx",
   "components/NotificationsPanel.tsx",
+  "components/OverrideControls.tsx",
   "components/PlexPanel.tsx",
   "components/PlexPin.tsx",
   "components/PlexTrashNotice.tsx",
+  "components/PolicyEditor.tsx",
+  "components/PolicyRuleEditors.tsx",
+  "components/PolicySimulator.tsx",
+  "components/QuantityInput.tsx",
   "components/ReapBar.tsx",
   "components/ReapBreakdown.tsx",
   "components/ReapConfirm.tsx",
   "components/ReapPlan.tsx",
   "components/RestoreCard.tsx",
+  "components/ReviewQueue.tsx",
   "components/SafetyBanner.tsx",
+  "components/ScalesPanel.tsx",
+  "components/ScanBar.tsx",
+  "components/ScanLine.tsx",
+  "components/ScanFreshness.tsx",
+  "components/SectionNav.tsx",
   "components/SecurityPanel.tsx",
   "components/ServiceModal.tsx",
   "components/ServicesPanel.tsx",
+  "components/Settings.tsx",
+  "components/SetupConnectStep.tsx",
+  "components/SetupPasswordStep.tsx",
+  "components/SetupPlexStep.tsx",
+  "components/SetupRestoreModal.tsx",
+  "components/SetupScanStep.tsx",
+  "components/SetupStepper.tsx",
+  "components/SetupWizard.tsx",
+  "components/ShowPanel.tsx",
+  "components/StaleReadNotice.tsx",
+  "components/StatusChip.tsx",
+  "components/SwitchConfirm.tsx",
+  "components/TagsEditor.tsx",
+  "components/UnmatchedList.tsx",
+  "components/UserMenu.tsx",
+  "components/WhyPanel.tsx",
+  "components/WhyPanelFallback.tsx",
+  "components/WhyShell.tsx",
+  "components/policyMeta.ts",
+  "components/policyPresets.ts",
+  "docs/DocBody.tsx",
+  "docs/DocsModal.tsx",
+  "useScanSettled.ts",
 ];
 
 // Attributes whose value the operator sees or hears.
@@ -72,6 +114,12 @@ const VISIBLE_ATTRS = new Set([
 ]);
 
 const hasLetter = (s: string) => /\p{L}/u.test(s);
+
+// The product's name is a name, not operator copy: it stays a source literal so the
+// README-banner generator and the social card can parse it out of the masthead, and no
+// translator is ever handed it.
+const NAMES = new Set(["Reaper"]);
+const isCopy = (s: string) => hasLetter(s) && !NAMES.has(s.trim());
 
 // A `.ts` file parsed as TSX misreads generics (`foo<T>(x)`) as JSX and invents phantom
 // text nodes: api.ts alone "gained" 187 of them when this gate was first drafted.
@@ -120,21 +168,21 @@ export function leftoverCopy(fileName: string, text: string): Leftover[] {
   const flagValues = (e: ts.Expression) => {
     for (const v of valuePositions(e)) {
       if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) {
-        if (hasLetter(v.text)) flag(v, v.text);
+        if (isCopy(v.text)) flag(v, v.text);
       } else if (ts.isTemplateExpression(v)) {
-        if (hasLetter(templateText(v))) flag(v, templateText(v));
+        if (isCopy(templateText(v))) flag(v, templateText(v));
       }
     }
   };
 
   const visit = (node: ts.Node): void => {
     if (ts.isJsxText(node)) {
-      if (hasLetter(node.text)) flag(node, node.text);
+      if (isCopy(node.text)) flag(node, node.text);
     } else if (ts.isJsxAttribute(node)) {
       if (VISIBLE_ATTRS.has(node.name.getText(sf)) && node.initializer) {
         const init = node.initializer;
         if (ts.isStringLiteral(init)) {
-          if (hasLetter(init.text)) flag(init, init.text);
+          if (isCopy(init.text)) flag(init, init.text);
         } else if (ts.isJsxExpression(init) && init.expression) {
           flagValues(init.expression);
         }
@@ -227,6 +275,9 @@ describe("the i18n extraction gate", () => {
     expect(flagged(`const a = fn<Item>(rows); announce("Saved.");`, "probe.ts")).toEqual([
       "Saved.",
     ]);
+
+    // The product's name is a name, not copy, and stays a parseable source literal.
+    expect(flagged(`const a = <h1 className="brand-word">Reaper</h1>;`)).toEqual([]);
 
     // The named limit, pinned so nobody reads more coverage into the gate than it has:
     // a literal that reaches the operator through a plain call is not seen.

@@ -44,6 +44,32 @@ function runState(state: string): string {
   return state;
 }
 
+/** A stored step kind, said as the outcome it performs (#851). The literal request the
+ *  page's blurb promises is whole in the Request column beside this cell, so the kind is
+ *  free to be plain words (rule 21); an unknown kind (an older or newer build) reads
+ *  through unchanged, the same contract as `runState` above. `test_api_type_mirror.py`
+ *  holds these four to the kinds the planner emits, both directions. */
+function stepKind(kind: string): string {
+  if (kind === "radarr_delete") return i18next.t("reapPlan.steps.kind.radarrDelete");
+  if (kind === "sonarr_unmonitor") return i18next.t("reapPlan.steps.kind.sonarrUnmonitor");
+  if (kind === "sonarr_verify_unmonitor")
+    return i18next.t("reapPlan.steps.kind.sonarrVerifyUnmonitor");
+  if (kind === "sonarr_delete_files") return i18next.t("reapPlan.steps.kind.sonarrDeleteFiles");
+  return kind;
+}
+
+/** A stored step state in plain words, same contract; the stored reason for a failed or
+ *  skipped step renders beside it, so one word is enough here. `test_api_type_mirror.py`
+ *  holds these five to ``StepState``, both directions. */
+function stepState(state: string): string {
+  if (state === "pending") return i18next.t("reapPlan.steps.state.pending");
+  if (state === "sent") return i18next.t("reapPlan.steps.state.sent");
+  if (state === "verified") return i18next.t("reapPlan.steps.state.verified");
+  if (state === "failed") return i18next.t("reapPlan.steps.state.failed");
+  if (state === "skipped") return i18next.t("reapPlan.steps.state.skipped");
+  return state;
+}
+
 /** How many rows either long list on this page draws before saying how many more there are.
  *  One number for both, so the step table and the practice-run outcomes cut off together. */
 const LIST_CAP = 50;
@@ -104,7 +130,7 @@ function Steps({ run }: { run: Run }) {
                   <span className="canary-tag">{t("reapPlan.steps.testItem")}</span>
                 )}
               </td>
-              <td>{step.kind.replace(/_/g, " ")}</td>
+              <td>{stepKind(step.kind)}</td>
               <td>
                 <code>
                   {step.method} {step.path}
@@ -119,7 +145,7 @@ function Steps({ run }: { run: Run }) {
                   is that it survives a restart, which is exactly when the live copy is gone
                   and the table used to say "failed" and nothing else (#260). */}
               <td className="muted">
-                {step.state}
+                {stepState(step.state)}
                 {step.error && <span className="step-why">{step.error}</span>}
               </td>
             </tr>

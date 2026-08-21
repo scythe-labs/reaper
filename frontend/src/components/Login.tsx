@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Trans, useTranslation } from "react-i18next";
 import { api, ApiError, type AuthContext, type PlexPoll } from "../api";
 import { trapTab } from "./ModalShell";
 import { BrandBadge } from "../brand/BrandBadge";
@@ -33,6 +34,7 @@ function PlexGlyph() {
  *  learn "ok" or "why not". The polling itself is the shared flow in PlexPin.tsx,
  *  which the Settings link panel drives too. */
 function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void }) {
+  const { t } = useTranslation();
   const [phase, setPhase] = useState<"idle" | "waiting" | "choose" | "error">("idle");
   const [error, setError] = useState("");
   const [authUrl, setAuthUrl] = useState("");
@@ -50,7 +52,7 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     onChooseServer: () => setPhase("choose"),
     onTimedOut: () => {
       setPhase("error");
-      setError("Plex sign-in timed out. Please try again.");
+      setError(t("login.plexButton.timedOut"));
     },
     onFailed: (failure) => {
       setPhase("error");
@@ -78,7 +80,7 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
       pin.begin(pin_id);
     } catch (e) {
       setPhase("error");
-      setError(e instanceof ApiError ? e.message : "Could not reach Plex to start sign-in.");
+      setError(e instanceof ApiError ? e.message : t("login.plexButton.startFailedFallback"));
     }
   };
 
@@ -92,24 +94,23 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
       <div className="plex-waiting">
         <span className="spinner" aria-hidden="true" />
         <div>
-          <strong>Waiting for Plex…</strong>
+          <strong>{t("plex.waitingForPlex")}</strong>
           {/* Once the sign-in is approved, the wait can continue for a second reason: the
               server itself isn't answering yet. Say which one it is, so a longer wait
               doesn't read as a hang. Reaper keeps polling either way; the sign-in stays
-              good. Worded the same as the Settings panel's copy. */}
+              good. Worded the same as the Settings panel's copy -- literally the same
+              catalog key (rule 144), so a reword of one is a reword of both. */}
           <p className="muted">
             {pin.retrying ?? (
-              <>
-                Approve the sign-in in the Plex window.{" "}
-                <a href={authUrl} target="_blank" rel="noreferrer">
-                  Didn’t open?
-                </a>
-              </>
+              <Trans
+                i18nKey="plex.waiting.approveWithLink"
+                components={{ btn: <a href={authUrl} target="_blank" rel="noreferrer" /> }}
+              />
             )}
           </p>
         </div>
         <button className="link" onClick={cancel}>
-          Cancel
+          {t("plex.cancel")}
         </button>
       </div>
     );
@@ -118,11 +119,8 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
   if (phase === "choose") {
     return (
       <div className="server-pick">
-        <strong>Which server should Reaper manage?</strong>
-        <p className="muted">
-          This account owns more than one Plex server. Reaper will only ever scan and prune the one
-          you pick. You can change it later in Settings.
-        </p>
+        <strong>{t("plex.chooseServer.label")}</strong>
+        <p className="muted">{t("login.plexButton.chooseServerHelp")}</p>
         <ServerPickList
           servers={pin.servers ?? []}
           onPick={(machineId) => {
@@ -139,7 +137,7 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     <>
       <button className="btn-plex" onClick={start}>
         <PlexGlyph />
-        {setup ? "Sign in with Plex to set up Reaper" : "Sign in with Plex"}
+        {setup ? t("login.plexButton.signInSetup") : t("login.plexButton.signIn")}
       </button>
       {phase === "error" && <Notice tone="error">{error}</Notice>}
     </>
@@ -163,6 +161,7 @@ function LocalSheet({
   onAuthed: () => void;
   ctx: AuthContext | undefined;
 }) {
+  const { t } = useTranslation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -203,7 +202,7 @@ function LocalSheet({
       await api.localLogin(username, password);
       onAuthed();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Sign-in failed.");
+      setError(err instanceof ApiError ? err.message : t("login.localSheet.signInFailedFallback"));
     } finally {
       setBusy(false);
     }
@@ -223,26 +222,29 @@ function LocalSheet({
         inert={!open}
         role="dialog"
         aria-modal="true"
-        aria-label="Local account sign-in"
+        aria-label={t("login.localSheet.ariaLabel")}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => trapTab(e, open ? sheetRef.current : null)}
       >
         <div className="sheet-grip" aria-hidden="true" />
-        <h2>Local account</h2>
+        <h2>{t("login.localSheet.heading")}</h2>
         {/* The guarantee is only claimed where it holds. It used to be stated flat, directly
             above the notice saying no local account existed -- a promise and its own denial,
             one under the other, on a fresh Plex-only install (#382). What makes it true now is
             the wizard's mandatory password step, whose `set_password` creates a local admin
             where there is none; `auth.admins.LastAdminError` is what then keeps it true. Three
             branches, not two: while the context is still loading Reaper does not yet know
-            which install this is, so it says only what the account is for. */}
+            which install this is, so it says only what the account is for. Three whole
+            sentences in the catalog, not one stem with a bolted-on tail, because each is a
+            complete claim a translator sentences on its own (rule 144, the SafetyBanner
+            precedent). */}
         <p className="muted sheet-blurb">
-          The fallback for when Plex is unreachable.
-          {ctx &&
-            (noLocalYet
-              ? " This install doesn’t have one yet."
-              : " Reaper keeps at least one, so a plex.tv outage can’t lock you out.")}
+          {!ctx
+            ? t("login.localSheet.blurbLoading")
+            : noLocalYet
+              ? t("login.localSheet.blurbNoLocalYet")
+              : t("login.localSheet.blurbHasLocal")}
         </p>
 
         {/* `standing`: a property of the install, read from `["authContext"]` on first load, so
@@ -251,9 +253,6 @@ function LocalSheet({
             already there rather than causing this. */}
         {noLocalYet ? (
           <Notice tone="warn" standing>
-            Sign in with Plex above and Reaper will ask you to set a password, which creates it.
-            You’ll need that password to turn deletion on anyway. If Plex is unreachable right now,
-            Docker and snap installs can create an account on the host with{" "}
             {/* A name that can be pasted, not a placeholder to fill in. `admin` is what the
                 wizard's own password step would have created, and any local account arms
                 deletion and confirms a restore just the same (`admin_password.verify` checks
@@ -269,12 +268,12 @@ function LocalSheet({
                 two deliberately do not: `cli.py`'s lockout warning is printed BY `reaper-admin`,
                 so its reader demonstrably has it, and the manual's first-run callout already
                 says "On a Docker install" (rule 72, swept). */}
-            <code>reaper-admin create-admin --username admin</code>.
+            <Trans i18nKey="login.localSheet.noLocalYetNotice" components={{ code: <code /> }} />
           </Notice>
         ) : (
           <form onSubmit={submit} className="local-form">
             <label className="field">
-              <span className="field-label">Username</span>
+              <span className="field-label">{t("login.localSheet.usernameLabel")}</span>
               {/* The lengths the server accepts, so a long pasted passphrase is stopped in
                   the box rather than coming back as a validator's sentence. */}
               <input
@@ -286,7 +285,7 @@ function LocalSheet({
               />
             </label>
             <label className="field">
-              <span className="field-label">Password</span>
+              <span className="field-label">{t("login.localSheet.passwordLabel")}</span>
               <input
                 type="password"
                 autoComplete="current-password"
@@ -298,10 +297,10 @@ function LocalSheet({
             {error && <Notice tone="error">{error}</Notice>}
             <div className="sheet-actions">
               <button type="button" className="ghost" onClick={onClose}>
-                Back
+                {t("login.localSheet.backButton")}
               </button>
               <button type="submit" className="primary" disabled={busy || !username || !password}>
-                {busy ? "Signing in…" : "Sign in"}
+                {busy ? t("login.localSheet.signingIn") : t("login.localSheet.signIn")}
               </button>
             </div>
           </form>
@@ -316,6 +315,7 @@ function LocalSheet({
  *  the operator pastes it here. The code is never carried in the URL, so it stays out of
  *  reverse-proxy access logs. */
 function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
+  const { t } = useTranslation();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -328,7 +328,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
       await api.recover(code.trim());
       onAuthed();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Recovery failed.");
+      setError(err instanceof ApiError ? err.message : t("login.recovery.failedFallback"));
     } finally {
       setBusy(false);
     }
@@ -341,8 +341,8 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
     // changes the accessibility tree and nothing on screen.
     <main className="auth-card">
       <BrandBadge className="brand-badge" />
-      <h1 className="brand-word">Recovery</h1>
-      <p className="auth-tagline">Single-use admin access</p>
+      <h1 className="brand-word">{t("login.recovery.heading")}</h1>
+      <p className="auth-tagline">{t("login.recovery.tagline")}</p>
       {/* The console, NOT "its log": mint_recovery_token prints the banner deliberately
           (auth/recovery.py), so the code never reaches structlog, the in-app Logs tab, or
           the log files that tab downloads. Sending a locked-out operator to Settings ->
@@ -355,12 +355,11 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
           makes it true. Its siblings are `auth/recovery.py`'s banner and the locked-out page
           in the manual (rule 144). */}
       <p className="auth-note">
-        The code is in <code>recovery.txt</code> in Reaper's data folder, and in the console output.
-        Paste it to sign in, then set a new password without the old one.
+        <Trans i18nKey="login.recovery.note" components={{ code: <code /> }} />
       </p>
       <form onSubmit={submit} className="local-form">
         <label className="field">
-          <span className="field-label">Recovery code</span>
+          <span className="field-label">{t("login.recovery.codeLabel")}</span>
           <input
             autoFocus
             autoComplete="off"
@@ -368,12 +367,12 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
             maxLength={256}
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="Paste the code from the log"
+            placeholder={t("login.recovery.codePlaceholder")}
           />
         </label>
         {error && <Notice tone="error">{error}</Notice>}
         <button type="submit" className="primary btn-block" disabled={busy || !code.trim()}>
-          {busy ? "Redeeming…" : "Redeem recovery code"}
+          {busy ? t("login.recovery.redeeming") : t("login.recovery.redeemButton")}
         </button>
       </form>
     </main>
@@ -381,6 +380,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
 }
 
 export function Login() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: ctx } = useQuery({ queryKey: ["authContext"], queryFn: api.authContext });
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -403,27 +403,25 @@ export function Login() {
         <main className="auth-card">
           <BrandBadge className="brand-badge" />
           <h1 className="brand-word">Reaper</h1>
-          {/* The one tagline: the words the masthead shows once you are in (App.tsx), and the
-              ones the README, the manual's site header and the API's own description carry.
-              This card had wording of its own and was the only surface that did, which is why
-              it drifted alone. `TAGLINE_SITES` in tests/test_repo_hygiene.py is the guard. */}
-          <p className="auth-tagline">Grave decisions, clearly explained</p>
+          {/* The one tagline, "Grave decisions, clearly explained": the words the masthead
+              shows once you are in (App.tsx), and the ones the README, the manual's site
+              header and the API's own description carry. This card had wording of its own
+              and was the only surface that did, which is why it drifted alone.
+              `TAGLINE_SITES` in tests/test_repo_hygiene.py is the guard, and it reads this
+              file's raw source for that exact English sentence -- quoted above, on purpose,
+              now that the rendered copy itself lives in the catalog under `shell.app.brandTagline`, the one key both mastheads read. */}
+          <p className="auth-tagline">{t("shell.app.brandTagline")}</p>
           <p className="auth-note">
-            {setup
-              ? "Set up Reaper by signing in as the owner of the Plex server."
-              : "Sign in to review, explain, and prune your library."}
+            {setup ? t("login.authNoteSetup") : t("login.authNoteSignIn")}
           </p>
 
           <PlexButton setup={setup} onAuthed={onAuthed} />
 
           <button className="auth-alt" onClick={() => setSheetOpen(true)}>
-            Use a local account
+            {t("login.useLocalAccount")}
           </button>
 
-          <p className="auth-safety">
-            Reaper can permanently delete media. Only the server’s owner is admitted. Authenticating
-            with Plex is not enough.
-          </p>
+          <p className="auth-safety">{t("login.authSafety")}</p>
         </main>
       )}
 

@@ -20,26 +20,60 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type RefObject } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
 import { api, type Instance, type InstanceKind, type SetupStatus } from "../api";
+import i18next from "../i18n";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { KINDS, ServiceModal } from "./ServiceModal";
 import { SetupRestoreModal } from "./SetupRestoreModal";
 import { StepCard } from "./SetupStepper";
 
-/** The badge letters and the name a first instance of each kind arrives with.
+/** The badge letters and the name a first instance of each kind arrives with, read from the
+ *  catalog so neither is stranded in English (rule 144). One literal `t()` call per kind, since
+ *  a computed key is unreadable to the missing-key gate (`jobMeta` in JobsPanel.tsx is the same
+ *  shape).
  *
  *  The label, hint and port all come from `KINDS` (ServiceModal) rather than being restated
  *  here -- that table is the declaration, and a second copy of a service's hint is a sentence
  *  that drifts (rule 144). Only what `KINDS` does not carry lives here. */
-const ROW_META: Record<string, { badge: string; names: readonly string[] }> = {
-  tautulli: { badge: "TAU", names: ["Main"] },
-  radarr: { badge: "RAD", names: ["HD", "4K"] },
-  sonarr: { badge: "SON", names: ["HD", "4K"] },
-  seerr: { badge: "SEER", names: ["Main", "Second"] },
-};
+function rowMeta(kind: string): { badge: string; names: readonly string[] } {
+  switch (kind) {
+    case "tautulli":
+      return {
+        badge: i18next.t("setup.connect.badge.tautulli"),
+        names: [i18next.t("setup.connect.instanceName.main")],
+      };
+    case "radarr":
+      return {
+        badge: i18next.t("setup.connect.badge.radarr"),
+        names: [
+          i18next.t("setup.connect.instanceName.hd"),
+          i18next.t("setup.connect.instanceName.fourK"),
+        ],
+      };
+    case "sonarr":
+      return {
+        badge: i18next.t("setup.connect.badge.sonarr"),
+        names: [
+          i18next.t("setup.connect.instanceName.hd"),
+          i18next.t("setup.connect.instanceName.fourK"),
+        ],
+      };
+    case "seerr":
+      return {
+        badge: i18next.t("setup.connect.badge.seerr"),
+        names: [
+          i18next.t("setup.connect.instanceName.main"),
+          i18next.t("setup.connect.instanceName.second"),
+        ],
+      };
+    default:
+      return { badge: "", names: [] };
+  }
+}
 
 /** Which kinds a scan needs, and which are merely worth having. Drives the divider, so the
  *  eye can stop at the required set instead of reading every row to find out which matter. */
@@ -58,6 +92,7 @@ export function SetupConnectStep({
   onBack: () => void;
   onNext: () => void;
 }) {
+  const { t } = useTranslation();
   const {
     data: instances,
     isPending,
@@ -87,7 +122,11 @@ export function SetupConnectStep({
     // dropping the last Radarr is exactly what can un-ready the step.
     onSuccess: (_r, id) => {
       const gone = (instances ?? []).find((i) => i.id === id);
-      announce(gone ? `${gone.name} removed.` : "Connection removed.");
+      announce(
+        gone
+          ? t("setup.connect.announceRemovedNamed", { name: gone.name })
+          : t("setup.connect.announceRemoved"),
+      );
       setConfirmRemove(null);
       void queryClient.invalidateQueries({ queryKey: ["instances"] });
       void queryClient.invalidateQueries({ queryKey: ["setup"] });
@@ -108,26 +147,27 @@ export function SetupConnectStep({
    *  so a second Radarr does not open on a name that will collide. */
   const nextName = (kind: string) => {
     const taken = of(kind).length;
-    const pool = ROW_META[kind]?.names ?? [];
-    return pool[taken] ?? `${kind} ${taken + 1}`;
+    const meta = rowMeta(kind);
+    // Past the named pool, number the kind's own badge, never the internal slug.
+    return meta.names[taken] ?? `${meta.badge || kind} ${taken + 1}`;
   };
 
   const ready = setup.scan_ready;
 
   return (
-    <StepCard step="connect" title="Connect your library">
+    <StepCard step="connect" title={t("setup.connect.title")}>
       {/* "Scanning only reads", not "Reaper only reads": deletion goes THROUGH Radarr and
           Sonarr, so an unbounded claim is false about two of the four services whose keys are
           being typed on this screen, and the next step says so itself ("It removes files
           through them, never on its own"). The scan bound is the one every correct sibling
           already uses. Its twin is the services panel blurb in `ServicesPanel.tsx` (rule 72). */}
-      <p className="blurb">Scanning only reads from these. Nothing here can delete a file.</p>
+      <p className="blurb">{t("setup.connect.blurb")}</p>
 
       {/* Divided, so a failed refetch does not trade a working list for one sentence while
           React Query still holds the last good answer (rule 17/36). */}
-      {isError && !instances && <Notice tone="error">Couldn't load your connections.</Notice>}
-      {isError && instances && <StaleReadNotice what="your connections" />}
-      {isPending && <p className="muted">Loading…</p>}
+      {isError && !instances && <Notice tone="error">{t("setup.connect.loadError")}</Notice>}
+      {isError && instances && <StaleReadNotice what={t("setup.connect.staleWhat")} />}
+      {isPending && <p className="muted">{t("setup.connect.loading")}</p>}
 
       {instances && (
         <>
@@ -152,9 +192,9 @@ export function SetupConnectStep({
               />
             ))}
           </div>
-          <p className="conn-note">Connect at least one of Radarr or Sonarr.</p>
+          <p className="conn-note">{t("setup.connect.note")}</p>
 
-          <p className="conn-split">Optional</p>
+          <p className="conn-split">{t("setup.connect.optional")}</p>
           <div className="conn-list">
             {KINDS.filter((k) => !REQUIRED_KINDS.includes(k.value)).map((k) => (
               <ConnRow
@@ -184,20 +224,20 @@ export function SetupConnectStep({
         // mount, which is what a wizard step opens on. Presses only ever make it go away. Its
         // twin on the scan step already declares this (rule 72).
         <Notice tone="warn" standing>
-          Add Tautulli and one of Radarr or Sonarr, then you can run a scan.
+          {t("setup.connect.notReadyWarning")}
         </Notice>
       )}
 
       <div className="step-actions">
         <button className="ghost" onClick={onBack}>
-          Back
+          {t("setup.actions.back")}
         </button>
         <span className="spacer" />
         <button className="ghost" onClick={onNext}>
-          Skip for now
+          {t("setup.actions.skipForNow")}
         </button>
         <button className="primary btn-lg" onClick={onNext} disabled={!ready}>
-          Continue
+          {t("setup.actions.continue")}
         </button>
       </div>
 
@@ -206,11 +246,10 @@ export function SetupConnectStep({
           what creates one. */}
       <div className="step-foot step-foot-door">
         <div>
-          <strong>Moving an existing Reaper here?</strong> Restore a backup and your connections,
-          settings and decisions come back with it. You can skip the rest of setup.
+          <Trans i18nKey="setup.connect.restoreDoorLead" />
         </div>
         <button type="button" className="ghost" onClick={() => setRestoring(true)}>
-          Restore a backup
+          {t("setup.connect.restoreButton")}
         </button>
       </div>
 
@@ -264,6 +303,7 @@ function ConnRow({
    *  card for the same reason (rule 42, rule 72). */
   removeError: Error | null;
 }) {
+  const { t } = useTranslation();
   const connected = rows.length > 0;
   // A singleton that already has one offers no second, and its slot collapses rather than
   // holding a dead control: the chip beside it already carries the name and the connected
@@ -273,12 +313,12 @@ function ConnRow({
   return (
     <div className={connected ? "conn-row on" : "conn-row"}>
       <span className={`conn-badge kind-${kind.value}`} aria-hidden="true">
-        {ROW_META[kind.value]?.badge ?? kind.label.slice(0, 3).toUpperCase()}
+        {rowMeta(kind.value).badge || kind.label.slice(0, 3).toUpperCase()}
       </span>
       <div>
         <div className="conn-name">
           {kind.label}
-          {required && <span className="conn-tag required">Required</span>}
+          {required && <span className="conn-tag required">{t("setup.connect.requiredTag")}</span>}
         </div>
         {connected ? (
           <div className="conn-instances">
@@ -289,27 +329,33 @@ function ConnRow({
                    native confirm() and not a one-press delete. It replaces the chip in place, so
                    the question sits exactly where the thing it is about was. */
                 <span key={i.id} className="chip-confirm">
-                  <span className="chip-confirm-q">Remove {i.name}?</span>
+                  <span className="chip-confirm-q">
+                    {t("setup.connect.removeConfirmQuestion", { name: i.name })}
+                  </span>
                   <button
                     type="button"
                     className="danger"
                     disabled={removing}
                     // Says what removing does and does not touch, the same promise the services
                     // panel's own Remove makes.
-                    title="Only forgets it in Reaper. Nothing is changed in the service itself."
-                    aria-label={removing ? `Removing…, ${i.name}` : `Confirm remove ${i.name}`}
+                    title={t("setup.connect.removeButtonTitle")}
+                    aria-label={
+                      removing
+                        ? t("setup.connect.removingAria", { name: i.name })
+                        : t("setup.connect.confirmRemoveAria", { name: i.name })
+                    }
                     onClick={() => onRemove(i)}
                   >
-                    {removing ? "Removing…" : "Remove"}
+                    {removing ? t("setup.connect.removingLabel") : t("setup.connect.removeButton")}
                   </button>
                   <button
                     type="button"
                     // The visible word first, so "click Cancel" still reaches it by voice, then
                     // which connection it keeps.
-                    aria-label={`Cancel, keep ${i.name}`}
+                    aria-label={t("setup.connect.cancelKeepAria", { name: i.name })}
                     onClick={() => onAskRemove(null)}
                   >
-                    Cancel
+                    {t("setup.actions.cancel")}
                   </button>
                 </span>
               ) : (
@@ -329,7 +375,7 @@ function ConnRow({
                   <button
                     type="button"
                     className="chip-edit"
-                    aria-label={`Edit ${i.name}`}
+                    aria-label={t("setup.connect.editInstanceAria", { name: i.name })}
                     onClick={() => onEdit(i)}
                   >
                     {i.name}
@@ -337,7 +383,7 @@ function ConnRow({
                   <button
                     type="button"
                     className="chip-x"
-                    aria-label={`Remove ${i.name}`}
+                    aria-label={t("setup.connect.removeInstanceAria", { name: i.name })}
                     onClick={() => onAskRemove(i.id)}
                   >
                     <span aria-hidden="true">✕</span>
@@ -357,7 +403,7 @@ function ConnRow({
           className={connected ? "conn-add" : ""}
           onClick={onAdd}
         >
-          {connected ? "+ Add another" : "Connect"}
+          {connected ? t("setup.connect.addAnotherButton") : t("setup.connect.connectButton")}
         </button>
       ) : (
         <span />
@@ -367,7 +413,7 @@ function ConnRow({
           Spans the row's whole width, under the chips it is about. */}
       {removeError && (
         <Notice tone="error" className="conn-row-error">
-          Couldn't remove that connection: {removeError.message}
+          {t("setup.connect.removeFailedError", { message: removeError.message })}
         </Notice>
       )}
     </div>

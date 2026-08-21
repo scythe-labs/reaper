@@ -152,14 +152,18 @@ describe("who is allowed to write the rescan sentences", () => {
     readFileSync(join(dirname(fileURLToPath(import.meta.url)), name), "utf8");
 
   it("is this panel, and not the editor that announces them", () => {
+    // The declarations resolve from the catalog since Stage 4, so the anchor pins the
+    // key each constant reads: the sentence itself lives in locales/en/ui.json, and the
+    // imported constant values checked below are what the catalog served.
     const panel = read("PolicySimulator.tsx");
-    expect(panel).toContain(`export const RESCAN_HEADING = "${RESCAN_HEADING}"`);
-    expect(panel).toContain(`"${RESCAN_QUEUED_LEAD}"`);
+    expect(panel).toContain(`export const RESCAN_HEADING = i18next.t("policySim.rescanHeading")`);
+    expect(panel).toContain(`i18next.t("policySim.rescanQueuedLead")`);
     // The savebar's sentence, now that this panel shows it too. The savebar is at the foot of
     // the left column and this panel is the right one, so a reword reaching only one of them
     // leaves two answers to "when does this take effect" on one screen.
-    expect(panel).toContain("export const APPLIES_ON_NEXT_SCAN");
-    expect(panel).toContain(`"${APPLIES_ON_NEXT_SCAN}"`);
+    expect(panel).toContain(
+      `export const APPLIES_ON_NEXT_SCAN = i18next.t("policySim.appliesOnNextScan")`,
+    );
 
     const editor = read("PolicyEditor.tsx");
     for (const [name, sentence] of [

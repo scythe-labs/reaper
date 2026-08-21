@@ -34,6 +34,7 @@ import {
   type CSSProperties,
   type RefObject,
 } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import {
   api,
   ApiError,
@@ -51,6 +52,7 @@ import { announce } from "../announce";
 import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
 import { DocLink, HelpIcon } from "../docs/DocLink";
 import { bytes, count, humanDays } from "../format";
+import i18next from "../i18n";
 import { DeletionToggle } from "./DeletionToggle";
 import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
@@ -192,6 +194,7 @@ function GateRow({
    *  box at the wrong notice. */
   warnings: PolicyWarning[];
 }) {
+  const { t } = useTranslation();
   // Sibling of the simulator's spared-by row (rule 72), and the two fallbacks deliberately
   // DIFFER. There, an id appears once in a tally, so `UNNAMED_GATE_LABEL` reads correctly:
   // "Another protection, 7". Here it names a switch, and two ids this build has no copy for
@@ -247,19 +250,18 @@ function GateRow({
           page on that click and nothing else on screen would account for it. */}
       {meta.retired && gate.enabled && (
         <Notice tone="warn" inline>
-          A leftover from an older version, and Reaper won&apos;t scan while it is on. Add its list
-          again on Settings → Lists, or turn it off to remove it and stop protecting those titles.
+          {t("policyEditor.gateRow.retiredNotice")}
         </Notice>
       )}
 
       {gate.enabled && meta.unit === "days" && (
         <div className="rule-control">
-          <span>{meta.lead ?? "at least"}</span>
+          <span>{meta.lead ?? t("policyEditor.atLeast")}</span>
           <QuantityInput
             value={gate.threshold}
             units={TIME_UNITS}
             min={meta.min ?? 5}
-            ariaLabel={`${meta.label} threshold`}
+            ariaLabel={t("policyEditor.gateRow.thresholdAriaLabel", { label: meta.label })}
             describedBy={describes("threshold")}
             onChange={(v) => onChange({ ...gate, threshold: v })}
           />
@@ -267,13 +269,13 @@ function GateRow({
       )}
       {gate.enabled && meta.unit === "people" && (
         <div className="rule-control">
-          <span>at least</span>
+          <span>{t("policyEditor.atLeast")}</span>
           <FixedQuantity
             value={gate.threshold}
-            suffix={gate.threshold === 1 ? "person" : "people"}
+            suffix={t("policyEditor.units.person", { n: gate.threshold })}
             min={1}
             width="narrow"
-            ariaLabel={`${meta.label} threshold`}
+            ariaLabel={t("policyEditor.gateRow.thresholdAriaLabel", { label: meta.label })}
             describedBy={describes("threshold")}
             onChange={(v) => onChange({ ...gate, threshold: v })}
           />
@@ -309,7 +311,6 @@ function GateRow({
 // ---------------------------------------------------------------------------
 
 type RatingSourceMeta = {
-  label: string;
   scale: "ten" | "pct";
   votes: boolean;
   defFloor: number; // in tenths (7.5 -> 75; 75% -> 75)
@@ -317,23 +318,11 @@ type RatingSourceMeta = {
 };
 
 const RATING_META: Record<RatingSource, RatingSourceMeta> = {
-  imdb: { label: "IMDb", scale: "ten", votes: true, defFloor: 65, defVotes: 5000 },
-  rotten_tomatoes_critic: {
-    label: "Rotten Tomatoes critics",
-    scale: "pct",
-    votes: false,
-    defFloor: 75,
-    defVotes: 0,
-  },
-  rotten_tomatoes_audience: {
-    label: "Rotten Tomatoes audience",
-    scale: "pct",
-    votes: false,
-    defFloor: 80,
-    defVotes: 0,
-  },
-  metacritic: { label: "Metacritic", scale: "pct", votes: false, defFloor: 70, defVotes: 0 },
-  tmdb: { label: "TMDb", scale: "ten", votes: true, defFloor: 70, defVotes: 500 },
+  imdb: { scale: "ten", votes: true, defFloor: 65, defVotes: 5000 },
+  rotten_tomatoes_critic: { scale: "pct", votes: false, defFloor: 75, defVotes: 0 },
+  rotten_tomatoes_audience: { scale: "pct", votes: false, defFloor: 80, defVotes: 0 },
+  metacritic: { scale: "pct", votes: false, defFloor: 70, defVotes: 0 },
+  tmdb: { scale: "ten", votes: true, defFloor: 70, defVotes: 500 },
 };
 const RATING_ORDER: RatingSource[] = [
   "imdb",
@@ -343,13 +332,40 @@ const RATING_ORDER: RatingSource[] = [
   "tmdb",
 ];
 
+/** The source's display name, read at call time (not a frozen module constant) so a language
+ *  change is picked up the next time the editor opens -- same shape as `jobMeta` in
+ *  `JobsPanel.tsx`: each source gets its own literal `t()` call, since a computed key is
+ *  unreadable to the missing-key gate. */
+function ratingSourceLabel(source: RatingSource): string {
+  switch (source) {
+    case "imdb":
+      return i18next.t("policyEditor.ratingSource.imdb");
+    case "rotten_tomatoes_critic":
+      return i18next.t("policyEditor.ratingSource.rottenTomatoesCritic");
+    case "rotten_tomatoes_audience":
+      return i18next.t("policyEditor.ratingSource.rottenTomatoesAudience");
+    case "metacritic":
+      return i18next.t("policyEditor.ratingSource.metacritic");
+    case "tmdb":
+      return i18next.t("policyEditor.ratingSource.tmdb");
+  }
+}
+
 /** One title clears one bar if `describe` reads true; the summary reads the whole set. */
 function describeBar(rule: RatingRule): string {
   const meta = RATING_META[rule.source];
-  if (meta.scale === "pct") return `${meta.label} ${rule.floor}%`;
+  const label = ratingSourceLabel(rule.source);
+  if (meta.scale === "pct")
+    return i18next.t("policyEditor.ratingBar.pct", { label, floor: rule.floor });
   const votes =
-    meta.votes && rule.min_votes > 0 ? ` from ${rule.min_votes.toLocaleString()}+ votes` : "";
-  return `${(rule.floor / 10).toFixed(1)} on ${meta.label}${votes}`;
+    meta.votes && rule.min_votes > 0
+      ? i18next.t("policyEditor.ratingBar.fromVotes", { votes: rule.min_votes.toLocaleString() })
+      : "";
+  return i18next.t("policyEditor.ratingBar.ten", {
+    score: (rule.floor / 10).toFixed(1),
+    label,
+    votes,
+  });
 }
 
 /** The field name the server gives a warning about ONE setting of ONE rating bar.
@@ -383,7 +399,9 @@ function RatingBarRow({
    *  each box at the wrong notice. */
   warnings: PolicyWarning[];
 }) {
+  const { t } = useTranslation();
   const meta = RATING_META[rule.source];
+  const label = ratingSourceLabel(rule.source);
   // What this row's boxes point `aria-describedby` at. The block rendering these sits under the
   // whole list of bars, so reaching one meant browsing the card in document order (#189). The
   // filter is what keeps a complaint about IMDb off the Rotten Tomatoes row -- the worry the
@@ -392,31 +410,31 @@ function RatingBarRow({
     warningsDescribing("keep_rating_rules", warnings, [ratingWarningField(rule.source, setting)]);
   return (
     <div className="bar-line">
-      <span className="bar-src">{meta.label}</span>
+      <span className="bar-src">{label}</span>
       <span className="bar-set">
-        <span>at least</span>
+        <span>{t("policyEditor.atLeast")}</span>
         {meta.scale === "ten" ? (
           <>
             <FixedQuantity
               value={(rule.floor / 10).toFixed(1)}
-              suffix="/ 10"
+              suffix={t("policyEditor.units.outOfTen")}
               min={0}
               max={10}
               step={0.1}
               width="narrow"
-              ariaLabel={`${meta.label} score out of 10`}
+              ariaLabel={t("policyEditor.ratingBar.scoreAriaLabel", { label })}
               describedBy={describes("floor")}
               onChange={(v) => onChange({ ...rule, floor: Math.round(v * 10) })}
             />
             {meta.votes && (
               <>
-                <span>from</span>
+                <span>{t("policyEditor.ratingBar.votesFromLabel")}</span>
                 <FixedQuantity
                   value={rule.min_votes}
-                  suffix="+ votes"
+                  suffix={t("policyEditor.units.votesSuffix")}
                   min={0}
                   step={100}
-                  ariaLabel={`${meta.label} vote floor`}
+                  ariaLabel={t("policyEditor.ratingBar.voteFloorAriaLabel", { label })}
                   describedBy={describes("min_votes")}
                   onChange={(v) => onChange({ ...rule, min_votes: Math.max(0, v) })}
                 />
@@ -426,12 +444,12 @@ function RatingBarRow({
         ) : (
           <FixedQuantity
             value={rule.floor}
-            suffix="%"
+            suffix={t("policyEditor.units.percent")}
             min={0}
             max={100}
             step={1}
             width="narrow"
-            ariaLabel={`${meta.label} percentage`}
+            ariaLabel={t("policyEditor.ratingBar.percentAriaLabel", { label })}
             describedBy={describes("floor")}
             onChange={(v) => onChange({ ...rule, floor: v })}
           />
@@ -442,7 +460,7 @@ function RatingBarRow({
         type="button"
         className="bar-x"
         onClick={onRemove}
-        aria-label={`Remove the ${meta.label} bar`}
+        aria-label={t("policyEditor.ratingBar.removeAriaLabel", { label })}
       >
         ✕
       </button>
@@ -481,6 +499,7 @@ function RatingFloorRow({
   onRules: (r: RatingRule[]) => void;
   onMatch: (m: "any" | "all") => void;
 }) {
+  const { t } = useTranslation();
   const used = new Set(rules.map((r) => r.source));
   const available = RATING_ORDER.filter((s) => !used.has(s));
   const addSource = (source: RatingSource) => {
@@ -490,11 +509,14 @@ function RatingFloorRow({
       { source, floor: meta.defFloor, min_votes: meta.votes ? meta.defVotes : 0 },
     ]);
   };
-  const joiner = match === "any" ? ", or " : ", and ";
+  const joiner =
+    match === "any"
+      ? i18next.t("policyEditor.ratingFloor.joinerOr")
+      : i18next.t("policyEditor.ratingFloor.joinerAnd");
   const summary =
     rules.length === 0
-      ? "Nothing is kept yet: add a rating source to set the score a title must clear to stay."
-      : `Keep a title rated at least ${rules.map(describeBar).join(joiner)}.`;
+      ? t("policyEditor.ratingFloor.emptySummary")
+      : t("policyEditor.ratingFloor.summary", { bars: rules.map(describeBar).join(joiner) });
 
   // The same shape as the keep-tag chips 290 lines above, on the same ~1,900-line form: the ✕
   // removes the row it lives in, so without this focus falls to `<body>` and the next Tab
@@ -506,12 +528,9 @@ function RatingFloorRow({
     <div className="rules-card">
       <label className="toggle card-head">
         <Switch checked={gate.enabled} onChange={(enabled) => onGate({ ...gate, enabled })} />
-        <span className="rule-name">Keep well-rated titles</span>
+        <span className="rule-name">{t("policyEditor.ratingFloor.cardTitle")}</span>
       </label>
-      <p className="help rule-help">
-        A title that clears {match === "any" ? "any one" : "all"} of these bars is kept, whatever it
-        scored.
-      </p>
+      <p className="help rule-help">{t("policyEditor.ratingFloor.clearsBars", { match })}</p>
       {gate.enabled && (
         <>
           {rules.length > 0 && (
@@ -535,15 +554,15 @@ function RatingFloorRow({
               <select
                 ref={addSourceRef}
                 value=""
-                aria-label="Add a rating source"
+                aria-label={t("policyEditor.ratingFloor.addSourceAriaLabel")}
                 onChange={(e) => {
                   if (e.target.value) addSource(e.target.value as RatingSource);
                 }}
               >
-                <option value="">Add a rating source…</option>
+                <option value="">{t("policyEditor.ratingFloor.addSourcePlaceholder")}</option>
                 {available.map((s) => (
                   <option key={s} value={s}>
-                    {RATING_META[s].label}
+                    {ratingSourceLabel(s)}
                   </option>
                 ))}
               </select>
@@ -554,10 +573,10 @@ function RatingFloorRow({
               <Segmented
                 value={match}
                 onChange={onMatch}
-                label="How many bars a title must clear"
+                label={t("policyEditor.ratingFloor.matchLabel")}
                 options={[
-                  ["any", "any one bar keeps it"],
-                  ["all", "every bar must clear"],
+                  ["any", t("policyEditor.ratingFloor.matchAny")],
+                  ["all", t("policyEditor.ratingFloor.matchAll")],
                 ]}
               />
             )}
@@ -570,12 +589,7 @@ function RatingFloorRow({
           ) : (
             <p className="help">{summary}</p>
           )}
-          {mediaType === "tv" && (
-            <p className="help">
-              TV has IMDb, plus any scores Plex carries for the show. Rotten Tomatoes and Metacritic
-              are often missing for TV, so those bars just won't match a show.
-            </p>
-          )}
+          {mediaType === "tv" && <p className="help">{t("policyEditor.ratingFloor.tvNote")}</p>}
         </>
       )}
     </div>
@@ -595,6 +609,7 @@ function RatingFloorRow({
  *  protection an operator can express. Hence "removal points", not "points".
  */
 function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
+  const { t } = useTranslation();
   const total = builtIn + yours;
   const left = 100 - total;
   const scale = Math.max(total, 100);
@@ -612,13 +627,19 @@ function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
       </span>
       <span className="budget-line">
         <span>
-          <strong>{total}</strong> of 100 removal points used
+          <Trans
+            i18nKey="policyEditor.pointsBudget.totalUsed"
+            values={{ total }}
+            components={{ totalNum: <strong /> }}
+          />
         </span>
         {left === 0 ? (
           <span className="muted">{pointsSplit(builtIn, yours)}</span>
         ) : (
           <span className={left < 0 ? "budget-over-text" : "muted"}>
-            {left < 0 ? `${-left} over` : `${left} left to give out`}
+            {left < 0
+              ? t("policyEditor.pointsBudget.over", { n: -left })
+              : t("policyEditor.pointsBudget.leftToGiveOut", { n: left })}
           </span>
         )}
       </span>
@@ -629,8 +650,8 @@ function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
       {left !== 0 && (
         <Notice tone="error" className="budget-notice" as="span" standing>
           {left < 0
-            ? `Your rules add up to ${total} points. Take ${-left} away before saving.`
-            : `Your rules add up to ${total} points. Give out the other ${left} before saving.`}
+            ? t("policyEditor.pointsBudget.overNotice", { total, n: -left })
+            : t("policyEditor.pointsBudget.underNotice", { total, n: left })}
         </Notice>
       )}
     </span>
@@ -641,7 +662,9 @@ function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
  *  when the operator has written no removal rules. Both arguments are point totals, not
  *  rule counts, so the two numbers always add up to the total shown beside them. */
 function pointsSplit(builtIn: number, yours: number): string {
-  return yours > 0 ? `${builtIn} built in, ${yours} yours` : "all on built-in signals";
+  return yours > 0
+    ? i18next.t("policyEditor.pointsBudget.split", { builtIn, yours })
+    : i18next.t("policyEditor.pointsBudget.allBuiltIn");
 }
 
 /** One signal: a plain-English label, its help, a slider, and the flat points it can add.
@@ -661,6 +684,7 @@ function SignalRow({
   shipped: SignalSetting | undefined;
   onChange: (s: SignalSetting) => void;
 }) {
+  const { t } = useTranslation();
   const meta = SIGNAL_META[signal.signal] ?? { label: titleCase(signal.signal), help: "" };
 
   return (
@@ -669,23 +693,25 @@ function SignalRow({
         <span className="rule-name">{meta.label}</span>
         <span className="rule-strength">
           {signal.weight === 0 ? (
-            <span className="muted">off</span>
+            <span className="muted">{t("policyEditor.signalRow.off")}</span>
           ) : (
             // Points, not a share, and no second number beside it: removal weights total
             // exactly 100, so the weight IS what it adds. "up to" is not hedging -- a
             // signal ramps, and adds its full number only at the far end of its range.
-            <>
-              <span className="muted">up to </span>
-              <strong>{signal.weight}</strong>
-              <span className="muted"> points</span>
-            </>
+            <Trans
+              i18nKey="policyEditor.signalRow.upToPoints"
+              values={{ weight: signal.weight }}
+              components={{
+                mutedLead: <span className="muted" />,
+                weightNum: <strong />,
+                mutedTail: <span className="muted" />,
+              }}
+            />
           )}
         </span>
       </div>
       {signal.weight === 0 ? (
-        <p className="help rule-help">
-          Its points go back into the pot. Give them to another signal before saving.
-        </p>
+        <p className="help rule-help">{t("policyEditor.signalRow.zeroWeightHelp")}</p>
       ) : (
         meta.help && <p className="help rule-help">{meta.help}</p>
       )}
@@ -694,7 +720,7 @@ function SignalRow({
         min={0}
         max={100}
         value={signal.weight}
-        aria-label={`How much "${meta.label}" matters`}
+        aria-label={t("policyEditor.signalRow.weightAriaLabel", { label: meta.label })}
         onChange={(e) => onChange({ ...signal, weight: Number(e.target.value) })}
       />
       {signal.weight > 0 && (
@@ -748,6 +774,7 @@ function SignalRamp({
   shipped: SignalSetting | undefined;
   onChange: (s: SignalSetting) => void;
 }) {
+  const { t } = useTranslation();
   const units = rampUnits(signal.signal);
   const strip = rampStrip(signal.signal, signal.floor, signal.saturate_at);
   if (!units) return null;
@@ -802,7 +829,7 @@ function SignalRamp({
             <span>{units.nearLabel}</span>
             {box(
               signal.saturate_at - signal.floor,
-              `Where "${label}" stops adding points`,
+              t("policyEditor.signalRamp.stopsAdding", { label }),
               (stored) =>
                 // Floor back to zero with it: the pair carries one degree of freedom, and
                 // leaving a stale floor behind would keep a second number in the body that
@@ -819,7 +846,7 @@ function SignalRamp({
               <span>{units.nearLabel}</span>
               {box(
                 signal.floor,
-                `Where "${label}" starts adding points`,
+                t("policyEditor.signalRamp.startsAdding", { label }),
                 // The server refuses `floor >= saturate_at` outright, so the box cannot
                 // offer it: a policy that will not save is not a state to let an operator
                 // type their way into and discover at the save bar.
@@ -835,7 +862,7 @@ function SignalRamp({
               <span>{units.farLabel}</span>
               {box(
                 signal.saturate_at,
-                `Where "${label}" adds all its points`,
+                t("policyEditor.signalRamp.addsAll", { label }),
                 (stored) =>
                   onChange({ ...signal, saturate_at: Math.max(stored, signal.floor + 1) }),
                 { min: units.fromStored(signal.floor + 1) },
@@ -865,7 +892,7 @@ function SignalRamp({
               // threshold-naming test above this file's fixtures exists for. The name leads
               // with the visible text, so it still satisfies label-in-name for anyone
               // speaking it, and adds the signal it belongs to.
-              aria-label={`Set to default: ${label}`}
+              aria-label={t("policyEditor.signalRamp.setDefaultAriaLabel", { label })}
               onClick={() =>
                 onChange({
                   ...signal,
@@ -874,7 +901,7 @@ function SignalRamp({
                 })
               }
             >
-              Set to default
+              {t("policyEditor.signalRamp.setDefaultButton")}
             </button>
           </p>
         )}
@@ -933,6 +960,7 @@ function SignalRamp({
  *  was in flight, or fell silent when the read failed, would be a confident answer to a
  *  question nobody answered -- which is the whole failure this card exists to fix. */
 function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: number | null }) {
+  const { t } = useTranslation();
   const units = rampUnits(signal.signal);
   // Which title to describe. Half way up the ramp, because that is the only choice that
   // MOVES with the setting: an example pinned to an end reads the same whatever the operator
@@ -978,14 +1006,20 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
     <>
       <p className="ramp-said">
         {failed ? (
-          "Reaper couldn't work that one out. Your setting is fine, this is just the preview."
+          t("policyEditor.signalProbe.failed")
         ) : said ? (
-          <>
-            {said.lead} <b>{said.value}</b> adds <b>{said.points}</b> of these <b>{said.weight}</b>{" "}
-            points.
-          </>
+          <Trans
+            i18nKey="policyEditor.signalProbe.said"
+            values={{
+              lead: said.lead,
+              value: said.value,
+              points: said.points,
+              weight: said.weight,
+            }}
+            components={{ valueNum: <b />, pointsNum: <b />, weightNum: <b /> }}
+          />
         ) : (
-          "Working out what that earns…"
+          t("policyEditor.signalProbe.pending")
         )}
       </p>
       {/* Only where the mirror actually caps this signal. A history deeper than the far end
@@ -993,8 +1027,9 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
           that is already long. */}
       {capped && (
         <p className="help rule-help">
-          {`Your watch history goes back ${humanDays(Math.round(reachDays ?? 0))}, and nothing ` +
-            `can show as untouched for longer than that.`}
+          {t("policyEditor.signalProbe.historyCap", {
+            span: humanDays(Math.round(reachDays ?? 0)),
+          })}
         </p>
       )}
     </>
@@ -1023,9 +1058,15 @@ function SeasonAdvisory({ keepLast, scope }: { keepLast: number; scope: "all" | 
   const bounded = scope === "requested";
   return (
     <p className={`help ${!bounded && covered === data.total_shows ? "help-warn" : ""}`}>
-      With this setting, {bounded ? "up to " : null}
-      <strong>{count(covered)}</strong> of {count(data.total_shows)} shows have no season eligible
-      for removal (from your last scan).
+      <Trans
+        i18nKey="policyEditor.seasonAdvisory.message"
+        values={{
+          bounded: bounded ? "yes" : "no",
+          covered: count(covered),
+          total: count(data.total_shows),
+        }}
+        components={{ coveredNum: <strong /> }}
+      />
     </p>
   );
 }
@@ -1052,49 +1093,57 @@ function SeasonAdvisory({ keepLast, scope }: { keepLast: number; scope: "all" | 
 type RepairNotice = {
   tone: "error" | "warn";
   where: "top" | "savebar";
-  text: string;
 };
 
 export const REPAIR_NOTICES: Record<string, RepairNotice> = {
-  fell_back: {
-    tone: "error",
-    where: "top",
-    text: "Your saved policy couldn't be read, so this shows the starting one instead. Nothing has changed on your server. Check the values below, then save to replace it.",
-  },
-  rating_rules_restored: {
-    tone: "warn",
-    where: "top",
-    text: "Keep well-rated titles had stopped keeping anything. Your saved rating is back below, unsaved. Reaper won't remove anything until you check it and save.",
-  },
-  lists_migrated: {
-    tone: "warn",
-    where: "top",
-    text: "Your protected lists moved to Settings → Lists, and the keep rules below now do the protecting. The same titles stay covered. Reaper won't remove anything until you save this.",
-  },
-  rescaled: {
-    tone: "warn",
-    where: "savebar",
-    text: "Your points have been spread to add up to 100. Nothing has changed on your server yet. Each rule keeps the same share it had, so your scores stay where they are. Review and save.",
-  },
+  fell_back: { tone: "error", where: "top" },
+  rating_rules_restored: { tone: "warn", where: "top" },
+  lists_migrated: { tone: "warn", where: "top" },
+  rescaled: { tone: "warn", where: "savebar" },
 };
 
-/** What an id this build does not know renders as. It says the one thing true of every
- *  repair, so a server newer than this bundle still tells the operator why the page is
- *  dirty and what clears it. */
-const UNKNOWN_REPAIR: RepairNotice = {
-  tone: "warn",
-  where: "top",
-  text: "Reaper had to change your saved policy to load it, so what's below is not what's stored. Check it and save.",
-};
+/** The repair's sentence, read from the catalog at call time rather than baked into the
+ *  frozen table above -- same shape as `jobMeta` in `JobsPanel.tsx`, and for the same
+ *  reason: a language change is picked up the next render. Falls back to the one sentence
+ *  true of every repair this build does not recognize, so a server newer than this bundle
+ *  still tells the operator why the page is dirty and what clears it. */
+function repairText(id: string): string {
+  switch (id) {
+    case "fell_back":
+      return i18next.t("policyEditor.repairs.fellBack");
+    case "rating_rules_restored":
+      return i18next.t("policyEditor.repairs.ratingRulesRestored");
+    case "lists_migrated":
+      return i18next.t("policyEditor.repairs.listsMigrated");
+    case "rescaled":
+      return i18next.t("policyEditor.repairs.rescaled");
+    default:
+      return i18next.t("policyEditor.repairs.unknown");
+  }
+}
 
-const SECTIONS = [
-  { id: "flags", label: "What flags a title" },
-  { id: "kept", label: "What's always kept" },
-  { id: "pace", label: "Pace and limits" },
-  { id: "deletion", label: "Deletion" },
-] as const;
-export type PolicySectionId = (typeof SECTIONS)[number]["id"];
+/** What an id this build does not know renders as -- the one thing true of every repair. */
+const UNKNOWN_REPAIR: RepairNotice = { tone: "warn", where: "top" };
+
+const SECTION_IDS = ["flags", "kept", "pace", "deletion"] as const;
+export type PolicySectionId = (typeof SECTION_IDS)[number];
 type SectionId = PolicySectionId;
+
+/** The section's nav-rail and heading text, read at call time rather than baked into a
+ *  frozen table -- same shape as `jobMeta` in `JobsPanel.tsx`. Both the rail button and the
+ *  section's own `<h3>` name the same section, so they share this one declaration. */
+function sectionLabel(id: SectionId): string {
+  switch (id) {
+    case "flags":
+      return i18next.t("policyEditor.sections.flags");
+    case "kept":
+      return i18next.t("policyEditor.sections.kept");
+    case "pace":
+      return i18next.t("policyEditor.sections.pace");
+    case "deletion":
+      return i18next.t("policyEditor.sections.deletion");
+  }
+}
 
 /** A mount condition one of the anchors below sits under. An anchor claims its fields only
  *  while its guard holds, so on the other branch they fall to the catch-all stack instead of
@@ -1218,17 +1267,21 @@ function rewatchYears(days: number): string {
 
 /** The edge above, with its unit: "1 year", "1.5 years", "5 years". */
 function rewatchYearsPhrase(days: number): string {
-  const label = rewatchYears(days);
-  return `${label} ${label === "1" ? "year" : "years"}`;
+  const years = Math.round((days / 365) * 2) / 2;
+  return i18next.t("policyEditor.rewatch.yearsPhrase", { label: rewatchYears(days), n: years });
 }
 
 /** One ladder row's dormancy range in plain words: "sat under 1 year", "1 to 1.5 years",
  *  "over 5 years". */
 function rewatchRangeLabel(lo: number, hi: number | null): string {
-  if (hi === null) return `over ${rewatchYearsPhrase(lo)}`;
+  if (hi === null)
+    return i18next.t("policyEditor.rewatch.rangeOver", { phrase: rewatchYearsPhrase(lo) });
   return lo === 0
-    ? `sat under ${rewatchYearsPhrase(hi)}`
-    : `${rewatchYears(lo)} to ${rewatchYearsPhrase(hi)}`;
+    ? i18next.t("policyEditor.rewatch.rangeUnder", { phrase: rewatchYearsPhrase(hi) })
+    : i18next.t("policyEditor.rewatch.rangeTo", {
+        lo: rewatchYears(lo),
+        phrase: rewatchYearsPhrase(hi),
+      });
 }
 
 /** Why the ladder or the echo cannot show a real number right now, or `null` when the fit
@@ -1244,13 +1297,12 @@ function rewatchFitStatus(
   isError: boolean,
   mediaType: "movie" | "tv",
 ): string | null {
-  if (isPending) return "Reading your library's rewatch numbers…";
-  if (isError) return "Couldn't read your library's rewatch numbers.";
+  if (isPending) return i18next.t("policyEditor.rewatch.pending");
+  if (isError) return i18next.t("policyEditor.rewatch.error");
   if (!fit || fit.blocks.length === 0) {
-    const noun = mediaType === "tv" ? "shows" : "titles";
     return fit && fit.total_items > 0
-      ? `Not enough scanned ${noun} yet to show your library's own numbers.`
-      : "Run a scan first to see your library's own numbers.";
+      ? i18next.t("policyEditor.rewatch.notEnoughScanned", { mediaType })
+      : i18next.t("policyEditor.rewatch.runScanFirst");
   }
   return null;
 }
@@ -1296,7 +1348,6 @@ function rewatchEchoSentence(
   thresholdPct: number,
   mediaType: "movie" | "tv",
 ): string {
-  const noun = mediaType === "tv" ? "shows" : "titles";
   // Every clearing block counts, not just the leading run: the gate fires per block, and
   // the merge only makes point RATES monotone -- an upper bound can invert across blocks
   // of very different cohort sizes, and an echo that stopped at the first miss would then
@@ -1306,7 +1357,10 @@ function rewatchEchoSentence(
   const cleared = sorted.filter((block) => block.upper_bound_pct >= thresholdPct);
   const protectedItems = cleared.reduce((sum, block) => sum + block.items, 0);
   if (cleared.length === 0) {
-    return `At ${thresholdPct}%, nothing in your library clears that bar yet, 0 of ${count(fit.total_items)}.`;
+    return i18next.t("policyEditor.rewatch.echoEmpty", {
+      pct: thresholdPct,
+      total: count(fit.total_items),
+    });
   }
   const last = cleared[cleared.length - 1]!;
   // The "under about N years" clause is only true of a contiguous leading run; on the rare
@@ -1314,13 +1368,24 @@ function rewatchEchoSentence(
   const contiguous = cleared.length === sorted.indexOf(last) + 1;
   const range =
     last.hi_days === null
-      ? "at any age"
+      ? i18next.t("policyEditor.rewatch.anyAge")
       : contiguous
-        ? `unwatched under about ${rewatchYearsPhrase(last.hi_days)}`
+        ? i18next.t("policyEditor.rewatch.underAbout", { phrase: rewatchYearsPhrase(last.hi_days) })
         : null;
   return range === null
-    ? `At ${thresholdPct}%, this protects ${count(protectedItems)} of ${count(fit.total_items)} ${noun}.`
-    : `At ${thresholdPct}%, this protects ${noun} ${range}, ${count(protectedItems)} of ${count(fit.total_items)}.`;
+    ? i18next.t("policyEditor.rewatch.echoNoRange", {
+        pct: thresholdPct,
+        mediaType,
+        protectedCount: count(protectedItems),
+        total: count(fit.total_items),
+      })
+    : i18next.t("policyEditor.rewatch.echoWithRange", {
+        pct: thresholdPct,
+        mediaType,
+        range,
+        protectedCount: count(protectedItems),
+        total: count(fit.total_items),
+      });
 }
 
 export function PolicyEditor({
@@ -1351,6 +1416,7 @@ export function PolicyEditor({
   /** Reported on a rail click, on a jump, and as the page is scrolled past a heading. */
   onSectionChange: (next: PolicySectionId) => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   // Save and Discard both unmount the bar holding the pressed button (#173). Declared here,
   // above the `if (!draft)` return further down, because a hook below an early return is a
@@ -1417,7 +1483,7 @@ export function PolicyEditor({
   const savePace = useMutation({
     mutationFn: (s: ProfileSettings) => api.saveProfile(s),
     onSuccess: (s) => {
-      announce("Pace and limits saved.");
+      announce(t("policyEditor.announce.paceSaved"));
       setPace(s);
       void queryClient.invalidateQueries({ queryKey: ["profile"] });
       // The Reap breakdown reads grace_days (its countdown and unmeasured lines), so a saved
@@ -1579,7 +1645,11 @@ export function PolicyEditor({
       // using a screen reader cannot perceive an absence: no message, then a lost focus point.
       // Named for the half that saved, because the other half saves separately and its own
       // sentence follows. On the server's answer, never on the press (rule 85).
-      announce(savedType === "tv" ? "TV policy saved." : "Movie policy saved.");
+      announce(
+        savedType === "tv"
+          ? t("policyEditor.announce.tvPolicySaved")
+          : t("policyEditor.announce.moviePolicySaved"),
+      );
       queryClient.setQueryData(["policy", savedType], policy);
       // Re-seed the draft from the server's response so the dirty check compares
       // canonical forms. The server can order fields differently from the draft the
@@ -1627,7 +1697,10 @@ export function PolicyEditor({
   // unknown-id fallback so a server newer than this bundle still says something. Server
   // order is kept: it is the order the repairs were applied.
   const repairNotices = useMemo(() => {
-    const resolved = repairs.map((id) => ({ id, notice: REPAIR_NOTICES[id] ?? UNKNOWN_REPAIR }));
+    const resolved = repairs.map((id) => ({
+      id,
+      notice: { ...(REPAIR_NOTICES[id] ?? UNKNOWN_REPAIR), text: repairText(id) },
+    }));
     return {
       top: resolved.filter((r) => r.notice.where === "top"),
       savebar: resolved.filter((r) => r.notice.where === "savebar"),
@@ -1721,7 +1794,7 @@ export function PolicyEditor({
   const ready = draft !== null;
   useEffect(() => {
     if (!ready) return;
-    const heads = SECTIONS.map((s) => [s.id, sectionRefs[s.id].current] as const).filter(
+    const heads = SECTION_IDS.map((id) => [id, sectionRefs[id].current] as const).filter(
       (pair): pair is [SectionId, HTMLHeadingElement] => pair[1] !== null,
     );
     const first = heads[0];
@@ -1780,9 +1853,9 @@ export function PolicyEditor({
   // leave the whole workspace saying "Loading…" for good. Say what happened instead.
   if (!draft) {
     if (policyFailed) {
-      return <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>;
+      return <Notice tone="error">{t("policyEditor.load.failedWithReload")}</Notice>;
     }
-    return <p className="muted">Loading…</p>;
+    return <p className="muted">{t("policyEditor.loading")}</p>;
   }
 
   const update = (patch: Partial<PolicyBody>) => setDraft({ ...draft, ...patch });
@@ -1831,37 +1904,29 @@ export function PolicyEditor({
   // section, and a direction that survives one layout change is worth less than the words already
   // on screen (#178).
   const policyHeldBecause =
-    pointsLeft !== 0 ? "the points add up to 100" : 'the "Can\'t save this" problem is fixed';
+    pointsLeft !== 0
+      ? t("policyEditor.savebar.becausePoints")
+      : t("policyEditor.savebar.becauseInvalid");
 
-  const kind = mediaType === "tv" ? "TV" : "movie";
-  const otherKind = mediaType === "tv" ? "movie" : "TV";
+  const kind =
+    mediaType === "tv" ? t("policyEditor.mediaKind.tv") : t("policyEditor.mediaKind.movie");
+  const otherKind =
+    mediaType === "tv" ? t("policyEditor.mediaKind.movie") : t("policyEditor.mediaKind.tv");
 
   // The rewatch card's lane-dependent copy, both halves. `bar` and `barLabel` are one
   // sentence in two places, the span and the screen reader's label, so they are written
   // together.
-  const rewatchCopy =
-    mediaType === "tv"
-      ? {
-          name: "Keep shows most likely to be rewatched",
-          help: "A show people here keep coming back to will probably be watched again. It only lowers the score.",
-          bar: "watched again by anyone at least",
-          barLabel: "Watched again by anyone at least",
-          holdName: "Keep shows most likely to be rewatched above a percentage",
-          holdHelp:
-            "Keeps a show outright, whatever it scored, when its chance of being watched again is at or above your percentage.",
-        }
-      : {
-          name: "Keep titles most likely to be rewatched",
-          help: "A title people here keep coming back to will probably be watched again. It only lowers the score.",
-          bar: "watched by anyone at least",
-          barLabel: "Watched by anyone at least",
-          holdName: "Keep titles most likely to be rewatched above a percentage",
-          holdHelp:
-            "Keeps a title outright, whatever it scored, when its chance of being watched again is at or above your percentage.",
-        };
+  const rewatchCopy = {
+    name: t("policyEditor.rewatchCopy.name", { mediaType }),
+    help: t("policyEditor.rewatchCopy.help", { mediaType }),
+    bar: t("policyEditor.rewatchCopy.bar", { mediaType }),
+    barLabel: t("policyEditor.rewatchCopy.barLabel", { mediaType }),
+    holdName: t("policyEditor.rewatchCopy.holdName", { mediaType }),
+    holdHelp: t("policyEditor.rewatchCopy.holdHelp", { mediaType }),
+  };
   const preset = activePreset(draft);
   const presetHelp =
-    PRESETS.find((p) => p.id === preset)?.help ?? "Custom: your own tuning, not a preset.";
+    PRESETS.find((p) => p.id === preset)?.help ?? t("policyEditor.presetHelp.custom");
 
   const applyPreset = (p: (typeof PRESETS)[number]) => {
     const mix = DEFAULT_WEIGHTS[mediaType];
@@ -1894,14 +1959,16 @@ export function PolicyEditor({
   const dormancy = draft.gates.find((g) => g.gate === "min_dormancy" && g.enabled);
   const popularity = draft.gates.find((g) => g.gate === "server_popularity" && g.enabled);
   const keepClauses = [
-    popularity ? `watched by ${popularity.threshold || 1}+ people` : null,
+    popularity ? t("policyEditor.intent.watchedByPeople", { n: popularity.threshold || 1 }) : null,
     // "Untouched", never "played": this gate's clock runs from the last play only when
     // there IS one, and otherwise from the day the file arrived (engine/dormancy.py's
     // reference_instant). It therefore keeps titles nobody has ever played, so a clause
     // saying "played in the last N" was false about exactly the items it protects most --
     // the same claim the review queue's chip used to make, on the sentence this comment
     // block below calls the one an operator scans before arming (rules 21/72).
-    dormancy ? `untouched for less than ${humanDays(dormancy.threshold)}` : null,
+    dormancy
+      ? t("policyEditor.intent.untouchedLessThan", { span: humanDays(dormancy.threshold) })
+      : null,
   ].filter((c): c is string => c !== null);
   // TV's protections are built the same way, and for the same reason: every clause is
   // pushed only when its own switch is on. The line used to assert two of them flat, so
@@ -1915,10 +1982,10 @@ export function PolicyEditor({
   // protections themselves are listed in full a screen below.
   const tvKeepClauses = [
     draft.keep_last_seasons > 0
-      ? `the newest ${draft.keep_last_seasons === 1 ? "season" : `${draft.keep_last_seasons} seasons`} of a show`
+      ? t("policyEditor.intent.newestSeasons", { n: draft.keep_last_seasons })
       : null,
-    draft.keep_first_season ? "a show's first season" : null,
-    draft.keep_in_progress ? "anyone's mid-binge" : null,
+    draft.keep_first_season ? t("policyEditor.intent.firstSeason") : null,
+    draft.keep_in_progress ? t("policyEditor.intent.midBinge") : null,
   ].filter((c): c is string => c !== null);
   // Branch on the caps switch: with caps off the executor skips the per-run and rolling
   // checks entirely, so claiming a hard "at most N per run" here would contradict the
@@ -1931,11 +1998,16 @@ export function PolicyEditor({
   const paceClause = paceFailed
     ? null
     : !pace
-      ? "removes only within your caps"
+      ? t("policyEditor.intent.withinCaps")
       : pace.caps_enabled
-        ? `removes at most ${count(pace.max_items_per_run)} titles or ${bytes(pace.max_bytes_per_run)} per run`
-        : "removes with no per-run limit until you turn limits back on";
-  const paceTail = paceClause ? `, and ${paceClause}.` : ".";
+        ? t("policyEditor.intent.removesAtMost", {
+            items: count(pace.max_items_per_run),
+            size: bytes(pace.max_bytes_per_run),
+          })
+        : t("policyEditor.intent.noLimit");
+  const paceTail = paceClause
+    ? t("policyEditor.intent.paceTailWithClause", { clause: paceClause })
+    : ".";
 
   return (
     <section className="editor">
@@ -1948,17 +2020,13 @@ export function PolicyEditor({
           <div className="pc-left">
             <div className="pc-title">
               <span className={`kind-badge kind-${mediaType === "tv" ? "sonarr" : "radarr"}`}>
-                {mediaType === "tv" ? "Sonarr" : "Radarr"}
+                {t("policyEditor.header.badge", { mediaType })}
               </span>
               <h2 ref={bar.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
-                {mediaType === "tv" ? "TV policy" : "Movies policy"}
+                {t("policyEditor.header.title", { mediaType })}
               </h2>
             </div>
-            <p className="blurb pc-sub">
-              {mediaType === "tv"
-                ? "How Reaper judges TV: seasons, not whole shows. Tuned separately from movies."
-                : "How Reaper judges your movies. TV is tuned separately, with the toggle."}
-            </p>
+            <p className="blurb pc-sub">{t("policyEditor.header.blurb", { mediaType })}</p>
           </div>
           <div className="policy-head-actions">
             {/* The request is refused into the two-step confirm when the draft has edits. */}
@@ -1966,15 +2034,15 @@ export function PolicyEditor({
               fill
               value={mediaType}
               onChange={confirmSwitch.request}
-              label="Which policy"
+              label={t("policyEditor.header.whichPolicyLabel")}
               options={[
-                ["movie", "Movies"],
-                ["tv", "TV"],
+                ["movie", t("policyEditor.header.moviesOption")],
+                ["tv", t("policyEditor.header.tvOption")],
               ]}
             />
             <DocLink doc="understanding-policy" className="doc-help">
               <HelpIcon />
-              Help
+              {t("policyEditor.header.helpLink")}
             </DocLink>
           </div>
         </div>
@@ -1996,29 +2064,36 @@ export function PolicyEditor({
         {confirmSwitch.pending !== null && (
           <SwitchConfirm
             nonce={confirmSwitch.nonce}
-            message={`You have unsaved ${kind} policy changes. Switching to ${
-              confirmSwitch.pending === "tv" ? "TV" : "Movies"
-            } discards them.`}
+            message={t("policyEditor.switchConfirm.message", {
+              kind,
+              pending:
+                confirmSwitch.pending === "tv"
+                  ? t("policyEditor.header.tvOption")
+                  : t("policyEditor.header.moviesOption"),
+            })}
             onDiscard={confirmSwitch.discard}
             onKeep={confirmSwitch.keep}
           />
         )}
 
-        <nav className="settings-nav policy-rail" aria-label="Policy sections">
-          {SECTIONS.map((s) => (
+        <nav
+          className="settings-nav policy-rail"
+          aria-label={t("policyEditor.sections.navAriaLabel")}
+        >
+          {SECTION_IDS.map((id) => (
             <button
-              key={s.id}
-              className={section === s.id ? "settings-tab active" : "settings-tab"}
+              key={id}
+              className={section === id ? "settings-tab active" : "settings-tab"}
               // Reserve the bold (active) width so switching sections never shifts the rail.
-              data-label={s.label}
+              data-label={sectionLabel(id)}
               // The section being read is stated, not just colored, the same as the
               // masthead and the settings rail. True on a scroll as well as a click: the
               // observer above keeps activeSection on whatever heading has reached the
               // read line.
-              aria-current={section === s.id ? "page" : undefined}
-              onClick={() => goToSection(s.id)}
+              aria-current={section === id ? "page" : undefined}
+              onClick={() => goToSection(id)}
             >
-              {s.label}
+              {sectionLabel(id)}
             </button>
           ))}
         </nav>
@@ -2028,22 +2103,26 @@ export function PolicyEditor({
           <p className="intent-summary">
             {mediaType === "tv" ? (
               <>
-                Right now Reaper flags a <strong>season</strong> once it scores{" "}
+                {t("policyEditor.intent.tvLead")}
+                <strong>{t("policyEditor.intent.seasonWord")}</strong>
+                {t("policyEditor.intent.scoresOnce")}
                 <strong>{draft.condemn_at} / 100</strong>
                 {tvKeepClauses.length > 0 && (
                   <>
-                    , always keeps <strong>{andList(tvKeepClauses)}</strong>
+                    {t("policyEditor.intent.alwaysKeeps")}
+                    <strong>{andList(tvKeepClauses)}</strong>
                   </>
                 )}
                 {paceTail}
               </>
             ) : (
               <>
-                Right now Reaper flags a movie once it scores{" "}
+                {t("policyEditor.intent.movieLead")}
                 <strong>{draft.condemn_at} / 100</strong>
                 {keepClauses.length > 0 && (
                   <>
-                    , keeps anything <strong>{keepClauses.join(" or ")}</strong>
+                    {t("policyEditor.intent.keepsAnything")}
+                    <strong>{keepClauses.join(t("policyEditor.intent.orJoiner"))}</strong>
                   </>
                 )}
                 {paceTail}
@@ -2051,7 +2130,7 @@ export function PolicyEditor({
             )}
           </p>
           <div className="intent-row">
-            <span className="muted intent-label">Starting point</span>
+            <span className="muted intent-label">{t("policyEditor.starting.label")}</span>
             {/* Hand-tuned drafts match no preset, so "custom" matches no option and no
                 pill reads as active -- the same honesty the badge has always had. */}
             <Segmented
@@ -2060,37 +2139,35 @@ export function PolicyEditor({
                 const p = PRESETS.find((x) => x.id === id);
                 if (p) applyPreset(p);
               }}
-              label="Starting point"
+              label={t("policyEditor.starting.label")}
               options={PRESETS.map((p) => [p.id, p.label] as const)}
             />
           </div>
           <p className="help">
-            {presetHelp} Picking one resets the built-in points and rescales your own rules to fit
-            100. Your scores stay where they are.
+            {presetHelp} {t("policyEditor.starting.presetHelpTail")}
           </p>
           {staged !== null && (
             <p className="help">
-              <strong>Staged, not saved.</strong> Review the changes below, then Save changes in the
-              bar at the bottom.
+              <Trans
+                i18nKey="policyEditor.starting.stagedNotice"
+                components={{ strong: <strong /> }}
+              />
             </p>
           )}
         </div>
 
         {/* ------------------------------------------------------------------ */}
         <h3 ref={sectionRefs.flags} className="policy-section">
-          What flags a title
+          {t("policyEditor.sections.flags")}
           <DocLink doc="understanding-policy" anchor="signals" className="doc-learn">
-            Learn more
+            {t("policyEditor.learnMore")}
           </DocLink>
         </h3>
-        <p className="blurb">
-          The reasons to believe nobody will watch it again. Nothing here removes a title on its
-          own. The protections below can always overrule the score.
-        </p>
+        <p className="blurb">{t("policyEditor.flags.blurb")}</p>
 
         <label className="field">
           <span className="field-label">
-            Put a title on the list once it scores
+            {t("policyEditor.flags.condemnAtLabel")}
             <strong>{draft.condemn_at} / 100</strong>
           </span>
           <input
@@ -2101,23 +2178,20 @@ export function PolicyEditor({
             // the label AND the help run together -- read out in full on every value change, of
             // the one control that sets the score a title is condemned at. The signal sliders
             // above already name themselves this way.
-            aria-label="Put a title on the list once it scores"
+            aria-label={t("policyEditor.flags.condemnAtLabel")}
             // The warning about this threshold is rendered directly below and was reachable
             // only by leaving the slider to go looking for it (#174).
             aria-describedby={warningsDescribing("condemn_at", warningsAt("condemn_at"))}
             value={draft.condemn_at}
             onChange={(e) => update({ condemn_at: Number(e.target.value) })}
           />
-          <span className="help">
-            The higher you set this, the more sure Reaper has to be before it flags a title.
-            Protections below still win. This only decides among titles nothing is keeping.
-          </span>
+          <span className="help">{t("policyEditor.flags.condemnAtHelp")}</span>
         </label>
         <WarnBlock anchor="condemn_at" warnings={warningsAt("condemn_at")} />
 
         <label className="field">
           <span className="field-label">
-            Judge a title only when there's enough to go on
+            {t("policyEditor.flags.coverageFloorLabel")}
             <strong>{Math.round(draft.coverage_floor_bp / 100)}%</strong>
           </span>
           <input
@@ -2127,14 +2201,11 @@ export function PolicyEditor({
             step={500}
             // Same reason as the threshold slider above (rule 72): the wrapping <label> takes in
             // the help text, so the name was the whole paragraph.
-            aria-label="Judge a title only when there's enough to go on"
+            aria-label={t("policyEditor.flags.coverageFloorLabel")}
             value={draft.coverage_floor_bp}
             onChange={(e) => update({ coverage_floor_bp: Number(e.target.value) })}
           />
-          <span className="help">
-            Reaper judges a title on the reasons below. If it can't check enough of them, it holds
-            the title in Limbo for you to decide.
-          </span>
+          <span className="help">{t("policyEditor.flags.coverageFloorHelp")}</span>
         </label>
 
         <ul className="rule-list">
@@ -2161,10 +2232,10 @@ export function PolicyEditor({
             already in a labeled box above, spoken. */}
         <p className="ramp-key" aria-hidden="true">
           <span>
-            <i className="earns" aria-hidden="true" /> adds points, deepest where it adds them all
+            <i className="earns" aria-hidden="true" /> {t("policyEditor.rampKey.earns")}
           </span>
           <span>
-            <i className="alone" aria-hidden="true" /> left alone
+            <i className="alone" aria-hidden="true" /> {t("policyEditor.rampKey.alone")}
           </span>
         </p>
         <WarnBlock anchor="signals" warnings={warningsAt("signals")} />
@@ -2180,14 +2251,13 @@ export function PolicyEditor({
 
         {/* ------------------------------------------------------------------ */}
         <h3 ref={sectionRefs.kept} className="policy-section">
-          What's always kept
+          {t("policyEditor.sections.kept")}
           <DocLink doc="understanding-policy" anchor="protections" className="doc-learn">
-            Learn more
+            {t("policyEditor.learnMore")}
           </DocLink>
         </h3>
         <p className="blurb">
-          Protections. Any one of these keeps a title no matter how it scored, and every one can
-          only ever <em>keep</em> a file, never mark one for removal.
+          <Trans i18nKey="policyEditor.protections.blurb" components={{ em: <em /> }} />
         </p>
 
         <ul className="rule-list" ref={protections.ref as RefObject<HTMLUListElement>}>
@@ -2252,19 +2322,19 @@ export function PolicyEditor({
 
         {mediaType === "tv" && (
           <div className="season-card">
-            <h3>TV season protection</h3>
+            <h3>{t("policyEditor.season.cardTitle")}</h3>
             <ul className="rule-list">
               <li className="rule-row">
-                <span className="rule-name">Always keep the newest seasons</span>
+                <span className="rule-name">{t("policyEditor.season.keepNewestLabel")}</span>
                 <div className="rule-control">
-                  <span>the newest</span>
+                  <span>{t("policyEditor.season.theNewest")}</span>
                   <FixedQuantity
                     value={draft.keep_last_seasons}
-                    suffix={draft.keep_last_seasons === 1 ? "season" : "seasons"}
+                    suffix={t("policyEditor.units.season", { n: draft.keep_last_seasons })}
                     min={0}
                     max={1000}
                     width="narrow"
-                    ariaLabel="Newest seasons to always keep"
+                    ariaLabel={t("policyEditor.season.keepNewestAriaLabel")}
                     // This anchor's block serves two controls, so each takes only the warnings
                     // about its own field. Handed the whole list, this box spoke the complaint
                     // about the scope control below -- a sentence ending "or switch this to
@@ -2274,38 +2344,31 @@ export function PolicyEditor({
                     ])}
                     onChange={(v) => update({ keep_last_seasons: Math.max(0, v) })}
                   />
-                  <span>of every show</span>
+                  <span>{t("policyEditor.season.ofEveryShow")}</span>
                 </div>
-                <p className="help rule-help">
-                  The most recent seasons of every show are kept outright, whatever they score.
-                  There is no upper limit.
-                </p>
+                <p className="help rule-help">{t("policyEditor.season.keepNewestHelp")}</p>
                 <SeasonAdvisory keepLast={draft.keep_last_seasons} scope={draft.keep_last_scope} />
               </li>
 
               <li className="rule-row">
-                <span className="rule-name">Apply that to</span>
+                <span className="rule-name">{t("policyEditor.season.applyToLabel")}</span>
                 <div className="rule-control">
                   <Segmented
                     value={draft.keep_last_scope}
                     onChange={(keep_last_scope) => update({ keep_last_scope })}
-                    label="Keep-last scope"
+                    label={t("policyEditor.season.scopeLabel")}
                     // The other half of `keep_last`: the warning about "Requested only" with no
                     // Seerr connected is fixed from HERE, and this is the control it names.
                     describedBy={warningsDescribing("keep_last", warningsAt("keep_last"), [
                       "keep_last_scope",
                     ])}
                     options={[
-                      ["all", "All shows"],
-                      ["requested", "Requested only"],
+                      ["all", t("policyEditor.season.scopeAllOption")],
+                      ["requested", t("policyEditor.season.scopeRequestedOption")],
                     ]}
                   />
                 </div>
-                <p className="help rule-help">
-                  “Requested only” lets older seasons of shows nobody asked for be removed, while
-                  still keeping the recent seasons of requested shows. When Reaper can't tell
-                  whether a show was requested, it keeps the seasons to be safe.
-                </p>
+                <p className="help rule-help">{t("policyEditor.season.scopeHelp")}</p>
               </li>
 
               <li className="rule-row">
@@ -2314,9 +2377,9 @@ export function PolicyEditor({
                     checked={draft.keep_first_season}
                     onChange={(keep_first_season) => update({ keep_first_season })}
                   />
-                  <span className="rule-name">Always keep a show's first season</span>
+                  <span className="rule-name">{t("policyEditor.season.firstSeasonLabel")}</span>
                 </label>
-                <p className="help rule-help">So a new viewer can still start the show.</p>
+                <p className="help rule-help">{t("policyEditor.season.firstSeasonHelp")}</p>
               </li>
 
               <li className="rule-row">
@@ -2325,56 +2388,45 @@ export function PolicyEditor({
                     checked={draft.keep_in_progress}
                     onChange={(keep_in_progress) => update({ keep_in_progress })}
                   />
-                  <span className="rule-name">Keep seasons someone is partway through</span>
+                  <span className="rule-name">{t("policyEditor.season.midBingeLabel")}</span>
                 </label>
-                <p className="help rule-help">
-                  Reaper holds the season a viewer is midway into, plus the next one once they
-                  finish it. Turn this off and being mid-show protects nothing.
-                </p>
+                <p className="help rule-help">{t("policyEditor.season.midBingeHelp")}</p>
                 {draft.keep_in_progress && (
                   <>
                     <div className="rule-control">
-                      <span>let go of their place after</span>
+                      <span>{t("policyEditor.season.holdAfterLabel")}</span>
                       <FixedQuantity
                         value={draft.in_progress_hold_days}
-                        suffix="days"
+                        suffix={t("policyEditor.units.days")}
                         min={0}
                         // Matches `PolicyIn`'s ceiling, so the box clamps instead of the
                         // save coming back 422 (rule 131). Far past any watch history: 0
                         // is what "hold forever" is spelled as.
                         max={36500}
                         width="narrow"
-                        ariaLabel="Days without watching before a held place is released"
+                        ariaLabel={t("policyEditor.season.holdDaysAriaLabel")}
                         // One anchor, one field, one box: this is the control the warning's
                         // remedy names, so it takes the whole list unfiltered (#174).
                         describedBy={warningsDescribing("in_progress", warningsAt("in_progress"))}
                         onChange={(v) => update({ in_progress_hold_days: Math.max(0, v) })}
                       />
-                      <span>without watching</span>
+                      <span>{t("policyEditor.season.withoutWatching")}</span>
                     </div>
-                    <p className="help rule-help">
-                      If someone has not watched any of the show in this many days, Reaper treats
-                      the show as abandoned by them and lets go of their place. When Reaper can't
-                      tell when they last watched, it keeps holding. Set this longer than your watch
-                      history goes back, or to 0, and Reaper keeps every season: it can't tell who
-                      is partway through.
-                    </p>
+                    <p className="help rule-help">{t("policyEditor.season.holdDaysHelp")}</p>
                     <div className="rule-control">
-                      <span>also keep</span>
+                      <span>{t("policyEditor.season.alsoKeep")}</span>
                       <FixedQuantity
                         value={draft.season_lookahead}
-                        suffix={draft.season_lookahead === 1 ? "season" : "seasons"}
+                        suffix={t("policyEditor.units.season", { n: draft.season_lookahead })}
                         min={0}
                         max={1000}
                         width="narrow"
-                        ariaLabel="Seasons to keep ahead of a mid-binge viewer"
+                        ariaLabel={t("policyEditor.season.lookaheadAriaLabel")}
                         onChange={(v) => update({ season_lookahead: Math.max(0, v) })}
                       />
-                      <span>ahead of where they are</span>
+                      <span>{t("policyEditor.season.aheadOfWhereTheyAre")}</span>
                     </div>
-                    <p className="help rule-help">
-                      Set this above 0 to also keep the seasons just ahead of each viewer.
-                    </p>
+                    <p className="help rule-help">{t("policyEditor.season.lookaheadHelp")}</p>
                   </>
                 )}
                 {/* Outside the subtree above on purpose: one mount condition, so the anchor
@@ -2388,12 +2440,11 @@ export function PolicyEditor({
                     checked={draft.keep_specials}
                     onChange={(keep_specials) => update({ keep_specials })}
                   />
-                  <span className="rule-name">Never remove specials</span>
+                  <span className="rule-name">
+                    {t("policyEditor.season.neverRemoveSpecialsLabel")}
+                  </span>
                 </label>
-                <p className="help rule-help">
-                  On: specials (Season 0) are always kept. Off: specials are judged like any other
-                  season. Either way, specials never count toward the newest seasons you keep.
-                </p>
+                <p className="help rule-help">{t("policyEditor.season.neverRemoveSpecialsHelp")}</p>
               </li>
 
               <li className="rule-row">
@@ -2411,13 +2462,9 @@ export function PolicyEditor({
                       is named for what was seen, and the help text names both causes rather
                       than promising a download is under way (rule 21, and rule 72 with
                       `services/season_pruning.py`'s reason for the same check). */}
-                  <span className="rule-name">Never remove a season with episodes missing</span>
+                  <span className="rule-name">{t("policyEditor.season.incompleteLabel")}</span>
                 </label>
-                <p className="help rule-help">
-                  Keeps a season Sonarr wants more episodes for, so a removal never fights a
-                  download. Sonarr says the same thing about an ended show permanently missing an
-                  episode, so turn this off if that is your library.
-                </p>
+                <p className="help rule-help">{t("policyEditor.season.incompleteHelp")}</p>
               </li>
 
               <li className="rule-row">
@@ -2432,13 +2479,9 @@ export function PolicyEditor({
                       "flag_keep_conflicts",
                     ])}
                   />
-                  <span className="rule-name">Ask me first when a removal looks unusual</span>
+                  <span className="rule-name">{t("policyEditor.season.askFirstLabel")}</span>
                 </label>
-                <p className="help rule-help">
-                  When a season your rule would remove was watched by more people than a season it
-                  keeps, Reaper marks it "Needs a look" and waits for you. Turn this off and Reaper
-                  follows your keep rule without asking.
-                </p>
+                <p className="help rule-help">{t("policyEditor.season.askFirstHelp")}</p>
               </li>
             </ul>
             <WarnBlock anchor="keep_last" warnings={warningsAt("keep_last")} />
@@ -2459,7 +2502,7 @@ export function PolicyEditor({
               <span className="rule-name">{rewatchCopy.name}</span>
             </label>
             <DocLink doc="understanding-policy" anchor="rewatch-keep" className="doc-learn">
-              Learn more
+              {t("policyEditor.learnMore")}
             </DocLink>
           </div>
           <p className="help rule-help">{rewatchCopy.help}</p>
@@ -2469,7 +2512,7 @@ export function PolicyEditor({
                 <span>{rewatchCopy.bar}</span>
                 <FixedQuantity
                   value={draft.rewatch_min_viewings}
-                  suffix="times"
+                  suffix={t("policyEditor.units.times")}
                   min={1}
                   max={1000}
                   width="narrow"
@@ -2478,24 +2521,24 @@ export function PolicyEditor({
                 />
               </div>
               <div className="rule-control">
-                <span>most recently within</span>
+                <span>{t("policyEditor.rewatchCard.mostRecentlyWithin")}</span>
                 <QuantityInput
                   value={draft.rewatch_recent_days}
                   units={TIME_UNITS}
                   min={1}
-                  ariaLabel="Most recently within"
+                  ariaLabel={t("policyEditor.rewatchCard.mostRecentlyWithinAriaLabel")}
                   onChange={(v) => update({ rewatch_recent_days: v })}
                 />
               </div>
               <div className="rule-control">
-                <span>lowers the score by</span>
+                <span>{t("policyEditor.rewatchCard.lowersScoreBy")}</span>
                 <FixedQuantity
                   value={draft.rewatch_keep_discount}
-                  suffix="points"
+                  suffix={t("policyEditor.units.points")}
                   min={1}
                   max={50}
                   width="narrow"
-                  ariaLabel="Lowers the score by"
+                  ariaLabel={t("policyEditor.rewatchCard.lowersScoreByAriaLabel")}
                   onChange={(v) => update({ rewatch_keep_discount: v })}
                 />
               </div>
@@ -2544,14 +2587,14 @@ export function PolicyEditor({
                 {hold.enabled && (
                   <>
                     <div className="rule-control">
-                      <span>kept when the chance is at least</span>
+                      <span>{t("policyEditor.rewatchHold.keptWhenAtLeast")}</span>
                       <FixedQuantity
                         value={hold.threshold}
-                        suffix="%"
+                        suffix={t("policyEditor.units.percent")}
                         min={1}
                         max={99}
                         width="narrow"
-                        ariaLabel="Kept when the chance is at least"
+                        ariaLabel={t("policyEditor.rewatchHold.keptWhenAtLeastAriaLabel")}
                         onChange={(v) => setHold({ ...hold, threshold: v })}
                       />
                     </div>
@@ -2592,15 +2635,14 @@ export function PolicyEditor({
             an actual Save are its own, further down, and stay alerts. */}
         {invalidMessage && (
           <Notice tone="error" standing>
-            <strong>Can't save this:</strong> {invalidMessage}
+            <strong>{t("policyEditor.validation.cantSaveThisPrefix")}</strong> {invalidMessage}
           </Notice>
         )}
         {/* The check itself failing is AMBER, and it does not lock Save: the server
             checks the policy again on save either way. */}
         {validatorDown && (
           <Notice tone="warn" standing>
-            Couldn't check this draft just now, so any problem with it can't be shown here. You can
-            still save: the server checks it again when you do.
+            {t("policyEditor.validation.validatorDown")}
           </Notice>
         )}
         {/* Warnings live beside their controls; only one no anchor claims lands here. */}
@@ -2608,10 +2650,11 @@ export function PolicyEditor({
 
         <p className="hash">
           {validation && (
-            <>
-              {kind} policy <code>{validation.policy_hash.slice(0, 12)}</code>, saving does not arm
-              anything
-            </>
+            <Trans
+              i18nKey="policyEditor.hash.line"
+              values={{ kind, hash: validation.policy_hash.slice(0, 12) }}
+              components={{ hashCode: <code /> }}
+            />
           )}
         </p>
 
@@ -2619,22 +2662,18 @@ export function PolicyEditor({
 
         {/* ------------------------------------------------------------------ */}
         <h3 ref={sectionRefs.pace} className="policy-section">
-          Pace and limits
+          {t("policyEditor.sections.pace")}
           <DocLink doc="understanding-policy" anchor="pace" className="doc-learn">
-            Learn more
+            {t("policyEditor.learnMore")}
           </DocLink>
         </h3>
-        <p className="blurb">
-          Ceilings on how much one run and a rolling month may remove, plus the grace countdown.
-          Movies and TV alike.
-        </p>
+        <p className="blurb">{t("policyEditor.pace.blurb")}</p>
 
         {/* Recovery notice: hangs off the response flag alone, so no dirty gate or disclosure
             can hide it (mirrors the policy recovery notice above), `standing` included. */}
         {savedPace?.settings_recovered && (
           <Notice tone="error" standing>
-            Your saved caps and grace couldn't be read, so these show the starting ones. Nothing has
-            changed on your server, but a scan won't remove anything until you check these and save.
+            {t("policyEditor.pace.recoveryNotice")}
           </Notice>
         )}
 
@@ -2642,9 +2681,9 @@ export function PolicyEditor({
           paceFailed ? (
             // No reload advice (#195): this sits inside an editor whose savebar may be holding
             // unsaved policy edits, and a reload takes them with no ask.
-            <Notice tone="error">Couldn't load these settings.</Notice>
+            <Notice tone="error">{t("policyEditor.load.failedNoReload")}</Notice>
           ) : (
-            <p className="muted">Loading…</p>
+            <p className="muted">{t("policyEditor.loading")}</p>
           )
         ) : (
           <>
@@ -2653,19 +2692,15 @@ export function PolicyEditor({
                 checked={pace.caps_enabled}
                 onChange={(caps_enabled) => updatePace({ caps_enabled })}
               />
-              <span>Limit how much each run removes</span>
+              <span>{t("policyEditor.pace.limitLabel")}</span>
             </label>
-            <p className="help pace-approval-help">
-              An extra ceiling on how much one run and a rolling month remove, on top of the
-              deletion password. Turn off for a big first cleanup, back on for routine runs.
-            </p>
+            <p className="help pace-approval-help">{t("policyEditor.pace.limitHelp")}</p>
             {/* `standing`: seeded from the stored profile, so it paints on load whenever caps are
                 saved off, and after that it follows the Switch directly above it -- a control
                 whose own state already says which way it went. */}
             {!pace.caps_enabled && (
               <Notice tone="warn" inline standing>
-                No cap on run size. A run can remove everything you've approved at once. Deletion
-                still needs the password and your approval of the list.
+                {t("policyEditor.pace.noCapNotice")}
               </Notice>
             )}
 
@@ -2678,81 +2713,79 @@ export function PolicyEditor({
               <>
                 <div className="pace-matrix">
                   <span />
-                  <span className="col-h">Per run</span>
+                  <span className="col-h">{t("policyEditor.pace.perRunHeader")}</span>
                   <span className="col-h">
-                    Per 30 days <em>rolling</em>
+                    <Trans
+                      i18nKey="policyEditor.pace.per30DaysHeader"
+                      components={{ em: <em /> }}
+                    />
                   </span>
 
-                  <span className="row-h">Titles</span>
+                  <span className="row-h">{t("policyEditor.pace.titlesRowHeader")}</span>
                   {/* The ceilings the server enforces, stated here so an out-of-range
                       number is pulled back in the box instead of coming home a 422. */}
                   <FixedQuantity
                     value={pace.max_items_per_run}
-                    suffix="titles"
+                    suffix={t("policyEditor.units.titles")}
                     min={1}
                     max={1000}
                     width="narrow"
-                    ariaLabel="Most titles per run"
+                    ariaLabel={t("policyEditor.pace.mostTitlesPerRunAriaLabel")}
                     onChange={(v) => updatePace({ max_items_per_run: v })}
                   />
                   <FixedQuantity
                     value={pace.max_items_per_30d}
-                    suffix="titles"
+                    suffix={t("policyEditor.units.titles")}
                     min={1}
                     width="narrow"
-                    ariaLabel="Most titles per 30 days"
+                    ariaLabel={t("policyEditor.pace.mostTitlesPer30dAriaLabel")}
                     onChange={(v) => updatePace({ max_items_per_30d: v })}
                   />
 
-                  <span className="row-h">Disk freed</span>
+                  <span className="row-h">{t("policyEditor.pace.diskFreedRowHeader")}</span>
                   <QuantityInput
                     value={pace.max_bytes_per_run}
                     units={SIZE_UNITS}
-                    ariaLabel="Most disk freed per run"
+                    ariaLabel={t("policyEditor.pace.mostDiskPerRunAriaLabel")}
                     onChange={(v) => updatePace({ max_bytes_per_run: v })}
                   />
                   <QuantityInput
                     value={pace.max_bytes_per_30d}
                     units={SIZE_UNITS}
-                    ariaLabel="Most disk freed per 30 days"
+                    ariaLabel={t("policyEditor.pace.mostDiskPer30dAriaLabel")}
                     onChange={(v) => updatePace({ max_bytes_per_30d: v })}
                   />
                 </div>
-                <p className="help matrix-note">
-                  Cross a limit and the whole run stops. It never deletes just the part that fits.
-                  One run takes 1,000 titles at most.
-                </p>
+                <p className="help matrix-note">{t("policyEditor.pace.matrixNote")}</p>
               </>
             )}
 
             {/* Grace and unknown-size are not caps, so they step out of the matrix: one label,
                 one control, one short line of help bound directly beneath it. */}
             <div className="pace-extra">
-              <span className="ex-label">Grace period</span>
+              <span className="ex-label">{t("policyEditor.pace.gracePeriodLabel")}</span>
               <span className="ex-ctl">
                 <QuantityInput
                   value={pace.grace_days}
                   units={TIME_UNITS}
                   min={7}
-                  ariaLabel="Grace period"
+                  ariaLabel={t("policyEditor.pace.gracePeriodLabel")}
                   onChange={(v) => updatePace({ grace_days: v })}
                 />
                 {/* A notice, not a hold: nothing on the deletion path reads this window
                     (services/grace.py), so help promising time "before removal" was false. */}
-                <span className="help">
-                  How long a flagged title shows as leaving, so someone can rescue it.
-                </span>
+                <span className="help">{t("policyEditor.pace.gracePeriodHelp")}</span>
               </span>
 
-              <span className="ex-label">Unknown-size items</span>
+              <span className="ex-label">{t("policyEditor.pace.unmeasuredLabel")}</span>
               <span className="ex-ctl">
                 <FixedQuantity
                   value={pace.max_unmeasured_per_run}
-                  suffix="per run"
+                  suffix={t("policyEditor.units.perRun")}
                   min={0}
                   max={25}
                   width="narrow"
-                  ariaLabel="Items with an unknown size"
+                  ariaLabel={t("policyEditor.pace.unmeasuredAriaLabel")}
                   // The one setting that lets deletions past the size caps, so the warning
                   // about it is worth hearing from the box rather than after it.
                   describedBy={warningsDescribing(
@@ -2765,10 +2798,7 @@ export function PolicyEditor({
                     raising this, since the server's warning fires once it is already above
                     zero. Without it the help explained a keep and the control did the
                     opposite (#688). */}
-                <span className="help">
-                  Kept by default. Size caps can't measure them. Above 0, Reaper can delete that
-                  many. 25 at most.
-                </span>
+                <span className="help">{t("policyEditor.pace.unmeasuredHelp")}</span>
                 <WarnBlock
                   anchor="max_unmeasured_per_run"
                   warnings={warningsAt("max_unmeasured_per_run")}
@@ -2782,15 +2812,12 @@ export function PolicyEditor({
 
         {/* ------------------------------------------------------------------ */}
         <h3 ref={sectionRefs.deletion} className="policy-section">
-          Deletion
+          {t("policyEditor.sections.deletion")}
           <DocLink doc="arming" className="doc-learn">
-            Learn more
+            {t("policyEditor.learnMore")}
           </DocLink>
         </h3>
-        <p className="blurb">
-          Whether Reaper is allowed to remove anything at all. One switch for all of Reaper, movies
-          and TV alike. Turning it on always asks for the admin password. Turning it off never does.
-        </p>
+        <p className="blurb">{t("policyEditor.deletion.blurb")}</p>
         <DeletionToggle />
 
         {/* THE save bar: one place to save whatever is dirty -- the policy draft, the pace
@@ -2800,8 +2827,11 @@ export function PolicyEditor({
           <div className="savebar">
             <span className="savebar-what">
               <strong>
-                Unsaved changes:{" "}
-                {[dirty ? `${kind} policy` : null, paceDirty ? "pace and limits" : null]
+                {t("policyEditor.savebar.unsavedChangesPrefix")}
+                {[
+                  dirty ? t("policyEditor.savebar.kindPolicy", { kind }) : null,
+                  paceDirty ? t("policyEditor.savebar.paceAndLimits") : null,
+                ]
                   .filter(Boolean)
                   .join(", ")}
               </strong>
@@ -2809,11 +2839,15 @@ export function PolicyEditor({
               {/* What Save will ACTUALLY write, not what is merely dirty: a held-back policy
                   half must not be described as applying on the next scan (PR-7). */}
               {willSavePolicy && willSavePace
-                ? `${APPLIES_ON_NEXT_SCAN} Pace applies immediately.`
+                ? `${APPLIES_ON_NEXT_SCAN} ${t("policyEditor.savebar.paceAppliesImmediately")}`
                 : willSavePolicy
-                  ? `Saves only your ${kind} policy. The ${otherKind} one is untouched. ${APPLIES_ON_NEXT_SCAN}`
+                  ? t("policyEditor.savebar.savesOnlyKind", {
+                      kind,
+                      otherKind,
+                      appliesOnNextScan: APPLIES_ON_NEXT_SCAN,
+                    })
                   : willSavePace
-                    ? "Pace applies immediately. Changing a limit never affects a run you've already approved."
+                    ? `${t("policyEditor.savebar.paceAppliesImmediately")} ${t("policyEditor.savebar.paceOnlyTail")}`
                     : null}
               {/* Only when the OTHER half will still be written: that is the new fact, and the
                   one an operator would otherwise have to infer. With the policy alone dirty
@@ -2824,8 +2858,10 @@ export function PolicyEditor({
                   on every edit, so it changes under the operator rather than answering them. */}
               {policyBlocked && willSavePace && (
                 <Notice tone="warn" className="budget-notice" as="span" standing>
-                  Save writes pace and limits only. Your {kind} policy can't go with it until{" "}
-                  {policyHeldBecause}.
+                  {t("policyEditor.savebar.policyBlockedNotice", {
+                    kind,
+                    because: policyHeldBecause,
+                  })}
                 </Notice>
               )}
               {/* The repairs that are about what you are ABOUT TO WRITE, so they read beside
@@ -2856,10 +2892,10 @@ export function PolicyEditor({
                 // Discard is the larger silence of the two: up to fifty controls revert at
                 // once and the bar that did it disappears, so there was nothing to notice
                 // except that the page had stopped offering to save.
-                announce("Changes discarded.");
+                announce(t("policyEditor.announce.changesDiscarded"));
               }}
             >
-              Discard
+              {t("policyEditor.savebar.discardButton")}
             </button>
             <button
               className="primary"
@@ -2875,7 +2911,7 @@ export function PolicyEditor({
                 if (willSavePace && pace) savePace.mutate(pace);
               }}
             >
-              {saving ? "Saving…" : "Save changes"}
+              {saving ? t("policyEditor.savebar.saving") : t("policyEditor.savebar.saveButton")}
             </button>
             {save.error && <Notice tone="error">{save.error.message}</Notice>}
             {savePace.error && <Notice tone="error">{savePace.error.message}</Notice>}
@@ -2884,23 +2920,17 @@ export function PolicyEditor({
       </div>
 
       <div className="editor-sim">
-        <h2>What this would do</h2>
-        <p className="blurb">
-          Re-decided against your last scan, with zero API calls. Nothing here touches Sonarr,
-          Radarr or Tautulli.
-        </p>
+        <h2>{t("policyEditor.sim.heading")}</h2>
+        <p className="blurb">{t("policyEditor.sim.blurb")}</p>
         {invalidMessage ? (
-          <p className="muted">Fix the policy on the left, then this updates.</p>
+          <p className="muted">{t("policyEditor.sim.fixPolicyFirst")}</p>
         ) : simError ? (
           /* Checked BEFORE simulation: keepPreviousData can leave the previous draft's
              numbers in `simulation` when a refetch fails, and a stale count shown as
              current is exactly what this column must never do. */
           <div className="sim sim-info">
-            <h3>Can't show what this would do</h3>
-            <p>
-              The simulator request failed, so there are no numbers to show. Nothing about your
-              library or your saved policy has changed. Adjust any control to try again.
-            </p>
+            <h3>{t("policyEditor.sim.errorHeading")}</h3>
+            <p>{t("policyEditor.sim.errorBody")}</p>
             <p className="error">{simError.message}</p>
           </div>
         ) : simulation ? (
@@ -2925,7 +2955,7 @@ export function PolicyEditor({
             />
           )
         ) : (
-          <p className="muted">Working…</p>
+          <p className="muted">{t("policyEditor.sim.working")}</p>
         )}
       </div>
     </section>

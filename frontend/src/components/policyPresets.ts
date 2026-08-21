@@ -7,8 +7,15 @@
 // Pulled out of PolicyEditor.tsx, which was a single 2,700-line module holding these, five
 // rule editors and a 1,000-line component (R-2). None of it renders; all of it is pure, which
 // is why the tests can call it directly.
+//
+// The preset labels and help sentences live in `locales/en/ui.json` under `policyMeta.*`.
+// This is a data module, not a component, so it reads the catalog through the plain
+// `i18next` import rather than the `useTranslation` hook -- the module-scope pattern
+// `GeneralPanel`'s `ACCENT_PRESETS` already uses.
 
 import type { PolicyBody, ProfileSettings } from "../api";
+import { list } from "../format";
+import i18next from "../i18n";
 
 // ---------------------------------------------------------------------------
 // Presets: three starting points that stage (never save) the threshold and the
@@ -56,8 +63,8 @@ export const PRESETS: {
 }[] = [
   {
     id: "cautious",
-    label: "Cautious",
-    help: "Cautious: only flags a title it is very sure about, removes less per run, and shows a title as leaving for a month.",
+    label: i18next.t("policyMeta.presets.cautious.label"),
+    help: i18next.t("policyMeta.presets.cautious.help"),
     condemn_at: 82,
     caps: {
       max_items_per_run: 5,
@@ -75,8 +82,8 @@ export const PRESETS: {
   },
   {
     id: "balanced",
-    label: "Balanced",
-    help: "Balanced: the defaults Reaper ships with.",
+    label: i18next.t("policyMeta.presets.balanced.label"),
+    help: i18next.t("policyMeta.presets.balanced.help"),
     condemn_at: 70,
     caps: {
       max_items_per_run: 10,
@@ -90,8 +97,8 @@ export const PRESETS: {
   },
   {
     id: "aggressive",
-    label: "Aggressive",
-    help: "Aggressive: flags sooner, allows bigger runs, and keeps the one-week minimum grace.",
+    label: i18next.t("policyMeta.presets.aggressive.label"),
+    help: i18next.t("policyMeta.presets.aggressive.help"),
     condemn_at: 58,
     caps: {
       max_items_per_run: 25,
@@ -183,9 +190,12 @@ export function activePreset(draft: PolicyBody): PresetId | null {
 
 /** A list said the way a person would: "A", "A and B", "A, B, and C". Used by the intent
  *  summary, whose clauses are pushed one at a time as their switches turn on, so the
- *  number of them is never known ahead of time. */
+ *  number of them is never known ahead of time.
+ *
+ *  Delegates to `format.ts`'s `list()` (`Intl.ListFormat`) rather than hand-rolling the
+ *  glue words here a second time -- the same "a, b, and c" job Stage 2 already moved off
+ *  hand-built English for `WhyPanel`'s `joinChecks` (rule 72). Locale-correct for free,
+ *  and nothing to add to the catalog: the glue is native, not copy. */
 export function andList(parts: string[]): string {
-  if (parts.length <= 1) return parts[0] ?? "";
-  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
-  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+  return list(parts);
 }
