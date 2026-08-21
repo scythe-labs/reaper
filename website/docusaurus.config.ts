@@ -22,10 +22,12 @@ const config: Config = {
   tagline: TAGLINE,
   favicon: "img/favicon.svg",
 
-  // GitHub Pages for a project repository serves under /<repo>/. Both halves are read by the
-  // deploy workflow and by every absolute link the theme builds.
-  url: `https://${ORG}.github.io`,
-  baseUrl: `/${REPO}/`,
+  // The site is served from its own subdomain, so it sits at the root rather than under
+  // /<repo>/. `static/CNAME` carries the same hostname into the build output, and the repo's
+  // Pages setting has to name it too. Change one, change all three. GitHub redirects the old
+  // `scythe-labs.github.io/reaper/` addresses to here, so links already in the wild still land.
+  url: "https://docs.scythelabs.dev",
+  baseUrl: "/",
   organizationName: ORG,
   projectName: REPO,
   trailingSlash: false,
