@@ -143,7 +143,8 @@ MAX_HISTORY_PAGES = 5_000
 #: them). The walk halves the page until the row stands alone, skips it, and counts it: the
 #: scan degrades on the count and the sweep records it, so a skip is never quiet. Past this
 #: many the source is broken rather than holding a bad row or two, and the walk raises.
-#: Isolating one row costs about thirty requests, so this also bounds the runtime.
+#: Measured live: the two rows cost 34 requests and 215s on top of a 237s sweep, so this
+#: also bounds the runtime (``docs/LEARNINGS.md``, "A row Tautulli cannot render").
 MAX_UNSERVABLE_ROWS = 20
 
 
