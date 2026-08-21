@@ -139,12 +139,20 @@ class RatingsOut(BaseModel):
 
 
 class ChipOut(BaseModel):
-    """The one short status chip a card wears, display-ready.
+    """The one short status chip a card wears, typed rather than pre-worded.
 
-    ``tone`` picks the color, ``text`` is the whole chip. Derived server-side from the
-    stored explanation (never a re-decision): a Sanctuary card's chip names the protection
-    that fired, a Limbo card's names what stopped Reaper short. Condemned cards carry no
-    chip here -- their amber dormancy pill is built from ``dormant_for``."""
+    ``tone`` picks the color. ``reason`` is the catalog id plus its raw params (docs/history/
+    I18N_PLAN.md §5): the frontend composes ``chip.text.<id>`` for the chip itself and
+    ``chip.sentence.<id>`` for the standalone sentence form (the season row, and the
+    override frame ``shell.statusChip.reapRequestedKept`` nests it as ``{why}``), both in
+    ``frontend/src/locales/en/ui.json`` via ``why.ts``'s ``composeIn``. Derived server-side
+    from the stored explanation (never a re-decision): a Sanctuary card's chip names the
+    protection that fired, a Limbo card's names what stopped Reaper short. Condemned cards
+    carry no chip here -- their amber dormancy pill is built from ``dormant_for``.
+
+    Every id ``api.review._chip`` can emit has a ``chip.text`` entry and a ``chip.sentence``
+    entry, checked by the two-way walk in ``tests/test_review_chips.py`` (rule 145): there is
+    no id with no sentence, so a reader may always compose one."""
 
     tone: Literal["kept", "quiet", "look", "held"]
     """``kept`` renders green (a protection fired), ``quiet`` gray (nothing to act on),
@@ -155,16 +163,12 @@ class ChipOut(BaseModel):
     outlined means Reaper did. It is green rather than amber because the file is kept, and
     amber means only "left for you to decide"."""
 
-    text: str
-
-    why: str | None = None
-    """The same fact as ``text``, worded as a lowercase clause that can follow
-    "Reap requested, kept for now:" -- or None when this chip names no reason a reap
-    would be refused (an item under the threshold is reaped on request, not held).
-
-    It ships beside ``text`` because the frontend must never parse ``text`` to recover
-    it: the clause is ours to word, and a reworded chip would silently drop every
-    held-reap explanation back to the generic fallback (H-1)."""
+    reason: ReasonKey
+    """The typed id plus raw params -- day counts as integers, ratings exactly as the
+    reason carries them, never humanized. The frontend composes both catalog forms from it
+    (``frontend/src/why.ts``'s ``composeIn("chip.text", reason)`` /
+    ``composeIn("chip.sentence", reason)``); the server never renders English here (rule 92:
+    a chip must not be pre-worded for the frontend to parse back apart)."""
 
 
 class GroupSeasonMarkOut(BaseModel):

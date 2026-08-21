@@ -960,8 +960,9 @@ class TestTheTwoCopiesAgree:
             server_only = sorted(fields - browser_types[name])
             browser_only = sorted(browser_types[name] - fields)
             if server_only or browser_only:
+                pair = f"{name} <-> {counterpart}"
                 drifted.append(
-                    f"{name} <-> {counterpart}:"
+                    f"{pair}:"
                     + (
                         f" the server sends {server_only} and the browser has no field for it;"
                         if server_only
@@ -1173,10 +1174,11 @@ class TestEveryGateIdHasOperatorCopy:
     rule 118's shape: without them the guard could be deleted and its proof stay green.
 
     **The one sibling copy, named here rather than guarded** (rule 144): ``api/review.py``'s
-    ``_kept_phrase`` turns the same ids into the review queue's chip. It is deliberately not
-    covered, because its own fallback is already a sentence -- "a protection applies" -- so a
-    gate arriving without a branch there reads vaguely, never as a slug. Reword that fallback
-    into anything id-shaped and it needs a guard of its own.
+    ``_kept_reason`` turns the same ids into the review queue's chip. It is deliberately not
+    covered, because its own fallback is the id ``kept.unknown``, whose catalog entry
+    (``chip.sentence.kept.unknown``) composes "A protection applies." -- vague, but a
+    sentence, never a slug. Swap that fallback for anything id-shaped and it needs a guard
+    of its own.
 
     Bounded per rule 147: the union is read however it is spaced and wrapped, but only while
     it is spelled as quoted literals in one ``export type GateId = ...;`` statement. A

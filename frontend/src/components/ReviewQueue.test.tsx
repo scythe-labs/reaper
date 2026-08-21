@@ -22,6 +22,7 @@ import {
   type Snapshot,
   type Verdict,
 } from "../api";
+import i18next from "../i18n";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -730,39 +731,38 @@ describe("a reap the engine refused", () => {
     // chip is reaped, not held, and pinning it here would pin a pairing the server can no
     // longer send (rule 119).
     //
-    // The clause comes from the chip's own `why`, which the server words (H-1). These
-    // fixtures deliberately give `text` and `why` different words, so a test that passed by
-    // re-parsing the text would fail here: this asserts the field is read, not the prose.
+    // The clause is the chip's own `chip.sentence.<id>`, a different catalog entry than
+    // `chip.text.<id>`. These fixtures pick ids whose text and sentence forms read nothing
+    // alike, so a test that passed by rendering the chip TEXT here would fail: this asserts
+    // the sentence is composed, not the text re-used.
     const streaming = movie(1, {
       override: "reap",
       override_effective: false,
-      chip: { tone: "kept", text: "Kept, playing right now", why: "playing right now" },
+      chip: { tone: "kept", reason: { k: "kept.streaming_now" } },
     });
     const unidentifiable = movie(2, {
       override: "reap",
       override_effective: false,
-      chip: {
-        tone: "quiet",
-        text: "Couldn't read its Plex match",
-        why: "Reaper couldn't read what it matched in Plex",
-      },
+      chip: { tone: "quiet", reason: { k: "match.unreadable" } },
     });
     apiMock.candidates.mockResolvedValue(page([streaming, unidentifiable]));
     renderQueue();
 
+    const streamingWhy = i18next.t("chip.sentence.kept.streaming_now");
+    const unreadableWhy = i18next.t("chip.sentence.match.unreadable");
     expect(
-      await screen.findByText("Reap requested, kept for now: playing right now"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Reap requested, kept for now: Reaper couldn't read what it matched in Plex",
+      await screen.findByText(
+        i18next.t("shell.statusChip.reapRequestedKept", { why: streamingWhy }),
       ),
     ).toBeInTheDocument();
-    // The chip's own display wording never lands mid-sentence: the clause is the server's
-    // `why`, never the chip text with its "Kept, " lead sliced off (H-1).
-    expect(screen.queryByText(/kept for now: Kept,/)).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/kept for now: Couldn't read its Plex match/),
+      screen.getByText(i18next.t("shell.statusChip.reapRequestedKept", { why: unreadableWhy })),
+    ).toBeInTheDocument();
+    // The chip's own display wording never lands mid-sentence: the clause is the composed
+    // sentence, never the chip text ("Kept, ..."/"Couldn't read...") pasted in raw (H-1).
+    expect(screen.queryByText(/kept for now\. Kept,/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/kept for now\. Couldn't read its Plex match/),
     ).not.toBeInTheDocument();
   });
 });
@@ -1476,7 +1476,7 @@ describe("what a screen reader hears on a queue card", () => {
           video_resolution: "1080",
           requested_by: "someone",
           reason: "Nobody has watched it since it arrived",
-          chip: { tone: "look", text: "Nobody watched it" },
+          chip: { tone: "look", reason: { k: "look.unsettled" } },
         }),
       ]),
     );

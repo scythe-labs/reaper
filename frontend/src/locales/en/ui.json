@@ -578,6 +578,108 @@
       }
     }
   },
+  "chip": {
+    "text": {
+      "kept": {
+        "hand_spare": "Kept, you spared it",
+        "whitelisted": "Kept, on your keep list",
+        "streaming_now": "Kept, playing right now",
+        "rating": "Kept, well rated: {value_fixed1} on {source_label}",
+        "rating_plain": "Kept, well rated",
+        "popularity": "Kept, {count, plural, one {# person} other {# people}} watched it in the last {window_days_window}",
+        "popularity_legacy": "Kept, {count, plural, one {# person} other {# people}} watched it in the last {window_text}",
+        "popularity_plain": "Kept, people here still watch it",
+        "others_watching": "{count, plural, one {Kept, someone else is watching it} other {Kept, # others are watching it}}",
+        "others_watching_unknown": "Kept, others are watching it",
+        "curated_list": "Kept, on a protected list",
+        "no_history": "Kept, no watch history",
+        "dormancy": "Kept, hasn't sat unwatched long enough",
+        "unmanaged": "Kept, not managed by Sonarr or Radarr",
+        "season": {
+          "specials": "Kept, specials are never removed",
+          "incomplete": "Kept, episodes are missing",
+          "airing": "Kept, the show is still running",
+          "first": "Kept, the earliest season stays",
+          "keep_all": "Kept, your keep rule keeps all its seasons",
+          "midbinge": "Kept, someone is partway through",
+          "progress_history_short": "Kept, your watch history is too short to tell",
+          "keep_last": "Kept, in the last {keep_last} seasons you keep",
+          "rule": "Kept, your season rule keeps it"
+        },
+        "returned": "Kept, it came back after leaving your library",
+        "custom": "Kept, by your rule",
+        "unknown": "Kept, a protection applies"
+      },
+      "came_back": "Came back, {days_left_span} left",
+      "came_back_legacy": "Came back, {days_left_text} left",
+      "came_back_unknown": "Came back",
+      "match": {
+        "unmatched": "Couldn't be found in Plex",
+        "ambiguous": "Looks like two different things in Plex",
+        "conflicted": "Plex and {media_type, select, movie {Radarr} other {Sonarr}} don't agree",
+        "unreadable": "Couldn't read its Plex match"
+      },
+      "look": {
+        "comparable": "Needs a look, watched more than a season your rule keeps",
+        "unknowable": "Needs a look, couldn't check who watched these seasons",
+        "unsettled": "Needs a look, left for you to decide"
+      },
+      "unknown_checks": "Some checks couldn't run",
+      "coverage": "Too little of it could be checked",
+      "below_threshold": "Scored {score}, under your {threshold}",
+      "below": "Below your threshold"
+    },
+    "sentence": {
+      "kept": {
+        "hand_spare": "You spared it.",
+        "whitelisted": "It's on your keep list.",
+        "streaming_now": "It's playing right now.",
+        "rating": "It's well rated: {value_fixed1} on {source_label}.",
+        "rating_plain": "It's well rated.",
+        "popularity": "{count, plural, one {# person} other {# people}} watched it in the last {window_days_window}.",
+        "popularity_legacy": "{count, plural, one {# person} other {# people}} watched it in the last {window_text}.",
+        "popularity_plain": "People here still watch it.",
+        "others_watching": "{count, plural, one {Someone else is watching it.} other {# others are watching it.}}",
+        "others_watching_unknown": "Others are watching it.",
+        "curated_list": "It's on a protected list.",
+        "no_history": "It has no watch history, so it's kept to be safe.",
+        "dormancy": "It hasn't sat unwatched long enough.",
+        "unmanaged": "It isn't managed by Sonarr or Radarr.",
+        "season": {
+          "specials": "Specials are never removed.",
+          "incomplete": "Episodes are missing.",
+          "airing": "The show is still running.",
+          "first": "The earliest season stays.",
+          "keep_all": "Your keep rule keeps all its seasons.",
+          "midbinge": "Someone is partway through.",
+          "progress_history_short": "Your watch history is too short to tell.",
+          "keep_last": "It's one of the last {keep_last} seasons you keep.",
+          "rule": "Your season rule keeps it."
+        },
+        "returned": "It came back after leaving your library.",
+        "custom": "It's kept by your rule.",
+        "unknown": "A protection applies."
+      },
+      "came_back": "It left your library and came back.",
+      "came_back_legacy": "It left your library and came back.",
+      "came_back_unknown": "It left your library and came back.",
+      "match": {
+        "unmatched": "It couldn't be found in Plex.",
+        "ambiguous": "It looks like two different things in Plex.",
+        "conflicted": "Plex and {media_type, select, movie {Radarr} other {Sonarr}} don't agree about it.",
+        "unreadable": "Reaper couldn't read what it matched in Plex."
+      },
+      "look": {
+        "comparable": "Someone watched more than a season your rule keeps.",
+        "unknowable": "Reaper couldn't check who watched these seasons.",
+        "unsettled": "A check on it couldn't be settled."
+      },
+      "unknown_checks": "Some checks couldn't run.",
+      "coverage": "Too little of it could be checked.",
+      "below_threshold": "It scored {score}, under your {threshold}.",
+      "below": "It's below your threshold."
+    }
+  },
   "plex": {
     "blurb": "Link Plex and Reaper can show a \"Leaving Soon\" shelf and read your \"Never Reap\" collection. Optional. Scanning works without it.",
     "chooseServer": {
@@ -2129,7 +2231,7 @@
     "searchPlaceholder": "Search titles, shows, years…",
     "seasonCount": "{n, plural, one {1 season} other {# seasons}}",
     "seasonDivergence": {
-      "confirmSafeUnknown": "Reaper couldn't confirm it's safe to remove",
+      "confirmSafeUnknown": "Reaper couldn't confirm it's safe to remove.",
       "keptDespiteReap": "Kept even though the whole show is set to reap.",
       "keptDespiteReapExpired": "Kept even though the whole show is set to reap. Your spare ran out, so the next scan judges it again.",
       "keptForNowChip": "Kept for now",
@@ -2626,8 +2728,8 @@
     },
     "statusChip": {
       "exceptSeasons": "except {n, plural, one {# season} other {# seasons}}",
-      "reapRequestedKept": "Reap requested, kept for now: {why}",
-      "reapRequestedKeptDefaultWhy": "Reaper couldn't confirm it's safe to remove",
+      "reapRequestedKept": "Reap requested, kept for now. {why}",
+      "reapRequestedKeptDefaultWhy": "Reaper couldn't confirm it's safe to remove.",
       "reapedByHand": "Reaped by hand, {detail}",
       "sparedByHand": "Spared by hand",
       "sparedByHandWith": "Spared by hand, {suffix}",

@@ -104,15 +104,14 @@ describe("composeReason", () => {
 
 describe("composeIn", () => {
   // Fixture entries, added to i18next at test time rather than reading real catalog
-  // content -- chip.text and warning have no production keys yet (Phase 1 only
-  // generalizes the composer). tests/_reasons.py's twin test uses the same two
-  // messages, so a passing pair here and there proves `text`'s namespace argument
-  // walks the catalog the same way this one does (rule 119).
+  // content -- `warning` has no production keys yet (chip.text/chip.sentence do now, and
+  // the two cases below read them for real). tests/_reasons.py's twin test uses the same
+  // fixture message, so a passing pair here and there proves `namespace` walks the catalog
+  // the same way this one does (rule 119).
   i18next.addResourceBundle(
     "en-US",
     "ui",
     {
-      chip: { text: { fixture_count: "{n, plural, one {# stray file} other {# stray files}}" } },
       warning: { fixture_nested: "blocked because {cause}" },
       why: { cause: { fixture_cause: "the fixture reason fired" } },
     },
@@ -120,8 +119,21 @@ describe("composeIn", () => {
     true,
   );
 
-  it("composes a chip.text entry under its own namespace", () => {
-    expect(composeIn("chip.text", { k: "fixture_count", p: { n: 3 } })).toBe("3 stray files");
+  it("pluralizes a chip.text entry, off the real catalog", () => {
+    expect(composeIn("chip.text", { k: "kept.others_watching", p: { count: 1 } })).toBe(
+      "Kept, someone else is watching it",
+    );
+    expect(composeIn("chip.text", { k: "kept.others_watching", p: { count: 3 } })).toBe(
+      "Kept, 3 others are watching it",
+    );
+  });
+
+  it("nests a chip.sentence into the override frame the same way t() would", () => {
+    const why = composeIn("chip.sentence", { k: "kept.streaming_now" });
+    expect(why).toBe("It's playing right now.");
+    expect(i18next.t("shell.statusChip.reapRequestedKept", { why })).toBe(
+      "Reap requested, kept for now. It's playing right now.",
+    );
   });
 
   it("composes a warning entry, whose nested reason still resolves under why", () => {

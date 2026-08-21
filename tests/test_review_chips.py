@@ -26,13 +26,15 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
 from reaper.api.review import (
+    _CHIP_IDS,
     _chip,
     _decode_explanation,
     _explanation_out,
-    _kept_phrase,
+    _kept_reason,
     _primary_reason,
     _season_number,
 )
+from reaper.api.schemas import ChipOut
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -54,7 +56,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
-from reaper.engine.reason import Reason, legacy, to_wire
+from reaper.engine.reason import Reason, from_wire, legacy, to_wire
 from reaper.engine.signals import Score
 from reaper.main import create_app
 from reaper.services.condemned import (
@@ -290,109 +292,137 @@ def _exp_json(*args: object, **kwargs: object) -> str:
     return json.dumps(_exp(*args, **kwargs))  # type: ignore[arg-type]
 
 
+def _chip_reason(chip: ChipOut) -> Reason:
+    """A chip's wire ``reason`` thawed back to a comparable :class:`Reason`, the way an
+    HTTP caller would read it off the JSON response. One derivation so every test compares
+    the same way (rule 104)."""
+    return from_wire(chip.reason.model_dump())
+
+
+def _leaf_ids(node: dict[str, Any], prefix: str = "") -> set[str]:
+    """Every dotted id reachable as a string leaf of a nested catalog section, for the
+    two-way walk against ``_CHIP_IDS`` below."""
+    ids: set[str] = set()
+    for key, value in node.items():
+        dotted = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, str):
+            ids.add(dotted)
+        elif isinstance(value, dict):
+            ids |= _leaf_ids(value, dotted)
+    return ids
+
+
 class TestKeptChipWording:
-    """One green phrase per protection, from the gates' own closed detail vocabulary."""
+    """One typed reason per protection, from the gates' own closed detail vocabulary."""
 
     @pytest.mark.parametrize(
-        ("gate", "detail", "phrase"),
+        ("gate", "detail", "expected"),
         [
-            ("whitelisted", "on your keep list, never reaped", "on your keep list"),
+            ("whitelisted", "on your keep list, never reaped", Reason("kept.whitelisted")),
             # The scan's own constant, not a copy of it: the chip tells a hand spare apart
             # from a real keep-list entry by exact equality, so a test that retyped the
             # string would keep passing after one side was reworded.
-            ("whitelisted", HAND_SPARE_DETAIL, "you spared it"),
-            ("streaming_now", "someone is watching it right now", "playing right now"),
+            ("whitelisted", HAND_SPARE_DETAIL, Reason("kept.hand_spare")),
+            ("streaming_now", "someone is watching it right now", Reason("kept.streaming_now")),
             (
                 "rating_floor",
                 "well rated: 6.8 on IMDb from 722,243 votes",
-                "well rated: 6.8 on IMDb",
+                Reason("kept.rating", {"value": 6.8, "source": "imdb"}),
             ),
-            ("rating_floor", "some future wording", "well rated"),
+            ("rating_floor", "some future wording", Reason("kept.rating_plain")),
             (
                 "server_popularity",
                 "watched here: 3 people in the last year",
-                "3 people watched it in the last year",
+                Reason("kept.popularity_legacy", {"count": 3, "window_text": "year"}),
             ),
             (
                 "server_popularity",
                 "watched here: 1 person in the last 90 days",
-                "1 person watched it in the last 90 days",
+                Reason("kept.popularity_legacy", {"count": 1, "window_text": "90 days"}),
             ),
-            ("server_popularity", "some future wording", "people here still watch it"),
-            ("curated_list", "on a protected list: A Curated List", "on a protected list"),
+            ("server_popularity", "some future wording", Reason("kept.popularity_plain")),
+            ("curated_list", "on a protected list: A Curated List", Reason("kept.curated_list")),
             (
                 "min_dormancy",
                 "unwatched for 1 year, 2 months, less than the 3 years Reaper waits",
-                "hasn't sat unwatched long enough",
+                Reason("kept.dormancy"),
             ),
             (
                 "min_dormancy",
                 "no watch history, so its dormancy cannot be established",
-                "no watch history, kept to be safe",
+                Reason("kept.no_history"),
             ),
             (
                 "unmanaged",
                 "no Sonarr or Radarr manages this file, so Reaper cannot remove it",
-                "not managed by Sonarr or Radarr",
+                Reason("kept.unmanaged"),
             ),
-            ("season_progression", "specials are never auto-pruned", "specials are never removed"),
-            ("season_progression", "episodes are missing from this season", "episodes are missing"),
+            (
+                "season_progression",
+                "specials are never auto-pruned",
+                Reason("kept.season.specials"),
+            ),
+            (
+                "season_progression",
+                "episodes are missing from this season",
+                Reason("kept.season.incomplete"),
+            ),
             (
                 "season_progression",
                 "the newest season of a show that is still running",
-                "the show is still running",
+                Reason("kept.season.airing"),
             ),
             (
                 "season_progression",
                 "the earliest season on disk, so there is somewhere to start",
-                "the earliest season stays",
+                Reason("kept.season.first"),
             ),
             # A snapshot stored before these three were reworded carries the retired
-            # spelling, and degrades to the generic phrase rather than to a wrong one.
+            # spelling, and degrades to the generic id rather than to a wrong one.
             (
                 "season_progression",
                 "Sonarr is still downloading this season",
-                "your season rule keeps it",
+                Reason("kept.season.rule"),
             ),
-            ("season_progression", "currently airing", "your season rule keeps it"),
+            ("season_progression", "currently airing", Reason("kept.season.rule")),
             (
                 "season_progression",
                 "the first season is kept so the show can still be started",
-                "your season rule keeps it",
+                Reason("kept.season.rule"),
             ),
             (
                 "season_progression",
                 "within the last 2 seasons (rank 1)",
-                "in the last 2 seasons you keep",
+                Reason("kept.season.keep_last", {"keep_last": 2}),
             ),
             (
                 "season_progression",
                 "this show has only 2 seasons on disk, so your keep-last-3 rule keeps all of them",
-                "your keep rule keeps all its seasons",
+                Reason("kept.season.keep_all"),
             ),
             (
                 "season_progression",
                 "a viewer is part-way through the show",
-                "someone is partway through",
+                Reason("kept.season.midbinge"),
             ),
             # Not a keep rule at all: the mirror is too short to answer who is mid-binge.
-            # The generic phrase would name a control the operator can edit and that will
+            # The generic id would name a control the operator can edit and that will
             # not move it, sending them to lower keep-last while the real lever is the
             # depth of their watch history (or the hold set against it).
             (
                 "season_progression",
                 "your watch history is too short to tell who is part-way through",
-                "your watch history is too short to tell",
+                Reason("kept.season.progress_history_short"),
             ),
-            ("season_progression", "some future wording", "your season rule keeps it"),
-            ("custom", "your rule: genre is Documentary", "by your rule"),
-            ("brand_new_gate", "whatever it says", "a protection applies"),
+            ("season_progression", "some future wording", Reason("kept.season.rule")),
+            ("custom", "your rule: genre is Documentary", Reason("kept.custom")),
+            ("brand_new_gate", "whatever it says", Reason("kept.unknown")),
         ],
     )
-    def test_phrase(self, gate: str, detail: str, phrase: str) -> None:
+    def test_reason(self, gate: str, detail: str, expected: Reason) -> None:
         # The prose column drives the LEGACY arm -- rows frozen before reasons were typed.
         # Fresh rows take the id arm, driven by the writer-connected tests below.
-        assert _kept_phrase(gate, legacy(detail)) == phrase
+        assert _kept_reason(gate, legacy(detail)) == expected
 
 
 class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
@@ -414,7 +444,7 @@ class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
     ARRIVED_DAYS_AGO = 89
     WAITS_DAYS = 365
 
-    def _phrase_for_a_never_played_title(self) -> str:
+    def _reason_for_a_never_played_title(self) -> Reason:
         # One clock reading, not three: a test that re-samples can straddle a day boundary
         # between the reference and the count and drop a day (rule 133).
         now = utcnow()
@@ -430,19 +460,19 @@ class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
         result = MinDormancyGate(GateConfig(threshold=self.WAITS_DAYS)).evaluate(facts)
 
         assert result.outcome == PROTECT, "the gate must fire for this chip to exist at all"
-        return _kept_phrase("min_dormancy", result.detail)
+        return _kept_reason("min_dormancy", result.detail)
 
     def test_the_chip_asserts_no_play(self) -> None:
         """The regression itself. Nobody watched this, so the chip may not say anyone did."""
-        phrase = self._phrase_for_a_never_played_title()
+        sentence = reason_text(self._reason_for_a_never_played_title(), namespace="chip.text")
 
         # Whole words: "unwatched" is the chip saying nobody did, which is the point.
-        assert re.search(r"\bwatched\b", phrase) is None
-        assert re.search(r"\bplayed\b", phrase) is None
+        assert re.search(r"\bwatched\b", sentence) is None
+        assert re.search(r"\bplayed\b", sentence) is None
 
     def test_the_chip_still_names_why_it_is_kept(self) -> None:
         """Truthful is not enough on its own -- the chip's whole job is to say why."""
-        assert self._phrase_for_a_never_played_title() == "hasn't sat unwatched long enough"
+        assert self._reason_for_a_never_played_title() == Reason("kept.dormancy")
 
 
 class TestChip:
@@ -468,7 +498,7 @@ class TestChip:
         )
         assert chip is not None
         assert chip.tone == "kept"
-        assert chip.text == "Kept, well rated: 6.8 on IMDb"
+        assert _chip_reason(chip) == Reason("kept.rating", {"value": 6.8, "source": "imdb"})
 
     def test_protect_with_nothing_fired_degrades_to_no_chip(self) -> None:
         """A stored row that claims protect but records no protection must not invent
@@ -486,30 +516,32 @@ class TestChip:
             82,
         )
         assert chip is not None
-        assert (chip.tone, chip.text) == ("quiet", "Couldn't be found in Plex")
+        assert (chip.tone, _chip_reason(chip)) == ("quiet", Reason("match.unmatched"))
 
     def test_ambiguous_match(self) -> None:
         chip = _chip(_exp(50, match_status="ambiguous"), "abstain", 50)
         assert chip is not None
-        assert (chip.tone, chip.text) == ("quiet", "Looks like two different things in Plex")
+        assert (chip.tone, _chip_reason(chip)) == ("quiet", Reason("match.ambiguous"))
 
     @pytest.mark.parametrize(
         ("media_type", "app"), [("movie", "Radarr"), ("season", "Sonarr")], ids=["movie", "season"]
     )
-    def test_a_conflicted_match_names_the_app_that_disagrees(
-        self, media_type: str, app: str
-    ) -> None:
+    def test_a_conflicted_match_names_the_media_type(self, media_type: str, app: str) -> None:
         """A disagreement is NOT a duplicate, and saying so sends the operator hunting for a
-        second copy that is not there. It gets its own chip, naming the app whose metadata
-        has to change -- which differs by media type, so both are pinned (rule 141: the
-        movie arm alone would pass on a hardcoded "Radarr")."""
+        second copy that is not there. It gets its own chip, carrying the media type so the
+        catalog's ICU select names the app whose metadata has to change -- which differs by
+        media type, so both are pinned (rule 141: the movie arm alone would pass on a
+        hardcoded "Radarr")."""
         chip = _chip(_exp(50, match_status="conflicted"), "abstain", 50, media_type)
         assert chip is not None
-        assert (chip.tone, chip.text) == ("quiet", f"Plex and {app} don't agree")
-        assert chip.why == f"Plex and {app} don't agree about it"
-        # And it must not fall through to the multiplicity wording it used to share.
-        assert "more than one" not in chip.text
-        assert "two different things" not in chip.text
+        expected = Reason("match.conflicted", {"media_type": media_type})
+        assert (chip.tone, _chip_reason(chip)) == ("quiet", expected)
+        # And the catalog composes the right app, not the multiplicity wording this chip
+        # used to share with the ambiguous-match id.
+        text = reason_text(expected, namespace="chip.text")
+        assert text == f"Plex and {app} don't agree"
+        assert "more than one" not in text
+        assert "two different things" not in text
 
     @pytest.mark.parametrize(
         ("media_type", "expected"),
@@ -544,7 +576,7 @@ class TestChip:
         )
         assert chip is not None
         assert chip.tone == "look"
-        assert chip.text == "Needs a look, watched more than a season your rule keeps"
+        assert _chip_reason(chip) == Reason("look.comparable")
 
     def test_an_unreadable_kept_season_claims_no_comparison(self) -> None:
         """The twin of the dormancy chip's fabricated play, one gate over.
@@ -571,8 +603,9 @@ class TestChip:
 
         assert chip is not None
         assert chip.tone == "look"
-        assert "watched more than" not in chip.text
-        assert chip.text == "Needs a look, couldn't check who watched these seasons"
+        reason = _chip_reason(chip)
+        assert "watched more than" not in reason_text(reason, namespace="chip.text")
+        assert reason == Reason("look.unknowable")
 
     def test_a_conflict_the_mirror_could_not_settle_shares_that_chip(self) -> None:
         """The third shape, and why that chip stopped naming the KEPT season.
@@ -599,8 +632,9 @@ class TestChip:
 
         assert chip is not None
         assert chip.tone == "look"
-        assert "watched more than" not in chip.text
-        assert chip.text == "Needs a look, couldn't check who watched these seasons"
+        reason = _chip_reason(chip)
+        assert "watched more than" not in reason_text(reason, namespace="chip.text")
+        assert reason == Reason("look.unknowable")
 
     def test_a_row_frozen_before_the_flag_names_neither_shape(self) -> None:
         """A stored row that predates ``defers_to_owner`` carries nothing that can tell a
@@ -623,8 +657,7 @@ class TestChip:
 
             assert chip is not None
             assert chip.tone == "look"
-            assert chip.text == "Needs a look, left for you to decide"
-            assert chip.why == "a check on it couldn't be settled"
+            assert _chip_reason(chip) == Reason("look.unsettled")
             # ...and the invitation the chip extends is one the engine honors.
             assert reap_override_verdict_decoded(legacy, score=82) == "condemn"
 
@@ -653,8 +686,9 @@ class TestChip:
         chip = _chip(_exp(82, unknown=[entry]), "abstain", 82)
 
         assert chip is not None
-        assert chip.text == "Needs a look, left for you to decide"
-        assert "watched more than" not in chip.text
+        reason = _chip_reason(chip)
+        assert reason == Reason("look.unsettled")
+        assert "watched more than" not in reason_text(reason, namespace="chip.text")
 
     @pytest.mark.parametrize("junk", ['"true"', '"false"', '"0"', "1", "0", "[]", "{}", "null"])
     def test_the_panel_reads_the_junk_the_chip_reads_and_keeps_rendering(self, junk: str) -> None:
@@ -701,7 +735,7 @@ class TestChip:
         # And the chip beside it says the same thing about the same row.
         chip = _chip(exp, "abstain", 82)
         assert chip is not None
-        assert chip.text == "Needs a look, left for you to decide"
+        assert _chip_reason(chip) == Reason("look.unsettled")
 
     @pytest.mark.parametrize("junk", ["70.5", '"abc"', "true", "[]", '{"a": 1}'])
     def test_an_illegible_threshold_costs_its_own_clause_and_nothing_else(self, junk: str) -> None:
@@ -740,7 +774,7 @@ class TestChip:
         # And the chip beside it declines the same comparison rather than inventing one.
         chip = _chip(exp, "abstain", 82)
         assert chip is not None
-        assert chip.text == "Below your threshold"
+        assert _chip_reason(chip) == Reason("below")
 
     @pytest.mark.parametrize("junk", ['"matched"', "5", "[]"])
     def test_a_match_block_of_the_wrong_shape_reads_as_absent(self, junk: str) -> None:
@@ -786,7 +820,10 @@ class TestChip:
         )
         refused = replace(made, defers_to_owner=False)
 
-        for result, expected in ((made, "watched more than"), (refused, "couldn't check")):
+        for result, expected in (
+            (made, Reason("look.comparable")),
+            (refused, Reason("look.unknowable")),
+        ):
             frozen = json.loads(
                 _explain(
                     Evaluation(results=[result]),
@@ -798,7 +835,7 @@ class TestChip:
             chip = _chip(frozen, "abstain", 82)
 
             assert chip is not None, expected
-            assert expected in chip.text, chip.text
+            assert _chip_reason(chip) == expected
 
     def test_the_panel_is_served_the_flag_its_chip_reads(self) -> None:
         """The why panel's half of ``defers_to_owner``'s supply chain, end to end (#86).
@@ -926,8 +963,9 @@ class TestChip:
                 verdict = reap_override_verdict_decoded(exp, score=82)
 
                 assert chip is not None
-                assert chip.text.startswith("Needs a look"), f"{chip.text!r} for {flag}"
-                assert verdict == "condemn", f"{chip.text!r} vs {verdict!r} for {flag}"
+                reason = _chip_reason(chip)
+                assert reason.id.startswith("look."), f"{reason!r} for {flag}"
+                assert verdict == "condemn", f"{reason!r} vs {verdict!r} for {flag}"
 
         # The other direction. A row the reap refuses must not be wearing an invitation.
         held = {
@@ -942,7 +980,7 @@ class TestChip:
             chip = _chip(exp, "abstain", 82)
 
             assert reap_override_verdict_decoded(exp, score=82) == "protect", label
-            assert chip is None or not chip.text.startswith("Needs a look"), label
+            assert chip is None or not _chip_reason(chip).id.startswith("look."), label
 
     def test_any_future_deliberate_flag_still_wants_eyes(self) -> None:
         """A blocked detail that is a sentence of its own (not "could not check") is a
@@ -953,7 +991,7 @@ class TestChip:
             60,
         )
         assert chip is not None
-        assert (chip.tone, chip.text) == ("look", "Needs a look, left for you to decide")
+        assert (chip.tone, _chip_reason(chip)) == ("look", Reason("look.unsettled"))
 
     def test_checks_that_could_not_run(self) -> None:
         chip = _chip(
@@ -970,7 +1008,7 @@ class TestChip:
             50,
         )
         assert chip is not None
-        assert (chip.tone, chip.text) == ("quiet", "Some checks couldn't run")
+        assert (chip.tone, _chip_reason(chip)) == ("quiet", Reason("unknown_checks"))
 
     def test_a_history_too_short_for_the_window_reads_as_a_check_that_could_not_run(
         self,
@@ -997,15 +1035,16 @@ class TestChip:
         )
 
         assert chip is not None
-        assert (chip.tone, chip.text) == ("quiet", "Some checks couldn't run")
-        assert "left for you to decide" not in chip.text
+        reason = _chip_reason(chip)
+        assert (chip.tone, reason) == ("quiet", Reason("unknown_checks"))
+        assert not reason.id.startswith("look.")
 
     def test_coverage_floor(self) -> None:
         """Past the blocked cases, an abstain at or above the threshold can only be the
         coverage floor (decide_verdict's order)."""
         chip = _chip(_exp(82), "abstain", 82)
         assert chip is not None
-        assert (chip.tone, chip.text) == ("quiet", "Too little of it could be checked")
+        assert (chip.tone, _chip_reason(chip)) == ("quiet", Reason("coverage"))
 
     @pytest.mark.parametrize("stored_floor", [6000, 3000])
     def test_explain_freezes_the_coverage_floor_the_panel_restates(self, stored_floor: int) -> None:
@@ -1092,7 +1131,10 @@ class TestChip:
     def test_below_threshold_names_both_numbers(self) -> None:
         chip = _chip(_exp(42), "abstain", 42)
         assert chip is not None
-        assert (chip.tone, chip.text) == ("quiet", "Scored 42, under your 70")
+        assert (chip.tone, _chip_reason(chip)) == (
+            "quiet",
+            Reason("below_threshold", {"score": 42, "threshold": 70}),
+        )
 
     def test_malformed_explanation_never_errors_a_row_off_the_queue(self) -> None:
         # The parse happens once per row now (_decode_explanation), and anything that is
@@ -1139,8 +1181,9 @@ class TestTheCameBackChip:
     def test_the_chip_states_how_long_is_left(self) -> None:
         chip = _chip(_exp(20, fired=[self._fired(days_ago=35, by_reaper=True)]), "protect", 20)
         assert chip is not None
-        assert chip.text.startswith("Came back, ")
-        assert chip.text.endswith(" left")
+        reason = _chip_reason(chip)
+        assert reason.id == "came_back"
+        assert "days_left" in reason.params
 
     def test_it_is_the_outlined_tone_and_not_the_filled_one(self) -> None:
         # Filled means the owner decided; this is Reaper's decision, and it expires.
@@ -1169,7 +1212,7 @@ class TestTheCameBackChip:
         )
         assert chip is not None
         assert chip.tone == "kept"
-        assert chip.text == "Kept, you spared it"
+        assert _chip_reason(chip) == Reason("kept.hand_spare")
 
     def test_an_unparseable_detail_costs_the_number_and_not_the_chip(self) -> None:
         # A stored row from a build that worded the detail differently. Vague but true, and
@@ -1181,23 +1224,48 @@ class TestTheCameBackChip:
         )
         assert chip is not None
         assert chip.tone == "held"
-        assert chip.text == "Came back"
+        assert _chip_reason(chip) == Reason("came_back_unknown")
 
-    def test_the_why_clause_reads_as_a_held_reap_sentence(self) -> None:
-        # It is spoken after "Reap requested, kept for now:", so it has to be a lowercase
-        # clause that finishes that sentence.
+    def test_the_sentence_form_is_a_full_sentence(self) -> None:
+        # The sentence is what the season row prints, and what the override frame
+        # (shell.statusChip.reapRequestedKept, phase 2b) nests as {why} -- a full
+        # sentence now, never a lowercase clause riding after a colon.
         chip = _chip(_exp(20, fired=[self._fired(days_ago=35, by_reaper=True)]), "protect", 20)
         assert chip is not None
-        assert chip.why is not None
-        assert chip.why[0].islower()
-        assert f"Reap requested, kept for now: {chip.why}".endswith("came back")
+        sentence = reason_text(_chip_reason(chip), namespace="chip.sentence")
+        assert sentence[0].isupper()
+        assert sentence.endswith(".")
+        assert sentence == "It left your library and came back."
 
-    def test_the_phrase_helper_words_it_too(self) -> None:
-        # Rule 66: a member with no arm falls to "a protection applies", which is what makes
-        # a missing one silent.
-        assert _kept_phrase(
+    def test_a_parseable_legacy_detail_keeps_its_span_as_english_text(self) -> None:
+        # A legacy row's window is already an English phrase it froze ("3 weeks"), not a
+        # raw day count, so it rides under its own id rather than the fresh path's numeric
+        # one: composing that text into a translated sentence would leak English into
+        # every other language under an id a translator cannot tell apart (rule 92).
+        chip = _chip(
+            _exp(
+                20,
+                fired=[
+                    {
+                        "gate": "returned",
+                        "detail": "it left your library and came back, 3 weeks left",
+                    }
+                ],
+            ),
+            "protect",
+            20,
+        )
+        assert chip is not None
+        assert chip.tone == "held"
+        assert _chip_reason(chip) == Reason("came_back_legacy", {"days_left_text": "3 weeks"})
+
+    def test_the_reason_helper_words_it_too(self) -> None:
+        # Rule 66: a member with no arm falls to "kept.unknown", which is what makes a
+        # missing one silent. This one has its own arm, reached only when this helper is
+        # called directly -- `_came_back_chip` always answers first on a live row.
+        assert _kept_reason(
             "returned", legacy("this left your library and came back, 1 year left")
-        ) != ("a protection applies")
+        ) == Reason("kept.returned")
 
 
 class TestTheReasonLineAgreesWithTheChip:
@@ -1220,7 +1288,7 @@ class TestTheReasonLineAgreesWithTheChip:
         chip = _chip(exp, "abstain", 82)
 
         assert chip is not None
-        assert chip.text == "Too little of it could be checked"
+        assert _chip_reason(chip) == Reason("coverage")
         assert reason is not None
         assert reason_text(reason) == "Kept to be safe: too little of it could be checked."
         assert "threshold" not in reason_text(reason)
@@ -1233,7 +1301,7 @@ class TestTheReasonLineAgreesWithTheChip:
         chip = _chip(exp, "abstain", 42)
 
         assert chip is not None
-        assert chip.text == "Scored 42, under your 70"
+        assert _chip_reason(chip) == Reason("below_threshold", {"score": 42, "threshold": 70})
         assert reason is not None
         assert reason_text(reason) == "Scored below your threshold."
 
@@ -1258,19 +1326,21 @@ class TestTheReasonLineAgreesWithTheChip:
             assert _primary_reason(exp, "abstain", 82) == Reason("below_threshold")
 
 
-class TestChipWhy:
-    """The clause a chip carries for the refused-reap sentence.
+class TestTheChipSentence:
+    """The chip's ``chip.sentence`` form: a full sentence, ready to stand alone on a
+    season row or nest into ``shell.statusChip.reapRequestedKept``'s ``{why}`` slot
+    (phase 2b rewires that nesting; this only proves the catalog composes a well-formed
+    sentence for every id the chip's typed reason can carry).
 
-    The frontend used to recover this by slicing "Kept, " off the chip text and looking
-    the rest up in a transcribed copy of the strings above, so rewording one chip here
-    silently dropped every held-reap explanation to a generic fallback -- and both sides
-    of the contract were asserted from the same transcription, so nothing failed (H-1).
-    The clause now ships beside the text, and these are the assertions that hold the two
-    in step.
+    The frontend used to recover a held-reap clause by slicing "Kept, " off the chip text
+    and looking the rest up in a transcribed copy of the strings above, so rewording one
+    chip here silently dropped every held-reap explanation to a generic fallback -- and
+    both sides of the contract were asserted from the same transcription, so nothing
+    failed (H-1). The sentence is composed from the typed ``reason`` now, and these are
+    the assertions that hold text and sentence in step.
     """
 
-    def test_a_fired_protection_says_the_same_words_without_the_lead(self) -> None:
-        """ "Kept, playing right now" reads "kept for now: playing right now"."""
+    def test_a_fired_protection_composes_both_forms(self) -> None:
         chip = _chip(
             _exp(
                 90, fired=[{"gate": "streaming_now", "detail": "someone is watching it right now"}]
@@ -1279,17 +1349,19 @@ class TestChipWhy:
             90,
         )
         assert chip is not None
-        assert chip.text == f"Kept, {chip.why}"
+        reason = _chip_reason(chip)
+        assert reason_text(reason, namespace="chip.text") == "Kept, playing right now"
+        assert reason_text(reason, namespace="chip.sentence") == "It's playing right now."
 
     @pytest.mark.parametrize(
-        ("explanation", "verdict", "score", "why"),
+        ("explanation", "verdict", "score", "sentence"),
         [
-            (_exp(82, match_status="unmatched"), "abstain", 82, "it couldn't be found in Plex"),
+            (_exp(82, match_status="unmatched"), "abstain", 82, "It couldn't be found in Plex."),
             (
                 _exp(50, match_status="ambiguous"),
                 "abstain",
                 50,
-                "it looks like two different things in Plex",
+                "It looks like two different things in Plex.",
             ),
             (
                 _exp(
@@ -1304,28 +1376,28 @@ class TestChipWhy:
                 ),
                 "abstain",
                 82,
-                "watched more than a season your rule keeps",
+                "Someone watched more than a season your rule keeps.",
             ),
             (
                 _exp(60, unknown=[{"gate": "custom", "detail": "A rule asked a human to look."}]),
                 "abstain",
                 60,
-                "a check on it couldn't be settled",
+                "A check on it couldn't be settled.",
             ),
             (
                 _exp(50, unknown=[{"gate": "min_dormancy", "detail": "could not check when: no"}]),
                 "abstain",
                 50,
-                "some checks couldn't run",
+                "Some checks couldn't run.",
             ),
         ],
     )
-    def test_every_blocked_lane_words_its_own_clause(
-        self, explanation: dict[str, Any], verdict: str, score: int, why: str
+    def test_every_blocked_lane_composes_its_own_sentence(
+        self, explanation: dict[str, Any], verdict: str, score: int, sentence: str
     ) -> None:
         chip = _chip(explanation, verdict, score)
         assert chip is not None
-        assert chip.why == why
+        assert reason_text(_chip_reason(chip), namespace="chip.sentence") == sentence
 
     @pytest.mark.parametrize(
         ("explanation", "verdict", "score"),
@@ -1334,14 +1406,19 @@ class TestChipWhy:
             (_exp(42), "abstain", 42),  # under the threshold
         ],
     )
-    def test_a_chip_about_the_score_names_no_refusal(
+    def test_a_chip_about_the_score_still_composes_a_sentence(
         self, explanation: dict[str, Any], verdict: str, score: int
     ) -> None:
-        """None is a real answer, not a gap. An item that merely scored low is reaped
-        when the owner asks; nothing is holding it, so there is no clause to say."""
+        """Unlike the retired ``why`` field, every id composes a sentence now -- these two
+        used to be the null-``why`` cases (an item that merely scored low is reaped when
+        the owner asks; nothing is holding it). The frontend tells this apart from a real
+        refusal by the reason's id/tone, not by a null sentence, since there is no longer
+        a null to read (phase 2b's concern, flagged here so it is not lost)."""
         chip = _chip(explanation, verdict, score)
         assert chip is not None
-        assert chip.why is None
+        reason = _chip_reason(chip)
+        assert reason.id in {"coverage", "below_threshold", "below"}
+        assert reason_text(reason, namespace="chip.sentence")
 
     @pytest.mark.parametrize(
         ("explanation", "verdict", "score"),
@@ -1383,21 +1460,17 @@ class TestChipWhy:
             ),
         ],
     )
-    def test_a_clause_reads_mid_sentence(
+    def test_every_sentence_is_a_capitalized_full_stop(
         self, explanation: dict[str, Any], verdict: str, score: int
     ) -> None:
-        """It follows a colon, so it starts lowercase and carries no chip furniture: no
-        capital lead, and none of the chip's own lead riding along inside the clause.
-
-        The furniture used to be a middot and this asserted the clause held none. The
-        separator is a comma now (#177), which made that assertion vacuous -- nothing
-        produces a middot any more, so it could not fail. It names the leads instead.
-        """
+        """A ``chip.sentence`` is a whole sentence, not a clause: capital lead, full stop,
+        never the chip's own "Kept,"/"Needs a look," lead riding along inside it."""
         chip = _chip(explanation, verdict, score)
         assert chip is not None
-        assert chip.why is not None
-        assert chip.why[0].islower()
-        assert not chip.why.startswith(("Kept,", "Needs a look,"))
+        sentence = reason_text(_chip_reason(chip), namespace="chip.sentence")
+        assert sentence[0].isupper()
+        assert sentence.endswith(".")
+        assert not sentence.startswith(("Kept,", "Needs a look,"))
 
 
 class TestSeasonNumber:
@@ -1526,12 +1599,12 @@ class TestCandidatesCarryTheGroupShape:
         assert len(rows) == 1
         row = rows[0]
         assert row["season_number"] == 3
+        # The typed reason travels with the chip, so a held reap on this row can compose
+        # its sentence without the frontend parsing the text back apart (H-1). "p": None
+        # is explicit, not omitted: nothing on this route sets exclude_none.
         assert row["chip"] == {
             "tone": "look",
-            "text": "Needs a look, watched more than a season your rule keeps",
-            # The clause travels with the chip, so a held reap on this row can say why
-            # without the frontend parsing the text back apart (H-1).
-            "why": "watched more than a season your rule keeps",
+            "reason": {"k": "look.comparable", "p": None},
         }
         # The strip rides the show's own rollup, sent once beside the rows rather than
         # copied onto each of them.
@@ -1912,3 +1985,43 @@ class TestTheMatchStatusVocabulary:
                 f"{name} is exempt from needing panel copy because {why}, but why.cause has "
                 "an entry for it. One of the two is wrong (rule 25)."
             )
+
+
+class TestTheChipVocabulary:
+    """Every id ``_chip`` can emit, under the ``chip`` catalog namespace, both directions
+    (rule 145's shape, modeled on ``TestTheMatchStatusVocabulary`` above).
+
+    ``_CHIP_IDS`` is hand-maintained rather than AST-discovered: chip ids are inline
+    literals across many branches of ``_kept_reason``/``_chip``/``_came_back_chip``, not
+    each a named module constant the way ``*_REASON`` is. Rule 145's answer for a
+    hand-maintained population is the same as for a discovered one -- count what it claims
+    to cover, reconcile that count by hand, then pin it -- so that is what the first test
+    below does, and the other two prove the catalog agrees with the population in both
+    directions.
+    """
+
+    def test_the_chip_id_population_is_pinned(self) -> None:
+        assert len(_CHIP_IDS) == 40, (
+            f"_CHIP_IDS holds {len(_CHIP_IDS)}. If you added or removed a chip id, bump "
+            "this count deliberately."
+        )
+
+    def test_every_chip_id_has_text_and_sentence_copy(self) -> None:
+        texts = _leaf_ids(catalog("chip.text"))
+        sentences = _leaf_ids(catalog("chip.sentence"))
+        missing_text = _CHIP_IDS - texts
+        missing_sentence = _CHIP_IDS - sentences
+        assert not missing_text, f"chip ids with no chip.text entry: {sorted(missing_text)}"
+        assert not missing_sentence, (
+            f"chip ids with no chip.sentence entry: {sorted(missing_sentence)}"
+        )
+
+    def test_every_catalog_chip_entry_has_a_producer(self) -> None:
+        texts = _leaf_ids(catalog("chip.text"))
+        sentences = _leaf_ids(catalog("chip.sentence"))
+        orphaned_text = texts - _CHIP_IDS
+        orphaned_sentence = sentences - _CHIP_IDS
+        assert not orphaned_text, f"chip.text entries with no producer: {sorted(orphaned_text)}"
+        assert not orphaned_sentence, (
+            f"chip.sentence entries with no producer: {sorted(orphaned_sentence)}"
+        )

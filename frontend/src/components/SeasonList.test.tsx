@@ -7,6 +7,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Chip, Group, GroupSeasonMark, ShowStatus, Verdict } from "../api";
+import i18next from "../i18n";
 import { expectNoA11yViolations } from "../test/a11y";
 import {
   DEFAULT_GENERAL,
@@ -114,7 +115,7 @@ const SHOW_SEASONS: GroupSeasonMark[] = [
 
 const limboSeason = season(3, 3, "abstain", 82, {
   tone: "look",
-  text: "Needs a look, watched more than a season your rule keeps",
+  reason: { k: "look.comparable" },
 });
 
 function renderQueue(
@@ -166,9 +167,7 @@ async function expandSeasons() {
 describe("the show card", () => {
   it("wears its one status chip and the whole-show strip", async () => {
     renderQueue();
-    expect(
-      await screen.findByText("Needs a look, watched more than a season your rule keeps"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(i18next.t("chip.text.look.comparable"))).toBeInTheDocument();
     // The strip marks every season across every lane, not just this tab's.
     expect(screen.getByTitle("Season 1: kept. Open for its full reasoning.")).toBeInTheDocument();
     expect(
@@ -234,14 +233,14 @@ describe("the all-seasons list", () => {
       links: {} as Group["links"],
       show_status: null,
       seasons: [
-        season(1, 1, "protect", 34, { tone: "kept", text: "Kept, someone is partway through" }),
+        season(1, 1, "protect", 34, { tone: "kept", reason: { k: "kept.season.midbinge" } }),
         season(2, 2, "condemn", 88, null),
         limboSeason,
       ],
     } as Group);
     const { container } = renderQueue();
     await expandSeasons();
-    await screen.findByText("Kept, someone is partway through");
+    await screen.findByText(i18next.t("chip.text.kept.season.midbinge"));
     await expectNoA11yViolations(container);
   });
 
@@ -306,7 +305,7 @@ describe("the all-seasons list", () => {
       links: {} as Group["links"],
       show_status: null,
       seasons: [
-        season(1, 1, "protect", 34, { tone: "kept", text: "Kept, someone is partway through" }),
+        season(1, 1, "protect", 34, { tone: "kept", reason: { k: "kept.season.midbinge" } }),
         season(2, 2, "condemn", 88, null),
         limboSeason,
       ],
@@ -317,7 +316,9 @@ describe("the all-seasons list", () => {
 
     // Every lane is present: the kept season's chip, the condemned row's constant
     // mark, and the limbo row (whose chip also sits on the card head).
-    expect(await screen.findByText("Kept, someone is partway through")).toBeInTheDocument();
+    expect(
+      await screen.findByText(i18next.t("chip.text.kept.season.midbinge")),
+    ).toBeInTheDocument();
     expect(screen.getByText("Would be removed")).toBeInTheDocument();
 
     // Every season is actable in place now, not just this tab's. Scope to the season list
@@ -338,7 +339,7 @@ describe("the all-seasons list", () => {
     // list's own `.status-chip` family -- exactly like ShowPanel's SeasonPill and the row's
     // other chips -- so a long "Reap requested" line ellipsizes in place instead (rule 51).
     const held: Candidate = {
-      ...season(3, 3, "protect", 90, { tone: "kept", text: "Kept, playing right now" }),
+      ...season(3, 3, "protect", 90, { tone: "kept", reason: { k: "kept.streaming_now" } }),
       override: "reap",
       override_own: "reap",
       override_effective: false,
@@ -419,16 +420,10 @@ describe("the all-seasons list", () => {
       override: "reap",
       override_own: null,
       override_effective: false,
-      // `text` and `why` deliberately say different things: the held-reap reason is the
-      // chip's own `why` field, which the server words beside the text (H-1). A frontend
-      // that went back to parsing `text` would render the wrong sentence here and fail,
-      // which is what this batch's predecessor could not do -- it transcribed the backend's
-      // prose on both sides of the contract, so drift was invisible (I-2).
-      chip: {
-        tone: "look",
-        text: "Some checks couldn't run",
-        why: "a rating source didn't answer",
-      },
+      // `chip.text.look.unknowable` and `chip.sentence.look.unknowable` read nothing alike,
+      // so a frontend that composed the chip TEXT here instead of the SENTENCE would render
+      // the wrong line and fail (H-1).
+      chip: { tone: "look", reason: { k: "look.unknowable" } },
     });
     const sparedAgainst = withShow(23, 3, {
       override: "spare",
@@ -461,7 +456,7 @@ describe("the all-seasons list", () => {
     expect(screen.queryByText(/Reaped by hand/)).not.toBeInTheDocument();
     // The held season says it is kept for now, and why.
     expect(screen.getByText("Kept for now")).toBeInTheDocument();
-    expect(screen.getByText("A rating source didn't answer.")).toBeInTheDocument();
+    expect(screen.getByText(i18next.t("chip.sentence.look.unknowable"))).toBeInTheDocument();
     // The season spared against the show says it goes its own way. ("Spared" is also the active
     // Spare button's label, so target the chip.)
     expect(screen.getByText("Spared", { selector: ".status-chip" })).toBeInTheDocument();
@@ -655,7 +650,7 @@ describe("what a screen reader hears on a season row", () => {
       links: {} as Group["links"],
       show_status: null,
       seasons: [
-        season(1, 1, "protect", 34, { tone: "kept", text: "Kept, someone is partway through" }),
+        season(1, 1, "protect", 34, { tone: "kept", reason: { k: "kept.season.midbinge" } }),
         season(2, 2, "condemn", 88, null),
         limboSeason,
       ],
