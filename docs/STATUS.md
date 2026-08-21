@@ -41,7 +41,7 @@ Last verified against the code: 2026-08-02.
 | **First start** — four steps, password forced, restore door, resume from the server | ✅ done |
 | **Packaged installs** — Win/macOS binaries + tray, snap, CalVer, update check | 🟡 no cut yet |
 | **Collections** — chip, picker, collection screen, search reaches names | ✅ done, #816 |
-| **i18n** — ICU catalog, typed reasons, manual per locale, Weblate | ✅ landed, #862, RTL is #861 |
+| **i18n** — ICU catalog, typed reasons and server copy, manual, Weblate | ✅ #862, #868, RTL #861 |
 
 ## Open work
 
@@ -80,6 +80,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Watch history that vanished | **A high-water mark that cannot fall**, never a remapped key † |
 | A rebuilt source | **Tautulli's total aborts the scan, Plex's reissued keys degrade it** |
 | Why-panel scope | **Renders for keeps as well as deletes** † |
+| Server copy | **The server states facts, the browser says words** † |
 | Delete mode | **A notice window, not a gate** † |
 | Autonomy | An **earned grant keyed to `policy_hash`** — any edit reverts to approval-required |
 | Caps | **Four**: items + bytes, per-run + rolling 30-day |

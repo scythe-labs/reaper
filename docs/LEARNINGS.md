@@ -4298,6 +4298,17 @@ and collects all 4721 tests (2.8s).
 ⇒ The backend's wall clock is scheduling plus per-test boot, and the frontend's is one file.
 Neither is per-test work worth optimizing test by test.
 
+## The Python ICU twin substituted `#` before recursing (2026-08-21)
+
+`tests/_reasons.py` mirrors `why.ts`'s composer so a backend test can assert composed English
+through the real catalog (rule 119). Its plural handler replaced `#` with a whole-string
+`str.replace` before recursing into the picked branch, so a plural nested inside another
+plural's branch had its inner `#` overwritten by the outer count. No `why.*` entry nested a
+plural that way. `warning.graded_keeps_beyond_history` was the first to, and the bug surfaced
+as a backend assertion that disagreed with what `i18next` rendered in `PolicyEditor.test.tsx`.
+The fix substitutes at brace depth zero only. The twin earned its keep here: a test that
+transcribed the sentence would have agreed with the wrong renderer.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

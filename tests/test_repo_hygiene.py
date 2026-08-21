@@ -73,7 +73,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
 # dropped out of the walk).
-DECISION_SECTIONS = 18
+DECISION_SECTIONS = 19
 
 
 def _live_docs() -> list[Path]:

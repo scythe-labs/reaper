@@ -1014,3 +1014,30 @@ retargeted by hand). The artifacts still build from the pushed sha. The first cu
 curated summary instead, since a generated list spanning the whole history is not release
 notes; that file retired once v2026.8.1 gave every later cut a tag to start from, and a cut
 that finds no `v*` tag now stops rather than generating notes over an unbounded range.
+
+## Server copy
+
+**Choice: The server states facts, the browser says words.**
+
+Every sentence an operator reads in the SPA is composed in the browser from
+`frontend/src/locales/en/ui.json`, so every sentence reaches Weblate. The server sends a typed
+id and raw params (`engine/reason.py`'s `Reason`, wire `{k, p}`). `why.ts`'s `composeIn` looks
+the id up under the namespace the surface owns: `why`, `chip`, `warning`, and the page sections
+phase 5 of #868 added. Gates and signals kept this contract from #862 on. Three surfaces did not,
+because #862 drew its line at the why panel. The card's status chip, the policy warnings and the
+rule vocabulary were composed server-side in English, so a translated UI still showed English on
+every card and across the policy editor. #868 moved them, one PR per surface (#870, #872, #873,
+#874, #875), and a translator note per composed string rides the PR that closes it.
+
+Two corollaries hold. **No string surgery on translated text.** A sentence that needs a capital
+and a period is its own catalog entry (`chip.sentence.*` beside `chip.text.*`), so
+`ReviewQueue`'s `capitalizeSentence` went. **A catalog entry is a whole thing a translator can
+read.** A fragment exists only where a frame nests it through ICU, and its note names the frame.
+A legacy row whose stored prose already holds an English span gets its own id
+(`kept.popularity_legacy`, `came_back_legacy`) rather than riding a translated sentence, so the
+leak is visible and scoped to rows a rescan replaces. A rule name the operator typed travels as a
+param. It is their data in their language.
+
+What stays English on purpose: HTTP error `detail` bodies until each refusal carries a code,
+log lines, the confirmation phrase, the `reaper-admin` CLI, OpenAPI tag descriptions and the
+API-key auth box, and Discord posts and the tray until the backend has a catalog of its own.
