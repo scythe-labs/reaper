@@ -308,11 +308,14 @@ spanning lanes runs each lane it touched — which is not the same as everything
 `frontend`: the guards that read `manual/` and `website/` live in those last two, and for as
 long as the site lane started only its own build, a hand-edited generated page compiled and
 published with nothing having read it (#783).
-**Two workflows outside it carry their own path lists and have to** — a `paths` filter decides
+**The manual publishes from Cloudflare Pages, and no workflow here does it** — Pages watches
+`dev`, builds `website/` itself, and asks GitHub nothing, so the `site` job is the only thing
+that reads a page before an operator does and it gates nothing. Its four build settings live
+in `website/docusaurus.config.ts`'s header, beside the `baseUrl` they have to agree with.
+**One workflow outside it carries its own path list and has to** — a `paths` filter decides
 whether a workflow starts, so it cannot read another one's output. `codeql.yml` restates the
 prose globs as `paths-ignore` once per trigger, in `**` spelling rather than the `case` globs
-above; `docs-deploy.yml` carries a third list that is *near* the site lane and not equal to it.
-`tests/test_repo_hygiene.py` pins all three by name, so neither a fourth nor a move between
+above. `tests/test_repo_hygiene.py` pins both by name, so neither a third nor a move between
 files can arrive quietly and leave this paragraph stale again. **A workflow skipped by its own
 path filter publishes no check run at all** — a *job* skipped by an `if:` does publish one,
 with conclusion `skipped`, which is what the next sentence relies on. That is why the required

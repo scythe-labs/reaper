@@ -22,10 +22,17 @@ const config: Config = {
   tagline: TAGLINE,
   favicon: "img/favicon.svg",
 
-  // The site is served from its own subdomain, so it sits at the root rather than under
-  // /<repo>/. `static/CNAME` carries the same hostname into the build output, and the repo's
-  // Pages setting has to name it too. Change one, change all three. GitHub redirects the old
-  // `scythe-labs.github.io/reaper/` addresses to here, so links already in the wild still land.
+  // Cloudflare Pages serves this from its own subdomain, so it sits at the root rather than
+  // under /<repo>/. The project builds this directory out of the repository it already lives
+  // in, and its four settings are in the Cloudflare dashboard rather than in any file here:
+  //
+  //   Root directory           website
+  //   Build command            git fetch --unshallow || true && npm ci && npm run build
+  //   Build output directory   build
+  //   Custom domain            docs.scythelabs.dev
+  //
+  // The `--unshallow` is load-bearing. Pages clones one commit deep, and `showLastUpdateTime`
+  // below reads each page's git history, so without it every page reports the same date.
   url: "https://docs.scythelabs.dev",
   baseUrl: "/",
   organizationName: ORG,
