@@ -2628,6 +2628,12 @@
       "flowchartWithTitle": "Flowchart: {title}"
     },
     "docsModal": {
+      "group": {
+        "gettingStarted": "Getting started",
+        "operating": "Operating",
+        "policy": "Policy",
+        "safety": "Safety"
+      },
       "indexFooter": "More guides are added here as questions come up.",
       "indexLabel": "Documentation",
       "showingDoc": "Showing {title}.",

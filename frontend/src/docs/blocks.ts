@@ -46,10 +46,15 @@ export type DiagramBlock = {
 
 export type Block = Heading | Para | Callout | ListBlock | Steps | TableBlock | DiagramBlock;
 
+/** The groups the index files docs under. A key, never a label: `DocsModal` renders each
+ *  through the catalog, and `toMdx.ts` maps each to a directory. A fifth member is a sidebar
+ *  decision, and the closed union is what makes both sites fail to compile until it is made. */
+export type DocGroup = "Getting started" | "Policy" | "Safety" | "Operating";
+
 export type Doc = {
   id: string;
-  /** The group the index files it under, e.g. "Policy". Order comes from registry.ts. */
-  group: string;
+  /** The group the index files it under. Order comes from registry.ts. */
+  group: DocGroup;
   title: string;
   summary: string;
   body: Block[];

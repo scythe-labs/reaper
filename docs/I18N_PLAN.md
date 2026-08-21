@@ -29,12 +29,12 @@ undercount a tree a third larger.
 
 | Surface | Count |
 | --- | --- |
-| Frontend source files (non-test) | 125 files, 37,128 lines (re-measured after Stage 4) |
+| Frontend source files (non-test) | 126 files, 37,234 lines (re-measured after Stage 5) |
 | `aria-label=` / `title=` / `placeholder=` literals | 0 in the 74 converted files (Stage 4; was 122 / 70 / 29) |
 | JSX text nodes † | 0 in the 74 converted files (Stage 4; was ~322) |
 | Multi-word quoted string literals † | ~446 |
 | `announce()` call sites (live-region copy) | every one reads the catalog (Stage 4; was 56 English) |
-| Catalog keys in `locales/en/ui.json` (Stage 4) | 2,091 |
+| Catalog keys in `locales/en/ui.json` (Stage 4, plus Stage 5's four group names) | 2,095 |
 | In-app manual (`frontend/src/docs/content/*.ts`) | 6,509 words |
 | **Frontend test queries bound to English copy (`getBy*`/`findBy*`/`queryBy*` by Text/Role/Label)** | **2,434** |
 | Backend prose-bearing kwargs (`detail=`, `why=`, `text=`) | 39 (was 61; Stage 3 converted the gate, signal and keep details to ids) |
@@ -498,7 +498,7 @@ result. Merge, never rebase: the branch is shared.
 | 2 | Fable, no subagents | One file plus a handful of call sites. Delegating costs more than the work. |
 | 3 | Fable, no subagents | Evidence-path change, governed by rules 92, 127, 140, 142, 143. A `/reaper-review` pass runs on the diff before the PR opens; this is the one stage that earns it. |
 | 4 | Fable orchestrates, Sonnet extracts and verifies | Mechanical, high-volume, and verifiable by the two CI gates. The workflow below. |
-| 5 | Sonnet converts, Fable reviews the diff | The manual is typed data, and `manual.gen.test.ts` already guards its shape. |
+| 5 | Fable, no subagents | Planned as a Sonnet conversion. The English blocks stayed where they were, so the stage was a loader, a gate and four catalog keys, smaller than the handoff would have been. |
 | 6 | Fable, with the operator | The platform re-decision and the Weblate account are the operator's. The CI sync, the CONTRIBUTING note, and the gate scoping are the session's. |
 | 7 | Nobody yet | Judged after a shipped locale. |
 

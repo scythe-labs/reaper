@@ -7,6 +7,7 @@ import { render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GATE_META } from "../components/policyMeta";
+import i18n from "../i18n";
 import { expectNoA11yViolations } from "../test/a11y";
 import { docSections } from "./blocks";
 import { DocBody } from "./DocBody";
@@ -187,6 +188,31 @@ describe("DocsModal", () => {
       />,
     );
     expect(screen.getByRole("heading", { level: 3, name: DOCS[0]!.title })).toBeInTheDocument();
+  });
+
+  // No manual ships in this locale, so the English one serves entire, and the pane says so:
+  // the root's `lang` follows the UI, the manual's words are English, and a screen reader is
+  // told which voice each takes. The translated path is DocsModal.locale.test.tsx.
+  it("serves the English manual entire under a locale with no manual, and says so", async () => {
+    await i18n.changeLanguage("de");
+    const { unmount } = render(
+      <DocsModal
+        docId="arming"
+        anchor={undefined}
+        nonce={1}
+        onClose={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    const pane = screen.getByRole("region", { name: "Turning deletion on" });
+    expect(pane).toHaveAttribute("lang", "en");
+    expect(screen.getByRole("button", { name: /Turning deletion on/ })).toHaveAttribute(
+      "lang",
+      "en",
+    );
+    // Unmounted before the language moves back, so the change lands on no mounted hook.
+    unmount();
+    await i18n.changeLanguage("en-US");
   });
 });
 

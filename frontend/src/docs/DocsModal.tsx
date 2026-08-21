@@ -4,13 +4,30 @@
 // scrim, Escape and dialog semantics) split into an index and a reading pane. The index is
 // built from the registry, so a new doc appears here with no change to this file.
 
-import { useEffect, useMemo, useRef } from "react";
+import type { TFunction } from "i18next";
+import { use, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { ModalShell } from "../components/ModalShell";
-import { docSections } from "./blocks";
+import { docSections, type DocGroup } from "./blocks";
 import { DocBody } from "./DocBody";
-import { DOCS, getDoc, groupedDocs } from "./registry";
+import { manualFor } from "./localized";
+import { getDoc, groupedDocs } from "./registry";
+
+/** The index heading for a group. The group is a key, and the switch is exhaustive over
+ *  `DocGroup`, so a fifth group fails to compile here rather than rendering its key (rule 66). */
+function groupLabel(t: TFunction, group: DocGroup): string {
+  switch (group) {
+    case "Getting started":
+      return t("shell.docsModal.group.gettingStarted");
+    case "Policy":
+      return t("shell.docsModal.group.policy");
+    case "Safety":
+      return t("shell.docsModal.group.safety");
+    case "Operating":
+      return t("shell.docsModal.group.operating");
+  }
+}
 
 export function DocsModal({
   docId,
@@ -26,11 +43,21 @@ export function DocsModal({
   onClose: () => void;
   onNavigate: (id: string, anchor?: string) => void;
 }) {
-  const { t } = useTranslation();
-  // DOCS is a non-empty constant, so the fallback always resolves to a real doc.
-  const doc = getDoc(docId) ?? DOCS[0]!;
+  const { t, i18n } = useTranslation();
+  // The manual in the operator's language when one ships, else English entire. Looked up by
+  // the locale they chose, not the one the catalog could resolve: the manual and the UI fall
+  // back to English independently, each whole. A translated manual arrives as a promise:
+  // `use()` suspends on it the first time, behind the Suspense boundary DocsContext already
+  // holds for this component, and reads it synchronously after. English is never a promise,
+  // so the default locale never suspends.
+  const manual = manualFor(i18n.language);
+  const { lng, docs } = manual instanceof Promise ? use(manual) : manual;
+  /** What the catalog's strings are written in: the root's own `lang` (i18n.ts). */
+  const uiLng = i18n.resolvedLanguage ?? i18n.language;
+  // A manual is never empty, so the fallback always resolves to a real doc.
+  const doc = getDoc(docId, docs) ?? docs[0]!;
   const contentRef = useRef<HTMLDivElement>(null);
-  const groups = useMemo(() => groupedDocs(), []);
+  const groups = useMemo(() => groupedDocs(docs), [docs]);
   const sections = useMemo(() => docSections(doc), [doc]);
 
   // Land the reading pane where the caller asked: a section anchor, or the top of the doc.
@@ -75,9 +102,12 @@ export function DocsModal({
         <nav className="docs-index" aria-label={t("shell.docsModal.indexLabel")}>
           {groups.map((g) => (
             <div className="docs-index-group" key={g.group}>
-              <p className="docs-index-h">{g.group}</p>
+              <p className="docs-index-h">{groupLabel(t, g.group)}</p>
               {g.docs.map((d) => {
                 const active = d.id === doc.id;
+                // `lang` wherever the manual's own words are: the chrome around them follows
+                // the UI's locale, and when no manual ships in it the two differ, so a screen
+                // reader is told which voice each part takes (WCAG 3.1.2).
                 return (
                   <div key={d.id}>
                     <button
@@ -86,13 +116,14 @@ export function DocsModal({
                       // Reserve the bold (active) width so selecting an entry never shifts it.
                       data-label={d.title}
                       aria-current={active ? "page" : undefined}
+                      lang={lng}
                       onClick={() => onNavigate(d.id)}
                     >
                       {d.title}
                       <small>{d.summary}</small>
                     </button>
                     {active && sections.length > 0 && (
-                      <ul className="docs-index-sections">
+                      <ul className="docs-index-sections" lang={lng}>
                         {sections.map((s) => (
                           <li key={s.id}>
                             <button type="button" onClick={() => onNavigate(d.id, s.id)}>
@@ -122,9 +153,13 @@ export function DocsModal({
           tabIndex={0}
           role="region"
           aria-label={doc.title}
+          lang={lng}
         >
           <article>
-            <p className="doc-kicker">{doc.group}</p>
+            {/* The one catalog string inside the manual's pane, so it takes the UI's tag back. */}
+            <p className="doc-kicker" lang={uiLng}>
+              {groupLabel(t, doc.group)}
+            </p>
             {/* `h3`, under the `h2` `ModalShell` gives every dialog its title. This was an `h1`,
                 which made the docs the second `h1` on an authenticated page -- the masthead
                 grew the first one in this same issue -- and inverted the outline inside the
