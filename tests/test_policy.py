@@ -62,14 +62,23 @@ from reaper.engine.policy_migrations import (
     rebalance,
     recover_rating_rules,
 )
-from reaper.engine.policy_warnings import PolicyWarning, _shortfall_text, inspect
+from reaper.engine.policy_warnings import PolicyWarning, inspect
 from reaper.engine.reason import legacy
 from reaper.engine.signals import REWATCH_KEEP, Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 from reaper.services.scan_runner import GATE_TYPES, ScanConfigError, build_gates
 from reaper.services.season_pruning import plan_series_prune
-from tests._reasons import flat
+from tests._reasons import catalog, flat
+from tests._reasons import text as reason_text
+
+
+def _msg(w: PolicyWarning) -> str:
+    """A warning's composed English, from the real catalog (rule 92: never assert on the
+    typed reason's own repr as though it were the operator's sentence). The test-side twin
+    of ``PolicyEditor.tsx``'s ``composeIn("warning", w.reason)``."""
+    return reason_text(w.reason, namespace="warning")
+
 
 #: Every gate ``build_gates`` can construct from a policy row. RATING_FLOOR is not in
 #: ``GATE_TYPES`` because it takes a set of per-source bars rather than one GateConfig, so
@@ -845,7 +854,7 @@ class TestTheDangerousConfigDetector:
 
         warnings = inspect(body, ProfileSettings())
 
-        assert any("protect almost nothing" in w.message for w in warnings)
+        assert any("protect almost nothing" in _msg(w) for w in warnings)
 
     def test_a_floor_typed_in_whole_points_is_flagged(self) -> None:
         """Typing 7 meaning 7.0 gives a floor of 0.7, which protects everything."""
@@ -856,7 +865,7 @@ class TestTheDangerousConfigDetector:
 
         warnings = inspect(body, ProfileSettings())
 
-        assert any("Did you mean 7.0" in w.message for w in warnings)
+        assert any("Did you mean 7.0" in _msg(w) for w in warnings)
 
     def test_the_rating_keep_says_so_when_it_has_no_sources_to_keep_on(self) -> None:
         """Rating keep on with an empty source list keeps nothing, and looks configured.
@@ -885,7 +894,7 @@ class TestTheDangerousConfigDetector:
         complaint = [w for w in warnings if w.field == "keep_rating_rules"]
         assert len(complaint) == 1
         assert complaint[0].severity == "warn"
-        assert "not keeping anything" in complaint[0].message
+        assert "not keeping anything" in _msg(complaint[0])
 
         off = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR, enabled=False),))
         assert not [
@@ -1018,7 +1027,7 @@ class TestTheDangerousConfigDetector:
         complaint = [w for w in warnings if w.field == anchor]
         assert len(complaint) == 1
         assert complaint[0].severity == "danger"
-        assert complaint[0].message.startswith(
+        assert _msg(complaint[0]).startswith(
             f"Your {kind} uses {label}, which Reaper cannot read for {where},"
         )
 
@@ -1032,7 +1041,7 @@ class TestTheDangerousConfigDetector:
 
         warnings = inspect(body, ProfileSettings())
 
-        assert any(w.severity == "danger" and "someone is watching" in w.message for w in warnings)
+        assert any(w.severity == "danger" and "someone is watching" in _msg(w) for w in warnings)
 
     def test_disabling_the_data_horizon_gate_is_dangerous(self) -> None:
         """Still a danger, but for the reason this switch actually owns.
@@ -1048,7 +1057,7 @@ class TestTheDangerousConfigDetector:
         warnings = inspect(body, ProfileSettings())
 
         assert any(w.severity == "danger" for w in warnings)
-        message = next(w.message for w in warnings if w.field.endswith("data_horizon.enabled"))
+        message = next(_msg(w) for w in warnings if w.field.endswith("data_horizon.enabled"))
         assert "never-watched" not in message
         assert "could not read" in message
 
@@ -1061,7 +1070,7 @@ class TestTheDangerousConfigDetector:
         body = _policy(gates=(GateSetting(gate=GateId.STREAMING_NOW, enabled=False),))
 
         message = next(
-            w.message
+            _msg(w)
             for w in inspect(body, ProfileSettings())
             if w.field.endswith("streaming_now.enabled")
         )
@@ -1145,7 +1154,7 @@ class TestWhereEachDetectorThresholdActuallySits:
         )
 
     def _said(self, body: PolicyBody, **kwargs: object) -> list[str]:
-        return [w.message for w in inspect(body, ProfileSettings(), **kwargs)]  # type: ignore[arg-type]
+        return [_msg(w) for w in inspect(body, ProfileSettings(), **kwargs)]  # type: ignore[arg-type]
 
     @pytest.mark.parametrize(("floor", "shown"), [(89, None), (90, "9.0"), (91, "9.1")])
     def test_the_bar_that_protects_almost_nothing_starts_at_nine_point_oh(
@@ -1288,7 +1297,7 @@ class TestWhereEachDetectorThresholdActuallySits:
         if loud:
             assert flagged[0].field == "condemn_at"
             assert flagged[0].severity == "danger"
-            assert f"A threshold of {condemn_at} condemns almost everything" in flagged[0].message
+            assert f"A threshold of {condemn_at} condemns almost everything" in _msg(flagged[0])
 
 
 class TestADormancyFloorDeeperThanTheWatchHistory:
@@ -1346,9 +1355,9 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
         [flagged] = self._floor_warnings(self._floored(), reach=90.0)
 
         assert flagged.severity == "warn"
-        assert flagged.message.startswith("Nothing will be flagged for removal.")
-        assert "3 years" in flagged.message
-        assert "lower this wait" in flagged.message
+        assert _msg(flagged).startswith("Nothing will be flagged for removal.")
+        assert "3 years" in _msg(flagged)
+        assert "lower this wait" in _msg(flagged)
 
     def test_a_single_unit_floor_keeps_its_number(self) -> None:
         """The shipped floor is three years, so it never exercised ``humanize_window``'s
@@ -1360,7 +1369,7 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
         """
         for threshold, expected in ((365, "1 year"), (30, "1 month")):
             [flagged] = self._floor_warnings(self._floored(threshold), reach=1.0)
-            assert f"waits {expected} of no watching" in flagged.message
+            assert f"waits {expected} of no watching" in _msg(flagged)
 
     def test_the_boundary_is_exact(self) -> None:
         """At the floor a title CAN read as dormant enough, so the claim stops being true."""
@@ -1457,7 +1466,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         assert len(flagged) == 1
         assert flagged[0].severity == "warn"
-        assert "Nothing will be flagged for removal" in flagged[0].message
+        assert "Nothing will be flagged for removal" in _msg(flagged[0])
 
     def test_it_is_silent_when_the_history_covers_the_window(self) -> None:
         """The gate answers the question it is asked, so there is nothing to report."""
@@ -1496,10 +1505,10 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         assert len(flagged) == 1
         assert flagged[0].severity == "warn"
-        assert "Nothing will be flagged for removal" in flagged[0].message
+        assert "Nothing will be flagged for removal" in _msg(flagged[0])
         # The span they never set, named, and the remedy that does not need the hidden box.
-        assert "the last year" in flagged[0].message
-        assert "remove that rule" in flagged[0].message
+        assert "the last year" in _msg(flagged[0])
+        assert "remove that rule" in _msg(flagged[0])
         # And nothing on the window control, which is not on the page to be fixed.
         assert self._window_warnings(self._owner_rule_only(), reach=90.0) == []
 
@@ -1532,7 +1541,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         [flagged] = self._rule_warnings(self._owner_rule_only(), reach=90.0)
 
-        assert f'"{RECENT_WATCHERS.label}"' in flagged.message
+        assert f'"{RECENT_WATCHERS.label}"' in _msg(flagged)
         # The label is the registry's, not a second spelling of it: the editor renders this
         # exact string through GET /api/vocabulary, so a copy here would drift from the card.
         assert RECENT_WATCHERS.label == "People who watched it recently"
@@ -1548,9 +1557,9 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         [flagged] = self._rule_warnings(self._two_rules_on_the_same_field(), reach=90.0)
 
-        assert "Your 2 keep rules" in flagged.message
-        assert "remove them." in flagged.message
-        assert "remove that rule" not in flagged.message
+        assert "Your 2 keep rules" in _msg(flagged)
+        assert "remove them." in _msg(flagged)
+        assert "remove that rule" not in _msg(flagged)
 
     def test_a_rule_the_shortfall_does_not_block_is_left_out_of_the_count(self) -> None:
         """The count ranges over the rules that are blocking, never over the rule list.
@@ -1573,9 +1582,9 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         [flagged] = self._rule_warnings(with_bystanders, reach=90.0)
 
-        assert "Your keep rule on" in flagged.message
-        assert "remove that rule." in flagged.message
-        assert "2 keep rules" not in flagged.message
+        assert "Your keep rule on" in _msg(flagged)
+        assert "remove that rule." in _msg(flagged)
+        assert "2 keep rules" not in _msg(flagged)
 
     def test_the_fallback_window_is_silent_with_no_rule_reading_it(self) -> None:
         """The gate off and no owner rule on a watcher count is the ordinary case: the
@@ -1655,40 +1664,34 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         that far", which only reads if the span has already been said. Both other tests
         here sit outside ``_REACH_NAMEABLE_MARGIN_DAYS`` and take the arm that names a
         number, so this is the branch that would go out ungrammatical unnoticed."""
-        message = self._window_warnings(self._pop(), reach=float(self.WINDOW) - 15)[0].message
+        message = _msg(self._window_warnings(self._pop(), reach=float(self.WINDOW) - 15)[0])
 
         assert message.index("in the last year") < message.index("does not go back that far")
 
     def test_the_cause_clause_is_the_one_the_why_panel_prints(self) -> None:
-        """Rule 144: this sentence has a sibling. ``ServerPopularityGate.evaluate`` puts
-        the same shortfall in front of the same operator, off the same
-        ``gates.history_shortfall`` helper. Restating it here in different words would let
-        the editor and the why panel describe one mirror two ways.
+        """Rule 144, structurally rather than by two copies agreeing. ``inspect`` nests the
+        SAME ``Reason`` the why panel prints (off the same ``gates.history_shortfall``
+        helper) as the ``shortfall`` param on ``warning.popularity_beyond_history``, and a
+        nested reason always composes under ``why`` (``why.ts``, this module's ``text``),
+        never a second copy of the sentence written in ``inspect``. So the two cannot drift
+        the way two independently-worded strings could -- there is one catalog entry for
+        this clause, quoted twice.
 
-        If this fails, the two copies have drifted: fix them together, in
-        ``engine/policy_warnings.py inspect`` and ``engine/gates.py:ServerPopularityGate.evaluate``.
-
-        **What it pins, stated exactly, because it was read as more than it is** (#243
-        asked whether this is a tautological oracle, since it computes its expectation by
-        calling the helper both sides call). It is not: rule 119 requires an agreement test
-        to call the real function rather than transcribe it, and the shared value here is a
-        whole sentence, so a reworded copy in ``inspect`` fails on the spot. But it pins
-        AGREEMENT only -- reword ``history_shortfall`` and both sides move together, silently
-        -- and it drives ONE blocked row, so it says nothing about the others (rule 145).
-        The claim was "every blocked row", which is a population proven against one member;
-        it now says what it drives.
+        If this fails, either ``history_shortfall`` changed what it returns for this input,
+        or the warning stopped nesting it. Rule 119: the expectation is the real function's
+        real output, never a transcribed copy.
         """
         reach = 90.0
         expected_reason = history_shortfall(
             Known(value=reach, source="tautulli"), float(self.WINDOW)
         )
         assert expected_reason is not None
-        expected = _shortfall_text(expected_reason)
+        expected = reason_text(expected_reason)
         # Truthy, not merely non-None: "" is a legal str that every ``in`` below accepts, so
         # a helper degrading to an empty sentence would satisfy this test vacuously.
         assert expected
 
-        message = self._window_warnings(self._pop(), reach=reach)[0].message
+        message = _msg(self._window_warnings(self._pop(), reach=reach)[0])
         blocked = ServerPopularityGate(GateConfig(threshold=2, window_days=self.WINDOW)).evaluate(
             replace(
                 _evidence(days=900, watchers=0, rank=1, rating=70, size_gb=1),
@@ -1698,9 +1701,8 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         assert blocked.blocked is True  # the state the warning is describing
         assert expected in message
-        # The panel's copy of the same clause lives in the catalog now; the warning
-        # keeps its English through ``_shortfall_text``, and the two are held
-        # together by ``test_review_chips``'s shortfall pin.
+        # The why panel's copy of the same clause: the two ``Reason``s carry identical
+        # params, which is what "the warning nests the panel's own reason" means.
         assert flat(expected_reason) in flat(blocked.detail)
 
     def test_a_window_shorter_than_the_history_keeps_its_own_warning(self) -> None:
@@ -1710,7 +1712,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         flagged = self._window_warnings(self._pop(window_days=7), reach=800.0)
 
         assert len(flagged) == 1
-        assert "very short" in flagged[0].message
+        assert "very short" in _msg(flagged[0])
 
     def test_the_two_ends_merge_into_one_message_instead_of_opposing_each_other(self) -> None:
         """A 7-day window under a 3-day mirror is short AND outrun, and the two remedies
@@ -1726,7 +1728,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         assert len(flagged) == 1
         assert flagged[0].severity == "warn"
-        message = flagged[0].message
+        message = _msg(flagged[0])
         # The shortfall is the one that survives -- it names the live outcome, and the
         # short-window advice describes pressure that cannot land while nothing is flagged.
         assert "Nothing will be flagged for removal" in message
@@ -1739,11 +1741,11 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """The merge above is only for the overlap. Apart, each fault is real on its own
         and says the thing it always said, remedy included -- which is what makes the
         merged message discriminable from either of them."""
-        outrun_only = self._window_warnings(self._pop(), reach=90.0)[0].message
+        outrun_only = _msg(self._window_warnings(self._pop(), reach=90.0)[0])
         assert "Lower this window to match your history" in outrun_only
         assert "very short" not in outrun_only
 
-        short_only = self._window_warnings(self._pop(window_days=7), reach=800.0)[0].message
+        short_only = _msg(self._window_warnings(self._pop(window_days=7), reach=800.0)[0])
         assert "A watch window of 7 days is very short" in short_only
         assert "A year is the usual setting." in short_only
         assert "Nothing will be flagged for removal" not in short_only
@@ -1768,7 +1770,7 @@ class TestRequestedOnlyScopeWithoutSeerr:
         flagged = [w for w in warnings if w.field == "keep_last_scope"]
         assert len(flagged) == 1
         assert flagged[0].severity == "warn"
-        assert "Seerr" in flagged[0].message
+        assert "Seerr" in _msg(flagged[0])
 
     def test_it_is_silent_when_seerr_is_connected(self) -> None:
         """The scope does what it says, so there is nothing to report."""
@@ -1796,7 +1798,7 @@ class TestRequestedOnlyScopeWithoutSeerr:
 
         spoken = [w for w in warnings if w.field == "keep_last_scope"]
         assert len(spoken) == 1
-        assert f"keeping the last {seasons} seasons of every show" in spoken[0].message
+        assert f"keeping the last {seasons} seasons of every show" in _msg(spoken[0])
 
     def test_it_is_silent_when_the_floor_is_off(self) -> None:
         """At 0 seasons the floor never fires, so its scope decides nothing and saying
@@ -2491,8 +2493,8 @@ class TestTheOtherReachShortfallLanes:
         """
         [flagged] = self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0)
 
-        assert flagged.message.startswith("Titles added before your watch history starts")
-        assert "Nothing will be flagged" not in flagged.message
+        assert _msg(flagged).startswith("Titles added before your watch history starts")
+        assert "Nothing will be flagged" not in _msg(flagged)
 
     def test_it_does_not_tell_the_operator_to_wait_for_a_span_that_never_closes(self) -> None:
         """The remedy has to be one the operator can actually reach the end of.
@@ -2505,8 +2507,8 @@ class TestTheOtherReachShortfallLanes:
         """
         [flagged] = self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0)
 
-        assert "Wait for it to build up" not in flagged.message
-        assert flagged.message.endswith("Remove that rule if you want those titles judged.")
+        assert "Wait for it to build up" not in _msg(flagged)
+        assert _msg(flagged).endswith("Remove that rule if you want those titles judged.")
 
     def test_it_counts_the_rules_it_is_asking_the_operator_to_remove(self) -> None:
         """Issue #157, on the lane that never got the fix (rule 72).
@@ -2528,15 +2530,13 @@ class TestTheOtherReachShortfallLanes:
             )
 
             if count == 1:
-                assert "Your keep rule counts" in flagged.message
-                assert flagged.message.endswith("Remove that rule if you want those titles judged.")
+                assert "Your keep rule counts" in _msg(flagged)
+                assert _msg(flagged).endswith("Remove that rule if you want those titles judged.")
             else:
-                assert f"Your {count} keep rules count" in flagged.message
-                assert flagged.message.endswith(
-                    "Remove those rules if you want those titles judged."
-                )
+                assert f"Your {count} keep rules count" in _msg(flagged)
+                assert _msg(flagged).endswith("Remove those rules if you want those titles judged.")
             # Never the other number's sentence: the bug was one arm serving both.
-            assert ("keep rules" in flagged.message) is (count > 1)
+            assert ("keep rules" in _msg(flagged)) is (count > 1)
 
     def test_the_op_decides_it_here_exactly_as_it_does_on_the_window(self) -> None:
         """``lte`` leaves an item already over the bar settled, so it stays condemnable.
@@ -2578,7 +2578,7 @@ class TestTheOtherReachShortfallLanes:
         assert flagged[0].severity == "warn"
         # It names the rule, which the protect lanes cannot: a graded keep carries a name the
         # operator typed, a `ConditionSpec` does not.
-        assert '"my lean"' in flagged[0].message
+        assert '"my lean"' in _msg(flagged[0])
 
     def test_a_lean_inside_the_headroom_is_not(self) -> None:
         """The bound is ``MAX_SCORE - condemn_at``: at 30 the item can still reach 70."""
@@ -2612,8 +2612,8 @@ class TestTheOtherReachShortfallLanes:
         assert len(lifetime) == 1
         # Each says what is true of ITS span: the window empties the list outright, the
         # lifetime one only for titles older than the mirror.
-        assert windowed[0].message.startswith("Nothing will be flagged for removal.")
-        assert lifetime[0].message.startswith("Titles added before your watch history starts")
+        assert _msg(windowed[0]).startswith("Nothing will be flagged for removal.")
+        assert _msg(lifetime[0]).startswith("Titles added before your watch history starts")
 
     def test_a_windowed_lean_the_history_covers_is_not_flagged(self) -> None:
         """No shortfall, no full discount, so nothing to say."""
@@ -2643,7 +2643,7 @@ class TestTheOtherReachShortfallLanes:
         # threshold in a third sentence too; that sentence said again what the lead already
         # says and was cut, so the derived number is the only thing left to pin -- which is
         # the half that could actually be wrong.
-        assert "20 points or less" in flagged.message
+        assert "20 points or less" in _msg(flagged)
 
     def test_a_caller_that_cannot_read_the_mirror_stays_quiet_on_the_lean_lane(self) -> None:
         """The lean twin of the protect-lane guard above (rules 118, 72).
@@ -2697,8 +2697,8 @@ class TestTheOtherReachShortfallLanes:
         )
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
 
-        assert "6 months" in flagged.message
-        assert "year" not in flagged.message
+        assert "6 months" in _msg(flagged)
+        assert "year" not in _msg(flagged)
 
     # --- the total is per span, never per rule ------------------------------------
 
@@ -2722,12 +2722,12 @@ class TestTheOtherReachShortfallLanes:
         )
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
 
-        assert flagged.message.startswith("Nothing will be flagged for removal.")
+        assert _msg(flagged).startswith("Nothing will be flagged for removal.")
         # Both contributors are named: the operator cannot act on a total alone, because
         # neither rule looks wrong on its own.
-        assert '"one" and "two"' in flagged.message
-        assert "all 40 of their points" in flagged.message
-        assert "set their total to 30 points or less" in flagged.message
+        assert '"one" and "two"' in _msg(flagged)
+        assert "all 40 of their points" in _msg(flagged)
+        assert "set their total to 30 points or less" in _msg(flagged)
 
     def test_a_window_keep_and_a_lifetime_keep_name_the_affected_set(self) -> None:
         """Mixed spans do NOT claim an empty list, and that asymmetry is deliberate.
@@ -2750,9 +2750,9 @@ class TestTheOtherReachShortfallLanes:
         )
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
 
-        assert flagged.message.startswith("Titles added before your watch history starts")
-        assert "Nothing will be flagged" not in flagged.message
-        assert '"recent" and "ever"' in flagged.message
+        assert _msg(flagged).startswith("Titles added before your watch history starts")
+        assert "Nothing will be flagged" not in _msg(flagged)
+        assert '"recent" and "ever"' in _msg(flagged)
 
     def test_a_lifetime_keep_alone_is_not_told_to_wait(self) -> None:
         """ "Wait for it to build up" is false on an ``ITEM_LIFETIME`` span, so it is not offered.
@@ -2766,9 +2766,9 @@ class TestTheOtherReachShortfallLanes:
         body = _policy(graded_keeps=self._lean("watchers_all_time", 40).graded_keeps)
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
 
-        assert "Wait for it to build up" not in flagged.message
+        assert "Wait for it to build up" not in _msg(flagged)
         # The remedy that does work still leads, and reads as a sentence.
-        assert flagged.message.endswith("Set it to 30 points or less.")
+        assert _msg(flagged).endswith("Set it to 30 points or less.")
 
     def test_a_window_keep_in_the_set_is_still_told_to_wait(self) -> None:
         """The discriminator for the test above, and why this is a condition rather than a
@@ -2779,7 +2779,7 @@ class TestTheOtherReachShortfallLanes:
         body = _policy(graded_keeps=self._lean("recent_watchers", 40).graded_keeps)
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
 
-        assert "Wait for it to build up, or set it to 30 points or less." in flagged.message
+        assert "Wait for it to build up, or set it to 30 points or less." in _msg(flagged)
 
     def test_a_threshold_with_no_headroom_names_a_move_the_editor_accepts(self) -> None:
         """``condemn_at`` may be 100, which is the cautious direction, and ``max_discount`` is
@@ -2789,8 +2789,8 @@ class TestTheOtherReachShortfallLanes:
         body = _policy(condemn_at=100, graded_keeps=self._lean("recent_watchers", 40).graded_keeps)
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
 
-        assert "remove that rule" in flagged.message
-        assert "0 points or less" not in flagged.message
+        assert "remove that rule" in _msg(flagged)
+        assert "0 points or less" not in _msg(flagged)
 
     def test_it_is_not_the_total_based_warning_and_both_can_fire(self) -> None:
         """They answer different questions on one anchor, and neither covers the other.
@@ -2804,13 +2804,13 @@ class TestTheOtherReachShortfallLanes:
             self._lean("recent_watchers", 40), "graded_keeps", reach=90.0
         )
         assert len(only_mirror) == 1
-        assert "subtract up to" not in only_mirror[0].message
+        assert "subtract up to" not in _msg(only_mirror[0])
 
         # At 70 both hold, and the operator gets both sentences rather than one standing in
         # for the other.
         both = self._warnings_on(self._lean("recent_watchers", 70), "graded_keeps", reach=90.0)
         assert len(both) == 2
-        assert sum("subtract up to" in w.message for w in both) == 1
+        assert sum("subtract up to" in _msg(w) for w in both) == 1
 
 
 class TestTheCondemnLanesCoverage:
@@ -2858,10 +2858,10 @@ class TestTheCondemnLanesCoverage:
         [flagged] = self._condemn_warnings(body)
 
         assert flagged.severity == "warn"
-        assert flagged.message.startswith("Nothing will be flagged for removal.")
+        assert _msg(flagged).startswith("Nothing will be flagged for removal.")
         # The number that makes it actionable is the weight to move, not a coverage ratio.
-        assert "60 of your 100 removal points" in flagged.message
-        assert "40 points are left to judge on" in flagged.message
+        assert "60 of your 100 removal points" in _msg(flagged)
+        assert "40 points are left to judge on" in _msg(flagged)
 
     def test_a_graded_custom_rule_adds_to_the_same_sum(self) -> None:
         """#164's first split: 20 on the built-in alone clears both bounds, and the operator's
@@ -2888,7 +2888,7 @@ class TestTheCondemnLanesCoverage:
 
         [flagged] = self._condemn_warnings(with_rule)
 
-        assert "55 of your 100 removal points" in flagged.message
+        assert "55 of your 100 removal points" in _msg(flagged)
 
     def _boolean(self, op: Op) -> PolicyBody:
         """The measured split, with the rule's operator as the only variable."""
@@ -2924,8 +2924,8 @@ class TestTheCondemnLanesCoverage:
         """
         [flagged] = self._condemn_warnings(self._boolean(Op.LTE))
 
-        assert "55 of your 100 removal points" in flagged.message
-        assert "45 points are left to judge on" in flagged.message
+        assert "55 of your 100 removal points" in _msg(flagged)
+        assert "45 points are left to judge on" in _msg(flagged)
 
     def test_a_boolean_rule_that_can_still_fire_is_left_out(self) -> None:
         """The discriminator, and the reason the sum is not simply "weight on the field".
@@ -3000,10 +3000,10 @@ class TestTheCondemnLanesCoverage:
 
         assert flagged.field == "custom_condemn"
         assert flagged.severity == "warn"
-        assert flagged.message.startswith("Your removal rule won't flag the titles it was written")
+        assert _msg(flagged).startswith("Your removal rule won't flag the titles it was written")
         # The other tier's claim, which is false here and must not be borrowed: this list has
         # titles in it.
-        assert "Nothing will be flagged" not in flagged.message
+        assert "Nothing will be flagged" not in _msg(flagged)
 
     def test_the_partial_case_is_read_off_the_floor_and_not_off_the_rule(self) -> None:
         """The discriminator, swept across the boundary the coverage floor actually sets.
@@ -3043,8 +3043,8 @@ class TestTheCondemnLanesCoverage:
         empty = self._condemn_warnings(self._boolean(Op.LTE))
         partial = self._condemn_warnings(self._partial(Op.LTE, floor_bp=9000))
 
-        assert [w.message.startswith("Nothing will be flagged") for w in empty] == [True]
-        assert [w.message.startswith("Nothing will be flagged") for w in partial] == [False]
+        assert [_msg(w).startswith("Nothing will be flagged") for w in empty] == [True]
+        assert [_msg(w).startswith("Nothing will be flagged") for w in partial] == [False]
 
     def test_the_shipped_movie_policy_is_not_flagged(self) -> None:
         """The population this must not fire on. ``FEW_WATCHERS`` carries 20 of the shipped
@@ -3175,11 +3175,11 @@ class TestAHoldTheWatchHistoryCannotEstablish:
         [flagged] = self._hold_warnings(self._tv(in_progress_hold_days=180))
 
         assert flagged.severity == "warn"
-        assert flagged.message.startswith("No TV season will be flagged for removal.")
+        assert _msg(flagged).startswith("No TV season will be flagged for removal.")
         # The hold is named before the cause clause, so the in-margin arm's "that far" has a
         # span to point at, and the remedy names the box the operator is looking at.
-        assert "6 months" in flagged.message
-        assert "lower this to match your history" in flagged.message
+        assert "6 months" in _msg(flagged)
+        assert "lower this to match your history" in _msg(flagged)
 
     def test_a_single_unit_hold_keeps_its_number(self) -> None:
         """The dormancy floor's twin (rule 72): 180 is two units, so the shipped case never
@@ -3194,7 +3194,7 @@ class TestAHoldTheWatchHistoryCannotEstablish:
         for hold, expected in ((365, "1 year"), (30, "1 month")):
             body = self._tv(in_progress_hold_days=hold, gates=floored)
             [flagged] = self._hold_warnings(body, reach=10.0)
-            assert f"place for {expected} after they last watched" in flagged.message
+            assert f"place for {expected} after they last watched" in _msg(flagged)
 
     def test_a_one_day_hold_still_takes_the_shortfall_copy(self) -> None:
         """The boundary between the two cause clauses, one step below every case here.
@@ -3212,8 +3212,8 @@ class TestAHoldTheWatchHistoryCannotEstablish:
 
         [flagged] = self._hold_warnings(body, reach=0.5)
 
-        assert "place for 1 day after they last watched" in flagged.message
-        assert "held forever" not in flagged.message
+        assert "place for 1 day after they last watched" in _msg(flagged)
+        assert "held forever" not in _msg(flagged)
 
     def test_the_journey_that_used_to_end_on_a_silent_page(self) -> None:
         """Clearing the window warning must not clear this one, which is exactly what the
@@ -3253,8 +3253,8 @@ class TestAHoldTheWatchHistoryCannotEstablish:
 
         [flagged] = self._hold_warnings(self._tv(in_progress_hold_days=0), reach=10_000.0)
 
-        assert "held forever" in flagged.message
-        assert "Set a number of days, or turn this protection off." in flagged.message
+        assert "held forever" in _msg(flagged)
+        assert "Set a number of days, or turn this protection off." in _msg(flagged)
 
     def test_a_history_that_spans_the_hold_is_silent(self) -> None:
         """The guard can answer, so it is doing its job and there is nothing to say. 180 is the
@@ -3358,9 +3358,9 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
         """
         [flagged] = self._conflict_warnings(self._tv())
 
-        assert flagged.message.startswith("Seasons of shows added before your watch history")
-        assert "Nothing will be flagged" not in flagged.message
-        assert "No TV season will be flagged" not in flagged.message
+        assert _msg(flagged).startswith("Seasons of shows added before your watch history")
+        assert "Nothing will be flagged" not in _msg(flagged)
+        assert "No TV season will be flagged" not in _msg(flagged)
 
     def test_it_says_where_the_held_shows_go(self) -> None:
         """They are not lost, and a warning that did not say so would read far worse than the
@@ -3370,7 +3370,16 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
         puts on the operator's screen (rule 144)."""
         [flagged] = self._conflict_warnings(self._tv())
 
-        assert '"Needs a look"' in flagged.message
+        assert '"Needs a look"' in _msg(flagged)
+
+    def test_the_needs_a_look_quote_is_the_chip_labels_own_string(self) -> None:
+        """Rule 144's sibling check, since this phrase is hand-authored copy in two catalog
+        entries rather than one generated from the other.
+        ``warning.season_conflicts_before_history`` quotes the same words the status chip
+        actually shows (``why.panel.verdict.needsLookLabel``); a reword of either alone
+        would print a quote that names a label the operator's screen no longer carries."""
+        chip_label = catalog("why")["panel"]["verdict"]["needsLookLabel"]
+        assert f'"{chip_label}"' in catalog("warning")["season_conflicts_before_history"]
 
     def test_the_detector_being_off_silences_it(self) -> None:
         """The control the deferral said did not exist.
@@ -3438,8 +3447,8 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
         """
         [flagged] = self._conflict_warnings(self._tv())
 
-        assert "Wait for it to build up" not in flagged.message
-        assert flagged.message.endswith('marks those shows "Needs a look" instead of guessing.')
+        assert "Wait for it to build up" not in _msg(flagged)
+        assert _msg(flagged).endswith('marks those shows "Needs a look" instead of guessing.')
 
     def test_a_keep_rule_holding_no_season_silences_it(self) -> None:
         """The hold this claims has to be one the keep rule can actually produce.
@@ -3541,8 +3550,8 @@ class TestTheUnmeasuredAllowanceWarning:
 
         assert len(spoken) == 1
         assert spoken[0].severity == "warn"
-        assert f"delete up to {allowance} items it can't measure" in spoken[0].message
-        assert "GB caps won't cover them" in spoken[0].message
+        assert f"delete up to {allowance} items it can't measure" in _msg(spoken[0])
+        assert "GB caps won't cover them" in _msg(spoken[0])
 
 
 class TestTheTwoSizeFootguns:
@@ -3584,8 +3593,8 @@ class TestTheTwoSizeFootguns:
 
         assert len(spoken) == 1
         assert spoken[0].field == "custom_condemn"
-        assert '"the big ones" removes things for being large' in spoken[0].message
-        assert "not whether anyone wants the title" in spoken[0].message
+        assert '"the big ones" removes things for being large' in _msg(spoken[0])
+        assert "not whether anyone wants the title" in _msg(spoken[0])
 
     def test_a_size_rule_at_weight_zero_is_off_and_says_nothing(self) -> None:
         """Weight 0 removes the rule's weight from the denominator, so it adds no pressure at
@@ -3605,7 +3614,7 @@ class TestTheTwoSizeFootguns:
 
         assert len(spoken) == 1
         assert spoken[0].field == "signals"
-        assert f'"Large files" is adding {weight} points toward removal' in spoken[0].message
+        assert f'"Large files" is adding {weight} points toward removal' in _msg(spoken[0])
 
     def test_the_built_in_size_signal_at_weight_zero_says_nothing(self) -> None:
         assert [
@@ -3631,8 +3640,8 @@ class TestTheKeepLastSeasonsWarning:
         else:
             assert len(warnings) == 1
             assert warnings[0].severity == "warn"
-            assert f"Keeping the last {seasons} seasons" in warnings[0].message
-            assert "TV pruning is effectively off" in warnings[0].message
+            assert f"Keeping the last {seasons} seasons" in _msg(warnings[0])
+            assert "TV pruning is effectively off" in _msg(warnings[0])
 
     def test_a_movie_policy_never_raises_it(self) -> None:
         """The media-type test was free to invert: ``==`` to ``!=`` tells a movie operator
@@ -3679,13 +3688,13 @@ class TestTheKeepPointsTotalWarning:
             assert warnings == []
         else:
             assert len(warnings) == 1
-            assert f"subtract up to {total} points" in warnings[0].message
-            assert "remove threshold of 70" in warnings[0].message
+            assert f"subtract up to {total} points" in _msg(warnings[0])
+            assert "remove threshold of 70" in _msg(warnings[0])
 
     def test_the_total_is_summed_across_rules(self) -> None:
         """Two keeps of 40 reach the same threshold one keep of 80 does: ``score()``
         subtracts the sum, so testing each rule alone leaves the arity-two case silent."""
-        assert "subtract up to 80 points" in self._keeps(40, 40)[0].message
+        assert "subtract up to 80 points" in _msg(self._keeps(40, 40)[0])
 
 
 class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
@@ -3721,7 +3730,7 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
         return [
             w
             for w in inspect(body, ProfileSettings(), history_reach_days=self.REACH)
-            if w.message.startswith("Nothing will be flagged for removal.")
+            if _msg(w).startswith("Nothing will be flagged for removal.")
         ]
 
     def _blocked_boolean(
@@ -3755,8 +3764,8 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
         spoken = self._spoken(self._blocked_boolean())
 
         assert len(spoken) == 1
-        assert "40 of your 100 removal points" in spoken[0].message
-        assert "only 60 points are left to judge on" in spoken[0].message
+        assert "40 of your 100 removal points" in _msg(spoken[0])
+        assert "only 60 points are left to judge on" in _msg(spoken[0])
 
     def test_it_sends_a_blocked_boolean_rule_to_the_card_that_holds_it(self) -> None:
         """None of the weight is on the signals card, so the operator goes to the rules card.
@@ -3783,7 +3792,7 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
 
         def said(rules: int) -> list[str]:
             return [
-                w.message
+                _msg(w)
                 for w in inspect(
                     self._blocked_boolean(weight=60, rules=rules, condemn_at=40),
                     ProfileSettings(),
@@ -3841,8 +3850,8 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
 
         assert len(spoken) == 1
         assert spoken[0].field == "signals"
-        assert "60 of your 100 removal points" in spoken[0].message
-        assert "only 40 points are left to judge on" in spoken[0].message
+        assert "60 of your 100 removal points" in _msg(spoken[0])
+        assert "only 40 points are left to judge on" in _msg(spoken[0])
 
     def test_a_single_withheld_point_is_still_a_withheld_point(self) -> None:
         """The lowest live weight there is, on both routes into the total.
@@ -3857,8 +3866,8 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
 
         assert [w.field for w in self._spoken(slider)] == ["signals"]
         assert [w.field for w in self._spoken(rule)] == ["custom_condemn"]
-        assert all("1 of your 100 removal points" in w.message for w in self._spoken(slider))
-        assert all("only 99 points are left to judge on" in w.message for w in self._spoken(rule))
+        assert all("1 of your 100 removal points" in _msg(w) for w in self._spoken(slider))
+        assert all("only 99 points are left to judge on" in _msg(w) for w in self._spoken(rule))
 
     def test_the_operator_is_sent_to_whichever_card_holds_more_of_the_weight(self) -> None:
         """25 on the built-in slider against 40 on a custom rule: the rules card holds more,
@@ -3884,7 +3893,7 @@ class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
 
         assert len(spoken) == 1
         assert spoken[0].field == "custom_condemn"
-        assert "65 of your 100 removal points" in spoken[0].message
+        assert "65 of your 100 removal points" in _msg(spoken[0])
 
     def test_a_rule_that_reads_no_watchers_is_not_counted_as_watcher_dependent(self) -> None:
         """The span filter itself, which no fixture drove: every rule in this lane was on
@@ -3939,7 +3948,7 @@ class TestTheGradedKeepRemedyReadsAsASentence:
             if w.field == "graded_keeps"
         ]
         assert len(spoken) == 1
-        return spoken[0].message
+        return _msg(spoken[0])
 
     def test_the_lifetime_only_branch_renders_as_three_whole_sentences(self) -> None:
         """The exact message, because the middle sentence is assembled rather than written.
@@ -3977,6 +3986,71 @@ class TestTheGradedKeepRemedyReadsAsASentence:
         assert self._said(self._keep("recent_watchers", 40, condemn_at=condemn_at)).endswith(
             f"Wait for it to build up, or {remedy}"
         )
+
+
+#: Every id ``policy_warnings.inspect`` can emit, under the ``warning`` catalog namespace, both
+#: directions (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``).
+#:
+#: Hand-maintained rather than AST-discovered: like chip ids, these are inline ``Reason(...)``
+#: literals scattered across ``inspect``'s many branches, not each a named module constant the
+#: way ``*_REASON`` is. Rule 145's answer for a hand-maintained population is the same as for a
+#: discovered one -- count what it claims to cover, reconcile that count by hand, then pin it.
+_WARNING_IDS: frozenset[str] = frozenset(
+    {
+        "rating_no_sources",
+        "rating_bar_percent",
+        "rating_bar_low",
+        "rating_bar_high",
+        "dormancy_beyond_history",
+        "popularity_beyond_history",
+        "popularity_rules_beyond_history",
+        "added_before_history",
+        "watcher_points_beyond_history",
+        "custom_rules_cannot_fire",
+        "graded_keeps_beyond_history",
+        "popularity_window_short",
+        "in_progress_unreadable",
+        "season_conflicts_before_history",
+        "streaming_check_off",
+        "horizon_off",
+        "threshold_low",
+        "unmeasured_allowance",
+        "custom_rule_size",
+        "size_points",
+        "field_unreadable_for_media",
+        "keep_last_too_many",
+        "keep_last_all_shows",
+        "graded_keeps_exceed_threshold",
+    }
+)
+
+
+def _leaf_ids(node: dict[str, Any]) -> set[str]:
+    """Every string-valued key of a flat catalog section. ``warning`` has no sub-namespace
+    the way ``chip`` splits into ``text``/``sentence``, so this is the one-level twin of
+    ``test_review_chips._leaf_ids``."""
+    return {k for k, v in node.items() if isinstance(v, str)}
+
+
+class TestTheWarningVocabulary:
+    """Every id ``policy_warnings.inspect`` can emit, under ``warning.*``, both directions
+    (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``)."""
+
+    def test_the_warning_id_population_is_pinned(self) -> None:
+        assert len(_WARNING_IDS) == 24, (
+            f"_WARNING_IDS holds {len(_WARNING_IDS)}. If you added or removed a warning id, "
+            "bump this count deliberately."
+        )
+
+    def test_every_warning_id_has_catalog_copy(self) -> None:
+        entries = _leaf_ids(catalog("warning"))
+        missing = _WARNING_IDS - entries
+        assert not missing, f"warning ids with no warning.* entry: {sorted(missing)}"
+
+    def test_every_catalog_warning_entry_has_a_producer(self) -> None:
+        entries = _leaf_ids(catalog("warning"))
+        orphaned = entries - _WARNING_IDS
+        assert not orphaned, f"warning.* entries with no producer: {sorted(orphaned)}"
 
 
 class TestOwnListMediaScope:

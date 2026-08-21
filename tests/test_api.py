@@ -53,6 +53,7 @@ from reaper.engine.policy import (
     SignalSetting,
     combine_hashes,
 )
+from reaper.engine.reason import from_wire
 from reaper.main import create_app
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import retention
@@ -60,6 +61,15 @@ from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
 from ._lists import seeded_fingerprint
+from ._reasons import text as reason_text
+
+
+def _msg(warning: dict[str, Any]) -> str:
+    """A policy-warning dict's composed English, from the real catalog. The test-side twin
+    of ``PolicyEditor.tsx``'s ``composeIn("warning", w.reason)``, over the API's wire shape
+    (``{"field", "reason": {"k", "p"}, "severity"}``)."""
+    return reason_text(from_wire(warning["reason"]), namespace="warning")
+
 
 # No "whitelisted" row: the gate is retired (list membership protects through ``on_list``
 # keep rules), and the save boundary refuses it -- test_simulate_hardening pins that.
@@ -2054,7 +2064,7 @@ class TestRequestedOnlyScopeNeedsSeerr:
         flagged = self._scope_warnings(client)
         assert len(flagged) == 1
         assert flagged[0]["severity"] == "warn"
-        assert "Seerr" in flagged[0]["message"]
+        assert "Seerr" in _msg(flagged[0])
 
 
 class TestAPopularityWindowLongerThanTheWatchHistory:
@@ -2109,7 +2119,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         assert len(flagged) == 1
         assert flagged[0]["severity"] == "warn"
-        assert "Nothing will be flagged for removal" in flagged[0]["message"]
+        assert "Nothing will be flagged for removal" in _msg(flagged[0])
 
     def test_the_shipped_dormancy_floor_moves_the_warning_to_the_floor(
         self, client: TestClient, tmp_path: Path
@@ -2135,10 +2145,10 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         ] == []
         [floor] = [w for w in body["warnings"] if w["field"] == "gates.min_dormancy.threshold"]
         assert floor["severity"] == "warn"
-        assert "Nothing will be flagged for removal" in floor["message"]
+        assert "Nothing will be flagged for removal" in _msg(floor)
         # Through the route, so this pins the reach actually reaching `inspect` here too: with
         # the mirror unread the branch cannot fire at all (rule 141).
-        assert "3 years" in floor["message"]
+        assert "3 years" in _msg(floor)
 
     def test_a_mirror_that_covers_the_window_is_quiet(
         self, client: TestClient, tmp_path: Path
@@ -2177,7 +2187,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
         flagged = [w for w in warnings if w["field"] == "protect_conditions"]
         assert len(flagged) == 1
-        assert "Nothing will be flagged for removal" in flagged[0]["message"]
+        assert "Nothing will be flagged for removal" in _msg(flagged[0])
         # And nothing on the picker that is not rendered while the gate is off.
         assert [w for w in warnings if w["field"] == "gates.server_popularity.window_days"] == []
 
@@ -2462,7 +2472,7 @@ class TestPolicyValidation:
             },
         ).json()
 
-        assert any("protect almost nothing" in w["message"] for w in body["warnings"])
+        assert any("protect almost nothing" in _msg(w) for w in body["warnings"])
 
     def test_a_zero_vote_floor_is_refused_outright(self, client: TestClient) -> None:
         """Provably wrong, so it is a 422 rather than a warning: an IMDb bar with no
@@ -2499,7 +2509,7 @@ class TestUnknownSizeWarningTracksTheDraft:
                 **extra,
             },
         ).json()
-        return [w["message"] for w in body["warnings"] if w["field"] == "max_unmeasured_per_run"]
+        return [_msg(w) for w in body["warnings"] if w["field"] == "max_unmeasured_per_run"]
 
     def test_the_stored_zero_is_quiet(self, client: TestClient) -> None:
         """The shipped profile keeps every unmeasured item, so there is nothing to warn about."""

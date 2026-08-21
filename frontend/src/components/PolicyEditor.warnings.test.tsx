@@ -112,13 +112,19 @@ describe("PolicyEditor warning anchors", () => {
     },
   };
 
+  /** A probe fixture's own text, back out of its `legacy` reason (`why.ts`'s `composeIn`
+   *  renders a legacy reason's `p.text` verbatim). This walk cares only about WHERE a
+   *  warning lands, never what it says, so every fixture here carries a made-up sentence
+   *  with no catalog entry rather than a real backend id. */
+  const probeText = (w: PolicyWarning): string => String(w.reason.p?.text ?? "");
+
   /** One warning per field the anchor claims. The claimed fields ARE the probe fields, since
    *  both read the same array in the declaration. */
   const probes = (anchor: WarningAnchor): PolicyWarning[] =>
     anchor.fields.map((field) => ({
       field,
       severity: "warn",
-      message: `anchor probe: ${field}`,
+      reason: { k: "legacy", p: { text: `anchor probe: ${field}` } },
     }));
 
   /** The same probe, one per field the binding table below names -- which for a `prefix`
@@ -129,7 +135,7 @@ describe("PolicyEditor warning anchors", () => {
     Object.keys(controls).map((field) => ({
       field,
       severity: "warn",
-      message: `anchor probe: ${field}`,
+      reason: { k: "legacy", p: { text: `anchor probe: ${field}` } },
     }));
 
   /** Claimed by no anchor, so it proves the stack is rendering at all in the same render.
@@ -138,7 +144,7 @@ describe("PolicyEditor warning anchors", () => {
   const catchAll: PolicyWarning = {
     field: "some_field_no_anchor_claims",
     severity: "warn",
-    message: "anchor probe: the catch-all stack",
+    reason: { k: "legacy", p: { text: "anchor probe: the catch-all stack" } },
   };
 
   it("declares the nine anchors these cases walk", () => {
@@ -157,17 +163,17 @@ describe("PolicyEditor warning anchors", () => {
 
       await (anchor.guard ? GUARDS[anchor.guard].held : unguarded)([...mine, catchAll]);
 
-      expect(await screen.findByText(catchAll.message)).toBeInTheDocument();
+      expect(await screen.findByText(probeText(catchAll))).toBeInTheDocument();
       if (anchor.guard) {
         expect(screen.getByLabelText(GUARDS[anchor.guard].control)).toBeInTheDocument();
       }
       for (const w of mine) {
         // Claiming took this out of the catch-all, so anything found here came from the
         // anchor's own block -- and finding nothing means it rendered nowhere at all.
-        expect(await screen.findByText(w.message)).toBeInTheDocument();
+        expect(await screen.findByText(probeText(w))).toBeInTheDocument();
         // Exactly once: claiming AND still reaching the catch-all is the other way to be
         // wrong, and it prints the same sentence twice on one page.
-        expect(screen.getAllByText(w.message)).toHaveLength(1);
+        expect(screen.getAllByText(probeText(w))).toHaveLength(1);
       }
     });
   }
@@ -328,16 +334,16 @@ describe("PolicyEditor warning anchors", () => {
       // Wait for the WARNING, not for the box: validation is debounced, so the control is on
       // the page a beat before there is anything for it to describe itself with, and asserting
       // on the box alone would read the empty description every time (rule 137's shape).
-      await screen.findByText(mine[0]!.message);
+      await screen.findByText(probeText(mine[0]!));
 
       for (const w of mine) {
         const box = screen.getByLabelText(controls[w.field]!);
-        expect(box).toHaveAccessibleDescription(new RegExp(w.message));
+        expect(box).toHaveAccessibleDescription(new RegExp(probeText(w)));
         // And ONLY that one: a control speaking a sibling field's complaint sends the operator
         // to fix it here, where it cannot be fixed.
         for (const other of mine) {
           if (other.field === w.field) continue;
-          expect(box).not.toHaveAccessibleDescription(new RegExp(other.message));
+          expect(box).not.toHaveAccessibleDescription(new RegExp(probeText(other)));
         }
         // Never invalid. A policy warning does not block a save -- the save gate is a 422 from
         // body validation plus the points budget, and `severity` reaches neither -- so a box
@@ -354,7 +360,7 @@ describe("PolicyEditor warning anchors", () => {
       const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
       const blocking = boundProbes(controls).map((w) => ({ ...w, severity: "danger" as const }));
       await driveBound(entry, anchor)([...blocking, catchAll]);
-      await screen.findByText(blocking[0]!.message);
+      await screen.findByText(probeText(blocking[0]!));
 
       for (const name of Object.values(controls)) {
         expect(screen.getByLabelText(name)).not.toHaveAttribute("aria-invalid");
@@ -382,18 +388,22 @@ describe("PolicyEditor warning anchors", () => {
     };
     const probed: PolicyWarning[] = Object.values(BOXES)
       .filter((field): field is string => field !== null)
-      .map((field) => ({ field, severity: "warn", message: `anchor probe: ${field}` }));
+      .map((field) => ({
+        field,
+        severity: "warn",
+        reason: { k: "legacy", p: { text: `anchor probe: ${field}` } },
+      }));
     // The neighboring bar's complaint, driven in the same render. This is the misattribution
     // the issue was filed on -- a warning about IMDb spoken by the Rotten Tomatoes row -- so it
     // is probed rather than argued.
     const neighbor: PolicyWarning = {
       field: "keep_rating_rules.rotten_tomatoes_critic.floor",
       severity: "warn",
-      message: "anchor probe: the neighboring bar",
+      reason: { k: "legacy", p: { text: "anchor probe: the neighboring bar" } },
     };
 
     renderEditor({ body: barsBody }, pace, null, [...probed, neighbor, catchAll]);
-    await screen.findByText(probed[0]!.message);
+    await screen.findByText(probeText(probed[0]!));
 
     // Typed, unlike the `closest("li")` in the walk below: TypeScript resolves a TAG selector
     // to that tag's element type and a CLASS selector only to `Element`, which `within` will
@@ -416,7 +426,7 @@ describe("PolicyEditor warning anchors", () => {
       expect(box).toHaveAccessibleDescription(new RegExp(`anchor probe: ${field}`));
       for (const other of [...probed, neighbor]) {
         if (other.field === field) continue;
-        expect(box).not.toHaveAccessibleDescription(new RegExp(other.message));
+        expect(box).not.toHaveAccessibleDescription(new RegExp(probeText(other)));
       }
     }
   });
@@ -446,10 +456,14 @@ describe("PolicyEditor warning anchors", () => {
     };
     const probed: PolicyWarning[] = Object.values(BOXES)
       .filter((field): field is string => field !== null)
-      .map((field) => ({ field, severity: "warn", message: `anchor probe: ${field}` }));
+      .map((field) => ({
+        field,
+        severity: "warn",
+        reason: { k: "legacy", p: { text: `anchor probe: ${field}` } },
+      }));
 
     renderEditor({ body: gatesBody }, pace, null, [...probed, catchAll]);
-    await screen.findByText(probed[0]!.message);
+    await screen.findByText(probeText(probed[0]!));
 
     const row = screen.getByLabelText("Keep what your users actually watch").closest("li")!;
     // A container query rather than a role query, deliberately: the point is to collect boxes
@@ -469,7 +483,7 @@ describe("PolicyEditor warning anchors", () => {
       expect(box).toHaveAccessibleDescription(new RegExp(`anchor probe: ${field}`));
       for (const other of probed) {
         if (other.field === field) continue;
-        expect(box).not.toHaveAccessibleDescription(new RegExp(other.message));
+        expect(box).not.toHaveAccessibleDescription(new RegExp(probeText(other)));
       }
     }
   });
@@ -485,8 +499,8 @@ describe("PolicyEditor warning anchors", () => {
       await GUARDS[guard].absent(mine);
 
       for (const w of mine) {
-        expect(await screen.findByText(w.message)).toBeInTheDocument();
-        expect(screen.getAllByText(w.message)).toHaveLength(1);
+        expect(await screen.findByText(probeText(w))).toBeInTheDocument();
+        expect(screen.getAllByText(probeText(w))).toHaveLength(1);
       }
       // Read after the warnings, not before: the control is trivially absent from a page that
       // has not rendered yet, and this has to say something about the settled one (rule 137).
@@ -521,10 +535,10 @@ describe("PolicyEditor warning anchors", () => {
         const mine = probes(anchor);
         await GUARDS[guard].absent([...mine, catchAll]);
 
-        expect(await screen.findByText(catchAll.message)).toBeInTheDocument();
+        expect(await screen.findByText(probeText(catchAll))).toBeInTheDocument();
         for (const w of mine) {
-          expect(await screen.findByText(w.message)).toBeInTheDocument();
-          expect(screen.getAllByText(w.message)).toHaveLength(1);
+          expect(await screen.findByText(probeText(w))).toBeInTheDocument();
+          expect(screen.getAllByText(probeText(w))).toHaveLength(1);
         }
       });
     }
@@ -538,10 +552,10 @@ describe("PolicyEditor warning anchors", () => {
     const twin: PolicyWarning = {
       field: "protect_conditions",
       severity: "danger",
-      message: "anchor probe: one sentence, two rules behind it",
+      reason: { k: "legacy", p: { text: "anchor probe: one sentence, two rules behind it" } },
     };
     renderEditor({ body: body() }, pace, null, [twin, twin]);
 
-    expect(await screen.findAllByText(twin.message)).toHaveLength(2);
+    expect(await screen.findAllByText(probeText(twin))).toHaveLength(2);
   });
 });

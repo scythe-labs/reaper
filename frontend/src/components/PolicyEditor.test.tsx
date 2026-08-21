@@ -830,10 +830,14 @@ describe("the gate that counts recent watchers", () => {
         {
           field: "gates.server_popularity.window_days",
           severity: "warn",
-          message:
-            "Nothing will be flagged for removal. Reaper can't say who watched a title in the " +
-            "last year from a shorter history, and your watch history only goes back 3 months. " +
-            "Lower this window to match your history, or wait for it to build up.",
+          reason: {
+            k: "popularity_beyond_history",
+            p: {
+              window_days: 365,
+              shortfall: { k: "cause.history_reach_short", p: { reach_days: 90 } },
+              remedy: "lower",
+            },
+          },
         },
       ],
     );
@@ -884,18 +888,28 @@ describe("the gate that counts recent watchers", () => {
         {
           field: "unanchored_probe",
           severity: "warn",
-          message: "A warning no anchor claims, so it lands in the catch-all stack.",
+          // A legacy-shaped reason renders its text verbatim (why.ts's composeIn), which is
+          // exactly what a decoy fixture with no real backend id needs.
+          reason: {
+            k: "legacy",
+            p: { text: "A warning no anchor claims, so it lands in the catch-all stack." },
+          },
         },
         {
           field: "protect_conditions",
           severity: "warn",
-          // Verbatim from `policy_warnings.inspect`'s gate-off arm (rule 144): this is a payload the
-          // anchor test hands in, so a drifted copy here reads as the shipped sentence
-          // without failing anything.
-          message:
-            'Nothing will be flagged for removal. Your keep rule on "People who watched it ' +
-            'recently" counts the last year, and your watch history only goes back 3 months. ' +
-            "Wait for it to build up, or remove that rule.",
+          // The real id and params `policy_warnings.inspect`'s gate-off arm emits (rule 144):
+          // the catalog composes the sentence, so a drifted catalog entry fails the anchor
+          // test on its own rather than reading as the shipped copy silently.
+          reason: {
+            k: "popularity_rules_beyond_history",
+            p: {
+              window_days: 365,
+              shortfall: { k: "cause.history_reach_short", p: { reach_days: 90 } },
+              rules: 1,
+              field: "recent_watchers",
+            },
+          },
         },
       ],
     );

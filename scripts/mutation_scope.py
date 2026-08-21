@@ -1107,7 +1107,10 @@ def record(name, body, **kwargs):
     except Exception as exc:
         cases[name] = f"RAISED {type(exc).__name__}: {' '.join(str(exc).split())[:160]}"
         return
-    cases[name] = [f"{w.severity}|{w.field}|{w.message}" for w in got]
+    # The typed reason's repr, not composed English (docs/history/I18N_PLAN.md #868): id
+    # and params are what a mutant can actually change, and a repr is deterministic where a
+    # composed sentence would need the frontend catalog this script does not load.
+    cases[name] = [f"{w.severity}|{w.field}|{w.reason!r}" for w in got]
 
 def policy(**overrides):
     base = {
@@ -1362,7 +1365,7 @@ ZONES: dict[str, Zone] = {
         # `_protect_blocks_on_reach` decides one of `inspect`'s warnings and was undeclared, so
         # the zone's own "one function" note was true of the list rather than of the module.
         # `INSPECT_PROBE` reads the warnings out, so its mutants are answerable here.
-        functions=("inspect", "_protect_blocks_on_reach", "_shortfall_text"),
+        functions=("inspect", "_protect_blocks_on_reach"),
         tests=(
             "tests/test_policy.py",
             "tests/test_custom_condemn.py",

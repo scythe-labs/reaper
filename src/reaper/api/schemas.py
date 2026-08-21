@@ -939,8 +939,16 @@ class PolicyValidateIn(PolicyIn):
 
 
 class PolicyWarningOut(BaseModel):
+    """A config that is legal but probably not what the owner meant.
+
+    ``reason`` is the catalog id plus its raw params (docs/history/I18N_PLAN.md §5): the
+    frontend composes ``warning.<id>`` (``PolicyEditor.tsx``'s ``WarnBlock``, via
+    ``why.ts``'s ``composeIn("warning", reason)``). The server never renders English here
+    (rule 92), the same posture ``ChipOut.reason`` takes.
+    """
+
     field: str
-    message: str
+    reason: ReasonKey
     severity: str
 
 

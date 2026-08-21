@@ -109,6 +109,33 @@ def _lookup(dotted: str, namespace: str = "why") -> str | None:
     return node if isinstance(node, str) else None
 
 
+def _replace_hash(text: str, replacement: str) -> str:
+    """``#`` substituted only at brace depth 0, so a plural nested inside another plural's
+    branch keeps its OWN ``#`` for its own recursive pass.
+
+    A naive ``str.replace("#", ...)`` run before recursing corrupts exactly that case: the
+    outer plural's replacement clobbers a ``#`` that belongs to a ``{headroom, plural, one
+    {# point} other {# points}}`` sitting inside the picked branch, because the string is
+    substituted before ``_icu`` ever sees the nested argument.
+    ``warning.graded_keeps_beyond_history`` (#868) is the first catalog entry to nest a
+    plural inside a plural's own text, which is what surfaced it.
+    """
+    out: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == "{":
+            depth += 1
+            out.append(ch)
+        elif ch == "}":
+            depth -= 1
+            out.append(ch)
+        elif ch == "#" and depth == 0:
+            out.append(replacement)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _js_number(value: Any) -> str:
     """A number the way JS templates print it: no trailing ``.0``, no grouping."""
     if isinstance(value, float) and value == int(value):
@@ -196,12 +223,12 @@ def _icu(message: str, params: dict[str, Any]) -> str:
             picked = options.get(f"={_js_number(n)}")
             if picked is None:
                 picked = options.get("one" if n == 1 else "other", options.get("other", ""))
-            out.append(_icu(picked.replace("#", _grouped(n)), params))
+            out.append(_icu(_replace_hash(picked, _grouped(n)), params))
         elif kind == "selectordinal":
             picked = options.get(f"={_js_number(n)}")
             if picked is None:
                 picked = options.get(_ordinal_category(int(n)), options.get("other", ""))
-            out.append(_icu(picked.replace("#", _grouped(n)), params))
+            out.append(_icu(_replace_hash(picked, _grouped(n)), params))
         elif kind == "select":
             key = value if isinstance(value, str) else _js_number(value)
             picked = options.get(key, options.get("other", ""))

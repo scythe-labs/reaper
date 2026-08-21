@@ -81,6 +81,7 @@ import { useScanStatus } from "../useScanStatus";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
+import { composeIn } from "../why";
 
 /** The DOM id of the `i`th warning rendered at one anchor. Both ends of the association are
  *  named by this one function, so the control's `aria-describedby` and the notice's `id` cannot
@@ -146,15 +147,15 @@ function WarnBlock({
           inline
           standing
           id={warningId(anchor, i)}
-          // Field and message do not separate these. Two protect conditions on the same
+          // Field and reason do not separate these. Two protect conditions on the same
           // movie-only field in a TV policy produce byte-identical warnings, because the
           // producer has no name to put in them -- `ConditionSpec` carries a field, an
           // operator and a value, and nothing an operator titled. The position within this
           // already-filtered list is the only thing left that differs, and it is stable
           // across a render since the list is derived, never reordered (rule 19).
-          key={`${w.field}:${w.message}:${i}`}
+          key={`${w.field}:${w.reason.k}:${i}`}
         >
-          {w.message}
+          {composeIn("warning", w.reason)}
         </Notice>
       ))}
     </>

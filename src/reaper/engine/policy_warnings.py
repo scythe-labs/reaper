@@ -3,13 +3,15 @@
 
 ``PolicyBody`` refuses what is provably wrong. ``inspect`` catches the rest, and a validator
 cannot: an IMDb floor of ``96`` (meaning 9.6) is as legal as ``75``, and only one of them is
-what someone typing a Rotten Tomatoes number intended. So every warning here says what the
-setting will actually do and shows the blast radius beside it.
+what someone typing a Rotten Tomatoes number intended. So every warning here carries a typed
+reason (docs/history/I18N_PLAN.md §5) -- a catalog id under ``warning.*`` plus raw params --
+and the frontend composes what the setting will actually do and shows the blast radius beside
+it, in the operator's own language (rule 92).
 
 Split out of ``engine/policy.py``, which is the model and the hash over it. Nothing in a
-warning reaches a verdict: ``inspect`` reads a body and returns prose, and no caller feeds
-its result back into scoring. The dependency runs one way -- this module imports the model
-from ``policy`` and ``policy`` imports nothing back -- so the pair cannot cycle whatever
+warning reaches a verdict: ``inspect`` reads a body and returns typed reasons, and no caller
+feeds its result back into scoring. The dependency runs one way -- this module imports the
+model from ``policy`` and ``policy`` imports nothing back -- so the pair cannot cycle whatever
 either gains later.
 """
 
@@ -17,7 +19,6 @@ from __future__ import annotations
 
 from typing import Literal, assert_never
 
-from reaper.clock import humanize_days, humanize_window
 from reaper.engine.fields import (
     BY_KEY,
     Op,
@@ -35,10 +36,10 @@ from reaper.engine.policy import (
     ProfileSettings,
     join_and,
 )
-from reaper.engine.reason import Reason
+from reaper.engine.reason import Reason, ReasonParam
 from reaper.engine.signals import MAX_SCORE, SignalId
 from reaper.engine.verdict import decide_verdict
-from reaper.ratings import is_percentage_source, source_label
+from reaper.ratings import is_percentage_source
 
 #: How loudly a warning reads. One declaration, because ``inspect``'s local ``warn`` defaults to
 #: the quieter of the two and would otherwise re-spell the pair.
@@ -49,7 +50,7 @@ class PolicyWarning(Frozen):
     """A config that is legal but probably not what the owner meant."""
 
     field: str
-    message: str
+    reason: Reason
     severity: Severity
 
 
@@ -98,27 +99,6 @@ def _protect_blocks_on_reach(cond: ConditionSpec) -> ReachSpan | None:
     return spec.reach_span
 
 
-def _shortfall_text(short: Reason) -> str:
-    """The shortfall clause in English, for warning copy that stays backend-composed.
-
-    Policy warnings are server-composed operator copy and stay English until their own
-    surface is extracted (docs/history/I18N_PLAN.md §5 converts only the gate and signal details).
-    The catalog's ``why.cause.*`` entries carry the same sentences for the why-panel;
-    ``tests/test_review_chips.py`` pins the pair so the two cannot drift.
-    """
-    if short.id == "cause.history_reach_short":
-        days = short.params.get("reach_days")
-        if isinstance(days, int | float):
-            return f"your watch history only goes back {humanize_days(float(days))}"
-    return {
-        "cause.reach_not_recorded": (
-            "this scan did not record how far back your watch history goes"
-        ),
-        "cause.history_not_that_far": "your watch history does not go back that far",
-        "cause.added_at_not_recorded": "this scan did not record when it was added",
-    }.get(short.id, short.id)
-
-
 def inspect(
     body: PolicyBody,
     settings: ProfileSettings,
@@ -153,20 +133,14 @@ def inspect(
     """
     warnings: list[PolicyWarning] = []
 
-    def warn(field: str, message: str, severity: Severity = "warn") -> None:
-        warnings.append(PolicyWarning(field=field, severity=severity, message=message))
+    def warn(field: str, reason: Reason, severity: Severity = "warn") -> None:
+        warnings.append(PolicyWarning(field=field, severity=severity, reason=reason))
 
     rating_on = any(g.gate is GateId.RATING_FLOOR and g.enabled for g in body.gates)
     if rating_on:
         if not body.keep_rating_rules:
-            warn(
-                "keep_rating_rules",
-                "Keep well-rated titles is turned on, but it has no rating sources "
-                "yet, so it is not keeping anything. Add a rating source to it, or "
-                "turn the protection off.",
-            )
+            warn("keep_rating_rules", Reason("rating_no_sources"))
         for rule in body.keep_rating_rules:
-            label = source_label(rule.source)
             # Every warning below is about ONE bar's number, so it names that bar rather than
             # the card: the editor can then render it against the box that fixes it instead of
             # in a stack under the whole list, where reaching it meant browsing the page in
@@ -175,28 +149,17 @@ def inspect(
             # ``gates.{gate}.{setting}`` family this mirrors. The empty-list warning above keeps
             # the bare field, because there is no bar for it to be about.
             bar = f"keep_rating_rules.{rule.source.value}.floor"
+            params: dict[str, ReasonParam] = {"floor": rule.floor, "source": rule.source.value}
             if is_percentage_source(rule.source):
                 # A percentage source read on the 0-10 scale is the usual mix-up: typing 8
                 # meaning "80%" sets an 8% bar that keeps everything.
                 if rule.floor <= 20:
-                    warn(
-                        bar,
-                        f"A bar of {rule.floor}% on {label} protects almost everything. "
-                        "This field is a percentage: for 80% enter 80, not 8.",
-                    )
+                    warn(bar, Reason("rating_bar_percent", params))
             else:
                 if rule.floor >= 90:
-                    warn(
-                        bar,
-                        f"A bar of {rule.floor / 10:.1f} on {label} will protect almost "
-                        "nothing: very few titles rate that highly.",
-                    )
+                    warn(bar, Reason("rating_bar_high", params))
                 if rule.floor <= 20:
-                    warn(
-                        bar,
-                        f"A bar of {rule.floor / 10:.1f} on {label} protects essentially "
-                        "everything. Did you mean 7.0?",
-                    )
+                    warn(bar, Reason("rating_bar_low", params))
 
     # The span every reader of a watcher count is measured against -- NOT the enabled gate
     # row. ``PolicyBody.popularity_window_days`` falls back to 365 when the gate is off or
@@ -226,17 +189,6 @@ def inspect(
     # other members are held on the season path: ``season_scan``'s lifetime-shortfall
     # conflict and ``gates.progress_is_establishable``.
     #
-    # This used to read "the member with a control the operator can turn, so the editor is
-    # where it has to be said", which quietly justified saying nothing about the other two.
-    # It was false of the mid-binge hold from the day that guard shipped:
-    # ``in_progress_hold_days`` is a control on this same editor, one card down, and a hold
-    # the mirror cannot span holds every season on disk (issue #154). That branch is at the
-    # foot of this function now, and so is the lifetime-shortfall conflict, the fifth member
-    # (issue #224). This comment used to close by declaring that one deliberately unwarned,
-    # "the one member with no control behind it": ``flag_keep_conflicts`` is a switch on this
-    # same editor, so the premise was false as written, and the branch that now speaks for it
-    # explains what is true instead (rules 7/24, 72).
-    #
     # WHO blocks on this window, which is what makes "nothing will be flagged" true. This
     # detector claims it for the PROTECT lane only: a blocked protect ABSTAINs every item
     # (``verdict.decide_verdict``), library-wide, for as long as the shortfall lasts. Two
@@ -244,34 +196,28 @@ def inspect(
     # own keep-outright rule on a popularity-window field is the other, and ``build_gates``
     # hands it this same span whether the gate is on or off.
     #
-    # **The lean lane is warned about too now, further down**, and this comment carried it as
-    # a known gap for a while: a graded keep takes its FULL ``max_discount`` on a shortfall,
-    # for every item (``signals.evaluate_keep``), and ``score()`` floors at zero under a
-    # bounded base, so a keep worth more than ``MAX_SCORE - condemn_at`` empties the list just
-    # as provably as a blocked protect does. The ``graded_keeps`` warning at the end of this
-    # function is still not that warning: it fires on ``total_keep >= condemn_at``, a much
-    # higher bar, and says nothing about the mirror. ``PolicyRuleEditors``' ``leanFields`` is
-    # not gate-filtered, so the field is offered as a lean whichever way the switch is set,
-    # which is why the lean check does not read the gate either (rules 7/24, 140).
+    # The lean lane is warned about too, further down: a graded keep takes its FULL
+    # ``max_discount`` on a shortfall, for every item (``signals.evaluate_keep``), and
+    # ``score()`` floors at zero under a bounded base, so a keep worth more than
+    # ``MAX_SCORE - condemn_at`` empties the list just as provably as a blocked protect
+    # does. The ``graded_keeps`` warning at the end of this function is not that warning: it
+    # fires on ``total_keep >= condemn_at``, a much higher bar, and says nothing about the
+    # mirror.
     #
-    # This branch remains about the PROTECT lane only. The three lanes and what each does under
-    # a shortfall, since the asymmetry is why there are separate checks: a protect blocks and
-    # abstains, a lean takes its full discount, and a condemn rule withholds its pressure
-    # while keeping its weight in the denominator.
-    #
-    # That last one lowers scores without blocking anything, so it cannot empty the list
-    # through PRESSURE -- but it can through COVERAGE, and **that lane is warned about now
-    # too, further down** (issue #164 closed). This paragraph used to rule it safe and was
-    # wrong to (rule 7/24): a blocked signal is unevaluated, so its weight leaves the
-    # numerator and stays in the denominator, and enough weight on reach-bounded fields drops
-    # coverage under ``coverage_floor_bp`` for every item at once.
+    # The condemn lane is warned about too, further down: a blocked condemn rule withholds
+    # its pressure while keeping its weight in the denominator, so it cannot empty the list
+    # through PRESSURE -- but it can through COVERAGE, since a blocked signal is
+    # unevaluated, and enough weight on reach-bounded fields drops coverage under
+    # ``coverage_floor_bp`` for every item at once.
     #
     # ``warn``, not ``danger``: the outcome is that Reaper deletes nothing, which is the
     # keep direction. Every ``danger`` here marks a config that removes MORE.
     #
-    # The cause clause comes from ``gates.history_shortfall`` rather than being restated,
-    # because the why-panel prints that same sentence off the same helper for the same
-    # operator (rule 144), and it already decides when the gap is too small to name a number.
+    # The shortfall rides as a nested ``Reason`` param (``why.cause.*``) rather than being
+    # composed into English here, because the why-panel prints the identical sentence off the
+    # same ``gates.history_shortfall`` helper for the same operator (rule 144): nesting the
+    # SAME reason under both surfaces is what keeps them from drifting, rather than a test
+    # that merely checks two independently-worded copies agree.
     #
     # ONLY where the block is what is actually holding the list back, which is what
     # ``reach_clears_dormancy`` tests. ``MinDormancyGate`` PROTECTs anything younger than its
@@ -312,16 +258,15 @@ def inspect(
     # branch is that voice, and it cannot stack with the five, because it fires on precisely
     # the negation they are guarded on.
     if dormancy_floor is not None and history_reach_days is not None and not reach_clears_dormancy:
-        floor_short_reason = history_shortfall(
+        floor_short = history_shortfall(
             Known(value=history_reach_days, source="tautulli"), float(dormancy_floor.threshold)
         )
-        floor_short = "" if floor_short_reason is None else _shortfall_text(floor_short_reason)
+        floor_params: dict[str, ReasonParam] = {"days": dormancy_floor.threshold}
+        if floor_short is not None:
+            floor_params["shortfall"] = floor_short
         warn(
             f"gates.{GateId.MIN_DORMANCY.value}.threshold",
-            "Nothing will be flagged for removal. Reaper waits "
-            f"{humanize_days(dormancy_floor.threshold)} of no watching before "
-            f"anything can go, and {floor_short}, so it can't yet show a title sitting "
-            "untouched that long. Wait for it to build up, or lower this wait.",
+            Reason("dormancy_beyond_history", floor_params),
         )
 
     window_blockers = [c for c, span in blocking if span is ReachSpan.POPULARITY_WINDOW]
@@ -332,17 +277,16 @@ def inspect(
     lifetime_blockers = [c for c, span in blocking if span is ReachSpan.ITEM_LIFETIME]
     owner_protect_on_window = bool(window_blockers)
     # Derived once and read by both lanes below (rule 104). The protect lane additionally
-    # requires a reader on the window, which is what ``short`` adds; the lean lane does not,
-    # because a graded keep on a window field is discounted whether the gate is on or off.
-    window_short: str | None = None
+    # requires a reader on the window, which is what ``window_short`` adds; the lean lane
+    # does not, because a graded keep on a window field is discounted whether the gate is on
+    # or off.
+    window_short: Reason | None = None
     if history_reach_days is not None and reach_clears_dormancy:
-        window_short_reason = history_shortfall(
+        window_short = history_shortfall(
             Known(value=history_reach_days, source="tautulli"), float(window_days)
         )
-        window_short = None if window_short_reason is None else _shortfall_text(window_short_reason)
     short = window_short if (popularity is not None or owner_protect_on_window) else None
     if short is not None:
-        window_text = humanize_window(window_days)
         if popularity is not None:
             # The window control is on the page while the gate is on (``PolicyEditor``'s
             # ``GateRow`` renders it under ``gate.enabled``), so the remedy may name it.
@@ -354,19 +298,16 @@ def inspect(
             # reach DOES clear the shortfall, it just buys the other fault to do it -- an
             # even shorter window counts almost nothing as watched. Waiting is the only move
             # that clears one without deepening the other, which is why it leads.
-            remedy = (
-                "Wait for it to build up: a shorter window would leave almost nothing "
-                "counted as watched."
-                if very_short
-                else "Lower this window to match your history, or wait for it to build up."
-            )
-            field = f"gates.{GateId.SERVER_POPULARITY.value}.window_days"
-            # The window is named BEFORE the cause clause, because ``history_shortfall``'s
-            # in-margin arm is "your watch history does not go back that far" and "that far"
-            # needs the span to have been said already.
-            message = (
-                "Nothing will be flagged for removal. Reaper can't say who watched a title "
-                f"in the last {window_text} from a shorter history, and {short}. {remedy}"
+            warn(
+                f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
+                Reason(
+                    "popularity_beyond_history",
+                    {
+                        "window_days": window_days,
+                        "shortfall": short,
+                        "remedy": "wait" if very_short else "lower",
+                    },
+                ),
             )
         else:
             # The gate is off, so the window is the 365-day fallback and its control is not
@@ -382,29 +323,22 @@ def inspect(
             # appends unconditionally and ``PolicyBody`` validates the pair -- so a singular
             # "remove that rule" was factually wrong there: removing one leaves the warning
             # byte-identical while a live protection is gone, with nothing saying the pick
-            # was wrong. And "counts who watched a title" is not a discriminator when the
-            # card beside it reads "People who have ever watched it", which also counts who
-            # watched a title; the only thing telling them apart was the window, which is
-            # unrendered here by this branch's own premise.
-            #
-            # The label comes from the registry the editor renders from -- backend-owned,
-            # served verbatim through ``GET /api/vocabulary`` to ``describeCondition`` -- so
-            # this names the string already on the operator's screen rather than a second
-            # spelling of it (rule 144). Distinct labels joined, so a span that ever gains a
-            # second field does not silently name one of them.
-            field = "protect_conditions"
-            labels = join_and(
-                list(dict.fromkeys(f'"{BY_KEY[c.field].label}"' for c in window_blockers))
+            # was wrong. The single-rule case names the field (the catalog derives its label
+            # from ``why.field.*``, rule 144); the plural case does not enumerate every
+            # blocking field, which is the one thing this rewrite gave up rather than invent
+            # a translatable joined-list mechanism the composer does not otherwise need.
+            warn(
+                "protect_conditions",
+                Reason(
+                    "popularity_rules_beyond_history",
+                    {
+                        "window_days": window_days,
+                        "shortfall": short,
+                        "rules": len(window_blockers),
+                        "field": window_blockers[0].field,
+                    },
+                ),
             )
-            many = len(window_blockers) > 1
-            subject = f"Your {len(window_blockers)} keep rules" if many else "Your keep rule"
-            counts = "count" if many else "counts"
-            message = (
-                f"Nothing will be flagged for removal. {subject} on {labels} {counts} the "
-                f"last {window_text}, and {short}. Wait for it to build up, or remove "
-                f"{'them' if many else 'that rule'}."
-            )
-        warn(field, message)
 
     # The OTHER span, and the reader that had no warning at all. ``watchers_all_time`` is
     # PROTECT-only and carries ``ITEM_LIFETIME``, so ``fields.evaluate`` blocks it through
@@ -423,43 +357,30 @@ def inspect(
     # every item is kept on age alone, so this rule is deciding nothing and its remedy would
     # move no verdict.
     #
-    # Removing the rule is the ONLY remedy, and the "wait for it to build up" this used to lead
-    # with was false for the same reason it would be on the season branch at the foot of this
-    # function (rule 72): on an ``ITEM_LIFETIME`` span the reach and the item's age both advance
-    # one day per day, so the shortfall holds exactly while ``added_at < horizon`` and no amount
-    # of waiting moves it. It survived because it reads as harmless boilerplate beside a remedy
-    # that does work, which is precisely how an operator ends up taking the half that never
-    # resolves.
+    # Removing the rule is the ONLY remedy: on an ``ITEM_LIFETIME`` span the reach and the
+    # item's age both advance one day per day, so the shortfall holds exactly while
+    # ``added_at < horizon`` and no amount of waiting moves it (rules 7/24, 72) -- so no
+    # "wait for it to build up" clause is offered here at all.
     #
     # And it is COUNTED, for the reason the window branch above is (issue #157, rule 72): two
     # rules on this span are constructible -- one field carries it, ``ITEM_LIFETIME`` sits on
     # the spec and not on the value, and ``PolicyBody`` validates the pair -- so a singular
-    # "remove that rule" was factually wrong for any number above one. Removing one leaves this
-    # sentence byte-identical while a live protection is gone, with nothing saying the pick was
-    # wrong. No label is joined the way the window branch joins its own: every condition here is
-    # on the one field, so the label would be the same word repeated and discriminates nothing.
-    # The titles are named "those" in the remedy rather than "them", which now has two plural
-    # nouns in front of it to refer back to.
+    # "remove that rule" was factually wrong for any number above one. No field is named the
+    # way the window branch names its own: every condition here is on the one field, so the
+    # label would be the same word repeated and discriminates nothing.
     if lifetime_blockers and history_reach_days is not None and reach_clears_dormancy:
-        many = len(lifetime_blockers) > 1
-        subject = f"Your {len(lifetime_blockers)} keep rules" if many else "Your keep rule"
         warn(
             "protect_conditions",
-            "Titles added before your watch history starts won't be flagged for "
-            f"removal. {subject} {'count' if many else 'counts'} everyone who has ever "
-            "watched a title, and Reaper can't count plays from before your history "
-            "begins, so it holds those titles instead of guessing. Remove "
-            f"{'those rules' if many else 'that rule'} if you want those titles judged.",
+            Reason("added_before_history", {"rules": len(lifetime_blockers)}),
         )
 
-    # The CONDEMN lane, the third of the four and the one the comment above used to rule out.
-    # A blocked condemn rule withholds its pressure and keeps its weight in the denominator
-    # (``signals.score``), so it cannot empty the list through pressure. The weight it leaves
-    # behind lowers BOTH bounds ``decide_verdict`` reads, though: coverage, which is what
-    # issue #164 measured, and the score ceiling with it -- ``signals``' "``condemn_at`` is
-    # itself a coverage floor" note. So the question is put to the real decision function
-    # rather than answered here, which covers both bounds and keeps the floor comparison in
-    # the one place allowed to make it (rule 3/22).
+    # The CONDEMN lane, the third of the four. A blocked condemn rule withholds its pressure
+    # and keeps its weight in the denominator (``signals.score``), so it cannot empty the list
+    # through PRESSURE. The weight it leaves behind lowers BOTH bounds ``decide_verdict`` reads,
+    # though: coverage, which is what issue #164 measured, and the score ceiling with it --
+    # ``signals``' "``condemn_at`` is itself a coverage floor" note. So the question is put to
+    # the real decision function rather than answered here, which covers both bounds and keeps
+    # the floor comparison in the one place allowed to make it (rule 3/22).
     #
     # Summed over the readers whose block is LIBRARY-WIDE, which is not every reader of the
     # field. Driven at a 90-day reach against the 365-day fallback, coverage per item:
@@ -523,7 +444,7 @@ def inspect(
             elif not can_add_pressure_under_a_shortfall(condemn.op):
                 never_earned += condemn.weight
                 never_earned_rules += 1
-    if withheld > 0 or never_earned > 0:
+    if (withheld > 0 or never_earned > 0) and window_short is not None:
         # The best any item can do once that weight is gone. The denominator is pinned at
         # ``MAX_SCORE`` (``_weights_total_one_hundred``), so a weight IS its share, and the
         # two bounds differ only by the boolean weight that stays evaluated.
@@ -545,11 +466,15 @@ def inspect(
                 "signals"
                 if on_the_signals_card * 2 >= withheld + never_earned
                 else "custom_condemn",
-                f"Nothing will be flagged for removal. {withheld + never_earned} of "
-                f"your {MAX_SCORE} removal points count who watched a title in the last "
-                f"{humanize_window(window_days)}, and {window_short}, so only "
-                f"{ceiling} points are left to judge on. Wait for it to build up, or "
-                "move those points to a reason that doesn't count watchers.",
+                Reason(
+                    "watcher_points_beyond_history",
+                    {
+                        "points": withheld + never_earned,
+                        "window_days": window_days,
+                        "shortfall": window_short,
+                        "ceiling": ceiling,
+                    },
+                ),
             )
         else:
             # The PARTIAL case, the other half of issue #215: the list is not empty, and the
@@ -579,29 +504,25 @@ def inspect(
                 coverage_floor_bp=body.coverage_floor_bp,
             )
             if held_case != "condemn":
-                many = never_earned_rules > 1
                 warn(
                     "custom_condemn",
-                    f"Your removal {'rules' if many else 'rule'} won't flag the titles "
-                    f"{'they were' if many else 'it was'} written to find. "
-                    f"{'They count' if many else 'It counts'} who watched a title in "
-                    f"the last {humanize_window(window_days)}, and {window_short}, so "
-                    "Reaper holds those titles back instead of guessing. Wait for it "
-                    "to build up, or remove "
-                    f"{'those rules' if many else 'that rule'}.",
+                    Reason(
+                        "custom_rules_cannot_fire",
+                        {
+                            "rules": never_earned_rules,
+                            "window_days": window_days,
+                            "shortfall": window_short,
+                        },
+                    ),
                 )
 
-    # The lean lane, which the comment above used to name as a known gap. A graded keep takes
-    # its FULL ``max_discount`` on a shortfall, on every item it reaches, with no
-    # ``_survives_more_history`` test to earn an outcome back (``signals.evaluate_keep``) -- and
-    # ``score()`` is ``max(0, base - keep_discount)`` over a base bounded by ``MAX_SCORE``. So a
-    # single keep worth more than the headroom holds every affected item under the threshold as
-    # provably as a blocked protect does, and it does it on a lane the operator was told was
+    # The lean lane, which the comment above names as a known gap it closes. A graded keep
+    # takes its FULL ``max_discount`` on a shortfall, on every item it reaches, with no
+    # ``_survives_more_history`` test to earn an outcome back (``signals.evaluate_keep``) --
+    # and ``score()`` is ``max(0, base - keep_discount)`` over a base bounded by ``MAX_SCORE``.
+    # So a single keep worth more than the headroom holds every affected item under the
+    # threshold as provably as a blocked protect does, on a lane the operator was told was
     # safe.
-    #
-    # The existing ``graded_keeps`` warning is not this one and does not cover it: it fires on
-    # the keeps TOTALLING at least ``condemn_at``, a much higher bar (70 against 31 on shipped
-    # values), and says nothing about the mirror. A keep at 40 sits in that dead zone.
     #
     # Anchored on ``graded_keeps`` beside the rule doing it, and it can name the rule, which
     # the protect lanes above cannot: a ``GradedKeepSpec`` carries a name the operator typed.
@@ -640,66 +561,42 @@ def inspect(
     windowed_total = sum(k.max_discount for k in window_keeps)
     combined_total = windowed_total + sum(k.max_discount for k in lifetime_keeps)
     contributors: list[GradedKeepSpec] = []
-    scope = cause = ""
+    scope: Literal["window", "combined"] | None = None
     total = 0
     if windowed_total > headroom:
-        contributors, total = window_keeps, windowed_total
-        scope = "Nothing will be flagged for removal."
-        cause = (
-            f"Reaper can't say who watched a title in the last "
-            f"{humanize_window(window_days)}, and {window_short}, so "
-        )
+        contributors, total, scope = window_keeps, windowed_total, "window"
     elif combined_total > headroom:
-        contributors, total = window_keeps + lifetime_keeps, combined_total
-        scope = "Titles added before your watch history starts won't be flagged for removal."
-    if contributors:
-        named = join_and([f'"{k.name}"' for k in contributors])
-        many = len(contributors) > 1
-        rule_phrase = f"your keep rules {named} take" if many else f"your keep rule {named} takes"
-        theirs = "their" if many else "its"
-        # ``max_discount`` is ``ge=1``, so at ``condemn_at`` 100 the headroom is 0 and every
-        # settable value is too high. Naming a number there sends the operator to a control
-        # that refuses it, so the remedy drops to the one move that still works.
-        if headroom < 1:
-            remedy = f"remove {'those rules' if many else 'that rule'}"
-        else:
-            unit = "point" if headroom == 1 else "points"
-            what = "their total" if many else "it"
-            remedy = f"set {what} to {headroom} {unit} or less"
-        # The cause clause leads only on the window branch; without it the sentence starts on
-        # "your", so it is capitalized here rather than carried as a second literal that could
-        # drift out of step with the one above it.
-        said = (
-            f"{cause}{rule_phrase} all {total} of {theirs} points off "
-            f"{'every title' if cause else 'them'}."
-        )
-        if not cause:
-            said = said[:1].upper() + said[1:]
+        contributors, total, scope = window_keeps + lifetime_keeps, combined_total, "combined"
+    if contributors and scope is not None:
         # "Wait for it to build up" is offered only where a WINDOW keep is one of the
         # contributors, which is the rule-72 sweep of the two branches that lead on the same
         # "added before your watch history starts" sentence. A window shortfall clears as the
         # mirror deepens, and clearing it drops those keeps out of ``window_keeps`` entirely,
         # which is what can bring the total back under the headroom. An ``ITEM_LIFETIME`` keep
-        # never leaves this list: the reach and the item's age advance together, so waiting moves
-        # nothing and only the remedy below can. Where the contributors are lifetime keeps alone,
-        # the remedy leads and is capitalized for it.
-        move = f"Wait for it to build up, or {remedy}." if window_keeps else f"{remedy}."
-        if not window_keeps:
-            move = move[:1].upper() + move[1:]
-        warn("graded_keeps", f"{scope} {said} {move}")
+        # never leaves this list: the reach and the item's age advance together, so waiting
+        # moves nothing and only the remedy can. ``max_discount`` is ``ge=1``, so at a headroom
+        # of 0 every settable value is too high and the remedy has to drop to "remove".
+        move = ("wait_" if window_keeps else "") + ("remove" if headroom < 1 else "set")
+        keep_params: dict[str, ReasonParam] = {
+            "scope": scope,
+            "names": join_and([f'"{k.name}"' for k in contributors]),
+            "total": total,
+            "rules": len(contributors),
+            "move": move,
+            "headroom": headroom,
+        }
+        if scope == "window" and window_short is not None:
+            keep_params["window_days"] = window_days
+            keep_params["shortfall"] = window_short
+        warn("graded_keeps", Reason("graded_keeps_beyond_history", keep_params))
 
     # Only where the shortfall is NOT already speaking for this control: it carries the pair
     # itself in that case, and stacking both told the operator to raise and to lower the same
     # number in adjacent sentences.
     if very_short and short is None:
-        # "A {n}-day window" would read "A 8-day" at 8, 11 and 18, all reachable under 30.
-        # The article governs "watch window" instead, so no value can disagree with it (#338).
-        window_text = f"{window_days} day" if window_days == 1 else f"{window_days} days"
         warn(
             f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
-            f"A watch window of {window_text} is very short: almost nothing gets "
-            "watched inside it, so the few-recent-watchers pressure applies to nearly "
-            "your whole library. A year is the usual setting.",
+            Reason("popularity_window_short", {"window_days": window_days}),
         )
 
     # The season path's member of the same family, one field down the same editor card, and
@@ -711,21 +608,15 @@ def inspect(
     # page said nothing at all: before this warning, ``in_progress_hold_days`` appeared in the
     # policy layer only as a field declaration (``policy.PolicyBody``).
     #
-    # The journey this closes is the one that reads as Reaper being broken. An operator on a
-    # short mirror gets the popularity-window warning, follows it, lowers the window to match
-    # their history, and clears it -- and the list is still empty, now with no warning on the
-    # page at all, because the one surface that ever named their history reach was the warning
-    # they just cleared.
-    #
     # Guarded on ``progress_is_establishable`` rather than on a shortfall, because the two
     # disagree at ``hold_days = 0``: that means "hold a place forever", which no finite mirror
     # can support and the predicate answers False at any reach, while
     # ``history_shortfall(reach, 0.0)`` sees a span of zero days, finds it covered, and returns
     # None. So the predicate decides WHETHER to speak and the shortfall supplies the cause
-    # clause only, and the zero arm needs its own cause. Asking the predicate is also what
-    # keeps one derivation of "does the mirror span the hold" (rule 104); it moved to
-    # ``engine.gates`` beside its two siblings so this could ask it without an engine module
-    # importing a service.
+    # clause only, and the zero arm needs its own cause (the catalog's ``hold_days`` exact-match
+    # arm). Asking the predicate is also what keeps one derivation of "does the mirror span the
+    # hold" (rule 104); it moved to ``engine.gates`` beside its two siblings so this could ask
+    # it without an engine module importing a service.
     #
     # Hoisted, because the fifth member below is guarded on its negation and the two must read
     # one derivation of "is the mid-binge guard holding the whole disk" rather than two copies
@@ -741,36 +632,15 @@ def inspect(
     # The reach is re-tested rather than left to the flag: narrowing does not survive being
     # folded into a bool, and the branch body builds a ``Known`` off it.
     if mid_binge_holds_everything and reach_clears_dormancy and history_reach_days is not None:
-        if body.in_progress_hold_days <= 0:
-            # No number to compare a reach against, so no shortfall sentence exists to
-            # borrow. The editor's own help text under this control already says a 0 keeps
-            # every season; this is the same fact at the moment it is true (rule 144).
-            cause = (
-                "At 0 days a viewer's place is held forever, and no watch history reaches "
-                "back far enough to check that"
-            )
-            remedy = "Set a number of days, or turn this protection off."
-        else:
-            hold_short_reason = history_shortfall(
+        hold_params: dict[str, ReasonParam] = {"hold_days": body.in_progress_hold_days}
+        if body.in_progress_hold_days > 0:
+            hold_short = history_shortfall(
                 Known(value=history_reach_days, source="tautulli"),
                 float(body.in_progress_hold_days),
             )
-            hold_short = "" if hold_short_reason is None else _shortfall_text(hold_short_reason)
-            # The hold is named BEFORE the cause clause, for the reason the window branch
-            # names its span first: the in-margin arm is "does not go back that far".
-            # ``humanize_days`` for the same reason as the dormancy branch above: "for year
-            # after they last watched" has no article to carry the dropped "1" (rule 21).
-            cause = (
-                "Reaper holds a viewer's place for "
-                f"{humanize_days(body.in_progress_hold_days)} after they last watched, and "
-                f"{hold_short}"
-            )
-            remedy = "Wait for it to build up, or lower this to match your history."
-        warn(
-            "in_progress_hold_days",
-            f"No TV season will be flagged for removal. {cause}, so it can't tell "
-            f"who is partway through a show and holds every season. {remedy}",
-        )
+            if hold_short is not None:
+                hold_params["shortfall"] = hold_short
+        warn("in_progress_hold_days", Reason("in_progress_unreadable", hold_params))
 
     # The FIFTH member of the family, and the one that was deferred rather than written
     # (issue #224). ``services.season_pruning._detect_conflicts`` compares two ALL-TIME season
@@ -780,63 +650,31 @@ def inspect(
     # either count says, ``auto_approvable`` goes False, and automatic TV pruning is inert on
     # that show until the mirror catches up.
     #
-    # Driven on the shipped TV policy at a 1200-day reach -- deep enough that all four warnings
-    # above and the #217 floor warning are correctly silent -- against a show 2000 days old:
-    # ``inspect`` returned NO warning at all while every prunable season came back held. That
-    # is the silent lane, and it is why this is a branch rather than a reworded deferral.
-    #
-    # The deferral it replaces said this was "the one member with no control behind it ... no
-    # setting the operator can reach". That was wrong on its own terms: ``flag_keep_conflicts``
-    # is a switch on this same editor ("Ask me first when a removal looks unusual"), and off
-    # means the keep rule is simply followed. What is true is narrower and is why no remedy
-    # naming that switch appears below: turning it off is the DELETE-MORE direction, on two
-    # numbers Reaper knows are wrong, so this family will not recommend it. The switch carries
-    # that option in its own help text, and this warning renders beside it, which is as close
-    # to offering it as the prime directive allows.
-    #
     # It names the AFFECTED SET rather than claiming an empty list, exactly as the
     # ``watchers_all_time`` branch above does and for the identical reason: the span this turns
     # on is each item's age, and ``inspect`` is handed one reach and never a list of arrival
-    # dates. "Nothing will be flagged" would be false in the reassuring direction for a library
-    # the mirror covers outright (rules 7/24). It also says where those shows go, because they
-    # are not lost: every conflict carries ``shortfall``, so ``season_evidence.guard_result`` marks
-    # each as a comparison Reaper did not make and the show waits in "Needs a look", where a
-    # hand reap still condemns it. That is the string already on the operator's screen, from
-    # the switch's own help text one row up (rule 144).
+    # dates. It also says where those shows go, because they are not lost: every conflict
+    # carries ``shortfall``, so ``season_evidence.guard_result`` marks each as a comparison
+    # Reaper did not make and the show waits in "Needs a look", where a hand reap still condemns
+    # it -- the same string the switch's own help text already puts on the operator's screen one
+    # row up (rule 144), reproduced here as plain catalog copy rather than composed from a chip
+    # catalog this phase does not touch.
     #
-    # The dormancy guard applies for the reason it does on all four above: under the floor
-    # every item is kept on age alone, this decides nothing, and the #217 branch is the voice
-    # that speaks there instead. The two cannot stack.
+    # The dormancy guard applies for the reason it does on all four above, and it is silenced by
+    # the MID-BINGE hold as well (rule 143's shape): where that guard cannot be established
+    # ``plan_series_prune`` holds every season ON DISK, so ``prunable`` is empty,
+    # ``_detect_conflicts`` iterates nothing, and this lane is never reached at all.
     #
-    # It is silenced by the MID-BINGE hold as well, which is rule 143's shape rather than a
-    # tidiness choice. Where that guard cannot be established ``plan_series_prune`` holds every
-    # season ON DISK, so ``prunable`` is empty, ``_detect_conflicts`` iterates nothing, and this
-    # lane is never reached at all -- naming it there would assert a cause that is not operative
-    # while the branch above already claims the strictly stronger "no TV season will be flagged".
-    # Two "wait for it to build up" sentences in adjacent paragraphs is also exactly the stacking
-    # #134 removed from this family.
-    #
-    # It carries NO remedy, and the "wait for it to build up" every other member of this family
-    # ends on would be a false one here. Those four turn on a FIXED span -- a popularity window,
-    # a hold in days, the dormancy floor -- so a deepening mirror does eventually cover it. This
-    # one turns on each item's own AGE, and both sides advance one day per day:
-    # ``history_reach_days`` is ``(now - horizon).days`` and the item's age is
-    # ``(now - added_at).days``, so the shortfall holds exactly while ``added_at < horizon``, a
-    # comparison of two fixed instants that waiting cannot move. Telling the operator to wait
-    # would be telling them to do nothing forever (rules 7/24, 21). The sentence instead ends on
-    # where those shows go, which is true and is the only move that exists.
+    # It carries NO remedy: on this span the reach and the item's age both advance one day per
+    # day, so the shortfall holds exactly while ``added_at < horizon``, a comparison of two
+    # fixed instants that waiting cannot move (rules 7/24, 21).
     #
     # The keep rule must also be able to PRODUCE a comparison partner, which is the difference
-    # between a conflict and nothing at all. ``_detect_conflicts`` iterates ``prunable`` against
-    # ``kept_seasons``, and that list drops specials, so a policy keeping no season on age alone
-    # leaves it empty, the inner loop never runs, and no conflict is raised however short the
-    # mirror is. Claiming the hold there would be false in the reassuring direction (rules 7/24):
-    # the operator would read that old shows wait for them while every season of those shows is
-    # condemnable on score. ``keep_last_seasons`` and ``keep_first_season`` are the two rules
-    # that protect on age alone, so they are what this asks. An incomplete or airing season can
-    # still supply a partner under a policy holding neither, but both are transient per-item
-    # states, and this function is handed one reach and never a season list -- the same reason
-    # the message below names the affected set rather than claiming an empty one.
+    # between a conflict and nothing at all: ``_detect_conflicts`` iterates ``prunable`` against
+    # ``kept_seasons``, which drops specials, so a policy keeping no season on age alone leaves
+    # it empty and no conflict is raised however short the mirror is. ``keep_last_seasons`` and
+    # ``keep_first_season`` are the two rules that protect on age alone, so they are what this
+    # asks.
     if (
         body.media_type == "tv"
         and body.flag_keep_conflicts
@@ -845,53 +683,27 @@ def inspect(
         and reach_clears_dormancy
         and not mid_binge_holds_everything
     ):
-        warn(
-            "flag_keep_conflicts",
-            "Seasons of shows added before your watch history starts won't be removed "
-            "automatically. Reaper compares how many people watched each season, and "
-            "it can't count plays from before your history begins, so it marks those "
-            'shows "Needs a look" instead of guessing.',
-        )
+        warn("flag_keep_conflicts", Reason("season_conflicts_before_history"))
 
     disabled = {g.gate for g in body.gates if not g.enabled}
     # Each of these states the consequence THIS switch has, verified against the code that
-    # would deliver it (rules 7/24 and 25). Both used to name a consequence that cannot
-    # occur, because the outcome each described is delivered somewhere the switch does not
-    # reach:
-    #
-    # * The active-stream veto lives in the executor and is unconditional -- ``_reap_one``
-    #   calls ``_being_watched_now`` on every real send without ever consulting the policy
-    #   gate, and ``execute`` refuses a real run outright when Plex is missing. So turning
-    #   the gate off cannot delete a file mid-play. What it does do is let the title be
-    #   condemned, listed, and approved, and then skipped at the last moment.
-    # * The horizon defense is the dormancy CLAMP in fact derivation
-    #   (``services.snapshot.build_facts``, ``max(added_at, horizon)``), which runs whatever
-    #   this switch says. ``DataHorizonGate`` can never PROTECT -- its own docstring says so,
-    #   and ``evaluate`` has only a blocked branch and an abstain -- and its one independent
-    #   job is failing closed on an Unknown dormancy, which ``MinDormancyGate`` also does.
-    for gate, why in (
-        (
-            GateId.STREAMING_NOW,
-            "A title someone is watching still reaches your reap list. Reaper skips it at "
-            "the last moment, so a run removes less than it showed you.",
-        ),
-        (
-            GateId.DATA_HORIZON,
-            "Reaper drops one of the two checks that keep a title whose unwatched time it "
-            "could not read.",
-        ),
-    ):
-        if gate in disabled:
-            warn(f"gates.{gate.value}.enabled", why, severity="danger")
+    # would deliver it (rules 7/24 and 25). The active-stream veto lives in the executor and
+    # is unconditional -- ``_reap_one`` calls ``_being_watched_now`` on every real send
+    # without ever consulting the policy gate, and ``execute`` refuses a real run outright
+    # when Plex is missing. So turning the gate off cannot delete a file mid-play. What it
+    # does do is let the title be condemned, listed, and approved, and then skipped at the
+    # last moment. The horizon defense is the dormancy CLAMP in fact derivation
+    # (``services.snapshot.build_facts``, ``max(added_at, horizon)``), which runs whatever
+    # this switch says. ``DataHorizonGate`` can never PROTECT -- its own docstring says so,
+    # and ``evaluate`` has only a blocked branch and an abstain -- and its one independent job
+    # is failing closed on an Unknown dormancy, which ``MinDormancyGate`` also does.
+    if GateId.STREAMING_NOW in disabled:
+        warn(f"gates.{GateId.STREAMING_NOW.value}.enabled", Reason("streaming_check_off"), "danger")
+    if GateId.DATA_HORIZON in disabled:
+        warn(f"gates.{GateId.DATA_HORIZON.value}.enabled", Reason("horizon_off"), "danger")
 
     if body.condemn_at <= 30:
-        warn(
-            "condemn_at",
-            f"A threshold of {body.condemn_at} condemns almost everything the "
-            "protections do not save. Check the simulator's counts and review "
-            "the flagged list carefully before arming this.",
-            severity="danger",
-        )
+        warn("condemn_at", Reason("threshold_low", {"threshold": body.condemn_at}), "danger")
 
     if settings.max_unmeasured_per_run > 0:
         # Legal, and probably not what most operators mean: exactly what this detector is
@@ -899,19 +711,15 @@ def inspect(
         # scare, it is the one fact that makes the setting understandable.
         warn(
             "max_unmeasured_per_run",
-            f"Reaper will delete up to {settings.max_unmeasured_per_run} items it "
-            "can't measure. The GB caps won't cover them.",
+            Reason("unmeasured_allowance", {"count": settings.max_unmeasured_per_run}),
         )
 
     for spec in body.custom_condemn:
         if spec.field == "size_bytes" and spec.weight > 0:
             warn(
                 "custom_condemn",
-                f'Your rule "{spec.name}" removes things for being large. File size '
-                "measures how much space you reclaim, not whether anyone wants the "
-                "title, and big files are usually the popular 4K ones. Review what "
-                "this rule flags over a few scans before arming it.",
-                severity="danger",
+                Reason("custom_rule_size", {"rule_name": spec.name}),
+                "danger",
             )
 
     # The same footgun through the built-in signal, which had no warning at all while the
@@ -921,14 +729,7 @@ def inspect(
         (s for s in body.signals if s.signal is SignalId.SIZE and s.weight > 0), None
     )
     if size_signal is not None:
-        warn(
-            "signals",
-            f'"Large files" is adding {size_signal.weight} points toward removal. File '
-            "size measures how much space you reclaim, not whether anyone wants the "
-            "title, and big files are usually the popular 4K ones. Review what it "
-            "flags over a few scans before arming it.",
-            severity="danger",
-        )
+        warn("signals", Reason("size_points", {"points": size_signal.weight}), "danger")
 
     # A rule written on a field this media type cannot read. `Condition.validate_for`
     # checks the lane, the operator and the type, but NOT the media type, so a rule saved
@@ -940,20 +741,25 @@ def inspect(
     for anchor, kind, rules in (
         ("protect_conditions", "protection", [(c.field, "") for c in body.protect_conditions]),
         ("custom_condemn", "rule", [(c.field, c.name) for c in body.custom_condemn]),
-        ("graded_keeps", "keep rule", [(k.field, k.name) for k in body.graded_keeps]),
+        ("graded_keeps", "keep_rule", [(k.field, k.name) for k in body.graded_keeps]),
     ):
         for field_key, name in rules:
             field_spec = BY_KEY.get(field_key)
             if field_spec is None or body.media_type in field_spec.media_types:
                 continue
-            called = f' "{name}"' if name else ""
-            where = "seasons" if body.media_type == "tv" else "movies"
             warn(
                 anchor,
-                f"Your {kind}{called} uses {field_spec.label}, which Reaper cannot read "
-                f"for {where}, so it never does anything. Remove it here, and set it "
-                "on your other policy instead.",
-                severity="danger",
+                Reason(
+                    "field_unreadable_for_media",
+                    {
+                        "kind": kind,
+                        "named": "yes" if name else "no",
+                        "rule_name": name,
+                        "field": field_key,
+                        "media_type": body.media_type,
+                    },
+                ),
+                "danger",
             )
 
     # There was a dilution warning here, telling an owner that a rule written as 20 was
@@ -965,9 +771,7 @@ def inspect(
     if body.media_type == "tv" and body.keep_last_seasons >= 10:
         warn(
             "keep_last_seasons",
-            f"Keeping the last {body.keep_last_seasons} seasons protects every season of "
-            "most shows, so TV pruning is effectively off: most series have fewer "
-            "seasons than this.",
+            Reason("keep_last_too_many", {"keep_last": body.keep_last_seasons}),
         )
 
     # "Requested only" needs Seerr to tell a requested show from an unrequested one.
@@ -984,19 +788,17 @@ def inspect(
     ):
         warn(
             "keep_last_scope",
-            f"Reaper is keeping the last {body.keep_last_seasons} seasons of every "
-            "show, not just requested ones: telling them apart needs Seerr, and no "
-            'Seerr service is connected. Connect one, or switch this to "All shows" '
-            "so the setting says what actually happens.",
+            Reason("keep_last_all_shows", {"keep_last": body.keep_last_seasons}),
         )
 
     total_keep = sum(k.max_discount for k in body.graded_keeps)
     if total_keep >= body.condemn_at:
         warn(
             "graded_keeps",
-            f"Your keep rules can subtract up to {total_keep} points, at or above your "
-            f"remove threshold of {body.condemn_at}. Together they could keep almost "
-            "everything. Check the simulator still shows items to remove.",
+            Reason(
+                "graded_keeps_exceed_threshold",
+                {"points": total_keep, "threshold": body.condemn_at},
+            ),
         )
 
     return warnings
