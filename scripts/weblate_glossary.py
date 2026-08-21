@@ -41,6 +41,9 @@ PROJECT = "reaper"
 UI_COMPONENT_URL = f"{API_ROOT}/components/{PROJECT}/ui/"
 GLOSSARY_COMPONENT_URL = f"{API_ROOT}/components/{PROJECT}/glossary/"
 GLOSSARY_TRANSLATIONS_URL = f"{GLOSSARY_COMPONENT_URL}translations/?page_size=100"
+#: The source-language side, where Weblate keeps a term's explanation and its flags. Every
+#: target language's unit points back at one of these through `source_unit`.
+GLOSSARY_SOURCE_UNITS_URL = f"{API_ROOT}/translations/{PROJECT}/glossary/en/units/?page_size=100"
 CREATE_COMPONENT_URL = f"{API_ROOT}/projects/{PROJECT}/components/"
 DEFAULT_KEY_FILE = Path("/opt/reaper_1/.weblate_api")
 
@@ -191,27 +194,22 @@ def _units_by_source(units_url: str, key: str) -> dict[str, dict[str, Any]]:
     return found
 
 
-def _seed_language(
-    code: str, units_url: str, terms: list[tuple[str, str]], key: str, *, dry_run: bool
-) -> None:
-    """Post every term the language does not hold yet, then make sure the product names
-    carry `read-only`. A read-only term's target is the term itself, translated, which is
-    how Weblate's own "untranslatable" checkbox stores one. Every other term is seeded the
-    way Weblate's "copy source" does it: the English term in the target, marked "needs
-    editing" (state 10), because the API refuses a blank target."""
+def _seed_language(code: str, units_url: str, terms: list[str], key: str, *, dry_run: bool) -> None:
+    """Post every term the language does not hold yet.
+
+    A product name is posted translated, the term itself, which is how Weblate's own
+    "untranslatable" checkbox stores one. Every other term is seeded the way Weblate's "copy
+    source" does it: the English term in the target, marked "needs editing" (state 10), because
+    the API refuses a blank target. The explanation and the `read-only` flag are not sent here:
+    Weblate keeps both on the source unit, which `_sync_source_units` writes once per term.
+    """
     present = _units_by_source(units_url, key)
     posted = 0
-    for term, explanation in terms:
+    for term in terms:
         if term in present:
             continue
         read_only = term in READ_ONLY_TERMS
-        body = {
-            "source": [term],
-            "target": [term],
-            "explanation": explanation,
-            "extra_flags": "read-only" if read_only else "",
-            "state": 20 if read_only else 10,
-        }
+        body = {"source": [term], "target": [term], "state": 20 if read_only else 10}
         if dry_run:
             print(f"  {code}: would add {term!r}" + (" (read-only)" if read_only else ""))
             continue
@@ -220,24 +218,35 @@ def _seed_language(
     if not dry_run:
         print(f"  {code}: added {posted}, already present {len(present)}")
 
-    for term in READ_ONLY_TERMS:
+
+def _sync_source_units(terms: list[tuple[str, str]], key: str, *, dry_run: bool) -> None:
+    """Write each term's explanation and, for the product names, the `read-only` flag onto
+    its source unit, the `en` side every language shares. Only the fields that differ are
+    sent, so a re-run is silent. A term with no source unit yet has not been seeded into any
+    language and is named."""
+    present = _units_by_source(GLOSSARY_SOURCE_UNITS_URL, key)
+    changed = 0
+    for term, explanation in terms:
         unit = present.get(term)
         if unit is None:
+            print(f"  no source unit yet: {term}")
             continue
-        flags = [f for f in (unit.get("flags") or "").split(",") if f]
-        if "read-only" in flags:
+        patch: dict[str, str] = {}
+        if (unit.get("explanation") or "") != explanation:
+            patch["explanation"] = explanation
+        if term in READ_ONLY_TERMS:
+            flags = [f for f in (unit.get("extra_flags") or "").split(",") if f]
+            if "read-only" not in flags:
+                patch["extra_flags"] = ",".join([*flags, "read-only"])
+        if not patch:
             continue
         if dry_run:
-            print(f"  {code}: would mark read-only: {term}")
+            print(f"  would set {sorted(patch)} on {term!r}")
             continue
-        flags.append("read-only")
-        _request(
-            unit["url"],
-            method="PATCH",
-            key=key,
-            body=json.dumps({"flags": ",".join(flags)}).encode(),
-        )
-        print(f"  {code}: marked read-only: {term}")
+        _request(unit["source_unit"], method="PATCH", key=key, body=json.dumps(patch).encode())
+        changed += 1
+    if not dry_run:
+        print(f"  source units updated: {changed}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -259,7 +268,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     print(f"{len(terms)} terms in {GLOSSARY_FILE}, {len(targets)} target language(s)")
     for code, units_url in targets:
-        _seed_language(code, units_url, terms, key, dry_run=args.dry_run)
+        _seed_language(code, units_url, [term for term, _ in terms], key, dry_run=args.dry_run)
+    _sync_source_units(terms, key, dry_run=args.dry_run)
     return 0
 
 
