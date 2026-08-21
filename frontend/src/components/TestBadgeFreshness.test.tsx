@@ -33,6 +33,10 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 const PASSED = { ok: true, detail: "Reached", version: "4.0.1" };
+// The Discord webhook test sends a typed reason rather than `PASSED`'s free-form `detail`
+// (docs/history/I18N_PLAN.md §5); composed by NotificationsPanel into "Posted a test
+// message to your Discord channel." (`services.discord.testResult.posted`).
+const DISCORD_PASSED = { ok: true, reason: { k: "posted" }, version: "4.0.1" };
 
 function sonarr(overrides: Partial<Instance> = {}): Instance {
   return {
@@ -61,7 +65,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.plexLibraries.mockResolvedValue([]);
   apiMock.testSavedInstance.mockResolvedValue(PASSED);
-  apiMock.testWebhook.mockResolvedValue(PASSED);
+  apiMock.testWebhook.mockResolvedValue(DISCORD_PASSED);
   apiMock.notifications.mockResolvedValue({ has_webhook: false });
 });
 
@@ -113,7 +117,7 @@ describe("the badge on the Discord row", () => {
     const press = await screen.findByRole("button", { name: "Send test message" });
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);
-    await waitFor(() => expect(badge()!.textContent).toContain("Reached"));
+    await waitFor(() => expect(badge()!.textContent).toContain("Posted"));
     return user;
   }
 
@@ -134,7 +138,7 @@ describe("the badge on the Discord row", () => {
 
     await user.type(urlBox(), "{backspace}");
 
-    expect(badge()!.textContent).toContain("Reached");
+    expect(badge()!.textContent).toContain("Posted");
     // Re-shown, never re-sent: nobody wants a second message in the channel for a backspace.
     expect(apiMock.testWebhook).toHaveBeenCalledTimes(1);
   });

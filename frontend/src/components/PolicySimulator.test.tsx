@@ -33,7 +33,7 @@ function renderNotice(props: Partial<Parameters<typeof StaleNotice>[0]> = {}) {
       percent={40}
       detail="Scoring"
       staleKind="gathers_differently"
-      staleReason="This policy doesn't match the last scan. Scan to apply it."
+      staleReason={{ k: "gathers_differently", p: { media_type: "movie" } }}
       {...props}
     />,
   );
@@ -110,32 +110,36 @@ describe("what the panel says when it will not answer", () => {
     expect(seen.size).toBe(cases.length);
   });
 
-  it("renders the server's sentence rather than a copy of its own", () => {
-    // The reason lives in api/simulate.py alone. It used to live in both, and the copy the
-    // operator actually read was the one in this file -- so the sentence that was reviewed
-    // and the sentence that shipped were different strings (rule 144).
+  it("renders the composed reason rather than a copy of its own", () => {
+    // The reason id lives in api/simulate.py's `_refused` alone, and is composed here from
+    // the catalog (`policySim.staleReason.<id>`) rather than restated -- so the sentence a
+    // reviewer reads and the sentence that ships are one catalog entry (rule 144).
     renderNotice({
       scanning: false,
       staleKind: "seasons_not_recorded",
-      staleReason: "A sentence only the server could have written.",
+      staleReason: { k: "seasons_not_recorded" },
     });
 
-    expect(screen.getByText("A sentence only the server could have written.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The last scan didn't record what your season rules need, so there are no numbers " +
+          "to show. Run a scan, then this becomes exact again.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("still says something when the server sends a kind this build does not know", () => {
-    // Rule 66: an unknown id falls back, it never guesses. An older browser against a newer
-    // server gets the general heading and the server's own sentence, which is always sent.
+    // Rule 66: an unknown id falls back, it never guesses. composeIn's own fallback
+    // (why.test.ts) fires here, the same as any other reason id this build has no catalog
+    // entry for yet: the raw id, never a blank paragraph.
     renderNotice({
       scanning: false,
       staleKind: "a_refusal_from_the_future" as never,
-      staleReason: "Something changed that this scan cannot answer for.",
+      staleReason: { k: "a_refusal_from_the_future" },
     });
 
     expect(screen.getByRole("heading", { name: "Needs a fresh scan" })).toBeInTheDocument();
-    expect(
-      screen.getByText("Something changed that this scan cannot answer for."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("a_refusal_from_the_future")).toBeInTheDocument();
   });
 });
 

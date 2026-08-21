@@ -60,6 +60,8 @@ from reaper.clients.plex import PlexClient, PlexError
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import InstanceKind, PlexServer
+from reaper.engine.explanation import ReasonKey
+from reaper.engine.reason import Reason, to_wire
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import (
     admin_password,
@@ -179,15 +181,34 @@ class SeerrServiceOut(BaseModel):
 
 
 class TestOut(BaseModel):
-    """The verdict on one connection test: did it reach the service, and what to say about it.
+    """The verdict on a saved instance's connection test: did it reach the service, and what
+    to say about it.
 
-    What a test of a SAVED instance and a webhook test can both answer. The mapping a
-    pre-save probe reads is on :class:`InstanceProbeOut` below, because only that route can
-    answer it and a shared shape said otherwise: the published contract had a Discord webhook
-    test declaring it may return Sonarr root folders (rule 25)."""
+    ``detail`` comes from an *arr/Seerr integration's own connectivity text (a probe result
+    or a transport error), which has no fixed vocabulary to catalog -- out of scope for the
+    typed-reason conversion (docs/history/I18N_PLAN.md §5) that gave the Discord webhook test
+    its own :class:`DiscordTestOut` below. The mapping a pre-save probe reads is on
+    :class:`InstanceProbeOut` below, because only that route can answer it and a shared shape
+    said otherwise: the published contract had a Discord webhook test declaring it may return
+    Sonarr root folders (rule 25)."""
 
     ok: bool
     detail: str
+    version: str | None = None
+
+
+class DiscordTestOut(BaseModel):
+    """The verdict on a Discord webhook test: did the sample post land.
+
+    Split from :class:`TestOut` rather than widening it (rule 25's reasoning extended):
+    unlike an *arr/Seerr probe, this test has exactly three fixed outcomes, so ``reason``
+    composes under ``services.discord.testResult.<id>`` (``DiscordModal.tsx`` and
+    ``NotificationsPanel.tsx`` compose it into the same ``detail`` shape ``TestBadge`` and
+    ``testSentence`` already render, via ``why.ts``'s ``composeIn``). The server never
+    renders English here (rule 92)."""
+
+    ok: bool
+    reason: ReasonKey
     version: str | None = None
 
 
@@ -208,8 +229,10 @@ class InstanceProbeOut(TestOut):
     # reports no root folders" is a claim about the instance, and printing it over a read that
     # never landed asserts something nobody checked (rule 93's Absent-vs-Unknown, and the same
     # trap the modal's own empty-vs-stale notices are divided against). ``None`` means the read
-    # landed, so an empty list beside it really is nothing to map.
-    map_error: str | None = None
+    # landed, so an empty list beside it really is nothing to map. The catalog id plus the
+    # integration's own plain-language translation as a raw ``error`` param (docs/history/
+    # I18N_PLAN.md §5): ``ServiceModal.tsx`` composes ``services.modal.mapError`` (rule 92).
+    map_error_reason: ReasonKey | None = None
 
 
 class LeavingSoonLastOut(BaseModel):
@@ -587,9 +610,12 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> Instan
         log.warning(
             "instance.map_probe_failed", kind=kind.value, error=f"{type(exc).__name__}: {exc}"
         )
-        out.map_error = (
-            f"Reaper reached this service but couldn't read what to map. "
-            f"{instances.explain_failure(kind, exc)}"
+        # Assigned onto an already-built instance, which pydantic does not coerce the way a
+        # constructor kwarg is (`ChipOut`/`PolicyWarningOut`'s `reason=to_wire(...)`), so the
+        # wire dict is validated into a real `ReasonKey` explicitly rather than left a raw dict
+        # the serializer only duck-types.
+        out.map_error_reason = ReasonKey.model_validate(
+            to_wire(Reason("mapError", {"error": instances.explain_failure(kind, exc)}))
         )
     return out
 
@@ -1011,7 +1037,7 @@ async def clear_notifications(request: Request) -> NotificationsOut:
 
 
 @router.post("/notifications/test", tags=[api_tags.NOTIFICATIONS])
-async def test_notifications(request: Request, payload: NotificationsTestIn) -> TestOut:
+async def test_notifications(request: Request, payload: NotificationsTestIn) -> DiscordTestOut:
     """Post a sample embed so an operator can confirm the channel before trusting it.
 
     Tests the URL in the body (the one about to be saved), or the stored webhook when the
@@ -1026,17 +1052,13 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
         async with session_factory(request)() as session:
             notifier = await build_notifier(session, secret_box(request), runtime_settings(request))
         if notifier is None:
-            return TestOut(ok=False, detail="No Discord webhook is configured to test.")
+            return DiscordTestOut(ok=False, reason=to_wire(Reason("not_configured")))
 
     # Both branches above leave ``notifier`` set (the stored branch returns early when None).
     assert notifier is not None
     ok = await notifier.post(_sample_embed())
-    detail = (
-        "Posted a test message to your Discord channel."
-        if ok
-        else "Could not post to that webhook. Check the URL and that the channel still exists."
-    )
-    return TestOut(ok=ok, detail=detail)
+    reason = Reason("posted") if ok else Reason("failed")
+    return DiscordTestOut(ok=ok, reason=to_wire(reason))
 
 
 # ---------------------------------------------------------------------------

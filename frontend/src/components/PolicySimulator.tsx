@@ -13,10 +13,11 @@
 
 import type { RefObject } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import type { ProfileSettings, SimStale, Simulation } from "../api";
+import type { ProfileSettings, ReasonKey, SimStale, Simulation } from "../api";
 import { useSuccessorFocus } from "../focus";
 import { bytes, count, totalBytes } from "../format";
 import i18next from "../i18n";
+import { composeIn } from "../why";
 import { GATE_META, UNNAMED_GATE_LABEL } from "./policyMeta";
 import { Notice } from "./Notice";
 import { ProgressBar } from "./ProgressBar";
@@ -114,8 +115,8 @@ export function StaleNotice({
   /** Which refusal this is, from the server. Null on a snapshot answered by an older build
    *  that did not send one, which lands on the general heading. */
   staleKind: SimStale | null;
-  /** The server's sentence for that refusal. The only copy of it. */
-  staleReason: string | null;
+  /** The server's typed reason for that refusal, composed here into the body paragraph. */
+  staleReason: ReasonKey | null;
 }) {
   const { t } = useTranslation();
 
@@ -166,7 +167,7 @@ export function StaleNotice({
         </>
       ) : (
         <>
-          {/* The server's sentence, rendered rather than restated. It states the condition
+          {/* The server's reason, composed here rather than restated. It states the condition
               and never who caused it: this notice used to open "You changed what the scan
               reads" at operators who had changed nothing, because any upgrade adding a field
               to the hashed body leaves the recorded hash unmatchable until the next scan.
@@ -174,14 +175,18 @@ export function StaleNotice({
               It used to be a hardcoded paragraph here that named a keep tag, a season rule
               and the watch span all at once, beside a second copy in api/simulate.py that
               nothing ever rendered. Three refusals now, each with its own remedy, and a
-              season rule previews rather than reaching any of them. Keeping that as two
-              hand-synced copies would have meant the reviewed sentence and the read sentence
-              being different strings again (rule 144).
+              season rule previews rather than reaching any of them. `policySim.staleReason.<id>`
+              (docs/history/I18N_PLAN.md §5) is composed from the one id `_refused` sends, so
+              the reviewed sentence and the read sentence stay one catalog entry (rule 144).
 
               gathers_differently also fires with no policy edit at all, when the operator
               changes a protection list: the numbers then predate the lists, which is why the
               sentence states the mismatch and never names an edit (#512). */}
-          <p>{staleReason ?? t("policySim.staleReasonFallback")}</p>
+          <p>
+            {staleReason
+              ? composeIn("policySim.staleReason", staleReason)
+              : t("policySim.staleReasonFallback")}
+          </p>
           <button
             className="primary sm"
             onClick={() => {

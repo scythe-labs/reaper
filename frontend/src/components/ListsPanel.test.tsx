@@ -126,7 +126,7 @@ beforeEach(() => {
   Object.values(apiMock).forEach((fn) => fn.mockReset());
   apiMock.plexLibraries.mockResolvedValue([]);
   apiMock.syncPlexLibraries.mockResolvedValue([]);
-  apiMock.syncLists.mockResolvedValue({ checked: 1, failed: 0, plex_error: null });
+  apiMock.syncLists.mockResolvedValue({ checked: 1, failed: 0, plex_error_reason: null });
   apiMock.startScan.mockResolvedValue({ running: true, followup_queued: false });
 });
 
@@ -567,7 +567,7 @@ describe("the row actions", () => {
     expect(screen.getByRole("button", { name: "Checking…, Never Reap" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: /^Check now/ })).not.toBeInTheDocument();
 
-    release({ checked: 2, failed: 0, plex_error: null });
+    release({ checked: 2, failed: 0, plex_error_reason: null });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Check now, IMDb Top 250" })).toBeEnabled(),
     );
@@ -613,7 +613,7 @@ describe("the row actions", () => {
     expect(await screen.findByText("Checking it now.")).toBeInTheDocument();
     expect(screen.queryByText(/Runs with your next scan/)).not.toBeInTheDocument();
 
-    release({ checked: 1, failed: 0, plex_error: null });
+    release({ checked: 1, failed: 0, plex_error_reason: null });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Check now, My watchlist" })).toBeEnabled(),
     );
@@ -711,7 +711,7 @@ describe("the row actions", () => {
     apiMock.syncLists.mockResolvedValue({
       checked: 0,
       failed: 0,
-      plex_error: "Reaper couldn't reach Plex, so its collections were not checked: timed out",
+      plex_error_reason: { k: "plexError", p: { error: "timed out" } },
     });
     renderPanel();
 

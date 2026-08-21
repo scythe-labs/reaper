@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
 import { api, type InstanceTest } from "../api";
+import { composeIn } from "../why";
 import { TestBadge, testSentence } from "./ServiceModal";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
@@ -100,8 +101,16 @@ export function NotificationsPanel({
     // second webhook pasted mid-send gets "Passed" for a channel nobody tried (rule 85).
     onMutate: () => ({ of: testedWith() }),
     onSuccess: (r, _v, issued) => {
-      setTest({ result: r, of: issued.of });
-      announce(testSentence(r));
+      // The server sends a typed reason (docs/history/I18N_PLAN.md §5); composed here, once,
+      // into the same `{ok, detail, version}` shape `TestBadge` and `testSentence` already
+      // render for a connection test.
+      const result: InstanceTest = {
+        ok: r.ok,
+        detail: composeIn("services.discord.testResult", r.reason),
+        version: r.version,
+      };
+      setTest({ result, of: issued.of });
+      announce(testSentence(result));
     },
     onError: (e: Error) => setError(e.message),
   });

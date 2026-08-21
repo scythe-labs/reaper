@@ -1570,7 +1570,7 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
             ),
         )
 
-        assert "scan" in str(result["stale_reason"]).lower()
+        assert result["stale_reason"]["k"] == "gathers_differently"
 
     def test_moving_a_gate_threshold_refuses_over_this_snapshot(self, client: TestClient) -> None:
         """Not because a bar edit is unanswerable -- it is answerable, and

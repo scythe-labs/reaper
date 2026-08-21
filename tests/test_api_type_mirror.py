@@ -88,10 +88,11 @@ INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 #: Reconciled by hand against the tree: 127 under ``reaper.api.*`` and 16 across the two engine
 #: modules (+1 for ``RewatchOddsOut``, #554 stage 2, mirrored in the browser as ``RewatchOdds``;
 #: +2 more for the same stage's ``RewatchOddsFitOut``/``RewatchOddsBlockOut``, the Policy page's
-#: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``). It is here
-#: because the collision assertion below is flag-shaped, and a flag cannot see a member that
-#: left the walk (rule 145).
-_EXPECTED_SERVER_MODELS = 144
+#: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``; +1 more for
+#: #868 phase 5's ``DiscordTestOut``, split off ``TestOut`` for the Discord webhook test's
+#: typed reason). It is here because the collision assertion below is flag-shaped, and a flag
+#: cannot see a member that left the walk (rule 145).
+_EXPECTED_SERVER_MODELS = 145
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
 #: field sets are compared -- and the rename is the only reason a suffix rule cannot find it.
@@ -160,8 +161,11 @@ CLIENT_ONLY = {
 # Both +3 again for #554 stage 2's frontend step: `RewatchOdds` pairs with `RewatchOddsOut`,
 # `RewatchOddsFit` with `RewatchOddsFitOut`, and `RewatchOddsBlock` with `RewatchOddsBlockOut`,
 # all three on the plain suffix rule with no ALIAS entry needed.
-EXPECTED_INTERFACES = 98
-EXPECTED_PAIRS = 96
+# Both +1 again for #868 phase 5: `DiscordTest` pairs with the new `DiscordTestOut` on the
+# suffix rule, split off `TestOut` because the Discord webhook test now sends a typed reason
+# where the *arr/Seerr connection test still sends free English (docs/history/I18N_PLAN.md §5).
+EXPECTED_INTERFACES = 99
+EXPECTED_PAIRS = 97
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

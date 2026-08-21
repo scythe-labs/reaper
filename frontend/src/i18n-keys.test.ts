@@ -31,15 +31,26 @@ import { shippedSource, sourceText, srcRelative } from "./test/sources";
 
 // The files allowed to hand t() a computed key, and the catalog namespaces they own.
 // A namespace listed here is proven by that file's own tests, not by this gate.
-// why.ts composes under any namespace (composeIn). "chip." and "warning." are the two #868
-// adds next (status chip text, policy warnings), registered ahead of their first key.
+// why.ts composes under any namespace (composeIn). "chip." and "warning." are #868 phase 2/3
+// (status chip text, policy warnings). Phase 5's four one-off server sentences add three
+// leaf keys with no id variant beside them ("lists.plexError", "services.modal.mapError") or
+// with a whole small namespace of their own ("policySim.staleReason.", "services.discord.
+// testResult."), registered the same way.
 // PolicyRuleEditors.tsx reads a field's label, help paragraph and unit by its server key
 // (`why.field.<key>`, `policyRules.fieldHelp.<key>`, `policyRules.fieldUnit.<key>`) now that
 // the vocabulary endpoint no longer ships them (#868 phase 4); proven complete by
 // `test_review_chips.py::test_every_field_and_fixed_check_has_catalog_copy` for the label and
 // by `tests/test_review_chips.py`'s pinned help/unit sets for the other two.
 const DYNAMIC: Record<string, string[]> = {
-  "why.ts": ["why.", "chip.", "warning."],
+  "why.ts": [
+    "why.",
+    "chip.",
+    "warning.",
+    "policySim.staleReason.",
+    "lists.plexError",
+    "services.discord.testResult.",
+    "services.modal.mapError",
+  ],
   "components/PolicyRuleEditors.tsx": [
     "why.field.",
     "policyRules.fieldHelp.",

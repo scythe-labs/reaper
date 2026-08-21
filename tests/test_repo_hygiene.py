@@ -3364,7 +3364,29 @@ def _ui_catalog_leaves() -> tuple[tuple[str, str], ...]:
 
 
 def _ui_catalog_keys() -> frozenset[str]:
-    return frozenset(key for key, _ in _ui_catalog_leaves())
+    """Every dotted key a citation can legitimately name: leaves, the ``t()`` shape, PLUS every
+    section path above them, the ``composeIn(namespace, reason)`` shape (#868 phase 5).
+
+    A namespace argument is a section, never a leaf -- ``composeIn("services.discord.testResult",
+    reason)`` looks up ``services.discord.testResult.<reason.k>``, so the bare section is what the
+    code and its comments cite, and ``services.discord.testResult`` on its own is a dict in
+    ``ui.json``, not a string. ``_ui_catalog_leaves()`` stays leaf-only for its other callers
+    (the word-scan tests), which read each entry as a rendered message.
+    """
+    catalog = json.loads((FRONTEND_SRC / "locales" / "en" / "ui.json").read_text(encoding="utf-8"))
+    keys: set[str] = set()
+
+    def walk(node: object, prefix: str) -> None:
+        if prefix:
+            keys.add(prefix)
+        if isinstance(node, str):
+            return
+        assert isinstance(node, dict)
+        for name, child in node.items():
+            walk(child, f"{prefix}.{name}" if prefix else name)
+
+    walk(catalog, "")
+    return frozenset(keys)
 
 
 _DOTTED_SYMBOL = re.compile(

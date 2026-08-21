@@ -781,8 +781,8 @@ export interface GateCount {
 }
 
 /** Why the simulator would not answer. Mirrors `api.schemas.SimStale`, and the panel
- *  branches on it for the heading; an id this build does not know falls back to
- *  `stale_reason`, which is the same fact as a sentence and always populated. */
+ *  branches on it for the heading; the body paragraph is `stale_reason` beside it, composed
+ *  from the catalog. */
 export type SimStale = "gathers_differently" | "seasons_not_recorded" | "in_progress_not_read";
 
 export interface Simulation {
@@ -792,7 +792,9 @@ export interface Simulation {
   exact: boolean;
   /** Which refusal this is. Null exactly when `exact`. */
   stale_kind: SimStale | null;
-  stale_reason: string | null;
+  /** The catalog id for the refusal, composed under `policySim.staleReason.<id>` by
+   *  `PolicySimulator.tsx`'s `StaleNotice` (`composeIn`, docs/history/I18N_PLAN.md §5). */
+  stale_reason: ReasonKey | null;
   condemned: number;
   protected: number;
   abstained: number;
@@ -1077,8 +1079,10 @@ export interface ListSyncResult {
   checked: number;
   failed: number;
   /** Set when Plex could not be reached at all, so no collection row carries an error
-   *  explaining why it was not checked. Null when Plex answered or none is linked. */
-  plex_error: string | null;
+   *  explaining why it was not checked. Null when Plex answered or none is linked. The
+   *  catalog id plus Plex's own error text as a raw `error` param, composed under
+   *  `lists.plexError` by `ListsPanel.tsx` (docs/history/I18N_PLAN.md §5). */
+  plex_error_reason: ReasonKey | null;
 }
 
 export interface PlexTrash {
@@ -1543,8 +1547,11 @@ export interface Instance {
   last_error: string | null;
 }
 
-/** The verdict on one connection test: what a saved-instance test and a webhook test can both
- *  answer. What a pre-save probe additionally reads is on `InstanceProbe`. */
+/** The verdict on a saved-instance connection test. An *arr/Seerr integration's own
+ *  connectivity text has no fixed vocabulary to catalog, so `detail` stays plain English
+ *  here (out of scope for docs/history/I18N_PLAN.md §5); the Discord webhook test is typed
+ *  instead, as `DiscordTest` below. What a pre-save probe additionally reads is on
+ *  `InstanceProbe`. */
 export interface InstanceTest {
   ok: boolean;
   detail: string;
@@ -1560,8 +1567,21 @@ export interface InstanceProbe extends InstanceTest {
   root_folders: RootFolder[];
   seerr_services: SeerrService[];
   /** Why the list above is empty, when the read FAILED rather than there being nothing to map.
-   *  `null` means the read landed, so an empty list really is nothing to map. */
-  map_error: string | null;
+   *  `null` means the read landed, so an empty list really is nothing to map. The catalog id
+   *  plus the integration's own plain-language text as a raw `error` param, composed under
+   *  `services.modal.mapError` by `ServiceModal.tsx` (docs/history/I18N_PLAN.md §5). */
+  map_error_reason: ReasonKey | null;
+}
+
+/** The verdict on a Discord webhook test: exactly three fixed outcomes, so `reason` is typed
+ *  rather than the `InstanceTest`/`InstanceProbe` shape's free-form `detail` (rule 25's
+ *  reasoning extended). `DiscordModal.tsx` and `NotificationsPanel.tsx` compose
+ *  `services.discord.testResult.<id>` into the same `{ok, detail, version}` shape `TestBadge`
+ *  and `testSentence` already render (docs/history/I18N_PLAN.md §5). */
+export interface DiscordTest {
+  ok: boolean;
+  reason: ReasonKey;
+  version: string | null;
 }
 
 /** One of an *arr instance's root folders, with a suggested Plex library to prefill the map. */
@@ -2072,9 +2092,9 @@ export const api = {
     put<Notifications>("/api/settings/notifications", { webhook_url }),
   clearWebhook: () => del<Notifications>("/api/settings/notifications"),
   /** Post a sample embed. Pass the URL about to be saved to test it, or null to test the
-   *  already-stored webhook without re-pasting the secret. Reuses the connection-test shape. */
+   *  already-stored webhook without re-pasting the secret. */
   testWebhook: (webhook_url: string | null) =>
-    post<InstanceTest>("/api/settings/notifications/test", { webhook_url }),
+    post<DiscordTest>("/api/settings/notifications/test", { webhook_url }),
 
   policy: (mediaType: "movie" | "tv" = "movie") =>
     request<Policy>(`/api/policy?media_type=${mediaType}`),
