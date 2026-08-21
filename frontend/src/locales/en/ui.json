@@ -1110,5 +1110,271 @@
       "sentence": "{lead}: {detail}{version}",
       "version": " (version {version})"
     }
+  },
+  "reapPlan": {
+    "breakdown": {
+      "allowanceUnknown": "Reaper couldn't check your unknown-size allowance, so it can't say how many titles this reap removes. {count} {n, plural, one {title} other {titles}} on the list can't be measured.",
+      "condemnedByPolicy": "Condemned by your policy",
+      "emptyMeasured": "A reap would remove nothing right now. Reaper couldn't measure any of the titles on the list, so it won't remove them.",
+      "emptyNone": "A reap would remove nothing right now. The last scan condemned nothing.",
+      "emptySpared": "A reap would remove nothing right now. You've spared everything the last scan condemned.",
+      "expiredSpares": "<strong>{count} {n, plural, one {title is} other {titles are}} kept by {n, plural, one {a spare that expired} other {spares that expired}}.</strong> This reap won't remove {n, plural, one {it} other {them}}. A new scan judges {n, plural, one {it} other {them}} again.",
+      "handReaped": "You marked to reap by hand",
+      "handReapedHeld": "{count} {n, plural, one {reap you marked is} other {reaps you marked are}} on hold, so this reap won't remove {n, plural, one {it} other {them}} yet.",
+      "handSpared": "You spared by hand",
+      "kept": "kept",
+      "loadFailed": "Couldn't load what a reap would remove. Reaper just can't show it right now. Reload to try again.",
+      "loading": "Loading…",
+      "noScan": "No scan yet. Run one, and this shows what a reap would remove.",
+      "plexNotice": "Warning your Plex users first? “Leaving Soon” is in <btn>Settings → Plex</btn>.",
+      "reapCountMeta": "<strong>{count}</strong> {n, plural, one {title} other {titles}},",
+      "reasons": {
+        "fewWatchers": "Few or no watchers",
+        "lowRating": "Low rating",
+        "seasonRank": "An older season",
+        "size": "Large file on disk",
+        "unwatched": "Gone unwatched too long"
+      },
+      "reasonsHeading": "Why your policy condemned them",
+      "reasonsOf": "of {count} {n, plural, one {title} other {titles}}",
+      "reasonsOverlap": "Titles usually trip more than one, so these overlap and add up to more than the total.",
+      "reviewQueue": "Review queue",
+      "reviewQueueLead": "To spare a title or change a decision, open the",
+      "scanFailed": "The scan didn't start. Try again.",
+      "scanNow": "Scan now",
+      "scanning": "Scanning…",
+      "seeReview": "See Review",
+      "split": "{moviesCount} {movies, plural, one {movie} other {movies}}, {seasonsCount} {seasons, plural, one {TV season} other {TV seasons}}, smallest first, test item first.",
+      "starting": "Starting…",
+      "sub": "Your policy's verdict from the last scan, with your own changes on top.",
+      "title": "What this reap removes",
+      "unmeasuredAllowed": "{count} {n, plural, one {title} other {titles}} can't be measured. These are only removed within your unknown-size allowance.",
+      "unmeasuredHeld": "{count} {n, plural, one {title} other {titles}} can't be measured, so Reaper won't remove {n, plural, one {it} other {them}}.",
+      "willBeReaped": "Will be reaped"
+    },
+    "degraded": {
+      "notice": "<strong>This scan came back incomplete.</strong> {reason} You can still look at it, but Reaper won't act on it, so a plan can't be built. Fix the source and scan again."
+    },
+    "history": {
+      "heading": "Recent plans",
+      "openAbove": ", open above"
+    },
+    "page": {
+      "blurb": "A plan records exactly what a reap <em>would</em> do: the literal request behind every deletion. You can practice it end to end. Nothing here deletes anything.",
+      "buildButton": "Build a plan from the last scan",
+      "building": "Planning…",
+      "title": "Reap plan"
+    },
+    "plan": {
+      "loadFailed": "Reaper couldn't load this plan. Reload the page to try again.",
+      "loading": "Loading the plan…",
+      "notFound": "That plan is no longer available."
+    },
+    "report": {
+      "moreOutcomes": "…and {count} more.",
+      "outcomesLabel": "What the practice run walked",
+      "stoppedTitle": "The run stopped. Nothing was touched",
+      "walkedAll": "Practice run complete. Every safety check ran and nothing was sent. <walkedNum>{soulsCount}</walkedNum> were walked end to end.",
+      "walkedSkipped": "Practice run complete. Every safety check ran and nothing was sent. <walkedNum>{soulsCount}</walkedNum> were walked, and <skipNum>{skippedCount}</skipNum> of them would be skipped."
+    },
+    "runState": {
+      "done": "done",
+      "notRun": "not run",
+      "running": "running",
+      "stopped": "stopped"
+    },
+    "steps": {
+      "headers": {
+        "action": "Action",
+        "ordinal": "#",
+        "request": "Request",
+        "state": "State"
+      },
+      "more": "…and {count} more {n, plural, one {step} other {steps}}, not shown. The run still covers every one of them.",
+      "regionLabel": "Plan steps",
+      "testItem": "test item"
+    },
+    "summary": {
+      "checkingSafety": "Checking whether deletion is on…",
+      "connectPlex": "Connect Plex in Settings",
+      "deletionOff": "Deletion is off, so this plan can't run.",
+      "execute": "Execute…",
+      "executeDisabledTitle": "Turn deletion on first",
+      "heldBackUnknownSize": "{soulsCount} {n, plural, one {is} other {are}} held back. Reaper couldn't measure {n, plural, one {its} other {their}} size, so it won't delete {n, plural, one {it} other {them}}.",
+      "planLine": "{souls}, {bytes}, smallest first, and the first is a test: if it doesn't go exactly as planned, the run stops.",
+      "practiceRun": "Practice run",
+      "practiceRunChecking": "Checking…",
+      "safetyUnknown": "Reaper couldn't confirm whether deletion is on, so this plan can't run from here.",
+      "setupUnknown": "Reaper couldn't check whether Plex and Tautulli are connected. Without either one a real run is refused.",
+      "staleCheckPending": "Checking whether this plan came from the latest scan…",
+      "staleRun": "This plan came from an older scan, so it can list titles you have since protected. <btn>Build a new plan</btn>",
+      "staleUnknown": "Reaper couldn't check whether this plan came from the latest scan. <btn>Build a new plan</btn>",
+      "turnOnLink": "Turn it on in Policy → Deletion"
+    }
+  },
+  "reapConfirm": {
+    "arm": {
+      "checking": "Checking whether deletion is on…",
+      "off": "Deletion is <strong>off</strong>. Turn it on in <em>Policy → Deletion</em> (it asks for your admin password), then come back here.",
+      "typePhrase": "Type <code>{phrase}</code> to confirm:",
+      "unknown": "Reaper couldn't confirm whether deletion is on, so nothing can be reaped from here. Check <em>Policy → Deletion</em>, then reload this page."
+    },
+    "bar": {
+      "announceEnded": "{phase, select, error {Reap failed. {souls} removed before it stopped.} aborted {Reap stopped. {souls} removed, {bytes} freed.} other {Reap finished. {souls} removed, {bytes} freed.}}",
+      "dismiss": "Dismiss",
+      "endedLabel": "{phase, select, error {Reap failed.} aborted {Stopped.} other {Reaped.}}",
+      "errorSuffix": ". {error}",
+      "freedSuffix": ", {bytes} freed",
+      "reapingCount": "Reaping, {done} of {total}",
+      "removedFreed": "{souls} removed, {bytes} freed",
+      "stopError": "Reaper couldn't stop the reap: {error}",
+      "view": "View",
+      "viewReport": "View report"
+    },
+    "cancel": "Cancel",
+    "done": "Done",
+    "failed": {
+      "body": "<strong>The reap stopped on a problem.</strong> {error} Anything already removed is gone; check the Review queue after the next scan.",
+      "unknownError": "Reaper couldn't say what went wrong."
+    },
+    "freedAmount": "{bytes} freed",
+    "heldBack": "{souls} {n, plural, one {is} other {are}} held back. Reaper couldn't measure {n, plural, one {its} other {their}} size, so it won't delete {n, plural, one {it} other {them}}.",
+    "otherRunning": "Another reap is running. Wait for it to finish, then reopen this to reap.",
+    "practiceRun": {
+      "announceOff": "Practice run passed, but deletion is off, so nothing can be reaped.",
+      "announcePassed": "Practice run passed. Type the confirmation phrase to reap.",
+      "announceUnknownSafety": "Practice run passed, but Reaper couldn't confirm whether deletion is on.",
+      "checking": "Checking every safety stop with a practice run…",
+      "failed": "The practice run failed, so nothing can be executed: {message}",
+      "passed": "Practice run passed: the plan is sound, and it sent nothing.",
+      "stopped": "The plan stopped. Nothing would be touched."
+    },
+    "progress": {
+      "announceStopping": "Stopping after the current one.",
+      "announceTick": "{pct}% deleted.",
+      "ariaLabel": "Reaping",
+      "count": "{done} of {total} souls",
+      "valueText": "{pct}%, {done} of {total} removed"
+    },
+    "reapCount": "Reap {souls}",
+    "reapingLabel": "Reaping…",
+    "result": {
+      "checkFailed": "Failed: ",
+      "checkPassed": "Passed: ",
+      "reclaimed": "{souls} reclaimed",
+      "refreshedNote": " Plex is refreshed for what was removed, and a fresh scan is running so the queue matches your library.",
+      "sparedAtLastMoment": ", {n} spared at the last moment",
+      "unmeasuredSuffix": ", {n} of unknown size"
+    },
+    "sparedAmount": ", {n} spared",
+    "stop": "Stop",
+    "stopping": "Stopping…",
+    "stoppingLabel": "Stopping after the current one…",
+    "summary": "{souls}, {bytes}, smallest first, and the first is a test: if it doesn't go exactly as planned, the run stops. This removes the files through Sonarr/Radarr and adds an import exclusion so they won't silently re-download."
+  },
+  "backup": {
+    "blurb": "Save everything Reaper knows to one file, and put it all back if you ever need to.",
+    "download": {
+      "button": "Download backup",
+      "errorFallback": "Something went wrong.",
+      "failed": "The download didn't start: {error}",
+      "heading": "Download a backup",
+      "help": "One file with everything Reaper decided and everything you set up, plus the keys that unlock your saved credentials. The rebuildable cache is left out to keep the file small.",
+      "keyEnvWarning": "Your encryption key is set through the environment, so it is not inside this backup. Keep that key with the file, or a restore cannot read your saved credentials.",
+      "keySafetyWarning": "This file can unlock your Plex and Sonarr/Radarr credentials. Keep it as safe as a password.",
+      "lastBackupLabel": "Last backup",
+      "lastBackupNever": "Never",
+      "preparingButton": "Preparing…"
+    },
+    "heading": "Backup & Restore",
+    "insideLabel": "Inside",
+    "insideValue": "Decisions, settings, credentials",
+    "loadError": "Couldn't load this page. Reload to try again.",
+    "loading": "Loading…",
+    "restore": {
+      "armedLead": "A restore is ready.",
+      "armedRest": "Nothing has changed yet. Restart Reaper to finish.",
+      "cancelButton": "Cancel restore",
+      "cancelFailed": "That file is still waiting to be restored: {message}",
+      "cancelFailedFallback": "That file is still waiting to be restored.",
+      "checkingFile": "Checking {fileName}…",
+      "chooseFailed": "Reaper couldn't read that file: {message}",
+      "chooseFailedFallback": "Reaper couldn't read that file.",
+      "dropzoneHint": "Reaper backup file (.reaper)",
+      "dropzonePrompt": "Drop a backup file here, or <btn>choose one</btn>.",
+      "fromLabel": "From",
+      "fromSavedSuffix": ", saved {when}",
+      "fromVersion": "Reaper {version}",
+      "fromVersionUnknown": "an earlier setup",
+      "heading": "Restore from a backup",
+      "idleHelp": "Replace everything here with a saved backup. Deletion stays off after a restore until you turn it back on.",
+      "noKeyWarning": "This backup doesn't include the encryption key. Set REAPER_SECRET_KEY on this server to the value it was saved with, or your saved credentials can't be read after the restore.",
+      "noUndoWarning": "Restoring replaces your current decisions and settings. There is no undo, so download a backup first.",
+      "passwordLabel": "Admin password",
+      "passwordPlaceholder": "Confirm to restore",
+      "reloadButton": "Reload",
+      "removeButton": "Remove",
+      "restartButton": "Restart now",
+      "restartFailed": "Reaper didn't restart: {message}",
+      "restartFailedFallback": "Reaper didn't restart.",
+      "restartHelp": "Reaper stops. It comes back on its own if your container is set to restart, otherwise start it yourself.",
+      "restartingButton": "Restarting…",
+      "restoreButton": "Restore",
+      "restoreFailed": "The restore didn't start: {message}",
+      "restoreFailedFallback": "The restore didn't start.",
+      "restoringButton": "Restoring…",
+      "stoppingHelp": "This page stops working until then. Reload it once Reaper is back, or start the container yourself if it doesn't come back on its own.",
+      "stoppingLead": "Reaper is stopping.",
+      "stoppingRest": "It finishes the restore when it starts again.",
+      "usingHeldPassword": "Reaper will confirm with the password you just set.",
+      "verdictCurrent": "Matches this server. Safe to restore.",
+      "verdictOutdated": "Saved on an older version. Reaper will update it when it restarts.",
+      "whenHelp": "Restoring takes effect when Reaper restarts. Nothing changes until then.",
+      "wizardHelp": "You can close this. When Reaper comes back it will have everything from the backup, and setup will be behind you."
+    }
+  },
+  "security": {
+    "blurb": "The admin password. It confirms turning deletion on (in <strong>Policy → Deletion</strong>), and it's also how you sign in without Plex.",
+    "form": {
+      "changeFailedError": "The password wasn't changed: {message}",
+      "changeHelp": "Changing it needs the current password first.",
+      "changeTitle": "Change the admin password",
+      "confirmPasswordLabel": "Confirm new password",
+      "currentPasswordLabel": "Current password",
+      "currentRequiredError": "Enter the current password to save.",
+      "mismatchError": "The passwords don't match.",
+      "newPasswordLabel": "New password",
+      "newPasswordPlaceholder": "at least {min} characters",
+      "recoveryHelp": "You can set a new one without the old password.",
+      "recoveryNotNeeded": "Not needed. A recovery code signed you in.",
+      "save": "Save",
+      "saved": "Password saved.",
+      "setFailedError": "The password wasn't set: {message}",
+      "setHelp": "Choose something long, and keep it somewhere safe.",
+      "setTitle": "Set an admin password",
+      "tooShortError": "Use at least {min} characters. <b>{count} so far.</b>"
+    },
+    "heading": "Security",
+    "loadError": "Couldn't load these settings. Reload to try again.",
+    "loading": "Loading…"
+  },
+  "deletion": {
+    "cancelButton": "Cancel",
+    "checking": "Checking whether deletion is on…",
+    "confirmButton": "Confirm",
+    "noPasswordSet": "Set an admin password first, in Settings → Security.",
+    "passwordAriaLabel": "Admin password",
+    "passwordPlaceholder": "admin password",
+    "stateOff": "Deletion is off. Reaper is read-only.",
+    "stateOn": "Deletion is on.",
+    "turnOff": "Turn off",
+    "turnOffHeading": "Turn deletion off",
+    "turnOffHelp": "Puts Reaper back to read-only right away.",
+    "turnOffHelpUnknown": "Puts Reaper back to read-only right away. Safe to press either way: if it was already off, nothing changes.",
+    "turnOnButton": "Turn on…",
+    "turnOnHeading": "Turn deletion on",
+    "turnOnHelp": "Reaper will be allowed to delete media you approve. You'll still review and approve every run.",
+    "turningOff": "Turning off…",
+    "unknownNotice": "Reaper couldn't confirm whether deletion is on. Until it can, treat it as on."
   }
 }
