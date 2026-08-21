@@ -223,7 +223,7 @@ export function NotificationsPanel({
             save.mutate();
           }}
         >
-          {save.isPending ? t("services.common.saving") : t("services.common.save")}
+          {save.isPending ? t("common.saving") : t("common.save")}
         </button>
         <button
           type="button"
@@ -250,7 +250,7 @@ export function NotificationsPanel({
               remove.mutate();
             }}
           >
-            {remove.isPending ? t("services.common.removing") : t("services.common.remove")}
+            {remove.isPending ? t("common.removing") : t("common.remove")}
           </button>
         )}
         <TestBadge result={test && test.of === testedWith() ? test.result : null} />

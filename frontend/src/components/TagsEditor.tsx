@@ -70,7 +70,7 @@ export function TagsEditor({
           // A placeholder is a name of last resort, so this box was announcing itself as the
           // example text inside it and lost even that the moment anything was typed. Same
           // defect #136 fixed on the Plex panel's address pair.
-          aria-label={addLabel ?? t("shell.tagsEditor.addLabel")}
+          aria-label={addLabel ?? t("common.addTag")}
           aria-describedby={describedBy}
           value={input}
           onChange={(e) => setInput(e.target.value)}

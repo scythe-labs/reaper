@@ -306,7 +306,7 @@ export function LogsPanel() {
               onClick={() => download.mutate()}
               disabled={download.isPending}
             >
-              {download.isPending ? t("logs.downloadPreparing") : t("logs.downloadButton")}
+              {download.isPending ? t("common.preparing") : t("logs.downloadButton")}
             </button>
           </SetRow>
         </div>

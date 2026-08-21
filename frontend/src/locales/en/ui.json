@@ -1,4 +1,41 @@
 {
+  "common": {
+    "add": "Add",
+    "addTag": "Add a tag",
+    "adminPassword": "Admin password",
+    "adminPasswordPlaceholder": "admin password",
+    "back": "Back",
+    "cancel": "Cancel",
+    "checking": "Checking…",
+    "checkingDeletion": "Checking whether deletion is on…",
+    "checkingLastScan": "Checking the last scan…",
+    "close": "Close",
+    "confirmRemove": "Confirm remove",
+    "discard": "Discard",
+    "edit": "Edit",
+    "editNamed": "Edit {name}",
+    "failed": "Failed",
+    "hide": "Hide",
+    "loadError": "Couldn't load these settings. Reload to try again.",
+    "loading": "Loading…",
+    "noAdminPassword": "Set an admin password first, in Settings → Security.",
+    "pageLoadError": "Couldn't load this page. Reload to try again.",
+    "planning": "Planning…",
+    "preparing": "Preparing…",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "remove": "Remove",
+    "removeNamedQuestion": "Remove {name}?",
+    "removing": "Removing…",
+    "save": "Save",
+    "saveChanges": "Save changes",
+    "saveError": "Couldn't save that. Try again.",
+    "saving": "Saving…",
+    "scanNow": "Scan now",
+    "scanStartFailed": "The scan didn't start: {message}",
+    "scanning": "Scanning…",
+    "starting": "Starting…"
+  },
   "safetyBanner": {
     "unknown": "<strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm whether deletion is on. Until it can, treat this as armed and <btn>check Policy → Deletion</btn>.",
     "unknownNoLink": "<strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm whether deletion is on. Until it can, treat this as armed and check Policy → Deletion once you're in the app.",
@@ -34,7 +71,6 @@
       "desc": "Pushes the current countdown set to the Plex \"Leaving Soon\" shelf, so people get a heads-up before anything goes.",
       "didNotUpdate": "It didn't update",
       "loadFailed": "Couldn't load the shelf status. Reload to try again.",
-      "loading": "Loading…",
       "manageLink": "Manage in Plex → Leaving Soon",
       "offNotice": "Off. <btn>Turn it on in Plex → Leaving Soon</btn>",
       "runsAfterScan": "Runs after every scan",
@@ -94,7 +130,6 @@
       "scanWeekly": "Every Sunday at 3 AM"
     },
     "row": {
-      "edit": "Edit",
       "editAria": "Edit {title}",
       "runNow": "Run now",
       "runNowAria": "Run now, {title}",
@@ -110,15 +145,12 @@
       "scheduleUnknown": "Couldn't check the schedule."
     },
     "schedule": {
-      "cancel": "Cancel",
       "customHelp": "A cron line, for when none of the presets fit. 30 4 * * * runs at 4:30 AM every day.",
       "customLabel": "Your own schedule",
       "customOption": "Your own schedule…",
       "defaultHelp": "Default: {cron}. You can Run now anytime.",
       "howOftenLabel": "How often",
-      "save": "Save",
       "savedAnnounce": "Schedule saved.",
-      "saving": "Saving…",
       "zoneHelp": "Times use your server time zone: {zone}. Change it in Settings, General.",
       "zoneHelpUnknown": "Times use your server time zone. Change it in Settings, General."
     },
@@ -127,7 +159,6 @@
       "shelfNoun": "the shelf status"
     },
     "status": {
-      "failed": "Failed",
       "finished": "Finished",
       "flashSentence": "{lead}: {text}",
       "lastRunFailed": "Last run failed {since}<exact>, {date}, {time}</exact>",
@@ -421,7 +452,6 @@
         "checkedTitle": "Protections it cleared",
         "firedBlurb": "Any one of these keeps the file, whatever it scored.",
         "firedTitle": "What spared it",
-        "hide": "Hide",
         "showCount": "{count, plural, one {Show 1} other {Show all #}}"
       },
       "head": {
@@ -465,7 +495,6 @@
         "runtime": "{minutes} min"
       },
       "onListSince": "On the list since {when}. Watching it or sparing it keeps it, and you still start every removal by hand.",
-      "overrideSaveError": "Couldn't save that. Try again.",
       "ratings": {
         "imdbLabel": "IMDb",
         "imdbTitleNoVotes": "The same number the score uses.",
@@ -487,7 +516,6 @@
       },
       "ruleTag": "Your rule",
       "shell": {
-        "close": "Close",
         "errorHeading": "Something went wrong"
       },
       "signals": {
@@ -552,7 +580,6 @@
   },
   "plex": {
     "blurb": "Linking Plex lets Reaper warn your library with a \"Leaving Soon\" shelf and read your \"Never Reap\" collection. It's optional. Scanning works without it.",
-    "cancel": "Cancel",
     "chooseServer": {
       "help": "This account owns more than one Plex server. Reaper will only ever scan and prune the one you pick.",
       "label": "Which server should Reaper manage?"
@@ -622,10 +649,7 @@
     "linkedAccount": {
       "help": "Signed in with Plex. {uri}"
     },
-    "loadError": "Couldn't load these settings. Reload to try again.",
-    "loading": "Loading…",
     "manualAddress": {
-      "checking": "Checking…",
       "help": "Hostname or IP, port, and whether to use SSL.",
       "hostAriaLabel": "Manual address host or IP",
       "hostPlaceholder": "plex.example.net",
@@ -642,7 +666,6 @@
       "signInFailedFallback": "Plex sign-in failed.",
       "chooseServerSaid": "Signed in with Plex. Choose which server Reaper should manage."
     },
-    "save": "Save",
     "server": {
       "fallbackOptionLabel": "The linked server",
       "help": "Plex servers this account can manage. Reaper works with one at a time.",
@@ -651,9 +674,7 @@
       "looking": "Looking for servers…",
       "missingNamed": "Plex's list came back without the server Reaper uses, {name}. Nothing has changed. Refresh to look again; the server and connection stay as they are until it is back.",
       "missingUnnamed": "Plex's list came back without the server Reaper uses. Nothing has changed. Refresh to look again; the server and connection stay as they are until it is back.",
-      "refreshButton": "Refresh",
       "refreshTitle": "Look for servers again",
-      "refreshing": "Refreshing…",
       "retry": "Retry"
     },
     "serverField": {
@@ -681,7 +702,6 @@
     "unlinkButton": "Unlink",
     "verifyCert": {
       "help": "Turn this off only for a server you run yourself, like one with a self-signed certificate.",
-      "label": "Check the server's certificate",
       "warning": "Reaper will accept this server's certificate without checking who issued it."
     },
     "waiting": {
@@ -703,10 +723,6 @@
       "help": "Reaper holds back a title whose plays stop being readable. After a library rebuild that can be every title at once, and this clears them all. For one title, use the button on its reasons panel instead.",
       "label": "Recorded watch history",
       "loadError": "Couldn't load the watch history record.",
-      "noPassword": "Set an admin password first, in Settings → Security.",
-      "passwordAriaLabel": "Admin password",
-      "passwordPlaceholder": "admin password",
-      "safetyChecking": "Checking…",
       "safetyUnknown": "Reaper couldn't check whether an admin password is set.",
       "tautulliHint": "Tautulli only moves old plays to the new number when you use its Fix Metadata screen.",
       "tautulliWarning": "A title that really was watched will score as never watched until you repair its history in Tautulli."
@@ -719,8 +735,7 @@
       "help": "Where links to your library open. Keep the default unless you host your own Plex Web. Clear it and save to go back to the default.",
       "label": "Plex web address",
       "placeholder": "https://app.plex.tv",
-      "saved": "Plex web address saved.",
-      "saving": "Saving…"
+      "saved": "Plex web address saved."
     }
   },
   "general": {
@@ -746,11 +761,8 @@
     },
     "apiKey": {
       "alreadyExists": "A key already exists. Use Replace to make a new one.",
-      "cancel": "Cancel",
       "checkFailed": "Couldn't check for an existing key. Confirming replaces one if it's there.",
-      "checking": "Checking…",
       "confirmGenerate": "Confirm generate",
-      "confirmRemove": "Confirm remove",
       "confirmReplace": "Confirm replace",
       "copied": "Copied",
       "copy": "Copy",
@@ -759,7 +771,6 @@
       "generate": "Generate API key",
       "generating": "Generating…",
       "help": "Send it as the X-Api-Key header so scripts and other apps can use Reaper without signing in. A key reads nearly everything, your settings included, and can start scans, build plans, and change your policy, run limits, and grace. Nothing else: it cannot turn deletion on, run a reap, read your logs, see who watched what, or change any other setting.",
-      "hide": "Hide",
       "label": "API key",
       "remove": "Remove…",
       "removeTitle": "Anything using this key stops working immediately",
@@ -803,8 +814,6 @@
       }
     },
     "heading": "General",
-    "loadError": "Couldn't load these settings. Reload to try again.",
-    "loading": "Loading…",
     "notices": {
       "apiKeyCopied": "API key copied.",
       "apiKeyGenerated": "New API key generated. The old one no longer works.",
@@ -822,9 +831,6 @@
     },
     "savebar": {
       "accentBlocked": "Enter a hex code like #25c3ff to save.",
-      "discard": "Discard",
-      "saveChanges": "Save changes",
-      "saving": "Saving…",
       "unsavedChanges": "Unsaved changes:"
     },
     "sections": {
@@ -859,7 +865,6 @@
     "downloadError": "The download didn't start: {message}",
     "downloadHelpBase": "Save the whole log to your computer, handy for a bug report.",
     "downloadLabel": "Log files",
-    "downloadPreparing": "Preparing…",
     "downloadRetentionKnown": "Reaper keeps the newest {n, number} files on the server, a fuller trail than the window above.",
     "downloadRetentionUnknown": "Reaper keeps a fuller trail on the server than the window above.",
     "emptyNoLines": "Nothing yet. New lines appear here as Reaper works.",
@@ -910,8 +915,6 @@
       "update": "Update",
       "version": "Version"
     },
-    "loadError": "Couldn't load this page. Reload to try again.",
-    "loading": "Loading…",
     "reaperDataDetail": "{size}, decisions, audit trail, credentials",
     "reaperVersion": "Reaper {version}",
     "rebuildableCacheDetail": "{size}, watch history, ratings, lists",
@@ -936,7 +939,6 @@
   },
   "lists": {
     "addList": "Add a list",
-    "addTagLabel": "Add a tag",
     "ago": {
       "days": "{n, plural, one {# day ago} other {# days ago}}",
       "hours": "{n, plural, one {# hour ago} other {# hours ago}}",
@@ -958,7 +960,6 @@
       "sonarr": "Sonarr",
       "sonarrAndRadarr": "Sonarr and Radarr"
     },
-    "cancel": "Cancel",
     "changePolicy": "Change policy",
     "checkFailed": "The check didn't run: {error}",
     "checkingItNow": "Checking it now.",
@@ -1010,9 +1011,7 @@
       "lastChecked": "Last checked {when}. "
     },
     "modal": {
-      "addTypedTitle": "Add a list: {sourceName}",
-      "editTitle": "Edit {name}",
-      "removeTitle": "Remove {name}?"
+      "addTypedTitle": "Add a list: {sourceName}"
     },
     "orphanNote": "Set up before this screen existed. Your next check moves it onto a list you can edit.",
     "partial": {
@@ -1021,7 +1020,6 @@
     },
     "pickLibraryOption": "Pick a library…",
     "picker": {
-      "add": "Add",
       "addPlexCollectionAria": "Add a Plex collection",
       "addPlexWatchlistAria": "Add a Plex watchlist",
       "addTagListAria": "Add a tag list",
@@ -1049,7 +1047,6 @@
     "row": {
       "checkAriaLabel": "{checking, select, true {Checking…, {title}} other {Check now, {title}}}",
       "checkButton": "{checking, select, true {Checking…} other {Check now}}",
-      "edit": "Edit",
       "editAriaLabel": "Edit {title}"
     },
     "saveError": "The list wasn't saved: {error}",
@@ -1072,11 +1069,6 @@
   },
   "services": {
     "common": {
-      "cancel": "Cancel",
-      "remove": "Remove",
-      "removing": "Removing…",
-      "save": "Save",
-      "saving": "Saving…",
       "testing": "Testing…"
     },
     "discord": {
@@ -1193,7 +1185,6 @@
         "initial": "Test connection"
       },
       "titleAdd": "Add a {kind}",
-      "titleEdit": "Edit {name}",
       "willDo": {
         "add": "to add this service",
         "save": "to save"
@@ -1223,11 +1214,8 @@
         "cancelRemoveAria": "Cancel, keep {name}",
         "certCheckOffChip": "certificate check off",
         "confirmRemoveAria": "Confirm remove {name}",
-        "confirmRemoveButton": "Confirm remove",
         "confirmRemoveTitle": "Only forgets it in Reaper. Nothing is changed in the service itself.",
         "disabledChip": "disabled",
-        "editAria": "Edit {name}",
-        "editButton": "Edit",
         "notTestedYet": "Not tested yet",
         "reachedDetail": "Reached",
         "removeAria": "Remove {name}",
@@ -1240,7 +1228,6 @@
       },
       "heading": "Services",
       "loadError": "Couldn't load your connections.",
-      "loading": "Loading…",
       "staleWhat": "your connections"
     },
     "serviceKind": {
@@ -1249,7 +1236,6 @@
     },
     "test": {
       "badgeVersion": " (v{version})",
-      "failed": "Failed",
       "passed": "Passed",
       "sentence": "{lead}: {detail}{version}",
       "version": " (version {version})"
@@ -1268,7 +1254,6 @@
       "handSpared": "You spared by hand",
       "kept": "kept",
       "loadFailed": "Couldn't load what a reap would remove. Reaper just can't show it right now. Reload to try again.",
-      "loading": "Loading…",
       "noScan": "No scan yet. Run one, and this shows what a reap would remove.",
       "plexNotice": "Warning your Plex users first? “Leaving Soon” is in <btn>Settings → Plex</btn>.",
       "reapCountMeta": "<strong>{count}</strong> {n, plural, one {title} other {titles}},",
@@ -1285,11 +1270,8 @@
       "reviewQueue": "Review queue",
       "reviewQueueLead": "To spare a title or change a decision, open the",
       "scanFailed": "The scan didn't start. Try again.",
-      "scanNow": "Scan now",
-      "scanning": "Scanning…",
       "seeReview": "See Review",
       "split": "{moviesCount} {movies, plural, one {movie} other {movies}}, {seasonsCount} {seasons, plural, one {TV season} other {TV seasons}}, smallest first, test item first.",
-      "starting": "Starting…",
       "sub": "Your policy's verdict from the last scan, with your own changes on top.",
       "title": "What this reap removes",
       "unmeasuredAllowed": "{count} {n, plural, one {title} other {titles}} can't be measured. These are only removed within your unknown-size allowance.",
@@ -1306,7 +1288,6 @@
     "page": {
       "blurb": "A plan records exactly what a reap <em>would</em> do: the literal request behind every deletion. You can practice it end to end. Nothing here deletes anything.",
       "buildButton": "Build a plan from the last scan",
-      "building": "Planning…",
       "title": "Reap plan"
     },
     "plan": {
@@ -1352,7 +1333,6 @@
       }
     },
     "summary": {
-      "checkingSafety": "Checking whether deletion is on…",
       "connectPlex": "Connect Plex in Settings",
       "deletionOff": "Deletion is off, so this plan can't run.",
       "execute": "Execute…",
@@ -1360,7 +1340,6 @@
       "heldBackUnknownSize": "{soulsCount} {n, plural, one {is} other {are}} held back. Reaper couldn't measure {n, plural, one {its} other {their}} size, so it won't delete {n, plural, one {it} other {them}}.",
       "planLine": "{souls}, {bytes}, smallest first, and the first is a test: if it doesn't go exactly as planned, the run stops.",
       "practiceRun": "Practice run",
-      "practiceRunChecking": "Checking…",
       "safetyUnknown": "Reaper couldn't confirm whether deletion is on, so this plan can't run from here.",
       "setupUnknown": "Reaper couldn't check whether Plex and Tautulli are connected. Without either one a real run is refused.",
       "staleCheckPending": "Checking whether this plan came from the latest scan…",
@@ -1371,7 +1350,6 @@
   },
   "reapConfirm": {
     "arm": {
-      "checking": "Checking whether deletion is on…",
       "off": "Deletion is <strong>off</strong>. Turn it on in <em>Policy → Deletion</em> (it asks for your admin password), then come back here.",
       "typePhrase": "Type <code>{phrase}</code> to confirm:",
       "unknown": "Reaper couldn't confirm whether deletion is on, so nothing can be reaped from here. Check <em>Policy → Deletion</em>, then reload this page."
@@ -1388,7 +1366,6 @@
       "view": "View",
       "viewReport": "View report"
     },
-    "cancel": "Cancel",
     "done": "Done",
     "failed": {
       "body": "<strong>The reap stopped on a problem.</strong> {error} Anything already removed is gone; check the Review queue after the next scan.",
@@ -1440,14 +1417,11 @@
       "keyEnvWarning": "Your encryption key is set through the environment, so it is not inside this backup. Keep that key with the file, or a restore cannot read your saved credentials.",
       "keySafetyWarning": "This file can unlock your Plex and Sonarr/Radarr credentials. Keep it as safe as a password.",
       "lastBackupLabel": "Last backup",
-      "lastBackupNever": "Never",
-      "preparingButton": "Preparing…"
+      "lastBackupNever": "Never"
     },
     "heading": "Backup & Restore",
     "insideLabel": "Inside",
     "insideValue": "Decisions, settings, credentials",
-    "loadError": "Couldn't load this page. Reload to try again.",
-    "loading": "Loading…",
     "restore": {
       "armedLead": "A restore is ready.",
       "armedRest": "Nothing has changed yet. Restart Reaper to finish.",
@@ -1467,10 +1441,8 @@
       "idleHelp": "Replace everything here with a saved backup. Deletion stays off after a restore until you turn it back on.",
       "noKeyWarning": "This backup doesn't include the encryption key. Set REAPER_SECRET_KEY on this server to the value it was saved with, or your saved credentials can't be read after the restore.",
       "noUndoWarning": "Restoring replaces your current decisions and settings. There is no undo, so download a backup first.",
-      "passwordLabel": "Admin password",
       "passwordPlaceholder": "Confirm to restore",
       "reloadButton": "Reload",
-      "removeButton": "Remove",
       "restartButton": "Restart now",
       "restartFailed": "Reaper didn't restart: {message}",
       "restartFailedFallback": "Reaper didn't restart.",
@@ -1504,24 +1476,16 @@
       "newPasswordPlaceholder": "at least {min} characters",
       "recoveryHelp": "You can set a new one without the old password.",
       "recoveryNotNeeded": "Not needed. A recovery code signed you in.",
-      "save": "Save",
       "saved": "Password saved.",
       "setFailedError": "The password wasn't set: {message}",
       "setHelp": "Choose something long, and keep it somewhere safe.",
       "setTitle": "Set an admin password",
       "tooShortError": "Use at least {min} characters. <b>{count} so far.</b>"
     },
-    "heading": "Security",
-    "loadError": "Couldn't load these settings. Reload to try again.",
-    "loading": "Loading…"
+    "heading": "Security"
   },
   "deletion": {
-    "cancelButton": "Cancel",
-    "checking": "Checking whether deletion is on…",
     "confirmButton": "Confirm",
-    "noPasswordSet": "Set an admin password first, in Settings → Security.",
-    "passwordAriaLabel": "Admin password",
-    "passwordPlaceholder": "admin password",
     "stateOff": "Deletion is off. Reaper is read-only.",
     "stateOn": "Deletion is on.",
     "turnOff": "Turn off",
@@ -1588,10 +1552,8 @@
     },
     "learnMore": "Learn more",
     "load": {
-      "failedNoReload": "Couldn't load these settings.",
-      "failedWithReload": "Couldn't load these settings. Reload to try again."
+      "failedNoReload": "Couldn't load these settings."
     },
-    "loading": "Loading…",
     "mediaKind": {
       "movie": "movie",
       "tv": "TV"
@@ -1710,15 +1672,12 @@
     "savebar": {
       "becauseInvalid": "the \"Can't save this\" problem is fixed",
       "becausePoints": "the points add up to 100",
-      "discardButton": "Discard",
       "kindPolicy": "{kind} policy",
       "paceAndLimits": "pace and limits",
       "paceAppliesImmediately": "Pace applies immediately.",
       "paceOnlyTail": "Changing a limit never affects a run you've already approved.",
       "policyBlockedNotice": "Save writes pace and limits only. Your {kind} policy can't go with it until {because}.",
-      "saveButton": "Save changes",
       "savesOnlyKind": "Saves only your {kind} policy. The {otherKind} one is untouched. {appliesOnNextScan}",
-      "saving": "Saving…",
       "unsavedChangesPrefix": "Unsaved changes: "
     },
     "season": {
@@ -1883,7 +1842,6 @@
     "rampPhraseDefault": "the higher it is",
     "rampStartAriaLabel": "Starts counting at",
     "rampValueGb": "{gb} GB",
-    "removeButton": "Remove",
     "removeEditor": {
       "blurb": "Add pressure to the score with a rule of your own. These can flag a title, but a protection still wins, and missing data only ever leans toward keeping.",
       "heading": "Your own reasons to remove",
@@ -1930,7 +1888,6 @@
     "reclaimed": "reclaimed",
     "rescanHeading": "Rescanning to apply your changes",
     "rescanQueuedLead": "A scan was already running, so your changes go into a second scan that starts right after it.",
-    "scanNowLabel": "Scan now",
     "scanStartFailed": "The scan didn't start: {error}",
     "scoringLibrary": "Scoring your library under the new policy. You can leave this page; it keeps running, and the numbers here refresh when it finishes.",
     "staleHeadings": {
@@ -1939,7 +1896,6 @@
       "seasonsNotRecorded": "Your season rules need a fresh scan"
     },
     "staleReasonFallback": "This policy doesn't match the last scan. Scan to apply it.",
-    "startingLabel": "Starting…",
     "summary": {
       "newlyCondemned": "Newly condemned",
       "noLongerCondemned": "No longer condemned",
@@ -2105,7 +2061,6 @@
     "libraryChipTitle": "Plex library: {library}",
     "loadQueueError": "Couldn't load your review queue.",
     "loadRestTitle": "Load the rest of this list and select all of it",
-    "loading": "Loading…",
     "loadingMore": "Loading more…",
     "markLabels": {
       "abstain": "left alone",
@@ -2155,7 +2110,6 @@
       "sparedJudgeAgainTitle": "Spared. Click to let Reaper judge it again",
       "sparedLeftAria": "Spared {short} left"
     },
-    "planningEllipsis": "Planning…",
     "queueTotal": "<itemsNum>{itemsCount}</itemsNum> {n, plural, one {item} other {items}}, <sizeNum>{sizeText}</sizeNum>{freed, select, yes { would be freed} other {}}{hasUnknown, select, yes {, <unknownNum>{unknownCount} {u, plural, one {size} other {sizes}} unknown</unknownNum>} other {}}",
     "reapNowButton": "Reap now…",
     "reapNowTitle": "Delete the selected items now (opens a confirmation)",
@@ -2169,7 +2123,6 @@
       "uhd": "4K"
     },
     "resolutionBadgeTitle": "The file's resolution",
-    "saveError": "Couldn't save that. Try again.",
     "scoreTitle": "Score {score} of 100",
     "searchAria": "Search titles, shows, years",
     "searchChipLabel": "“{search}”",
@@ -2309,9 +2262,7 @@
       "notInScanSub": "requested since, or filtered out",
       "reclaimableLabel": "Reclaimable",
       "reclaimableSub": "{n, plural, one {# title} other {# titles}} the scan would remove",
-      "refresh": "Refresh",
       "refreshTooltip": "Reload requests and watch history",
-      "refreshing": "Refreshing…",
       "requestsLabel": "Requests",
       "seeWhatTheseAre": "See what these are",
       "slowWait": "Still gathering requests. This can take a moment.",
@@ -2336,12 +2287,10 @@
     },
     "notInScan": {
       "allIncluded": "Every available request is in the last scan.",
-      "checking": "Checking the last scan…",
       "heading": "Not in the last scan",
       "leadSame": "{n, plural, one {# request} other {# requests}} the last scan didn't include.",
       "leadSplit": "{requests} requests across {n, plural, one {# title} other {# titles}} the last scan didn't include.",
       "leadWithDetail": "{lead} Here is each one, and why.",
-      "loading": "Loading…",
       "nothingLeftOut": "Nothing was left out.",
       "readFailed": "Reaper couldn't read the last scan, so it can't say which requests were left out. Reload the page to try again.",
       "staleWhat": "the last scan",
@@ -2420,8 +2369,6 @@
   },
   "setup": {
     "actions": {
-      "back": "Back",
-      "cancel": "Cancel",
       "continue": "Continue",
       "goToApp": "Go to the app",
       "skipForNow": "Skip for now"
@@ -2429,7 +2376,6 @@
     "connect": {
       "addAnotherButton": "+ Add another",
       "announceRemoved": "Connection removed.",
-      "announceRemovedNamed": "{name} removed.",
       "badge": {
         "radarr": "RAD",
         "seerr": "SEER",
@@ -2437,37 +2383,25 @@
         "tautulli": "TAU"
       },
       "blurb": "Scanning only reads from these. Nothing here can delete a file.",
-      "cancelKeepAria": "Cancel, keep {name}",
-      "confirmRemoveAria": "Confirm remove {name}",
       "connectButton": "Connect",
-      "editInstanceAria": "Edit {name}",
       "instanceName": {
         "fourK": "4K",
         "hd": "HD",
         "main": "Main",
         "second": "Second"
       },
-      "loadError": "Couldn't load your connections.",
-      "loading": "Loading…",
       "notReadyWarning": "Add Tautulli and one of Radarr or Sonarr, then you can run a scan.",
       "note": "Connect at least one of Radarr or Sonarr.",
       "optional": "Optional",
-      "removeButton": "Remove",
-      "removeButtonTitle": "Only forgets it in Reaper. Nothing is changed in the service itself.",
-      "removeConfirmQuestion": "Remove {name}?",
       "removeFailedError": "Couldn't remove that connection: {message}",
-      "removeInstanceAria": "Remove {name}",
       "removingAria": "Removing…, {name}",
-      "removingLabel": "Removing…",
       "requiredTag": "Required",
       "restoreButton": "Restore a backup",
       "restoreDoorLead": "<strong>Moving an existing Reaper here?</strong> Restore a backup and your connections, settings and decisions come back with it. You can skip the rest of setup.",
-      "staleWhat": "your connections",
       "title": "Connect your library"
     },
     "password": {
       "adminNote": "Your local account will be called <code>admin</code>. You can rename it later in Settings.",
-      "announceSaved": "Password saved.",
       "blurb": "It signs you in when Plex can't be reached, and it confirms every deletion. Reaper needs it before it goes any further.",
       "confirmLabel": "Confirm password",
       "minHelp": "At least {min} characters.",
@@ -2475,57 +2409,30 @@
       "passwordLabel": "Password",
       "restoreFootNote": "Restoring a backup? Set a password first. It's what confirms the restore.",
       "saveFailedError": "That didn't save: {message}",
-      "saving": "Saving…",
       "submit": "Set password and continue",
-      "title": "Set your password",
-      "tooShortError": "Use at least {min} characters. <b>{count} so far.</b>"
+      "title": "Set your password"
     },
     "plex": {
       "announceConnected": "Plex connected.",
-      "approveInWindow": "Approve the sign-in in the Plex window.",
-      "connectionFieldLabel": "Connection",
       "connectionHelp": "How Reaper reaches the server. A local address is usually faster, remote works from anywhere. Pick \"Manual address\" to type your own.",
-      "librariesBlurb": "The libraries Reaper may touch in Plex. Leaving Soon shelves are managed only in libraries you turn on. This doesn't change what gets scanned: scanning reads from Radarr and Sonarr.",
-      "librariesHeading": "Libraries",
-      "librariesLoadError": "Couldn't load the library list.",
       "librariesLoadErrorRetry": "Couldn't load the library list. Try again.",
-      "librariesLoading": "Loading libraries…",
-      "libraryKindMovie": "movies",
-      "libraryKindTv": "tv",
       "lookingForAddress": "Looking for an address…",
       "manualAddressAriaLabel": "Manual address, hostname or IP",
-      "manualAddressLabel": "Manual address",
-      "manualAddressOption": "Manual address…",
       "manualAddressPlaceholder": "192.168.1.10",
-      "manualOption": "Manual, {uri}",
       "manualPortAriaLabel": "Manual address, port",
       "manualUriPlaceholderHelp": "Enter a hostname or IP address.",
-      "multiServerBlurb": "This account owns more than one Plex server. Reaper will only ever scan and prune the one you pick.",
       "readOnlyBlurb": "Reaper checks nobody is watching before it removes a file, and that check runs through Plex. Without it Reaper can scan, but it will not remove anything.",
-      "refreshButton": "Refresh",
-      "refreshing": "Refreshing…",
-      "saveButton": "Save",
-      "savingButton": "Saving…",
       "serverAndAddressSummary": "Server and address",
-      "serverHelp": "Plex servers this account can manage. Reaper works with one at a time.",
-      "serverLabel": "Server",
-      "signInButton": "Sign in with Plex",
       "signInHelp": "Opens plex.tv. Reaper only accepts the owner of the server.",
       "signInStartError": "Couldn't start the Plex sign-in.",
       "signInTimeoutError": "The sign-in wasn't approved in time. Try again.",
       "signedIn": "Signed in",
       "signedInTo": "Signed in to {name}",
       "skipHelp": "Skip and Reaper still scans and shows you what it would remove. It will not be able to remove anything until Plex is connected.",
-      "sslLabel": "SSL",
-      "staleLibrariesWhat": "the library list",
-      "title": "Connect Plex",
-      "useSslLabel": "Use SSL",
-      "waitingHeading": "Waiting for Plex…"
+      "title": "Connect Plex"
     },
     "restore": {
-      "checkFailedError": "Reaper couldn't check whether a restore is already waiting. Close this and open it again.",
-      "loading": "Loading…",
-      "title": "Restore from a backup"
+      "checkFailedError": "Reaper couldn't check whether a restore is already waiting. Close this and open it again."
     },
     "scan": {
       "allSetHeading": "You're all set",
@@ -2534,9 +2441,7 @@
       "announceStarted": "Your first scan is running. You don't have to wait here.",
       "announceStoppedEarly": "Your first scan stopped before it finished. You can start it again.",
       "connectPlexLink": "Connect Plex",
-      "discordAdd": "Add",
       "discordBadge": "DIS",
-      "discordEdit": "Edit",
       "discordHint": "Tells your users what's leaving before it goes.",
       "discordName": "Discord",
       "goToQueueButton": "Go to the review queue",
@@ -2550,8 +2455,6 @@
       "scanErrorNotice": "The scan hit a problem: {message}",
       "scannedBlurb": "Nothing has been touched: open the queue to see what Reaper would remove, and why it picked each one.",
       "scannedHeading": "Your library is scanned",
-      "startFailedError": "The scan didn't start: {message}",
-      "starting": "Starting…",
       "title": "Run your first scan"
     },
     "stepper": {
@@ -2579,7 +2482,6 @@
     "authSafety": "Reaper can permanently delete media. Only the server’s owner is admitted. Authenticating with Plex is not enough.",
     "localSheet": {
       "ariaLabel": "Local account sign-in",
-      "backButton": "Back",
       "blurbHasLocal": "The fallback for when Plex is unreachable. Reaper keeps at least one, so a plex.tv outage can’t lock you out.",
       "blurbLoading": "The fallback for when Plex is unreachable.",
       "blurbNoLocalYet": "The fallback for when Plex is unreachable. This install doesn’t have one yet.",
@@ -2613,7 +2515,6 @@
   "shell": {
     "app": {
       "brandTagline": "Grave decisions, clearly explained",
-      "loadingEllipsis": "Loading…",
       "loadingReap": "Loading the reap…",
       "loadingReaperEllipsis": "Loading Reaper…",
       "reapLoadFailed": "Reaper couldn't load this reap. Close this and try View again.",
@@ -2638,9 +2539,6 @@
       "indexLabel": "Documentation",
       "showingDoc": "Showing {title}.",
       "title": "Help & docs"
-    },
-    "modalShell": {
-      "close": "Close"
     },
     "notice": {
       "problemLead": "Problem: ",
@@ -2669,7 +2567,6 @@
       "deltaSize": "{n} {dir, select, up {more} other {less}} to free{qualifier}",
       "deltaSummary": "Compared with the scan before: {parts}.",
       "deltaUnknownQualifier": ", {n} {count, plural, one {size} other {sizes}} unknown",
-      "edit": "Edit",
       "editScheduleLabel": "Edit the library scan schedule",
       "incompleteAnnounce": "That scan came back incomplete. Reaper won't act on it.",
       "keepsRunning": "You can leave this page; it keeps running.",
@@ -2687,13 +2584,9 @@
       "scanLibrary": "Scan library",
       "scanOnlyReads": "A scan only reads. It cannot delete.",
       "scanProblem": "The scan hit a problem: {error}",
-      "scanningEllipsis": "Scanning…",
-      "snapshotSummary": "{itemCount} items, <condemned>{condemnedCount}</condemned> would be removed, freeing <freed>{freedAmount}</freed>",
-      "startFailed": "The scan didn't start: {message}",
-      "starting": "Starting…"
+      "snapshotSummary": "{itemCount} items, <condemned>{condemnedCount}</condemned> would be removed, freeing <freed>{freedAmount}</freed>"
     },
     "scanFreshness": {
-      "checking": "Checking the last scan…",
       "degradedNotice": "The last scan came back incomplete, so Reaper won't act on it. <btn>Go to Settings → Jobs</btn> and rescan.",
       "lastScanned": "Last scanned {date}, {count} items.",
       "noScanYet": "No scan has run yet. <btn>Run one from Settings → Jobs</btn> to fill the queue.",
@@ -2749,7 +2642,6 @@
       "keepEditing": "Keep editing"
     },
     "tagsEditor": {
-      "addLabel": "Add a tag",
       "placeholder": "add a tag…",
       "removeTag": "Remove {tag}"
     },

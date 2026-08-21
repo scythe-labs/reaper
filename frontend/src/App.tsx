@@ -63,7 +63,7 @@ function RouteLoading() {
   return (
     <div className="fair-loading">
       <span className="spinner spinner-xl" aria-hidden="true" />
-      <p className="fair-loading-lead">{t("shell.app.loadingEllipsis")}</p>
+      <p className="fair-loading-lead">{t("common.loading")}</p>
     </div>
   );
 }

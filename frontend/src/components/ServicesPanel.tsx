@@ -147,7 +147,7 @@ function ServiceCard({
                 remove.mutate();
               }}
             >
-              {t("services.panel.card.confirmRemoveButton")}
+              {t("common.confirmRemove")}
             </button>
             <button
               type="button"
@@ -157,7 +157,7 @@ function ServiceCard({
               aria-label={t("services.panel.card.cancelRemoveAria", { name: instance.name })}
               onClick={() => setConfirmingRemove(false)}
             >
-              {t("services.common.cancel")}
+              {t("common.cancel")}
             </button>
           </>
         ) : (
@@ -182,10 +182,10 @@ function ServiceCard({
             </button>
             <button
               type="button"
-              aria-label={t("services.panel.card.editAria", { name: instance.name })}
+              aria-label={t("common.editNamed", { name: instance.name })}
               onClick={onEdit}
             >
-              {t("services.panel.card.editButton")}
+              {t("common.edit")}
             </button>
             <button
               type="button"
@@ -193,7 +193,7 @@ function ServiceCard({
               aria-label={t("services.panel.card.removeAria", { name: instance.name })}
               onClick={() => setConfirmingRemove(true)}
             >
-              {t("services.common.remove")}
+              {t("common.remove")}
             </button>
           </>
         )}
@@ -288,7 +288,7 @@ export function ServicesPanel() {
           ordinary edit reaches it. */}
       {error && !data && <Notice tone="error">{t("services.panel.loadError")}</Notice>}
       {error && data && <StaleReadNotice what={t("services.panel.staleWhat")} />}
-      {isPending && <p className="muted">{t("services.panel.loading")}</p>}
+      {isPending && <p className="muted">{t("common.loading")}</p>}
       {data &&
         KINDS.map((k) => (
           <ServiceSection

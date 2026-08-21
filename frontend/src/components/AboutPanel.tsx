@@ -39,14 +39,14 @@ export function AboutPanel() {
           <Trans i18nKey="about.devBuildWarning" components={{ code: <code /> }} />
         </Notice>
       )}
-      {isPending && <p className="muted">{t("about.loading")}</p>}
+      {isPending && <p className="muted">{t("common.loading")}</p>}
       {/* Two cases, not one. React Query keeps the last good row through a failed refetch and
           raises isError beside it, so an undivided `isError` printed "couldn't load this page"
           directly above the fully drawn page (rule 17/36). The trigger is a remount past
           `staleTime` -- leaving About and coming back 30 seconds later while the server is
           unreachable. Not window focus, which `main.tsx` turns off app-wide and only `useSafety`
           asks back, and not an invalidation: nothing in the app invalidates `["about"]`. */}
-      {isError && !data && <Notice tone="error">{t("about.loadError")}</Notice>}
+      {isError && !data && <Notice tone="error">{t("common.pageLoadError")}</Notice>}
       {isError && data && <StaleReadNotice what={t("about.staleReadWhat")} />}
       {data && (
         <div className="set-rows">

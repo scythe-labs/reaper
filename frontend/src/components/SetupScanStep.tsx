@@ -185,7 +185,7 @@ export function SetupScanStep({
             ))}
             <div className="step-actions">
               <button className="ghost" onClick={onBack}>
-                {t("setup.actions.back")}
+                {t("common.back")}
               </button>
               <span className="spacer" />
               <button className="primary btn-lg" onClick={onDone}>
@@ -224,7 +224,7 @@ export function SetupScanStep({
             )}
             <div className="step-actions">
               <button className="ghost" onClick={onBack}>
-                {t("setup.actions.back")}
+                {t("common.back")}
               </button>
               <span className="spacer" />
               {/* The wizard's standing promise: every step past the password can be left for
@@ -238,7 +238,7 @@ export function SetupScanStep({
                 onClick={() => start.mutate()}
                 disabled={start.isPending || !setup.scan_ready}
               >
-                {start.isPending ? t("setup.scan.starting") : t("setup.scan.runFirstScanButton")}
+                {start.isPending ? t("common.starting") : t("setup.scan.runFirstScanButton")}
               </button>
             </div>
           </>
@@ -246,7 +246,7 @@ export function SetupScanStep({
 
         {start.error && (
           <Notice tone="error">
-            {t("setup.scan.startFailedError", { message: start.error.message })}
+            {t("common.scanStartFailed", { message: start.error.message })}
           </Notice>
         )}
         {/* `standing`, unlike the Start refusal above it: a scan already running or already
@@ -282,7 +282,7 @@ function DiscordRow({ onOpen }: { onOpen: () => void }) {
           <div className="conn-why">{t("setup.scan.discordHint")}</div>
         </div>
         <button type="button" className="conn-add" onClick={onOpen}>
-          {connected ? t("setup.scan.discordEdit") : t("setup.scan.discordAdd")}
+          {connected ? t("common.edit") : t("common.add")}
         </button>
       </div>
     </div>

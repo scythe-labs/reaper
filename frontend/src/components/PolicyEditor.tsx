@@ -1853,9 +1853,9 @@ export function PolicyEditor({
   // leave the whole workspace saying "Loading…" for good. Say what happened instead.
   if (!draft) {
     if (policyFailed) {
-      return <Notice tone="error">{t("policyEditor.load.failedWithReload")}</Notice>;
+      return <Notice tone="error">{t("common.loadError")}</Notice>;
     }
-    return <p className="muted">{t("policyEditor.loading")}</p>;
+    return <p className="muted">{t("common.loading")}</p>;
   }
 
   const update = (patch: Partial<PolicyBody>) => setDraft({ ...draft, ...patch });
@@ -2683,7 +2683,7 @@ export function PolicyEditor({
             // unsaved policy edits, and a reload takes them with no ask.
             <Notice tone="error">{t("policyEditor.load.failedNoReload")}</Notice>
           ) : (
-            <p className="muted">{t("policyEditor.loading")}</p>
+            <p className="muted">{t("common.loading")}</p>
           )
         ) : (
           <>
@@ -2895,7 +2895,7 @@ export function PolicyEditor({
                 announce(t("policyEditor.announce.changesDiscarded"));
               }}
             >
-              {t("policyEditor.savebar.discardButton")}
+              {t("common.discard")}
             </button>
             <button
               className="primary"
@@ -2911,7 +2911,7 @@ export function PolicyEditor({
                 if (willSavePace && pace) savePace.mutate(pace);
               }}
             >
-              {saving ? t("policyEditor.savebar.saving") : t("policyEditor.savebar.saveButton")}
+              {saving ? t("common.saving") : t("common.saveChanges")}
             </button>
             {save.error && <Notice tone="error">{save.error.message}</Notice>}
             {savePace.error && <Notice tone="error">{savePace.error.message}</Notice>}

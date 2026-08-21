@@ -149,7 +149,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
 
         <div className="add-actions">
           <button type="button" className="ghost" onClick={onClose} disabled={busy}>
-            {t("services.common.cancel")}
+            {t("common.cancel")}
           </button>
           <span className="flex-spacer" />
           {connected && (
@@ -162,7 +162,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
               }}
               disabled={busy}
             >
-              {remove.isPending ? t("services.common.removing") : t("services.common.remove")}
+              {remove.isPending ? t("common.removing") : t("common.remove")}
             </button>
           )}
           <button
@@ -179,7 +179,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
               : t("services.discord.sendTestButton")}
           </button>
           <button type="submit" className="primary" disabled={!validNew || busy}>
-            {save.isPending ? t("services.common.saving") : t("services.common.save")}
+            {save.isPending ? t("common.saving") : t("common.save")}
           </button>
         </div>
       </form>

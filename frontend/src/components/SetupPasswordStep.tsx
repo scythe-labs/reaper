@@ -52,7 +52,7 @@ export function SetupPasswordStep({
       // bounce the operator straight back here.
       await queryClient.invalidateQueries({ queryKey: ["setup"] });
       await queryClient.invalidateQueries({ queryKey: ["safety"] });
-      announce(t("setup.password.announceSaved"));
+      announce(t("security.form.saved"));
       onDone(pw);
     },
     // No onError: the failure renders from `save.error` below. "Saved" and "that didn't work"
@@ -68,7 +68,7 @@ export function SetupPasswordStep({
   // they can fix right now rather than the thing that went wrong a moment ago.
   const error: ReactNode = tooShort ? (
     <Trans
-      i18nKey="setup.password.tooShortError"
+      i18nKey="security.form.tooShortError"
       values={{ min: MIN_ADMIN_PASSWORD, count: pw.length }}
       components={{ b: <b /> }}
     />
@@ -144,7 +144,7 @@ export function SetupPasswordStep({
         <div className="step-actions">
           <span className="spacer" />
           <button type="submit" className="primary btn-lg" disabled={!valid || save.isPending}>
-            {save.isPending ? t("setup.password.saving") : t("setup.password.submit")}
+            {save.isPending ? t("common.saving") : t("setup.password.submit")}
           </button>
         </div>
       </form>

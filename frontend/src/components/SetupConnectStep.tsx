@@ -124,7 +124,7 @@ export function SetupConnectStep({
       const gone = (instances ?? []).find((i) => i.id === id);
       announce(
         gone
-          ? t("setup.connect.announceRemovedNamed", { name: gone.name })
+          ? t("services.panel.card.removedAnnouncement", { name: gone.name })
           : t("setup.connect.announceRemoved"),
       );
       setConfirmRemove(null);
@@ -165,9 +165,9 @@ export function SetupConnectStep({
 
       {/* Divided, so a failed refetch does not trade a working list for one sentence while
           React Query still holds the last good answer (rule 17/36). */}
-      {isError && !instances && <Notice tone="error">{t("setup.connect.loadError")}</Notice>}
-      {isError && instances && <StaleReadNotice what={t("setup.connect.staleWhat")} />}
-      {isPending && <p className="muted">{t("setup.connect.loading")}</p>}
+      {isError && !instances && <Notice tone="error">{t("services.panel.loadError")}</Notice>}
+      {isError && instances && <StaleReadNotice what={t("services.panel.staleWhat")} />}
+      {isPending && <p className="muted">{t("common.loading")}</p>}
 
       {instances && (
         <>
@@ -230,7 +230,7 @@ export function SetupConnectStep({
 
       <div className="step-actions">
         <button className="ghost" onClick={onBack}>
-          {t("setup.actions.back")}
+          {t("common.back")}
         </button>
         <span className="spacer" />
         <button className="ghost" onClick={onNext}>
@@ -330,7 +330,7 @@ function ConnRow({
                    the question sits exactly where the thing it is about was. */
                 <span key={i.id} className="chip-confirm">
                   <span className="chip-confirm-q">
-                    {t("setup.connect.removeConfirmQuestion", { name: i.name })}
+                    {t("common.removeNamedQuestion", { name: i.name })}
                   </span>
                   <button
                     type="button"
@@ -338,24 +338,24 @@ function ConnRow({
                     disabled={removing}
                     // Says what removing does and does not touch, the same promise the services
                     // panel's own Remove makes.
-                    title={t("setup.connect.removeButtonTitle")}
+                    title={t("services.panel.card.confirmRemoveTitle")}
                     aria-label={
                       removing
                         ? t("setup.connect.removingAria", { name: i.name })
-                        : t("setup.connect.confirmRemoveAria", { name: i.name })
+                        : t("services.panel.card.confirmRemoveAria", { name: i.name })
                     }
                     onClick={() => onRemove(i)}
                   >
-                    {removing ? t("setup.connect.removingLabel") : t("setup.connect.removeButton")}
+                    {removing ? t("common.removing") : t("common.remove")}
                   </button>
                   <button
                     type="button"
                     // The visible word first, so "click Cancel" still reaches it by voice, then
                     // which connection it keeps.
-                    aria-label={t("setup.connect.cancelKeepAria", { name: i.name })}
+                    aria-label={t("services.panel.card.cancelRemoveAria", { name: i.name })}
                     onClick={() => onAskRemove(null)}
                   >
-                    {t("setup.actions.cancel")}
+                    {t("common.cancel")}
                   </button>
                 </span>
               ) : (
@@ -375,7 +375,7 @@ function ConnRow({
                   <button
                     type="button"
                     className="chip-edit"
-                    aria-label={t("setup.connect.editInstanceAria", { name: i.name })}
+                    aria-label={t("common.editNamed", { name: i.name })}
                     onClick={() => onEdit(i)}
                   >
                     {i.name}
@@ -383,7 +383,7 @@ function ConnRow({
                   <button
                     type="button"
                     className="chip-x"
-                    aria-label={t("setup.connect.removeInstanceAria", { name: i.name })}
+                    aria-label={t("services.panel.card.removeAria", { name: i.name })}
                     onClick={() => onAskRemove(i.id)}
                   >
                     <span aria-hidden="true">✕</span>

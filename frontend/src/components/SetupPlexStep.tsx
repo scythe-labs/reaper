@@ -107,7 +107,7 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
         <PlexLinked onError={setError} />
       ) : pin.servers ? (
         <>
-          <p className="blurb">{t("setup.plex.multiServerBlurb")}</p>
+          <p className="blurb">{t("plex.chooseServer.help")}</p>
           <div className="server-pick">
             <ServerPickList
               servers={pin.servers}
@@ -126,8 +126,8 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
             <div className="plex-waiting">
               <span className="spinner" aria-hidden="true" />
               <div>
-                <strong>{t("setup.plex.waitingHeading")}</strong>
-                <p className="muted">{pin.retrying ?? t("setup.plex.approveInWindow")}</p>
+                <strong>{t("plex.waitingForPlex")}</strong>
+                <p className="muted">{pin.retrying ?? t("plex.waiting.approveNoLink")}</p>
               </div>
               <button
                 className="link"
@@ -136,13 +136,13 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
                   setLinking(false);
                 }}
               >
-                {t("setup.actions.cancel")}
+                {t("common.cancel")}
               </button>
             </div>
           ) : (
             <>
               <button className="btn-plex" onClick={() => void startLink()}>
-                {t("setup.plex.signInButton")}
+                {t("login.plexButton.signIn")}
               </button>
               <p className="help">{t("setup.plex.signInHelp")}</p>
             </>
@@ -259,11 +259,11 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
         <div className="service-form">
           {servers.length > 1 && (
             <label className="field-sm">
-              <span className="field-label">{t("setup.plex.serverLabel")}</span>
+              <span className="field-label">{t("plex.serverField.label")}</span>
               <span className="pick-row">
                 <select
                   value={current?.machine_identifier ?? ""}
-                  aria-label={t("setup.plex.serverLabel")}
+                  aria-label={t("plex.serverField.label")}
                   disabled={switchServer.isPending}
                   onChange={(e) => {
                     if (e.target.value && e.target.value !== current?.machine_identifier) {
@@ -283,20 +283,18 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
                   disabled={resources.isFetching}
                   onClick={() => void resources.refetch()}
                 >
-                  {resources.isFetching
-                    ? t("setup.plex.refreshing")
-                    : t("setup.plex.refreshButton")}
+                  {resources.isFetching ? t("common.refreshing") : t("common.refresh")}
                 </button>
               </span>
-              <span className="help">{t("setup.plex.serverHelp")}</span>
+              <span className="help">{t("plex.server.help")}</span>
             </label>
           )}
 
           <label className="field-sm">
-            <span className="field-label">{t("setup.plex.connectionFieldLabel")}</span>
+            <span className="field-label">{t("plex.connectionField.label")}</span>
             <select
               value={manualOpen ? MANUAL : savedUri}
-              aria-label={t("setup.plex.connectionFieldLabel")}
+              aria-label={t("plex.connectionField.label")}
               disabled={setConnection.isPending}
               onChange={(e) => {
                 if (e.target.value === MANUAL) setManualOpen(true);
@@ -313,17 +311,17 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
               ))}
               {savedUri && !(current?.connections ?? []).some((c) => c.uri === savedUri) && (
                 <option value={savedUri}>
-                  {t("setup.plex.manualOption", { uri: savedUri.replace(/^https?:\/\//, "") })}
+                  {t("plex.connection.manualOption", { uri: savedUri.replace(/^https?:\/\//, "") })}
                 </option>
               )}
-              <option value={MANUAL}>{t("setup.plex.manualAddressOption")}</option>
+              <option value={MANUAL}>{t("plex.connection.manualAddressOption")}</option>
             </select>
             <span className="help">{t("setup.plex.connectionHelp")}</span>
           </label>
 
           {manualOpen && (
             <div className="field-sm">
-              <span className="field-label">{t("setup.plex.manualAddressLabel")}</span>
+              <span className="field-label">{t("plex.manualAddress.label")}</span>
               <div className="manual-row">
                 <span className="m-host">
                   <input
@@ -344,8 +342,12 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
                   />
                 </span>
                 <label className="toggle">
-                  <Switch checked={ssl} onChange={setSsl} ariaLabel={t("setup.plex.useSslLabel")} />
-                  <span>{t("setup.plex.sslLabel")}</span>
+                  <Switch
+                    checked={ssl}
+                    onChange={setSsl}
+                    ariaLabel={t("plex.manualAddress.useSslLabel")}
+                  />
+                  <span>{t("plex.manualAddress.sslShort")}</span>
                 </label>
                 <button
                   type="button"
@@ -353,9 +355,7 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
                   disabled={manualUri() === "" || setConnection.isPending}
                   onClick={() => setConnection.mutate(manualUri())}
                 >
-                  {setConnection.isPending
-                    ? t("setup.plex.savingButton")
-                    : t("setup.plex.saveButton")}
+                  {setConnection.isPending ? t("common.saving") : t("common.save")}
                 </button>
               </div>
               {/* What would actually be stored, so it is never a guess. */}
@@ -367,12 +367,12 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
         </div>
       </details>
 
-      <h3 style={{ marginTop: "1.1rem" }}>{t("setup.plex.librariesHeading")}</h3>
-      <p className="blurb">{t("setup.plex.librariesBlurb")}</p>
+      <h3 style={{ marginTop: "1.1rem" }}>{t("plex.librariesGroup.heading")}</h3>
+      <p className="blurb">{t("plex.librariesGroup.blurb")}</p>
       {libraries.isPending || syncLibraries.isPending ? (
-        <p className="muted">{t("setup.plex.librariesLoading")}</p>
+        <p className="muted">{t("plex.libraries.loading")}</p>
       ) : libraries.isError && !libraries.data ? (
-        <Notice tone="error">{t("setup.plex.librariesLoadError")}</Notice>
+        <Notice tone="error">{t("plex.libraries.loadError")}</Notice>
       ) : syncLibraries.isError && libs.length === 0 ? (
         /* The read landed empty and the sync that would fill it failed, which is what an
            unlinked or unreachable Plex answers. Without this the step drew an empty grid and
@@ -381,7 +381,7 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
         <Notice tone="error">{t("setup.plex.librariesLoadErrorRetry")}</Notice>
       ) : (
         <>
-          {libraries.isError && <StaleReadNotice what={t("setup.plex.staleLibrariesWhat")} />}
+          {libraries.isError && <StaleReadNotice what={t("plex.stale.libraries")} />}
           <div className="lib-grid">
             {libs.map((l) => (
               <div key={l.key} className={l.enabled ? "lib-card" : "lib-card off"}>
@@ -389,8 +389,8 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
                   {l.title}
                   <span className="lib-kind">
                     {l.kind === "movie"
-                      ? t("setup.plex.libraryKindMovie")
-                      : t("setup.plex.libraryKindTv")}
+                      ? t("plex.libraries.kindMovie")
+                      : t("plex.libraries.kindTv")}
                   </span>
                 </span>
                 <Switch

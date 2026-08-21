@@ -563,7 +563,7 @@ export function RemoveRulesEditor({
                   onCondemn(condemn.filter((_, j) => j !== i));
                 }}
               >
-                {t("policyRules.removeButton")}
+                {t("common.remove")}
               </button>
             </div>
           ))}
@@ -1018,7 +1018,7 @@ export function KeepRulesEditor({
                   onConditions(conditions.filter((_, j) => j !== i));
                 }}
               >
-                {t("policyRules.removeButton")}
+                {t("common.remove")}
               </button>
             </div>
           ))}
@@ -1073,7 +1073,7 @@ export function KeepRulesEditor({
                     onKeeps(keeps.filter((_, j) => j !== i));
                   }}
                 >
-                  {t("policyRules.removeButton")}
+                  {t("common.remove")}
                 </button>
               </div>
             );

@@ -337,9 +337,9 @@ export function ListModal({
     view === "picker"
       ? t("lists.addList")
       : view === "confirm"
-        ? t("lists.modal.removeTitle", { name: editing?.name })
+        ? t("common.removeNamedQuestion", { name: editing?.name })
         : editing
-          ? t("lists.modal.editTitle", { name: editing.name })
+          ? t("common.editNamed", { name: editing.name })
           : t("lists.modal.addTypedTitle", { sourceName: sourceName(source) });
 
   return (
@@ -362,7 +362,7 @@ export function ListModal({
                     aria-label={t("lists.picker.addPlexCollectionAria")}
                     onClick={() => openForm("plex_collection")}
                   >
-                    {t("lists.picker.add")}
+                    {t("common.add")}
                   </button>
                 </div>
               </PickCard>
@@ -380,7 +380,7 @@ export function ListModal({
                     aria-label={t("lists.picker.addPlexWatchlistAria")}
                     onClick={() => openForm("plex_watchlist")}
                   >
-                    {t("lists.picker.add")}
+                    {t("common.add")}
                   </button>
                 </div>
               </PickCard>
@@ -397,7 +397,7 @@ export function ListModal({
                     aria-label={t("lists.picker.addTagListAria")}
                     onClick={() => openForm("arr_tag")}
                   >
-                    {t("lists.picker.add")}
+                    {t("common.add")}
                   </button>
                 </div>
               </PickCard>
@@ -457,7 +457,7 @@ export function ListModal({
           <div className="add-actions">
             <span className="flex-spacer" />
             <button type="button" className="ghost" onClick={onClose}>
-              {t("lists.cancel")}
+              {t("common.cancel")}
             </button>
           </div>
         </div>
@@ -555,7 +555,7 @@ export function ListModal({
               <TagsEditor
                 tags={tags}
                 onTags={setTags}
-                addLabel={t("lists.addTagLabel")}
+                addLabel={t("common.addTag")}
                 describedBy={describedBy("tags")}
               />
               {/* Directly beneath the box it is about, and above the any/all pair, which is a
@@ -603,7 +603,7 @@ export function ListModal({
             {/* Live through the save: it is the deliberate way out, and it is what keeps
                 `canClose` a guard rather than a trap (see `canClose` above, rule 146). */}
             <button type="button" className="ghost" onClick={onClose}>
-              {t("lists.cancel")}
+              {t("common.cancel")}
             </button>
             <button type="submit" className="primary" disabled={!!missing || save.isPending}>
               {t("lists.submitButton", {
@@ -630,7 +630,7 @@ export function ListModal({
             {/* Live through the remove, same reason as the form's Cancel: with it disabled,
                 the one control still pressable on this view was Remove itself. */}
             <button type="button" className="ghost" onClick={() => setView("form")}>
-              {t("lists.cancel")}
+              {t("common.cancel")}
             </button>
             {/* `danger` alone is the app's destructive button, the one the reap confirmation
                 and the restore card use (rule 18). */}

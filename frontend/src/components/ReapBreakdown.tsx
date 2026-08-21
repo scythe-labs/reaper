@@ -106,7 +106,7 @@ export function ReapBreakdown({
     onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
   });
 
-  if (isPending) return <p className="muted">{t("reapPlan.breakdown.loading")}</p>;
+  if (isPending) return <p className="muted">{t("common.loading")}</p>;
   // An unreadable breakdown must never look like "nothing to reap": say we couldn't look,
   // in the amber tone, rather than rendering an empty ledger.
   //
@@ -270,10 +270,10 @@ export function ReapBreakdown({
             disabled={startScan.isPending || scanning}
           >
             {scanning
-              ? t("reapPlan.breakdown.scanning")
+              ? t("common.scanning")
               : startScan.isPending
-                ? t("reapPlan.breakdown.starting")
-                : t("reapPlan.breakdown.scanNow")}
+                ? t("common.starting")
+                : t("common.scanNow")}
           </button>
         </Notice>
       )}

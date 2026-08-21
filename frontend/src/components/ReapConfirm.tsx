@@ -359,7 +359,7 @@ export function ReapConfirm({
             // Three states, never one definite claim: only a switch we actually read may
             // be reported as off.
             safety.isPending ? (
-              <p className="reap-disarmed">{t("reapConfirm.arm.checking")}</p>
+              <p className="reap-disarmed">{t("common.checkingDeletion")}</p>
             ) : safety.isError || !safety.data ? (
               <Notice tone="warn">
                 <Trans i18nKey="reapConfirm.arm.unknown" components={{ em: <em /> }} />
@@ -396,7 +396,7 @@ export function ReapConfirm({
           {exec.error && <Notice tone="error">{exec.error.message}</Notice>}
           <div className="reap-confirm-actions">
             <button className="ghost" onClick={onClose} disabled={exec.isPending}>
-              {t("reapConfirm.cancel")}
+              {t("common.cancel")}
             </button>
             <button className="danger" disabled={!canExecute} onClick={() => exec.mutate()}>
               {exec.isPending

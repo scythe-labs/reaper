@@ -1211,7 +1211,7 @@ function Gates({
             <span className="fold-shut-label">
               {t("why.panel.gates.showCount", { count: outcomes.length })}
             </span>
-            <span className="fold-open-label">{t("why.panel.gates.hide")}</span>
+            <span className="fold-open-label">{t("common.hide")}</span>
           </summary>
           {body}
         </details>
@@ -1681,7 +1681,7 @@ export function WhyPanel({
             roomy
           />
           {(setOverride.isError || clearOverride.isError) && (
-            <span className="error">{t("why.panel.overrideSaveError")}</span>
+            <span className="error">{t("common.saveError")}</span>
           )}
         </div>
       </div>

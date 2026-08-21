@@ -256,7 +256,7 @@ export function Fairness({
             title={t("scales.board.refreshTooltip")}
           >
             <RefreshIcon />
-            {isFetching ? t("scales.board.refreshing") : t("scales.board.refresh")}
+            {isFetching ? t("common.refreshing") : t("common.refresh")}
           </button>
         </div>
         <p className="blurb">{t("scales.board.blurb")}</p>

@@ -23,7 +23,7 @@ export function flashSentence(flash: JobFlash): string {
 
 /** The word in front of a flash's own text, in both surfaces' hands. */
 function flashLead(ok: boolean): string {
-  return ok ? i18next.t("jobs.status.finished") : i18next.t("jobs.status.failed");
+  return ok ? i18next.t("jobs.status.finished") : i18next.t("common.failed");
 }
 
 /** How long the manual-run confirmation lingers before the line settles back. */

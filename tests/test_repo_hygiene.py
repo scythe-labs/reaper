@@ -4170,7 +4170,7 @@ _RELOAD_ADVICE = {
     # word, plus the catalog's own reloadButton label. Stage 4 converted every
     # component that gave it, so this is the whole population but for RestoreCard's
     # key literals above.
-    "frontend/src/locales/en/ui.json": 15,
+    "frontend/src/locales/en/ui.json": 11,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -4230,9 +4230,9 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # with its surface, one entry per key that spells it. The
 # count above matches the WORD `reload` per file, so it is blind to two panels drifting apart on
 # the sentence they print when a read never landed. That is what W11-36 is about: "Couldn't load
-# these settings. Reload to try again." is written at four sites and "Couldn't load this page.
-# Reload to try again." at two. Three more keys below hold two files each, and the finding named
-# none of them.
+# these settings. Reload to try again." was written at four keys and "Couldn't load this page.
+# Reload to try again." at two, until the catalog de-dupe folded each into one `common.*` key
+# that every panel reads. One key below still holds two files, and the finding named none of them.
 #
 # `PolicyEditor`'s "Couldn't load these settings." is the deliberate fifth copy and holds a key of
 # its own. The distinction is per BRANCH rather than per panel, and that file carries both: at
@@ -4255,7 +4255,6 @@ _NEVER_LOADED_COPY = {
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the library list.": [
-        "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the library list. Try again.": [
@@ -4288,12 +4287,8 @@ _NEVER_LOADED_COPY = {
     ],
     "Couldn't load these settings. Reload to try again.": [
         "frontend/src/locales/en/ui.json",
-        "frontend/src/locales/en/ui.json",
-        "frontend/src/locales/en/ui.json",
-        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this page. Reload to try again.": [
-        "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this person's requests. Close this panel and click the card to try again.": [
@@ -4304,7 +4299,6 @@ _NEVER_LOADED_COPY = {
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your connections.": [
-        "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your lists, so there is no way to tell here whether they are working.": [
