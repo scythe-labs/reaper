@@ -178,6 +178,7 @@ class TautulliClient(BaseClient):
         length: int = 100,
         start: int = 0,
         grouping: int = 0,
+        include_activity: int | None = None,
         read_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Watch history.
@@ -186,6 +187,14 @@ class TautulliClient(BaseClient):
         query by ``grandparent_rating_key`` -- Seerr stores the *show* rating key,
         but history rows are per-episode, so filtering on ``rating_key`` would find
         nothing and report a watched show as never played.
+
+        ``include_activity=0`` leaves the plays in progress out of the listing. Tautulli
+        otherwise appends its temporary session table to the history rows (the operator's
+        own setting decides, when the caller does not), and a session that table holds
+        without a start time sorts last and fails every page it is on with HTTP 500
+        (``history_sync.MAX_UNSERVABLE_ROWS``). The mirror walk passes 0: it drops a row
+        with no ``row_id`` anyway, and what is playing right now is ``get_activity``'s answer.
+        ``None`` sends nothing and leaves the choice to Tautulli.
 
         ``read_timeout`` is the caller's own read budget for one page, which the mirror sweep
         sets because it asks for tens of thousands of rows at a time
@@ -203,6 +212,7 @@ class TautulliClient(BaseClient):
             length=length,
             start=start,
             grouping=grouping,
+            include_activity=include_activity,
         )
         return data if isinstance(data, dict) else {}
 

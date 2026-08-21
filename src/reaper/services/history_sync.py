@@ -138,13 +138,16 @@ MAX_HISTORY_PAGES = 5_000
 #: How many rows the walk may step over because Tautulli answered HTTP 500 for each one alone.
 #: ``get_history`` renders its rows in Python after the query, and a row it cannot render
 #: fails every page that holds it, at any page size and on every sweep. Verified live: two
-#: undated rows, which sort last and so sat on the final page of three sweeps in a row (the
-#: ``after`` filter of an incremental sync excludes an undated row, so only the sweep met
-#: them). The walk halves the page until the row stands alone, skips it, and counts it: the
-#: scan degrades on the count and the sweep records it, so a skip is never quiet. Past this
-#: many the source is broken rather than holding a bad row or two, and the walk raises.
-#: Measured live: the two rows cost 34 requests and 215s on top of a 237s sweep, so this
-#: also bounds the runtime (``docs/LEARNINGS.md``, "A row Tautulli cannot render").
+#: sessions left in Tautulli's temporary activity table by a crash, with no start time, which
+#: ``get_history`` appended to the listing as activity and which sorted last, so they sat on
+#: the final page of three sweeps in a row. The walk now asks without activity
+#: (``TautulliClient.history``, ``include_activity``), so that pair cannot recur; this is the
+#: fail-safe for a history row itself Tautulli cannot render. The walk halves the page until
+#: the row stands alone, skips it, and counts it: the scan degrades on the count and the
+#: sweep records it, so a skip is never quiet. Past this many the source is broken rather
+#: than holding a bad row or two, and the walk raises. Measured live, before the activity
+#: change: the two rows cost 34 requests and 215s on top of a 237s sweep, so this also
+#: bounds the runtime (``docs/LEARNINGS.md``, "A row Tautulli cannot render").
 MAX_UNSERVABLE_ROWS = 20
 
 
@@ -496,7 +499,11 @@ async def _sync(
     while True:
         try:
             page = await client.history(
-                length=length, start=start, after=after, read_timeout=PAGE_READ_TIMEOUT
+                length=length,
+                start=start,
+                after=after,
+                include_activity=0,
+                read_timeout=PAGE_READ_TIMEOUT,
             )
         except IntegrationError as exc:
             if exc.read_timed_out:
@@ -650,7 +657,9 @@ async def _check_regression(engine: AsyncEngine, client: TautulliClient) -> None
     just record it. This deliberately does NOT compare our mirror's row count, which
     never shrinks (INSERT OR REPLACE, no deletes) and so could never detect a regression.
     """
-    page = await client.history(length=1, start=0)
+    # Without activity, so the total counts the same rows the walk reads: with it, every
+    # play in progress is one more row in the count.
+    page = await client.history(length=1, start=0, include_activity=0)
     current_total = int(page.get("recordsTotal") or page.get("recordsFiltered") or 0)
 
     previous_total = await _last_tautulli_total(engine)

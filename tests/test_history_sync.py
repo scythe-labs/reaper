@@ -379,6 +379,23 @@ class TestARowTheSourceCannotServeIsSteppedOverNotFatal:
         assert fake.asked == [(0, 1), (0, 8)]  # the probe, one page, never shrank
 
 
+class TestTheWalkAsksForHistoryWithoutActivity:
+    """Tautulli appends its temporary session table to ``get_history`` as activity unless
+    told not to, and a session that table holds without a start time fails every page it
+    is on with HTTP 500. The walk drops a row with no ``row_id`` anyway, so it asks without
+    activity, and the regression probe counts the same rows the walk reads."""
+
+    async def test_every_page_and_the_probe_pass_zero(self, engine: AsyncEngine) -> None:
+        """The client's default is ``None`` (Tautulli decides), so a call that omits the
+        argument is distinguishable from one that passes 0 (rule 141)."""
+        fake = PagingTautulli([_row(n, days_ago=n) for n in range(1, 10)])
+
+        await sync(engine, fake, full=True)
+
+        assert fake.include_activity, "nothing was asked"
+        assert set(fake.include_activity) == {0}
+
+
 class TestTheSweepCarriesItsOwnReadBudget:
     """A page of the sweep asks for tens of thousands of rows and the calls beside it on the
     same client answer a browser, so the budget cannot be a property of the client. #780 is
