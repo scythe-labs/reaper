@@ -378,7 +378,7 @@ English blocks; translating the site is out of scope.
 
 ### Stage 6 — the translation platform
 
-**Status:** done (2026-08-20, PR #NNN). The operator re-decided for Weblate and created the
+**Status:** done (2026-08-20, PR #860). The operator re-decided for Weblate and created the
 project the same day. The Hosted Weblate side was set through its API and is recorded here
 because it lives nowhere in the tree:
 
