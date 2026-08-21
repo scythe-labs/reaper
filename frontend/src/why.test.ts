@@ -83,7 +83,7 @@ describe("composeReason", () => {
     ).toBe(
       "Reaper cannot tell whether Season 3 is watched more than Season 1, since your watch " +
         "history only goes back 12 months. Season 1 is kept because it is one of the newest " +
-        "seasons your rule keeps. Left for you to decide instead of removing it.",
+        "seasons your rule keeps.",
     );
   });
 

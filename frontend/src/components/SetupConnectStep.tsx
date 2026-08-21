@@ -161,7 +161,7 @@ export function SetupConnectStep({
           being typed on this screen, and the next step says so itself ("It removes files
           through them, never on its own"). The scan bound is the one every correct sibling
           already uses. Its twin is the services panel blurb in `ServicesPanel.tsx` (rule 72). */}
-      <p className="blurb">{t("setup.connect.blurb")}</p>
+      <p className="blurb">{t("services.panel.blurb")}</p>
 
       {/* Divided, so a failed refetch does not trade a working list for one sentence while
           React Query still holds the last good answer (rule 17/36). */}

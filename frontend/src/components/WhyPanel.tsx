@@ -1585,7 +1585,10 @@ export function WhyPanel({
         <section className="block">
           <h3>{t("why.panel.keeps.heading")}</h3>
           <p className="blurb">
-            {explanation.base_score != null
+            {/* A lowering that rounds away printed "from 94 to 94", which reads as nothing
+                having happened. The numbers appear only when they differ. */}
+            {explanation.base_score != null &&
+            explanation.base_score.toFixed(0) !== explanation.score.toFixed(0)
               ? t("why.panel.keeps.blurbWithScores", {
                   from: explanation.base_score.toFixed(0),
                   to: explanation.score.toFixed(0),

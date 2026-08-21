@@ -816,8 +816,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
         assert message == (
             "Reaper cannot tell whether Season 1 is watched more than Season 3, since your "
             "watch history only goes back 12 months. Season 3 is kept because it is one of "
-            "the newest seasons your rule keeps. Left for you to decide instead of removing "
-            "it."
+            "the newest seasons your rule keeps."
         )
         # Rule 21: no em dashes in operator copy. Escaped rather than written literally, so
         # the assertion does not itself smuggle the character ruff bans (RUF001).
@@ -860,7 +859,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
         )
         for plan in (unsupported, unreadable, settleable):
             message = text(plan.conflicts[0].message)
-            assert message.endswith("Left for you to decide instead of removing it.")
+            assert message.endswith("your rule keeps.")
             assert "Kept for now" not in message
         # The two Reaper could not settle still assert no arithmetic. The unsupported one
         # cannot stand behind its own count; the unreadable one cannot stand behind the
