@@ -4294,8 +4294,7 @@ _NEVER_LOADED_COPY = {
     "Couldn't load this person's requests. Close this panel and click the card to try again.": [
         "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load what a reap would remove. Reaper just can't show it right now. Reload"
-    " to try again.": [
+    "Couldn't load what a reap would remove. Reload to try again.": [
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your connections.": [

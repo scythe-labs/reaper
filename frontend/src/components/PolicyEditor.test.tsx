@@ -73,7 +73,7 @@ describe("a policy the server had to repair", () => {
     expect(await screen.findByText(/Your protected lists moved to Settings/)).toBeInTheDocument();
     // And it does NOT borrow the rescale's sentence, which is what the degradation used to
     // tell the operator to go and check.
-    expect(screen.queryByText(/points have been spread/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/points were rescaled/)).not.toBeInTheDocument();
   });
 
   it("still says something for a repair id it does not know", async () => {
@@ -86,7 +86,7 @@ describe("a policy the server had to repair", () => {
     renderEditor({ body: body(), repairs: ["lists_migrated", "rescaled"] });
 
     expect(await screen.findByText(/Your protected lists moved to Settings/)).toBeInTheDocument();
-    expect(screen.getByText(/points have been spread/)).toBeInTheDocument();
+    expect(screen.getByText(/points were rescaled/)).toBeInTheDocument();
   });
 });
 
@@ -1320,7 +1320,7 @@ describe("trying a value against a signal's range", () => {
     );
     // And it says the setting itself is fine, because a failed preview is not a failed save.
     expect(
-      screen.getAllByText(/Your setting is fine, this is just the preview/).length,
+      screen.getAllByText(/Your setting is fine. Only the preview failed/).length,
     ).toBeGreaterThan(0);
   });
 });

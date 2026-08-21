@@ -316,7 +316,7 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
               )}
               <option value={MANUAL}>{t("plex.connection.manualAddressOption")}</option>
             </select>
-            <span className="help">{t("setup.plex.connectionHelp")}</span>
+            <span className="help">{t("plex.connectionField.help")}</span>
           </label>
 
           {manualOpen && (

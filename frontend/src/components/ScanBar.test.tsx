@@ -101,7 +101,7 @@ describe("starting a library scan", () => {
 
     await waitFor(() =>
       expect(announceSpy.mock.calls).toEqual([
-        ["Scanning your library. You can leave this page; it keeps running."],
+        ["Scanning your library. You can leave this page. It keeps running."],
       ]),
     );
   });
