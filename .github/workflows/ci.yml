@@ -63,9 +63,11 @@ jobs:
   # reads these three outputs rather than carrying globs of its own.
   #
   # It is not the repository's only path list, and saying so was wrong for as long as it
-  # was written (rule 7/24). `codeql.yml` filters itself and cannot read an output of this
-  # one, because a `paths` filter decides whether a workflow starts at all: it restates the
-  # prose globs below as `paths-ignore`, twice, once per trigger.
+  # was written (rule 7/24). Two other workflows filter themselves and neither can read an
+  # output of this one, because a `paths` filter decides whether a workflow starts at all:
+  # `codeql.yml` restates the prose globs below as `paths-ignore`, twice, once per trigger;
+  # `weblate-notes.yml` filters on one unrelated file, `frontend/src/locales/en/ui.notes.json`,
+  # and restates nothing from this job.
   #
   # The `site` lane no longer shares the question with a publisher. Cloudflare Pages builds
   # `website/` on every push and asks GitHub nothing, so a page reaching the manual has
@@ -75,8 +77,8 @@ jobs:
   # (#589). Restoring prose-first re-opens the half of that which is still live, a page
   # publishing with nothing having built it.
   #
-  # `tests/test_repo_hygiene.py` pins both of codeql's by name, so neither the count nor
-  # which file holds which can move without this comment being re-read.
+  # `tests/test_repo_hygiene.py` pins all three by name, so neither the count nor which
+  # file holds which can move without this comment being re-read.
   changes:
     name: Decide what to run
     runs-on: ubuntu-latest

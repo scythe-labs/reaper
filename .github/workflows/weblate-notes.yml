@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Pushes translator notes into Weblate.
+#
+# `frontend/src/locales/en/ui.notes.json` is the one place a note is written (CONTRIBUTING's
+# "Translate it"); Weblate's own explanation field is never hand-edited there, because the
+# next push here would overwrite it anyway. `scripts/weblate_notes.py` reads the notes file
+# and PATCHes the ones that changed, standard library only (rule 15), so this job installs
+# nothing beyond the Python `ubuntu-latest` already ships and runs it with a bare `python3`.
+#
+# Scoped to the one file that can change what this job does, the same reasoning
+# `docs-deploy.yml` scopes itself to `manual/` and `website/`: a workflow with its own
+# `paths` filter is invisible to `ci.yml`'s `changes` job, so `tests/test_repo_hygiene.py`
+# pins this list by name alongside codeql.yml's and docs-deploy.yml's, and CLAUDE.md's
+# "Which jobs appear" paragraph says so in prose.
+name: Weblate notes
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "frontend/src/locales/en/ui.notes.json"
+
+# Read-only: this job only calls Weblate's API, never the GitHub API.
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Push notes to Weblate
+        env:
+          WEBLATE_API_KEY: ${{ secrets.WEBLATE_API_KEY }}
+        run: python3 scripts/weblate_notes.py

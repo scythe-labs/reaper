@@ -312,11 +312,13 @@ published with nothing having read it (#783).
 `dev`, builds `website/` itself, and asks GitHub nothing, so the `site` job is the only thing
 that reads a page before an operator does and it gates nothing. Its four build settings live
 in `website/docusaurus.config.ts`'s header, beside the `baseUrl` they have to agree with.
-**One workflow outside it carries its own path list and has to** — a `paths` filter decides
+**Two workflows outside it carry their own path lists and have to** — a `paths` filter decides
 whether a workflow starts, so it cannot read another one's output. `codeql.yml` restates the
 prose globs as `paths-ignore` once per trigger, in `**` spelling rather than the `case` globs
-above. `tests/test_repo_hygiene.py` pins both by name, so neither a third nor a move between
-files can arrive quietly and leave this paragraph stale again. **A workflow skipped by its own
+above. `weblate-notes.yml` filters on the one file that can change what it does,
+`frontend/src/locales/en/ui.notes.json`, unrelated to any lane here. `tests/test_repo_hygiene.py`
+pins all three by name, so neither a fourth nor a move between files can arrive quietly and
+leave this paragraph stale again. **A workflow skipped by its own
 path filter publishes no check run at all** — a *job* skipped by an `if:` does publish one,
 with conclusion `skipped`, which is what the next sentence relies on. That is why the required
 check is `CI gate`: it runs on every commit, counts a skipped lane as a pass and a cancelled

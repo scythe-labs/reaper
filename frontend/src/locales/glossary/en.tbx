@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!--
+  Reaper's glossary, in TBX-Basic. Weblate reads this as a glossary component's source
+  language, so a translator sees each term's meaning beside the word itself while they
+  translate `ui.json` (CONTRIBUTING's "Translate it", #868 phase 6).
+
+  Each termEntry's <descrip type="definition"> is the one-line explanation Weblate shows.
+  TBX has no standard "read-only" flag Weblate's importer reads, so Sanctuary and Limbo (the
+  two entries below marked "product name, stays untranslated") are set read-only through the
+  API instead, by scripts/weblate_glossary.py, once the glossary component exists.
+-->
+<martif type="TBX-Basic" xml:lang="en">
+  <martifHeader>
+    <fileDesc>
+      <sourceDesc>
+        <p>Reaper's product vocabulary, for translators working on the ui component.</p>
+      </sourceDesc>
+    </fileDesc>
+  </martifHeader>
+  <text>
+    <body>
+      <termEntry id="sanctuary">
+        <descrip type="definition">The review queue's protected lane: a title something is actively protecting, kept no matter what it scored. One of the three tabs (Condemned, Sanctuary, Limbo). Product name, stays untranslated.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>Sanctuary</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="limbo">
+        <descrip type="definition">The review queue's undecided lane: a title Reaper did not condemn, either because it scored below the removal threshold or because too little of it could be checked. One of the three tabs (Condemned, Sanctuary, Limbo). Product name, stays untranslated.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>Limbo</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="condemned">
+        <descrip type="definition">The review queue's removal lane: a title that scored at or above the operator's threshold with nothing protecting it, and is a candidate to be reaped. One of the three tabs (Condemned, Sanctuary, Limbo). Not a product name: translate it normally, as the plain word for "marked to go."</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>Condemned</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="reap">
+        <descrip type="definition">The verb for actually removing a condemned title: deleting the file through Sonarr or Radarr and refreshing Plex. Distinct from a scan, which only decides; a reap is the destructive step, and it only runs when the operator starts it by hand. Translate normally, keeping one word for it everywhere it appears (a button label, a status, a confirmation phrase).</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>Reap</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="spare">
+        <descrip type="definition">The operator's own manual decision to keep one title, overriding whatever the scan decided. Usually temporary: a spare can carry an expiration, after which the next scan judges the title again. Translate normally, keeping it distinct from "protection" (an automatic reason) and "keep rule" (a configured condition).</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>Spare</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="leaving-soon">
+        <descrip type="definition">The named feature that warns a household before a title is removed: condemned titles appear on the Leaving Soon shelf (a Plex collection and label) during their grace period, so watching one saves it. Distinct from "shelf," the general word for the display mechanism itself. Translate normally.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>Leaving Soon</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="shelf">
+        <descrip type="definition">The general word for a Plex collection Reaper maintains to show operators or users a set of titles, as in "the Leaving Soon shelf." Translate normally.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>shelf</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="practice-run">
+        <descrip type="definition">Reaper's own name for a dry run: every safety interlock runs exactly as it would for real, but nothing is actually sent to Sonarr, Radarr, or Plex. Used to check a plan before arming deletion for real. Translate normally, keeping one phrase for it everywhere it appears.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>practice run</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="protection">
+        <descrip type="definition">Any automatic check that can keep a title from being removed (an engineering "gate"), such as a rating floor or a curated list. A protection that fires keeps the title outright, whatever it scored. Translate normally, keeping it distinct from "keep rule" (the configured condition behind some protections) and "spare" (a manual override).</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>protection</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="keep-rule">
+        <descrip type="definition">An operator-authored condition that tells Reaper to protect matching titles, set on a curated list or written directly in the Policy Editor. A list protects nothing until it has a keep rule. Translate normally.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>keep rule</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="grace">
+        <descrip type="definition">The countdown window after a title is first condemned, before a reap can act on it: it gives the operator, and users via the Leaving Soon shelf, time to notice and save it by watching or sparing it. A policy setting, in days. Translate normally.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>grace</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="scan">
+        <descrip type="definition">The read-only pass over the library: Reaper gathers evidence, freezes and scores it, and sorts every title into Condemned, Sanctuary, or Limbo. A scan never deletes anything; only a reap does. Translate normally.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>scan</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="souls">
+        <descrip type="definition">Reaper's own playful word for a counted title on a reap-related screen ("1 soul", "7 souls"), used instead of "items." Not a religious term: it follows the app's reaper/scythe theme. Translate with a similarly light word for "item" if one fits your language naturally; a literal translation of "soul" is not required.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>souls</term>
+          </tig>
+        </langSet>
+      </termEntry>
+
+      <termEntry id="scales">
+        <descrip type="definition">The named feature (capitalized, "the Scales") that shows which household member's watching drives which decisions, a per-person attribution view. Translate normally as a feature name, the way you would any other screen title.</descrip>
+        <langSet xml:lang="en">
+          <tig>
+            <term>Scales</term>
+          </tig>
+        </langSet>
+      </termEntry>
+    </body>
+  </text>
+</martif>

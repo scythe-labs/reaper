@@ -73,7 +73,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
 # dropped out of the walk).
-DECISION_SECTIONS = 18
+DECISION_SECTIONS = 19
 
 
 def _live_docs() -> list[Path]:
@@ -983,9 +983,15 @@ def test_american_english_everywhere() -> None:
     """
     offenders: list[str] = []
     # The English catalog joins the walk: since Stage 4 it holds the operator copy the walk
-    # used to read in the components. A translated catalog or manual is the one thing this
-    # gate leaves alone, because a French manual is French.
-    for path in [*_code_and_live_docs(), FRONTEND_SRC / "locales" / "en" / "ui.json"]:
+    # used to read in the components. Its translator notes join it too (#868 phase 6): they
+    # are prose written for a translator, not operator copy, but the same rule binds them. A
+    # translated catalog or manual is the one thing this gate leaves alone, because a French
+    # manual is French.
+    for path in [
+        *_code_and_live_docs(),
+        FRONTEND_SRC / "locales" / "en" / "ui.json",
+        FRONTEND_SRC / "locales" / "en" / "ui.notes.json",
+    ]:
         # This file spells every banned word once, in the pattern above.
         if path.resolve() == SELF or _is_translated_copy(path):
             continue
@@ -2550,21 +2556,24 @@ def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() ->
 
 
 #: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand and
-#: **named, not counted**. `codeql.yml` filters both its triggers, and `ci.yml` has none
-#: deliberately -- it runs on everything and classifies the diff inside a job, so its verdict
-#: can be read by other jobs and a skipped lane still reports.
+#: **named, not counted**. `codeql.yml` filters both its triggers, `weblate-notes.yml` filters
+#: its one (on the single file that can change what it does,
+#: `frontend/src/locales/en/ui.notes.json`), and `ci.yml` has none deliberately -- it runs on
+#: everything and classifies the diff inside a job, so its verdict can be read by other jobs
+#: and a skipped lane still reports.
 #:
 #: This is here because two sentences describe the arrangement in prose and both were wrong:
 #: `ci.yml`'s `changes` comment and CLAUDE.md's "which jobs appear" paragraph each said nothing
 #: else in the repository restated the path list, while three lists sat in two files (rule
 #: 7/24). It is a SET rather than a number because those sentences name which file holds which,
 #: and a count cannot see a filter moving between files -- move one of codeql's to
-#: `release.yml` and a pinned `2` stays green while both sentences go false (rule 145: pin the
+#: `release.yml` and a pinned `3` stays green while both sentences go false (rule 145: pin the
 #: population, and a scalar is not one).
 _WORKFLOW_PATH_FILTERS = frozenset(
     {
         "codeql.yml:push:paths-ignore",
         "codeql.yml:pull_request:paths-ignore",
+        "weblate-notes.yml:push:paths",
     }
 )
 
@@ -5958,7 +5967,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 237
+_EXPECTED_FRONTEND_MODULES = 238
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
