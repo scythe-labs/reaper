@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -206,11 +207,14 @@ class TestTheSnapshotChoiceRefusesAMeaninglessDiff:
     looking like one."""
 
     @pytest.fixture
-    def db(self) -> sqlite3.Connection:
+    def db(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE snapshot (id INTEGER PRIMARY KEY, degraded INTEGER)")
         conn.executemany("INSERT INTO snapshot VALUES (?, ?)", [(41, 0), (42, 1), (43, 0)])
-        return conn
+        yield conn
+        # Closed here rather than left to the garbage collector, which reports an unclosed
+        # database during whichever test it happens to run in (rule 133).
+        conn.close()
 
     def test_the_committed_snapshot_is_the_default(
         self, db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
