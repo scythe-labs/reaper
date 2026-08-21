@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
 //
-// Stage 6's gate over `locales/en/ui.notes.json` (docs/history/I18N_PLAN.md, #868 phase 6). A
-// translator working from `ui.json` alone sees a dotted key and a message with bare `{params}`;
+// #868 phase 6's gate over `locales/en/ui.notes.json`. A translator working from `ui.json`
+// alone sees a dotted key and a message with bare `{params}`;
 // the notes file is where they learn what a param holds, whether a string is a whole sentence
 // or a fragment another key nests, and where the string shows in the app. This gate does not
 // judge the WORDING of a note -- only that the required set of keys has exactly one.

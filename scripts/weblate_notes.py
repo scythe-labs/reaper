@@ -5,8 +5,8 @@
 Standalone by design (stdlib only, rule 15): the CI job that runs this on every push to
 `frontend/src/locales/en/ui.notes.json` installs nothing beyond Python itself. Weblate stores a
 translator note per source string as a unit's `explanation` field; this script is the one place
-that writes it, so a note is edited here, in the repository, never by hand on Weblate (§6 of the
-i18n plan, CONTRIBUTING's "Translate it").
+that writes it, so a note is edited here, in the repository, never by hand on Weblate
+(CONTRIBUTING's "Translate it").
 
     python3 scripts/weblate_notes.py            # writes the diff
     python3 scripts/weblate_notes.py --dry-run   # prints the diff, writes nothing
