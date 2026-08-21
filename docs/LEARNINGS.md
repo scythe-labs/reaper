@@ -4340,12 +4340,15 @@ in progress arrives as, so it now asks with `include_activity=0` and the probe c
 rows the walk reads. The executor's per-item re-ask keeps Tautulli's default on purpose: a play
 in progress there reads as played since approval, which spares.
 
-**Measured through the patched walk, a real `sync(full=True)` into a throwaway mirror**: 452s
+**Measured through the step-over alone, a real `sync(full=True)` into a throwaway mirror**: 452s
 and 53 requests, against 237s and 18 for the clean sweep measured on 08-14. The halving and the
 doubling back cost 34 requests for two adjacent rows, about 6.5s each at that offset, so a bad
 row costs roughly two minutes of sweep. A true bisect that remembered the far end of the failing
 window would halve that (18 requests simulated) and was not written: the job runs every three
 days, the fix belongs at the source, and `MAX_UNSERVABLE_ROWS` bounds the worst case at 20 rows.
+**Through the final walk, with activity left out**: 194s, 427,096 rows, none skipped, 19
+requests, and `inserted` equal to `fetched` on every page where every earlier run had fetched
+and dropped the six plays in progress.
 
 ⇒ A page that fails at every size is not a size problem. Ask what is IN the page before
 changing how much of it is asked for, and bisect by offset against the live source: the log says
