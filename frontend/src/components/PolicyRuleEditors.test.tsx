@@ -19,6 +19,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import type { Condition, GradedKeep, ListConfig, VocabField } from "../api";
+import i18next from "../i18n";
 import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
@@ -32,12 +33,13 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
+/** A field's label, read the way the component does now: off the real catalog by key, not
+ *  the wire (#868 phase 4). The vocabulary fixtures below carry no English. */
+const label = (key: string): string => i18next.t(`why.field.${key}`);
+
 const GENRE: VocabField = {
   key: "genre",
-  label: "Genre",
-  help_text: "",
   type: "text",
-  unit_suffix: "",
   ops: ["contains"],
 };
 
@@ -59,10 +61,14 @@ async function openTheSuggester() {
   // vocabulary loads, so it cannot gate itself -- wait for it to be enabled, not for the page.
   const picker = screen.getByRole("combobox", { name: "Field" });
   await waitFor(() => expect(picker).toBeEnabled());
-  await waitFor(() => expect(screen.getByRole("option", { name: "Genre" })).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: label("genre") })).toBeInTheDocument(),
+  );
   await user.selectOptions(picker, "genre");
 
-  const box = await screen.findByRole("combobox", { name: "Genre value" });
+  const box = await screen.findByRole("combobox", {
+    name: i18next.t("policyRules.suggestInput.valueAriaLabel", { field: label("genre") }),
+  });
   await user.click(box);
   await screen.findByRole("listbox");
   return { user, box, container };
@@ -156,10 +162,7 @@ describe("arrowing through the value suggester", () => {
 /** The field as the protect vocabulary serves it (`engine/fields.py`). */
 const ON_LIST: VocabField = {
   key: "on_list",
-  label: "On one of your lists",
-  help_text: "Matches a list by the name it has on Settings → Lists.",
   type: "text",
-  unit_suffix: "",
   ops: ["eq", "in", "contains"],
 };
 
@@ -167,10 +170,7 @@ const ON_LIST: VocabField = {
  *  a sibling that keeps the ramp controls. */
 const VOTES: VocabField = {
   key: "imdb_votes",
-  label: "IMDb vote count",
-  help_text: "",
   type: "count",
-  unit_suffix: "votes",
   ops: ["gte", "lte"],
 };
 
@@ -206,7 +206,7 @@ describe("a hard keep rule on a list", () => {
 
     const picker = screen.getByRole("combobox", { name: "Field" });
     await waitFor(() =>
-      expect(screen.getByRole("option", { name: "On one of your lists" })).toBeInTheDocument(),
+      expect(screen.getByRole("option", { name: label("on_list") })).toBeInTheDocument(),
     );
     await user.selectOptions(picker, "on_list");
 
@@ -247,7 +247,7 @@ describe("a lean keep rule on a list", () => {
     await user.click(await screen.findByRole("button", { name: "Leans toward keeping" }));
     const picker = screen.getByRole("combobox", { name: "Field" });
     await waitFor(() =>
-      expect(screen.getByRole("option", { name: "On one of your lists" })).toBeInTheDocument(),
+      expect(screen.getByRole("option", { name: label("on_list") })).toBeInTheDocument(),
     );
     await user.selectOptions(picker, "on_list");
   }
@@ -260,7 +260,7 @@ describe("a lean keep rule on a list", () => {
       .getAllByRole("option")
       .map((o) => o.textContent)
       .filter((t) => t !== "when…" && t !== "Pick a list…" && t !== "Never Reap");
-    expect(options[0]).toBe("On one of your lists");
+    expect(options[0]).toBe(label("on_list"));
 
     // Membership isn't a number, so the ramp controls stay off the page for it.
     expect(screen.queryByRole("group", { name: "Which way it leans" })).not.toBeInTheDocument();
@@ -320,7 +320,7 @@ describe("a lean keep rule on a list", () => {
  *  and fails later on a state the no-op never produced (rule 137). */
 async function pickTheListField(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() =>
-    expect(screen.getByRole("option", { name: "On one of your lists" })).toBeInTheDocument(),
+    expect(screen.getByRole("option", { name: label("on_list") })).toBeInTheDocument(),
   );
   await user.selectOptions(screen.getByRole("combobox", { name: "Field" }), "on_list");
 }
@@ -442,28 +442,19 @@ describe("one list, one keep rule", () => {
  *  meant. */
 const SIZE: VocabField = {
   key: "size_bytes",
-  label: "Size on disk",
-  help_text: "",
   type: "bytes",
-  unit_suffix: "GB",
   ops: ["gte", "lte"],
 };
 
 const RATING: VocabField = {
   key: "imdb_rating",
-  label: "IMDb rating",
-  help_text: "",
   type: "rating_tenths",
-  unit_suffix: "/10",
   ops: ["gte", "lte"],
 };
 
 const DORMANCY: VocabField = {
   key: "days_unwatched",
-  label: "Days since anyone watched it",
-  help_text: "",
   type: "days",
-  unit_suffix: "days",
   ops: ["gte", "lte"],
 };
 
@@ -495,11 +486,13 @@ describe("a rule on a field whose stored units are not its typed ones", () => {
       // itself and `selectOptions` against the empty list is a silent no-op.
       const picker = screen.getByRole("combobox", { name: "Field" });
       await waitFor(() =>
-        expect(screen.getByRole("option", { name: field.label })).toBeInTheDocument(),
+        expect(screen.getByRole("option", { name: label(field.key) })).toBeInTheDocument(),
       );
       await user.selectOptions(picker, field.key);
 
-      const box = await screen.findByRole("spinbutton", { name: `${field.label} value` });
+      const box = await screen.findByRole("spinbutton", {
+        name: i18next.t("policyRules.suggestInput.valueAriaLabel", { field: label(field.key) }),
+      });
       await user.type(box, typed);
 
       // Add gates itself on the value, so it is actable only once the typing has landed in
@@ -518,7 +511,7 @@ describe("a rule on a field whose stored units are not its typed ones", () => {
       renderKeepEditor({ conditions: [{ field: field.key, op: "gte", value: stored }] });
 
       expect(
-        await screen.findByText(`Keep it when ${field.label} is at least ${reads}`),
+        await screen.findByText(`Keep it when ${label(field.key)} is at least ${reads}`),
       ).toBeInTheDocument();
     },
   );

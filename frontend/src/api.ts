@@ -707,13 +707,13 @@ export interface RewatchOddsFit {
  *  lives there and not here, so the two cannot drift (rule 144). */
 export type FieldType = "days" | "bytes" | "count" | "rating_tenths" | "bool" | "text";
 
-/** One field the owner may write a protect condition about (from the vocabulary endpoint). */
+/** One field the owner may write a protect condition about (from the vocabulary endpoint).
+ *  The label, help paragraph and unit are not on the wire: the browser reads them from the
+ *  catalog by this key (`why.field.<key>`, `policyRules.fieldHelp.<key>`,
+ *  `policyRules.fieldUnit.<key>`), #868 phase 4. */
 export interface VocabField {
   key: string;
-  label: string;
-  help_text: string;
   type: FieldType;
-  unit_suffix: string;
   ops: string[];
 }
 export interface Vocabulary {

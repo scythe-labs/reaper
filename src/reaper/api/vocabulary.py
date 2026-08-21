@@ -43,14 +43,7 @@ async def get_vocabulary(lane: Lane, media_type: MediaType | None = None) -> Voc
     return VocabularyOut(
         lane=lane,
         fields=[
-            FieldOut(
-                key=spec.key,
-                label=spec.label,
-                help_text=spec.help_text,
-                type=spec.type,
-                unit_suffix=spec.unit_suffix,
-                ops=list(spec.ops),
-            )
+            FieldOut(key=spec.key, type=spec.type, ops=list(spec.ops))
             for spec in vocabulary(lane, media_type)
         ],
     )

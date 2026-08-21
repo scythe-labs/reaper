@@ -139,6 +139,44 @@ _COMPOSED_CAUSE_IDS = {
     "error": "fields.evaluate, wrapping a comparison error verbatim",
 }
 
+#: Fields whose vocabulary spec carried ``help_text`` before #868 phase 4 moved it into the
+#: catalog under ``policyRules.fieldHelp.<key>``. Read off ``engine.fields.REGISTRY`` by hand
+#: (rule 145) rather than derived from ``BY_KEY``, so a field losing its help cannot silently
+#: take its own guard's coverage with it. Today every field carries one.
+_FIELDS_WITH_HELP = frozenset(
+    {
+        "days_unwatched",
+        "genre",
+        "imdb_rating",
+        "imdb_votes",
+        "on_list",
+        "quality",
+        "recent_watchers",
+        "release_age",
+        "requested",
+        "season_rank",
+        "show_ended",
+        "size_bytes",
+        "streaming_now",
+        "watchers_all_time",
+        "whitelisted",
+    }
+)
+
+#: Same, for ``unit_suffix`` -> ``policyRules.fieldUnit.<key>``. Only a field whose value is a
+#: plain number with a unit carries one; a rank, a yes/no and a free-text field do not.
+_FIELDS_WITH_UNIT = frozenset(
+    {
+        "days_unwatched",
+        "imdb_rating",
+        "imdb_votes",
+        "recent_watchers",
+        "release_age",
+        "size_bytes",
+        "watchers_all_time",
+    }
+)
+
 
 def _catalog_causes() -> dict[str, str]:
     """The catalog's ``why.cause`` entries -- the copy every cause id composes into.
@@ -1848,7 +1886,12 @@ class TestTheMatchStatusVocabulary:
         by hand. Every member of both needs a ``why.check.*`` entry, or a blocked row
         renders its bare id; the fixed list is pinned here and reconciled by hand against
         the ``blocked_reason``/``keep_unchecked`` call sites (rule 145). Field ids also
-        need their ``why.field.*`` subject, which the condition sentences compose.
+        need their ``why.field.*`` subject, which the condition sentences compose, and the
+        policy editor's own copy: ``policyRules.fieldHelp.*`` for a field that carries help
+        and ``policyRules.fieldUnit.*`` for one that carries a unit, neither shipped over the
+        wire any more (#868 phase 4). Both are checked in both directions against the pinned
+        ``_FIELDS_WITH_HELP``/``_FIELDS_WITH_UNIT`` sets, so a field gaining or losing one is
+        caught either way.
         """
         checks = set(catalog()["check"])
         field_entries = set(catalog()["field"])
@@ -1868,6 +1911,18 @@ class TestTheMatchStatusVocabulary:
         assert set(fields_registry.BY_KEY) - field_entries == set(), (
             "field keys with no why.field entry: "
             f"{sorted(set(fields_registry.BY_KEY) - field_entries)}"
+        )
+        help_entries = set(catalog("policyRules.fieldHelp"))
+        assert help_entries == _FIELDS_WITH_HELP, (
+            "policyRules.fieldHelp entries drifted from the pinned set of fields that carry "
+            f"help text: missing {sorted(_FIELDS_WITH_HELP - help_entries)}, extra "
+            f"{sorted(help_entries - _FIELDS_WITH_HELP)}"
+        )
+        unit_entries = set(catalog("policyRules.fieldUnit"))
+        assert unit_entries == _FIELDS_WITH_UNIT, (
+            "policyRules.fieldUnit entries drifted from the pinned set of fields that carry "
+            f"a unit: missing {sorted(_FIELDS_WITH_UNIT - unit_entries)}, extra "
+            f"{sorted(unit_entries - _FIELDS_WITH_UNIT)}"
         )
 
     def test_every_backend_cause_has_operator_copy_in_the_panel(self) -> None:

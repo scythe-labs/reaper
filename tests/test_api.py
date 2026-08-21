@@ -2557,11 +2557,14 @@ class TestVocabularyIsFilteredServerSide:
 
         assert condemn < protect
 
-    def test_every_field_carries_its_units(self, client: TestClient) -> None:
-        """A bare number is how a 7.5 rating floor meets a Tomatometer of 96."""
+    def test_ships_no_english(self, client: TestClient) -> None:
+        """The browser says the words now (#868 phase 4): a field's label, help paragraph and
+        unit come from the catalog by its key (`why.field.*`, `policyRules.fieldHelp.*`,
+        `policyRules.fieldUnit.*`), never off the wire."""
         for field in client.get("/api/vocabulary?lane=protect").json()["fields"]:
-            assert field["label"]
-            assert field["help_text"]
+            assert "label" not in field
+            assert "help_text" not in field
+            assert "unit_suffix" not in field
 
     def test_a_movie_policy_is_not_offered_a_tv_only_field(self, client: TestClient) -> None:
         """The editor asks with the policy's media type; a TV-only reason ("the show has

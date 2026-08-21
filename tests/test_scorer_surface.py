@@ -206,11 +206,12 @@ def _gate_role(gate: GateId) -> str:
 #: behavioral ones, so a new attribute defaults to being *recorded*: forgetting to classify
 #: a display string costs a re-record, forgetting to classify a behavioral one costs a
 #: protection. ``test_every_field_spec_attribute_is_classified`` fails until it is decided.
+#: ``help_text`` and ``unit_suffix`` are gone (#868 phase 4): the browser reads a field's help
+#: and unit from the catalog by key now, and ``label`` survives only for the save-boundary
+#: ``ValueError``s in ``engine/fields.py`` and ``engine/policy.py``, still wording either way.
 _DISPLAY_ONLY_SPEC_ATTRS = frozenset(
     {
         "label",
-        "help_text",
-        "unit_suffix",
     }
 )
 
@@ -383,7 +384,6 @@ class TestTheWalkSeesWhatItClaimsTo:
         probe = FieldSpec(
             key="surface_walk_probe",
             label="Probe",
-            help_text="Probe",
             type=FieldType.COUNT,
             lanes=(Lane.CONDEMN,),
             ops=(Op.GTE,),
@@ -414,7 +414,6 @@ class TestTheWalkSeesWhatItClaimsTo:
         repointed = FieldSpec(
             key="on_list",
             label="On a protected list",
-            help_text="Probe",
             type=FieldType.TEXT,
             lanes=(Lane.PROTECT,),
             ops=(Op.EQ,),

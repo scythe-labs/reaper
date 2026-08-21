@@ -622,10 +622,7 @@ const VOCAB: Vocabulary = {
   fields: [
     {
       key: "release_age",
-      label: "Age since release",
-      help_text: "How long ago the title was released.",
       type: "days",
-      unit_suffix: "days",
       ops: ["gte", "lte"],
     },
   ],
