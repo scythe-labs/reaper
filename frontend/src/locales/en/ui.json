@@ -2008,7 +2008,7 @@
         "label": "How big it is on disk"
       },
       "unwatched": {
-        "help": "The longer it sits unwatched, the stronger the reason to remove it. The clock starts at the last play, or at the day it arrived when there has never been one.",
+        "help": "The longer nobody has watched it, the higher it scores. Time counts from the last play. If it was never played, it counts from the day it was added.",
         "label": "How long it's gone unwatched"
       }
     },
