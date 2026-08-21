@@ -119,9 +119,15 @@ def _fetch_units(key: str) -> dict[str, dict[str, Any]]:
 
 def sync(
     notes: dict[str, str], units: dict[str, dict[str, Any]], *, dry_run: bool, key: str
-) -> int:
-    """Write every note that differs from Weblate's stored explanation. Returns the process
-    exit code: 0 on success, 1 if any note's key had no matching unit."""
+) -> None:
+    """Write every note that differs from Weblate's stored explanation.
+
+    A key with no matching unit is reported as `missing`, not raised: it is the ordinary gap
+    between a merge landing here and Weblate's next pull of `dev`, not a failure this job should
+    fail CI over. An HTTP failure is the one thing that ends the run non-zero, and it does that
+    by propagating out of `_request_json` uncaught, since a PATCH that failed partway through is
+    not a state a "missing" count can describe.
+    """
     changed = unchanged = missing = 0
     for context in sorted(notes):
         note = notes[context]
@@ -143,7 +149,6 @@ def sync(
 
     verb = "would change" if dry_run else "changed"
     print(f"\n{verb}: {changed}, unchanged: {unchanged}, missing: {missing}")
-    return 1 if missing > 0 else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -155,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
     key = _api_key(args.key_file)
     notes: dict[str, str] = json.loads(NOTES_PATH.read_text(encoding="utf-8"))
     units = _fetch_units(key)
-    return sync(notes, units, dry_run=args.dry_run, key=key)
+    sync(notes, units, dry_run=args.dry_run, key=key)
+    return 0
 
 
 if __name__ == "__main__":
