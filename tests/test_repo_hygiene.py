@@ -4294,8 +4294,7 @@ _NEVER_LOADED_COPY = {
     "Couldn't load this person's requests. Close this panel and click the card to try again.": [
         "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load what a reap would remove. Reaper just can't show it right now. Reload"
-    " to try again.": [
+    "Couldn't load what a reap would remove. Reload to try again.": [
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your connections.": [
@@ -4308,8 +4307,8 @@ _NEVER_LOADED_COPY = {
     "Couldn't load your review queue.": [
         "frontend/src/locales/en/ui.json",
     ],
-    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from"
-    " right now. The rules you've already added are still here.": [
+    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from. The"
+    " rules you've already added are still here.": [
         "frontend/src/locales/en/ui.json",
     ],
     "Reaper couldn't load this plan. Reload the page to try again.": [
@@ -4318,7 +4317,7 @@ _NEVER_LOADED_COPY = {
     "Reaper couldn't load this reap. Close this and try View again.": [
         "frontend/src/locales/en/ui.json",
     ],
-    "Reaper couldn't load your lists, so there's nothing to pick from right now.": [
+    "Reaper couldn't load your lists, so there's nothing to pick from.": [
         "frontend/src/locales/en/ui.json",
     ],
 }

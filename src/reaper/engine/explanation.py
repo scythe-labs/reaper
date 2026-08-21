@@ -372,7 +372,7 @@ class Explanation(BaseModel):
 
     protections_checked: list[GateOutcomeOut]
     """Protections evaluated that did NOT fire -- **with the actual numbers**:
-    "Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first."
+    "Unwatched for 5 years, 7 months, past the 3 years Reaper waits."
 
     Every one of these is a whole sentence built by a gate's ABSTAIN branch in
     ``engine.gates``, and the example above is ``MinDormancyGate``'s, quoted verbatim. It used

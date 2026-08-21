@@ -1165,7 +1165,7 @@ describe("forgetting the recorded watch history", () => {
     renderPanel();
     // The honest cost of pressing it. A reset that reads as free is the one an operator presses
     // without repairing the source, and then every re-added title is condemnable on false zeros.
-    const warning = await screen.findByText(/score as never watched/);
+    const warning = await screen.findByText(/scores as never watched/);
     expect(warning).toHaveClass("notice-warn");
     expect(warning).toHaveTextContent("repair its history in Tautulli");
   });

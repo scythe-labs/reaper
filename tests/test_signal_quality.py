@@ -125,7 +125,7 @@ class TestTheMinDormancyGate:
         assert result.outcome == PROTECT
         # The floor of 1095 days reads as "3 years". "Untouched", never "last watched":
         # a never-played item's clock runs from its arrival, not from a play.
-        assert "untouched" in text(result.detail)
+        assert "unwatched" in text(result.detail)
         assert "3 years" in text(result.detail)
 
     def test_a_film_past_the_floor_is_not_protected_by_this_gate(self) -> None:
@@ -133,7 +133,7 @@ class TestTheMinDormancyGate:
         result = GATE.evaluate(_facts(1500))
 
         assert result.outcome == ABSTAIN
-        assert "Untouched for" in text(result.detail)
+        assert "Unwatched for" in text(result.detail)
         assert "3 years" in text(result.detail)  # the floor, humanised
 
     @pytest.mark.parametrize(

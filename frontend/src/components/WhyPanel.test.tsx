@@ -520,8 +520,21 @@ describe("the built-in rewatch keep", () => {
   it('drops "Your" from the keeps blurb', () => {
     show(withKeeps());
 
-    expect(screen.getByText(/^Soft keep rules lowered the score/)).toBeTruthy();
+    expect(screen.getByText(/^Keep rules lowered the score/)).toBeTruthy();
     expect(screen.queryByText(/Your soft/)).toBeNull();
+  });
+
+  it("names no numbers when the lowering rounds away", () => {
+    // A base of 94.4 and a score of 93.6 both print as 94, and "from 94 to 94" reads as
+    // nothing having happened. The plain sentence says the rules acted, without the numbers.
+    const base = withKeeps();
+    show({
+      ...base,
+      score: 94,
+      explanation: { ...base.explanation, score: 93.6, base_score: 94.4 },
+    });
+    expect(screen.getByText("Keep rules lowered the score.")).toBeTruthy();
+    expect(screen.queryByText(/from 94 to 94/)).toBeNull();
   });
 });
 
@@ -541,8 +554,8 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
 
     expect(
       screen.getByText(
-        "Of 599 shows that had sat unwatched about this long, 207 (35%) were watched again " +
-          "within a year. Measured from your own history at the last scan.",
+        "Of 599 shows in your history that had sat unwatched about this long, 207 (35%) were " +
+          "watched again within a year.",
       ),
     ).toBeInTheDocument();
   });
@@ -567,9 +580,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
     // `None`) -- this is the shape the browser actually reads over the wire.
     show(withOdds(null));
 
-    expect(
-      screen.queryByRole("heading", { name: "Watched again within a year" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Rewatch probability" })).not.toBeInTheDocument();
   });
 
   it("sits after Leaning toward keeping and before What spared it", () => {
@@ -596,7 +607,7 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
 
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     const leaning = headings.indexOf("Leaning toward keeping");
-    const odds = headings.indexOf("Watched again within a year");
+    const odds = headings.indexOf("Rewatch probability");
     const spared = headings.indexOf("What spared it");
     expect(leaning).toBeGreaterThanOrEqual(0);
     expect(odds).toBeGreaterThan(leaning);
@@ -669,9 +680,7 @@ describe("the verdict headline", () => {
   it("labels an honored hand reap a removal, never a Sanctuary", () => {
     show(detail(WORKED_ROWS, { verdict: "protect", override: "reap", override_effective: true }));
     expect(screen.getByText("Reaped by hand")).toBeInTheDocument();
-    expect(
-      screen.getByText(/it will be removed\. Nothing is holding it back/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Nothing is holding it back/i)).toBeInTheDocument();
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
     expect(screen.queryByText(/the score doesn't matter/i)).not.toBeInTheDocument();
   });
@@ -806,7 +815,7 @@ describe("the verdict headline", () => {
     );
     // Both surfaces say it, so each is asserted by its own distinguishing tail rather than
     // the shared clause -- the ambiguous test above has the same shape.
-    expect(screen.getByText(/so we couldn't tell which Plex entry it is/i)).toBeInTheDocument();
+    expect(screen.getByText(/so Reaper can't tell which one it is/i)).toBeInTheDocument();
     expect(
       screen.getByText(/You asked to remove this, but Plex and Sonarr describe this show/i),
     ).toBeInTheDocument();
@@ -827,7 +836,7 @@ describe("the verdict headline", () => {
       }),
     );
     expect(
-      screen.getByText(/Plex and Radarr describe this file differently, so we couldn't/i),
+      screen.getByText(/Plex and Radarr describe this file differently, so Reaper can't/i),
     ).toBeInTheDocument();
   });
 
@@ -1029,12 +1038,11 @@ describe("the verdict headline", () => {
   // (rule 119).
   const SETTLEABLE_CONFLICT =
     "9 people watched Season 1, more than watched Season 3, which Reaper is keeping " +
-    "because it is one of the newest seasons your rule keeps. Left for you to decide " +
-    "instead of removing it.";
+    "because it is one of the newest seasons your rule keeps.";
   const REFUSED_CONFLICT =
     "Reaper cannot tell whether Season 1 is watched more than Season 3, since your watch " +
     "history only goes back 12 months. Season 3 is kept because it is one of the newest " +
-    "seasons your rule keeps. Left for you to decide instead of removing it.";
+    "seasons your rule keeps.";
 
   // The message and the flag come from the same conflict, exactly as the producer emits them
   // (`season_evidence.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
@@ -1073,7 +1081,7 @@ describe("the verdict headline", () => {
     show(conflictDetail(SETTLEABLE_CONFLICT, true));
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
     expect(screen.getByText(/This was watched more than a season your keep rule/i)).toBeVisible();
-    expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
+    expect(screen.getByText(/left the call to you/i)).toBeInTheDocument();
   });
 
   it("offers a reap on a conflict Reaper could not settle, and the engine now honors it", () => {
@@ -1082,7 +1090,7 @@ describe("the verdict headline", () => {
     // it is the half that used to be a safety divergence, and a future change that makes a
     // block hold the reap again must fail a test rather than quietly re-break the panel.
     show(conflictDetail(REFUSED_CONFLICT, false));
-    expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
+    expect(screen.getByText(/left the call to you/i)).toBeInTheDocument();
   });
 
   it("never asserts a comparison its own reason block denies (#86)", () => {
@@ -1110,7 +1118,7 @@ describe("the verdict headline", () => {
     // while telling every one of them "Reaper couldn't check who watched these seasons".
     show(conflictDetail(SETTLEABLE_CONFLICT, null));
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
-    expect(screen.getByText(/Reaper couldn't settle this one on its own/i)).toBeVisible();
+    expect(screen.getByText(/Reaper couldn't settle this one/i)).toBeVisible();
     expect(screen.queryByText(/This was watched more than/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/couldn't check who watched these seasons/i)).not.toBeInTheDocument();
   });
@@ -1138,7 +1146,7 @@ describe("the verdict headline", () => {
   it("keeps the plain 'Limbo' note for an ordinary abstain", () => {
     show(detail(WORKED_ROWS, { verdict: "abstain" }));
     expect(screen.getByText("Limbo")).toBeInTheDocument();
-    expect(screen.getByText(/not confident enough to judge/i)).toBeInTheDocument();
+    expect(screen.getByText(/not sure enough to judge/i)).toBeInTheDocument();
   });
 
   it("does not read a mid-binge check that never ran as a conflict (#486)", () => {

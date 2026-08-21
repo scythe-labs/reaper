@@ -192,7 +192,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(screen.queryByText(/empties its own trash/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/empty its trash/i)).not.toBeInTheDocument();
   });
 
   it("says who does the emptying when the trash already holds records", async () => {
@@ -206,7 +206,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
-    expect(screen.getByText(/empties its own trash after every scan/i)).toBeInTheDocument();
+    expect(screen.getByText(/empty its trash after every scan/i)).toBeInTheDocument();
   });
 
   it("says nothing about auto-emptying when the preference could not be read", async () => {
@@ -222,7 +222,7 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
-    expect(screen.queryByText(/empties its own trash/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/empty its trash/i)).not.toBeInTheDocument();
   });
 
   it("offers no phrase input at all while deletion is off", async () => {

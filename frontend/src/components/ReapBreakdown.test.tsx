@@ -138,7 +138,7 @@ describe("the ledger", () => {
     // Allowance on: the planner admits the unmeasured, so the line must not promise they are
     // kept, and the count is not reduced (B-8).
     expect(
-      await screen.findByText(/only removed within your unknown-size allowance/),
+      await screen.findByText(/Only as many as your Unknown-size items limit allows are removed/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/won't remove them/)).not.toBeInTheDocument();
     // Not reduced: the unmeasured stay in the count when the allowance admits them -- and in
@@ -161,7 +161,7 @@ describe("the ledger", () => {
       }),
     );
     renderBreakdown();
-    expect(await screen.findByText(/would remove nothing right now/)).toBeInTheDocument();
+    expect(await screen.findByText(/would remove nothing/)).toBeInTheDocument();
     expect(screen.getByText(/couldn't measure any of the titles/)).toBeInTheDocument();
     expect(screen.queryByText("Will be reaped")).not.toBeInTheDocument();
   });
@@ -172,7 +172,9 @@ describe("the ledger", () => {
       full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
     );
     renderBreakdown();
-    const notice = await screen.findByText(/couldn't check your unknown-size allowance/);
+    const notice = await screen.findByText(
+      /couldn't check how many titles with no known size it may remove/,
+    );
     expect(notice).toHaveClass("notice-warn");
     // Neither answer may be stated as fact: not the held-back 565, not the raw 569 (B-16).
     expect(screen.queryByText("565")).not.toBeInTheDocument();
@@ -285,7 +287,7 @@ describe("the by-reason bars", () => {
     renderBreakdown();
     expect(await screen.findByText("Gone unwatched too long")).toBeInTheDocument();
     expect(screen.getByText("Low rating")).toBeInTheDocument();
-    expect(screen.getByText(/usually trip more than one, so these overlap/)).toBeInTheDocument();
+    expect(screen.getByText(/have more than one reason, so these add up/)).toBeInTheDocument();
   });
 
   it("shows a custom rule under its own name", async () => {
@@ -303,7 +305,7 @@ describe("the states that are not a full ledger", () => {
       full({ will_reap: 0, policy_condemned: 0, hand_spared: 0, hand_reaped: 0 }),
     );
     renderBreakdown();
-    expect(await screen.findByText(/would remove nothing right now/)).toBeInTheDocument();
+    expect(await screen.findByText(/would remove nothing/)).toBeInTheDocument();
   });
 
   it("prompts a scan before the first one", async () => {

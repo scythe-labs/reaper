@@ -459,15 +459,13 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
             # The settleable comparison: made, and the keep rule lost it.
             True: (
                 "40 people watched Season 1, more than watched Season 4, which Reaper is "
-                "keeping because it is one of the newest seasons your rule keeps. Left for "
-                "you to decide instead of removing it."
+                "keeping because it is one of the newest seasons your rule keeps."
             ),
             # The refused one, in the wording the guard really emits: the count comes first,
             # so a prefix test never saw the refusal.
             False: (
                 "40 people watched Season 1. Reaper could not check who watched Season 4, "
-                "which it is keeping because it is one of the newest seasons your rule "
-                "keeps. Left for you to decide instead of removing it."
+                "which it is keeping because it is one of the newest seasons your rule keeps."
             ),
         }
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})

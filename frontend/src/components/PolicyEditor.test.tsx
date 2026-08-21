@@ -58,7 +58,7 @@ describe("a policy the server had to repair", () => {
     async (repair) => {
       const { container } = renderEditor({ body: body(), repairs: [repair] });
 
-      await screen.findByText("Movies policy");
+      await screen.findByRole("heading", { name: "Movies policy" });
       const savebar = container.querySelector(".savebar");
       expect(savebar).not.toBeNull();
       expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
@@ -73,7 +73,7 @@ describe("a policy the server had to repair", () => {
     expect(await screen.findByText(/Your protected lists moved to Settings/)).toBeInTheDocument();
     // And it does NOT borrow the rescale's sentence, which is what the degradation used to
     // tell the operator to go and check.
-    expect(screen.queryByText(/points have been spread/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/points were rescaled/)).not.toBeInTheDocument();
   });
 
   it("still says something for a repair id it does not know", async () => {
@@ -86,7 +86,7 @@ describe("a policy the server had to repair", () => {
     renderEditor({ body: body(), repairs: ["lists_migrated", "rescaled"] });
 
     expect(await screen.findByText(/Your protected lists moved to Settings/)).toBeInTheDocument();
-    expect(screen.getByText(/points have been spread/)).toBeInTheDocument();
+    expect(screen.getByText(/points were rescaled/)).toBeInTheDocument();
   });
 });
 
@@ -96,7 +96,7 @@ describe("a policy that couldn't be read", () => {
   // its neighbor is how an operator sets a threshold they never meant to set.
   it("has no accessibility violations", async () => {
     const { container } = renderEditor({ body: body() });
-    await screen.findByText("Movies policy");
+    await screen.findByRole("heading", { name: "Movies policy" });
     // The page is stitched from seven reads, and the rule editors and the deletion switch settle
     // without changing anything a query can wait on. axe reads the DOM directly, so it has to be
     // the settled one (rule 136).
@@ -124,7 +124,7 @@ describe("a policy that couldn't be read", () => {
   it("stays quiet on an ordinary load", async () => {
     renderEditor({ body: body() });
 
-    await screen.findByText("Movies policy");
+    await screen.findByRole("heading", { name: "Movies policy" });
     expect(screen.queryByText(/Your saved policy couldn't be read/)).not.toBeInTheDocument();
   });
 });
@@ -759,7 +759,9 @@ describe("the hold on a title that came back (#553)", () => {
 
     await screen.findByLabelText("How long an absence counts");
     expect(screen.getByText(/left your library and was fetched again/)).toBeInTheDocument();
-    expect(screen.getByText(/A file swapped for a better copy is back within hours/)).toBeVisible();
+    expect(
+      screen.getByText(/How long a title has to be missing before its return counts/),
+    ).toBeVisible();
   });
 
   it("hides both durations while the protection is off", async () => {
@@ -1320,7 +1322,7 @@ describe("trying a value against a signal's range", () => {
     );
     // And it says the setting itself is fine, because a failed preview is not a failed save.
     expect(
-      screen.getAllByText(/Your setting is fine, this is just the preview/).length,
+      screen.getAllByText(/Your setting is fine. Only the preview failed/).length,
     ).toBeGreaterThan(0);
   });
 });
@@ -1492,7 +1494,7 @@ describe("the panel's verdict on an edit it has not simulated yet", () => {
     // here, or the premise below reads whatever the preceding tests happened to leave.
     apiMock.simulate.mockClear();
     renderEditor({ body: body() });
-    await screen.findByText("Movies policy");
+    await screen.findByRole("heading", { name: "Movies policy" });
     // The premise: the mount simulate settled, and it is the inert-shaped answer. Without this
     // the assertion below would pass on a panel that never rendered a comparison at all.
     await waitFor(() => expect(apiMock.simulate).toHaveBeenCalledTimes(1));
@@ -1517,7 +1519,7 @@ describe("the panel's verdict on an edit it has not simulated yet", () => {
   it("says it once the answer describes the draft it is about", async () => {
     // The other direction, so the test above cannot pass by the sentence being unreachable.
     renderEditor({ body: body() });
-    await screen.findByText("Movies policy");
+    await screen.findByRole("heading", { name: "Movies policy" });
     await screen.findByText("Titles that change");
 
     fireEvent.change(screen.getByLabelText("Put a title on the list once it scores"), {
@@ -1573,7 +1575,7 @@ describe("the section rail", () => {
   it("keeps the section a click asked for, where the click bottoms the page out", async () => {
     const person = userEvent.setup();
     renderEditor({ body: body() });
-    await screen.findByText("Movies policy");
+    await screen.findByRole("heading", { name: "Movies policy" });
     state(BOTTOM, LAST_SCREENFUL);
 
     await person.click(railTab("Pace and limits"));
@@ -1586,7 +1588,7 @@ describe("the section rail", () => {
   it("hands the rail back to the scroll once the operator moves the page", async () => {
     const person = userEvent.setup();
     renderEditor({ body: body() });
-    await screen.findByText("Movies policy");
+    await screen.findByRole("heading", { name: "Movies policy" });
     state(BOTTOM, LAST_SCREENFUL);
     await person.click(railTab("Pace and limits"));
     await scrolled();
@@ -1600,7 +1602,7 @@ describe("the section rail", () => {
 
   it("still marks the last section for someone who scrolls to the end", async () => {
     renderEditor({ body: body() });
-    await screen.findByText("Movies policy");
+    await screen.findByRole("heading", { name: "Movies policy" });
     state(BOTTOM, LAST_SCREENFUL);
 
     await scrolled();
@@ -1611,7 +1613,7 @@ describe("the section rail", () => {
   it("reports the section a click asks for, and marks what it is handed back", async () => {
     const person = userEvent.setup();
     renderEditor({ body: body() });
-    await screen.findByText("Movies policy");
+    await screen.findByRole("heading", { name: "Movies policy" });
 
     const rail = document.querySelector(".policy-rail");
     expect(rail, "the policy rail is not on the page").not.toBeNull();
@@ -1634,7 +1636,7 @@ describe("the policy the URL names", () => {
   it("opens on the policy it is handed, with no click to get there", async () => {
     renderEditor({ body: tvBody() }, pace, null, [], "deletion", "tv");
 
-    expect(await screen.findByText("TV policy")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "TV policy" })).toBeInTheDocument();
     // The read that decides every number on the page. `api.policy` defaults to "movie", so a
     // call carrying "tv" is the prop arriving and cannot be an omission (rule 141).
     expect(apiMock.policy).toHaveBeenCalledWith("tv");
@@ -1652,7 +1654,7 @@ describe("the policy the URL names", () => {
     // what it is for.
     const person = userEvent.setup();
     renderEditor({ body: body() });
-    await screen.findByText("Movies policy");
+    await screen.findByRole("heading", { name: "Movies policy" });
     // The other policy, for the fetch the switch starts. Set after the mount fetch has gone, as
     // `renderTvEditor` sets the season shape.
     apiMock.policy.mockResolvedValue({
@@ -1671,10 +1673,10 @@ describe("the policy the URL names", () => {
     expect(document.querySelector(".notice-warn")!.textContent).toContain(
       "You have unsaved movie policy changes. Switching to TV discards them.",
     );
-    expect(screen.getByText("Movies policy")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Movies policy" })).toBeInTheDocument();
 
     await person.click(screen.getByRole("button", { name: "Discard and switch" }));
-    expect(await screen.findByText("TV policy")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "TV policy" })).toBeInTheDocument();
     // The edits went with it: the draft re-seeded from the TV policy, so there is nothing left
     // to save and no bar offering to.
     await waitFor(() => expect(document.querySelector(".savebar")).toBeNull());

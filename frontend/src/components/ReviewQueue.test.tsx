@@ -331,7 +331,7 @@ describe("a bulk override", () => {
     await waitFor(() => expect(apiMock.candidates.mock.calls.length).toBeGreaterThan(listFetches));
     // The failed one, alone, is still picked, and the notice counts it.
     expect(
-      await screen.findByText(/1 item could not be updated; it is still selected/),
+      await screen.findByText(/1 item could not be updated. It is still selected/),
     ).toBeInTheDocument();
     expect(pickedCount()).toContain("1");
     // And it is the one that failed, not just any one: a clean-up that cleared the whole

@@ -13,7 +13,7 @@ describe("composeReason", () => {
     // The same sentence README.md and DECISIONS.md quote, off the same catalog entry
     // (tests/test_repo_hygiene.py derives it through the backend twin).
     expect(composeReason({ k: "dormancy_past_floor", p: { days: 2059, floor_days: 1095 } })).toBe(
-      "Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first.",
+      "Unwatched for 5 years, 7 months, past the 3 years Reaper waits.",
     );
   });
 
@@ -83,7 +83,7 @@ describe("composeReason", () => {
     ).toBe(
       "Reaper cannot tell whether Season 3 is watched more than Season 1, since your watch " +
         "history only goes back 12 months. Season 1 is kept because it is one of the newest " +
-        "seasons your rule keeps. Left for you to decide instead of removing it.",
+        "seasons your rule keeps.",
     );
   });
 

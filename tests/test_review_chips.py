@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import timedelta
@@ -321,8 +322,8 @@ class TestKeptChipWording:
             ("curated_list", "on a protected list: A Curated List", "on a protected list"),
             (
                 "min_dormancy",
-                "untouched for just 1 year, 2 months, less than the 3 years Reaper waits",
-                "hasn't sat untouched long enough",
+                "unwatched for 1 year, 2 months, less than the 3 years Reaper waits",
+                "hasn't sat unwatched long enough",
             ),
             (
                 "min_dormancy",
@@ -435,12 +436,13 @@ class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
         """The regression itself. Nobody watched this, so the chip may not say anyone did."""
         phrase = self._phrase_for_a_never_played_title()
 
-        assert "watched" not in phrase
-        assert "played" not in phrase
+        # Whole words: "unwatched" is the chip saying nobody did, which is the point.
+        assert re.search(r"\bwatched\b", phrase) is None
+        assert re.search(r"\bplayed\b", phrase) is None
 
     def test_the_chip_still_names_why_it_is_kept(self) -> None:
         """Truthful is not enough on its own -- the chip's whole job is to say why."""
-        assert self._phrase_for_a_never_played_title() == "hasn't sat untouched long enough"
+        assert self._phrase_for_a_never_played_title() == "hasn't sat unwatched long enough"
 
 
 class TestChip:

@@ -81,9 +81,9 @@ export const CLEARED_ROWS: readonly { lines: readonly string[]; source: string }
     source: "Nobody here watched it in the last",
   },
   {
-    lines: ["Untouched for 5 years, 7 months, past the 3 years it", "has to sit unwatched first."],
+    lines: ["Unwatched for 5 years, 7 months, past the 3 years", "Reaper waits."],
     // The catalog message opens with slots, so only this tail is a literal there.
-    source: "it has to sit unwatched first.",
+    source: "Reaper waits.",
   },
 ];
 
