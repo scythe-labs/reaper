@@ -336,7 +336,7 @@ export function ReapPlan({
           onClick={() => plan.mutate()}
           disabled={plan.isPending || degraded}
         >
-          {plan.isPending ? t("reapPlan.page.building") : t("reapPlan.page.buildButton")}
+          {plan.isPending ? t("common.planning") : t("reapPlan.page.buildButton")}
         </button>
       </div>
       <p className="blurb">
@@ -484,9 +484,7 @@ export function ReapPlan({
               <Notice tone="warn">{t("reapPlan.summary.setupUnknown")}</Notice>
             )}
             <button onClick={() => dry.mutate(run.id)} disabled={dry.isPending}>
-              {dry.isPending
-                ? t("reapPlan.summary.practiceRunChecking")
-                : t("reapPlan.summary.practiceRun")}
+              {dry.isPending ? t("common.checking") : t("reapPlan.summary.practiceRun")}
             </button>
             {run.state === "planned" && (
               <button
@@ -501,7 +499,7 @@ export function ReapPlan({
             {run.state === "planned" && !armed && (
               <span className="exec-note">
                 {safety.isPending ? (
-                  t("reapPlan.summary.checkingSafety")
+                  t("common.checkingDeletion")
                 ) : (
                   <>
                     {safety.isError || !safety.data

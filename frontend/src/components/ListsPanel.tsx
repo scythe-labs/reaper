@@ -320,7 +320,7 @@ function ListRow({
               aria-label={t("lists.row.editAriaLabel", { title })}
               onClick={onEdit}
             >
-              {t("lists.row.edit")}
+              {t("common.edit")}
             </button>
           )}
         </span>

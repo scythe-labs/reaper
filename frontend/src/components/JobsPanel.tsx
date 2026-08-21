@@ -310,14 +310,14 @@ function ScheduleModal({
         <div className="add-actions">
           <span className="flex-spacer" />
           <button className="ghost" onClick={onClose} disabled={save.isPending}>
-            {t("jobs.schedule.cancel")}
+            {t("common.cancel")}
           </button>
           <button
             className="primary"
             onClick={() => save.mutate(chosenCron)}
             disabled={saveDisabled}
           >
-            {save.isPending ? t("jobs.schedule.saving") : t("jobs.schedule.save")}
+            {save.isPending ? t("common.saving") : t("common.save")}
           </button>
         </div>
       </div>
@@ -401,7 +401,7 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
             aria-label={t("jobs.row.editAria", { title: meta.title })}
             onClick={onEdit}
           >
-            {t("jobs.row.edit")}
+            {t("common.edit")}
           </button>
         </span>
         <span className="slot-act">
@@ -473,7 +473,7 @@ function LeavingSoonRow({
         <div className="jobrow-main">
           <div className="jobrow-title">{title}</div>
           <div className="jobrow-desc">{desc}</div>
-          <div className="jobrow-sched">{t("jobs.leavingSoon.loading")}</div>
+          <div className="jobrow-sched">{t("common.loading")}</div>
         </div>
       </div>
     );

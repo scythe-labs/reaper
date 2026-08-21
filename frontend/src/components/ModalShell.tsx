@@ -152,7 +152,7 @@ export function ModalShell({
             className="icon-btn"
             onClick={close}
             disabled={!canClose}
-            aria-label={t("shell.modalShell.close")}
+            aria-label={t("common.close")}
           >
             ✕
           </button>

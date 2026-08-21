@@ -83,7 +83,7 @@ export function DeletionToggle() {
   });
 
   if (isLoading) {
-    return <p className="muted">{t("deletion.checking")}</p>;
+    return <p className="muted">{t("common.checkingDeletion")}</p>;
   }
   // Unknown must never read as safe: say it plainly, in amber, and still offer OFF -- no
   // password, no prior state, the one direction that can only make Reaper safer -- so the
@@ -152,7 +152,7 @@ export function DeletionToggle() {
             {t("deletion.turnOff")}
           </button>
         ) : !data.has_password ? (
-          <span className="muted">{t("deletion.noPasswordSet")}</span>
+          <span className="muted">{t("common.noAdminPassword")}</span>
         ) : confirming ? (
           <form
             className="pw-form"
@@ -169,8 +169,8 @@ export function DeletionToggle() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               maxLength={128}
-              placeholder={t("deletion.passwordPlaceholder")}
-              aria-label={t("deletion.passwordAriaLabel")}
+              placeholder={t("common.adminPasswordPlaceholder")}
+              aria-label={t("common.adminPassword")}
               autoComplete="current-password"
               autoFocus
             />
@@ -181,7 +181,7 @@ export function DeletionToggle() {
                 admin password sitting in component state for as long as this panel stayed
                 mounted, and refilled the field the next time it was opened (S-5). */}
             <button type="button" className="ghost sm" onClick={closeForm}>
-              {t("deletion.cancelButton")}
+              {t("common.cancel")}
             </button>
           </form>
         ) : (

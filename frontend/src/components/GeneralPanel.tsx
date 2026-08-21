@@ -515,7 +515,7 @@ export function GeneralPanel({
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   if (general.isPending) {
-    return <p className="muted">{t("general.loading")}</p>;
+    return <p className="muted">{t("common.loading")}</p>;
   }
   // Only when there is nothing to render. A refetch that fails AFTER a good load leaves `data` in
   // place (React Query keeps the last good row and raises `isError` beside it), and trading the
@@ -526,7 +526,7 @@ export function GeneralPanel({
   // failed refetch keeps the form on the last good values; this is for a load that never
   // landed one.
   if (!data) {
-    return <Notice tone="error">{t("general.loadError")}</Notice>;
+    return <Notice tone="error">{t("common.loadError")}</Notice>;
   }
 
   // The current zone may not be in the browser's list (an older engine, or a server-only
@@ -852,7 +852,7 @@ export function GeneralPanel({
                     {t("general.apiKey.show")}
                   </button>
                 ) : (
-                  <button onClick={() => setRevealedKey(null)}>{t("general.apiKey.hide")}</button>
+                  <button onClick={() => setRevealedKey(null)}>{t("common.hide")}</button>
                 )}
                 <button disabled={copy.isPending} onClick={() => copy.mutate()}>
                   {copied ? t("general.apiKey.copied") : t("general.apiKey.copy")}
@@ -877,7 +877,7 @@ export function GeneralPanel({
                         setKeyError(null);
                       }}
                     >
-                      {t("general.apiKey.cancel")}
+                      {t("common.cancel")}
                     </button>
                   </>
                 ) : (
@@ -902,11 +902,9 @@ export function GeneralPanel({
                         removeKey.mutate();
                       }}
                     >
-                      {t("general.apiKey.confirmRemove")}
+                      {t("common.confirmRemove")}
                     </button>
-                    <button onClick={() => setConfirmRemove(false)}>
-                      {t("general.apiKey.cancel")}
-                    </button>
+                    <button onClick={() => setConfirmRemove(false)}>{t("common.cancel")}</button>
                   </>
                 ) : (
                   <button
@@ -941,7 +939,7 @@ export function GeneralPanel({
                     setKeyError(null);
                   }}
                 >
-                  {t("general.apiKey.cancel")}
+                  {t("common.cancel")}
                 </button>
               </>
             ) : (
@@ -954,7 +952,7 @@ export function GeneralPanel({
                 {generate.isPending
                   ? t("general.apiKey.generating")
                   : requestGenerate.isPending
-                    ? t("general.apiKey.checking")
+                    ? t("common.checking")
                     : t("general.apiKey.generate")}
               </button>
             )}
@@ -1071,7 +1069,7 @@ export function GeneralPanel({
             )}
           </span>
           <button className="ghost" disabled={save.isPending} onClick={discardDrafts}>
-            {t("general.savebar.discard")}
+            {t("common.discard")}
           </button>
           <button
             className="primary"
@@ -1081,7 +1079,7 @@ export function GeneralPanel({
               save.mutate(Object.assign({}, ...pending.map((p) => p.patch)));
             }}
           >
-            {save.isPending ? t("general.savebar.saving") : t("general.savebar.saveChanges")}
+            {save.isPending ? t("common.saving") : t("common.saveChanges")}
           </button>
           {/* Inside the bar, not below the panel (rule 42, and the same slot
               `PolicyEditor`'s bar uses): the route refuses the whole body before writing any

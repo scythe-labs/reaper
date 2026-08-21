@@ -190,7 +190,7 @@ export function StaleNotice({
             }}
             disabled={starting}
           >
-            {starting ? t("policySim.startingLabel") : t("policySim.scanNowLabel")}
+            {starting ? t("common.starting") : t("common.scanNow")}
           </button>
         </>
       )}

@@ -110,7 +110,7 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
           </p>
         </div>
         <button className="link" onClick={cancel}>
-          {t("plex.cancel")}
+          {t("common.cancel")}
         </button>
       </div>
     );
@@ -297,7 +297,7 @@ function LocalSheet({
             {error && <Notice tone="error">{error}</Notice>}
             <div className="sheet-actions">
               <button type="button" className="ghost" onClick={onClose}>
-                {t("login.localSheet.backButton")}
+                {t("common.back")}
               </button>
               <button type="submit" className="primary" disabled={busy || !username || !password}>
                 {busy ? t("login.localSheet.signingIn") : t("login.localSheet.signIn")}

@@ -2773,7 +2773,7 @@ export function ReviewQueue({
             ever landed -- `data` is undefined only then. */}
         {error && !data && <p className="error">{t("reviewQueue.loadQueueError")}</p>}
         {error && data && <StaleReadNotice what={t("reviewQueue.staleQueueWhat")} />}
-        {isPending && <p className="muted">{t("reviewQueue.loading")}</p>}
+        {isPending && <p className="muted">{t("common.loading")}</p>}
 
         {data && data.length === 0 && !filtering && (
           <p className="empty">{activeCollection ? t("reviewQueue.emptyCollection") : tab.empty}</p>
@@ -3008,9 +3008,7 @@ export function ReviewQueue({
                   onClick={() => reapNow.mutate([...selected])}
                   title={t("reviewQueue.reapNowTitle")}
                 >
-                  {reapNow.isPending
-                    ? t("reviewQueue.planningEllipsis")
-                    : t("reviewQueue.reapNowButton")}
+                  {reapNow.isPending ? t("common.planning") : t("reviewQueue.reapNowButton")}
                 </button>
               )}
               <button type="button" className="sm select-done" onClick={toggleSelectMode}>
@@ -3024,7 +3022,7 @@ export function ReviewQueue({
           failures -- otherwise the button reads as a click the app ignored. Same wording as
           the why-panel's, since it is the same action. */}
         {(setOverride.isError || clearOverride.isError) && (
-          <p className="error bulk-error">{t("reviewQueue.saveError")}</p>
+          <p className="error bulk-error">{t("common.saveError")}</p>
         )}
         {selectEverything.isError && (
           <p className="error bulk-error">{t("reviewQueue.selectEverythingError")}</p>

@@ -155,7 +155,7 @@ export function ShowPanel({
             roomy
           />
           {(setOverride.isError || clearOverride.isError) && (
-            <span className="error">{t("reviewQueue.saveError")}</span>
+            <span className="error">{t("common.saveError")}</span>
           )}
         </div>
       </div>

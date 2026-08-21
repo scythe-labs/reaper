@@ -521,7 +521,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
                 onClick={() => void cancel(summary.token)}
                 disabled={busy}
               >
-                {t("backup.restore.removeButton")}
+                {t("common.remove")}
               </button>
             </div>
             <div className="chosen-body">
@@ -566,7 +566,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
             <p className="help restore-with-held">{t("backup.restore.usingHeldPassword")}</p>
           ) : (
             <label className="field-sm restore-pw">
-              <span className="field-label">{t("backup.restore.passwordLabel")}</span>
+              <span className="field-label">{t("common.adminPassword")}</span>
               <input
                 type="password"
                 value={password}

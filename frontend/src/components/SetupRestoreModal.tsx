@@ -44,11 +44,11 @@ export function SetupRestoreModal({
   });
 
   return (
-    <ModalShell title={t("setup.restore.title")} onClose={onClose}>
+    <ModalShell title={t("backup.restore.heading")} onClose={onClose}>
       {/* Three states, none of them silence (rule 17/36). A failed read must not fall through
           to the idle card: that card would invite an upload whose confirm is about to be
           refused, and it would hide an armed restore that is already staged. */}
-      {isPending && <p className="muted">{t("setup.restore.loading")}</p>}
+      {isPending && <p className="muted">{t("common.loading")}</p>}
       {/* Close and reopen, never "reload the page". A reload is the app-wide advice and it is
           wrong from inside the wizard: the password from step one lives in React state, so a
           reload would drop it and this door would go back to asking for it. Reopening the

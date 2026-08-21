@@ -50,14 +50,14 @@ export function BackupPanel({
     <div className="panel">
       <h2>{t("backup.heading")}</h2>
       <p className="blurb">{t("backup.blurb")}</p>
-      {isPending && <p className="muted">{t("backup.loading")}</p>}
+      {isPending && <p className="muted">{t("common.loading")}</p>}
       {/* Backup became a draft-holding panel with #135, so it takes the same two-branch read the
           other three carry: the never-loaded sentence only where nothing ever landed, and the
           shared stale line beside a card that is still on screen. Saying "Couldn't load this page"
           over a staged file and a typed password sends the operator to reload, and a reload does
           not run the unmount cleanup -- so following this panel's own advice was the one exit that
           orphaned the archive. */}
-      {isError && !data && <Notice tone="error">{t("backup.loadError")}</Notice>}
+      {isError && !data && <Notice tone="error">{t("common.pageLoadError")}</Notice>}
       {isError && data && <StaleReadNotice />}
       {data && (
         <>
@@ -76,7 +76,7 @@ export function BackupPanel({
             </dl>
             <div className="backup-actions">
               <button className="primary" onClick={download} disabled={busy}>
-                {busy ? t("backup.download.preparingButton") : t("backup.download.button")}
+                {busy ? t("common.preparing") : t("backup.download.button")}
               </button>
             </div>
             {error && <Notice tone="error">{t("backup.download.failed", { error })}</Notice>}

@@ -258,7 +258,7 @@ export function ServerPickList({
         </button>
       ))}
       <button type="button" className="link" onClick={onCancel}>
-        {t("plex.cancel")}
+        {t("common.cancel")}
       </button>
     </>
   );

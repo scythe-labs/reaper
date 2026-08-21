@@ -252,7 +252,7 @@ function AdminPasswordForm({
           </label>
           <div className="add-actions">
             <button type="submit" className="primary" disabled={!valid || save.isPending}>
-              {t("security.form.save")}
+              {t("common.save")}
             </button>
             {msg && <span className="muted">{msg}</span>}
           </div>
@@ -294,7 +294,7 @@ export function SecurityPanel({
     return (
       <div className="panel">
         <h2>{t("security.heading")}</h2>
-        <p className="muted">{t("security.loading")}</p>
+        <p className="muted">{t("common.loading")}</p>
       </div>
     );
   }
@@ -310,7 +310,7 @@ export function SecurityPanel({
     return (
       <div className="panel">
         <h2>{t("security.heading")}</h2>
-        <Notice tone="error">{t("security.loadError")}</Notice>
+        <Notice tone="error">{t("common.loadError")}</Notice>
       </div>
     );
   }

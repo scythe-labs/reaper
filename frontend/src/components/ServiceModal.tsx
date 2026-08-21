@@ -112,7 +112,7 @@ export function testSentence(result: InstanceTest): string {
 
 /** The word in front of a test's own detail, in both surfaces' hands. */
 function testLead(ok: boolean): string {
-  return ok ? i18next.t("services.test.passed") : i18next.t("services.test.failed");
+  return ok ? i18next.t("services.test.passed") : i18next.t("common.failed");
 }
 
 /** A small inline pill reporting the result of a connection test. */
@@ -746,7 +746,7 @@ export function ServiceModal({
         <>
           <span className={`kind-badge kind-${kind}`}>{kindLabel(kind)}</span>{" "}
           {editing
-            ? t("services.modal.titleEdit", { name: instance.name })
+            ? t("common.editNamed", { name: instance.name })
             : t("services.modal.titleAdd", { kind: kindLabel(kind) })}
         </>
       }
@@ -1205,15 +1205,15 @@ export function ServiceModal({
           </button>
           <span className="flex-spacer" />
           <button type="button" className="ghost" onClick={onClose} disabled={save.isPending}>
-            {t("services.common.cancel")}
+            {t("common.cancel")}
           </button>
           <button type="submit" className="primary" disabled={!ready || save.isPending}>
             {save.isPending
               ? editing
-                ? t("services.common.saving")
+                ? t("common.saving")
                 : t("services.modal.adding")
               : editing
-                ? t("services.common.save")
+                ? t("common.save")
                 : t("services.modal.addService")}
           </button>
           {missing && (

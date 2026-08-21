@@ -593,7 +593,7 @@ export function PlexPanel({
     return (
       <div className="panel">
         <h2>{t("plex.heading")}</h2>
-        <p className="muted">{t("plex.loading")}</p>
+        <p className="muted">{t("common.loading")}</p>
       </div>
     );
   }
@@ -608,7 +608,7 @@ export function PlexPanel({
     return (
       <div className="panel">
         <h2>{t("plex.heading")}</h2>
-        <Notice tone="error">{t("plex.loadError")}</Notice>
+        <Notice tone="error">{t("common.loadError")}</Notice>
       </div>
     );
   }
@@ -661,7 +661,7 @@ export function PlexPanel({
                  unreachable). */
               label={
                 resources.isPending
-                  ? t("plex.loading")
+                  ? t("common.loading")
                   : (resources.data?.owner_username ?? data.name)
               }
               help={t("plex.linkedAccount.help", { uri: data.connection_uri })}
@@ -710,7 +710,7 @@ export function PlexPanel({
                     </p>
                   </div>
                   <button className="link" onClick={cancelLink}>
-                    {t("plex.cancel")}
+                    {t("common.cancel")}
                   </button>
                 </div>
               ) : (
@@ -785,9 +785,7 @@ export function PlexPanel({
                     onClick={() => void resources.refetch()}
                     title={t("plex.server.refreshTitle")}
                   >
-                    {resources.isFetching
-                      ? t("plex.server.refreshing")
-                      : t("plex.server.refreshButton")}
+                    {resources.isFetching ? t("common.refreshing") : t("common.refresh")}
                   </button>
                 </>
               )}
@@ -875,7 +873,7 @@ export function PlexPanel({
                   saveManual();
                 }}
               >
-                {setConnection.isPending ? t("plex.manualAddress.checking") : t("plex.save")}
+                {setConnection.isPending ? t("common.checking") : t("common.save")}
               </button>
             </SetRow>
           )}
@@ -883,14 +881,14 @@ export function PlexPanel({
           {/* A Switch, not a box, so it releases the control track (`.set-row-plain`). */}
           <SetRow
             variant="plain"
-            label={t("plex.verifyCert.label")}
+            label={t("services.modal.field.verifyCert")}
             help={t("plex.verifyCert.help")}
             after={!verifyCert && <Notice tone="warn">{t("plex.verifyCert.warning")}</Notice>}
           >
             <Switch
               checked={verifyCert}
               disabled={saveVerify.isPending}
-              ariaLabel={t("plex.verifyCert.label")}
+              ariaLabel={t("services.modal.field.verifyCert")}
               onChange={(next) => {
                 setVerifyCert(next);
                 verifyRef.current = next;
@@ -935,7 +933,7 @@ export function PlexPanel({
                   saveWebUrl.mutate();
                 }}
               >
-                {saveWebUrl.isPending ? t("plex.webAddress.saving") : t("plex.save")}
+                {saveWebUrl.isPending ? t("common.saving") : t("common.save")}
               </button>
             )}
           </SetRow>
@@ -1039,7 +1037,7 @@ export function PlexPanel({
               on screen and says so, rather than blanking a control the operator came here for
               (rule 17/36, and rule 72 with the library grid and the shelf switches). */}
           {watchEvidence.isPending ? (
-            <p className="muted">{t("plex.loading")}</p>
+            <p className="muted">{t("common.loading")}</p>
           ) : !watchEvidence.data ? (
             <Notice tone="error">{t("plex.watchHistory.loadError")}</Notice>
           ) : (
@@ -1059,11 +1057,11 @@ export function PlexPanel({
                       direction can only make Reaper safer -- this one has no such direction,
                       which is why unknown ends the branch here. */}
                   {safety.isLoading ? (
-                    <span className="muted">{t("plex.watchHistory.safetyChecking")}</span>
+                    <span className="muted">{t("common.checking")}</span>
                   ) : !safety.data ? (
                     <span className="muted">{t("plex.watchHistory.safetyUnknown")}</span>
                   ) : !safety.data.has_password ? (
-                    <span className="muted">{t("plex.watchHistory.noPassword")}</span>
+                    <span className="muted">{t("common.noAdminPassword")}</span>
                   ) : forgetting ? (
                     /* The same form as arming deletion: one password box, Confirm, Cancel.
                          The placeholder is a hint that disappears on the first keystroke, so
@@ -1083,8 +1081,8 @@ export function PlexPanel({
                         value={forgetPassword}
                         onChange={(e) => setForgetPassword(e.target.value)}
                         maxLength={128}
-                        placeholder={t("plex.watchHistory.passwordPlaceholder")}
-                        aria-label={t("plex.watchHistory.passwordAriaLabel")}
+                        placeholder={t("common.adminPasswordPlaceholder")}
+                        aria-label={t("common.adminPassword")}
                         autoComplete="current-password"
                         autoFocus
                       />
@@ -1111,7 +1109,7 @@ export function PlexPanel({
                           setForgetPassword("");
                         }}
                       >
-                        {t("plex.cancel")}
+                        {t("common.cancel")}
                       </button>
                     </form>
                   ) : (
@@ -1176,7 +1174,7 @@ export function PlexPanel({
               writes to Plex before deletion is armed -- so blanking them hides a control the
               operator came here to set. */}
           {leavingSoon.isPending ? (
-            <p className="muted">{t("plex.loading")}</p>
+            <p className="muted">{t("common.loading")}</p>
           ) : !leavingSoon.data ? (
             <Notice tone="error">{t("plex.leavingSoon.loadError")}</Notice>
           ) : (

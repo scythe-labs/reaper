@@ -218,7 +218,7 @@ export function ScanRow({
     ? `${phaseLabel(status.phase)}${status.detail ? `, ${status.detail}` : ""}${
         pct !== null ? `, ${pct}%` : ""
       }`
-    : t("shell.scanBar.scanningEllipsis");
+    : t("common.scanning");
   // A finished scan confirms itself in the same slot, then settles to the last-run line. A
   // scan that reported a problem gets no flash: the error notice below carries the detail,
   // and a green "done" chip beside it would contradict.
@@ -304,7 +304,7 @@ export function ScanRow({
 
         {start.error && (
           <Notice tone="error" inline>
-            {t("shell.scanBar.startFailed", { message: start.error.message })}
+            {t("common.scanStartFailed", { message: start.error.message })}
           </Notice>
         )}
         {/* `standing`, unlike `start.error` directly above it, which answers this bar's own
@@ -361,7 +361,7 @@ export function ScanRow({
             onClick={onEdit}
             disabled={!canEdit}
           >
-            {t("shell.scanBar.edit")}
+            {t("common.edit")}
           </button>
         </span>
         <span className="slot-act">
@@ -371,9 +371,9 @@ export function ScanRow({
             disabled={scanning || start.isPending}
           >
             {scanning
-              ? t("shell.scanBar.scanningEllipsis")
+              ? t("common.scanning")
               : start.isPending
-                ? t("shell.scanBar.starting")
+                ? t("common.starting")
                 : t("shell.scanBar.scanLibrary")}
           </button>
         </span>

@@ -49,7 +49,7 @@ export function NotInScanPanel({
   // wrong direction to guess in.
   const unread = error && items.length === 0;
   const sub = isPending
-    ? t("scales.notInScan.checking")
+    ? t("common.checkingLastScan")
     : unread
       ? t("scales.notInScan.unread")
       : items.length === 0
@@ -66,7 +66,7 @@ export function NotInScanPanel({
       </div>
 
       {isPending ? (
-        <p className="scales-foot muted">{t("scales.notInScan.loading")}</p>
+        <p className="scales-foot muted">{t("common.loading")}</p>
       ) : unread ? (
         <Notice tone="error">{t("scales.notInScan.readFailed")}</Notice>
       ) : items.length === 0 ? (

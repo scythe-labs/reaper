@@ -25,7 +25,7 @@ export function ScanFreshness({
 }) {
   const { t } = useTranslation();
   if (isPending) {
-    return <p className="scan-freshness muted">{t("shell.scanFreshness.checking")}</p>;
+    return <p className="scan-freshness muted">{t("common.checkingLastScan")}</p>;
   }
   if (!snapshot) {
     if (error instanceof ApiError && error.status === 404) {
