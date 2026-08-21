@@ -35,9 +35,12 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import InstanceKind, PlexServer, Snapshot
+from reaper.engine.reason import from_wire
 from reaper.services import instances as instances_service
 
 from ._auth import TEST_PASSWORD, clear_admin_password
+from ._reasons import catalog
+from ._reasons import text as reason_text
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
@@ -794,7 +797,7 @@ class TestConnectionTestsHonorTheTlsChoice:
 
         # A passing test goes on to read the folder list, so this arm has to be stubbed too or
         # the route really dials ``a.local``. It passed anyway -- the connect failure is caught
-        # into ``map_error`` -- but on nothing better than that host not resolving here
+        # into ``map_error_reason`` -- but on nothing better than that host not resolving here
         # (rule 119). Its three siblings below already carry this.
         async def folders(
             *_a: object, **_k: object
@@ -1980,7 +1983,7 @@ class TestConnectionTestCarriesTheMapping:
         assert body["root_folders"][1]["suggested_library"] is None
         # Nothing was read that a Seerr would have, and the read landed, so no error is claimed.
         assert body["seerr_services"] == []
-        assert body["map_error"] is None
+        assert body["map_error_reason"] is None
 
     def test_a_failed_test_reads_nothing_to_map(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -2003,14 +2006,15 @@ class TestConnectionTestCarriesTheMapping:
 
         assert body["ok"] is False
         assert body["root_folders"] == []
-        assert body["map_error"] is None
+        assert body["map_error_reason"] is None
 
     def test_an_unreadable_folder_list_is_said_apart_from_an_empty_one(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The credentials really were proved, so the test still passes -- but the empty list
         must not read as "this instance has no folders", which is a claim nobody checked
-        (rule 93). The two states are told apart by ``map_error``, never by the empty list."""
+        (rule 93). The two states are told apart by ``map_error_reason``, never by the empty
+        list."""
         self._pass(monkeypatch)
 
         async def boom(*_a: object, **_k: object) -> list[instances_service.RootFolderSuggestion]:
@@ -2030,12 +2034,15 @@ class TestConnectionTestCarriesTheMapping:
         # Plain language, not the raw exception. Pasting `str(exc)` put "radarr: connection
         # reset" in front of someone trying to get a URL and a key right -- the exact string
         # shape `explain_failure` exists to prevent, on the one path that had not been given it.
-        assert "couldn't read what to map" in body["map_error"]
-        assert "connection reset" not in body["map_error"]
-        assert body["map_error"].endswith(
-            instances_service.explain_failure(
-                InstanceKind.RADARR, IntegrationError("radarr", "connection reset")
-            )
+        reason = body["map_error_reason"]
+        assert reason["k"] == "mapError"
+        explained = instances_service.explain_failure(
+            InstanceKind.RADARR, IntegrationError("radarr", "connection reset")
+        )
+        assert reason["p"] == {"error": explained}
+        assert "connection reset" not in explained
+        assert "couldn't read what to map" in reason_text(
+            from_wire(reason), namespace="services.modal"
         )
 
     def test_a_seerr_test_returns_the_portals_services(
@@ -2143,3 +2150,72 @@ class TestCreateStoresTheMapping:
             json={"kind": "radarr", "name": "HD", "base_url": "http://r.local", "api_key": "k"},
         )
         assert created.json()["plex_library_map"] == {}
+
+
+class TestTheDiscordTestRouteSendsATypedReason:
+    """``POST /api/settings/notifications/test``'s three outcomes, docs/history/
+    I18N_PLAN.md §5: the server sends an id, never a sentence."""
+
+    WEBHOOK = "https://discord.com/api/webhooks/123/token-is-a-secret"
+
+    def test_a_successful_post_says_posted(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.post(self.WEBHOOK).mock(return_value=httpx.Response(204))
+        body = client.post(
+            "/api/settings/notifications/test", json={"webhook_url": self.WEBHOOK}
+        ).json()
+        assert body["ok"] is True
+        assert body["reason"] == {"k": "posted", "p": None}
+
+    def test_a_rejected_post_says_failed(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.post(self.WEBHOOK).mock(
+            return_value=httpx.Response(400, json={"message": "bad"})
+        )
+        body = client.post(
+            "/api/settings/notifications/test", json={"webhook_url": self.WEBHOOK}
+        ).json()
+        assert body["ok"] is False
+        assert body["reason"] == {"k": "failed", "p": None}
+
+    def test_no_stored_webhook_says_not_configured(self, client: TestClient) -> None:
+        body = client.post("/api/settings/notifications/test", json={}).json()
+        assert body["ok"] is False
+        assert body["reason"] == {"k": "not_configured", "p": None}
+
+
+#: The ids ``test_notifications`` can emit (``api/settings.py``). Hand-maintained, since
+#: they are inline literals across the route's three branches rather than an enum.
+_DISCORD_TEST_RESULT_IDS: frozenset[str] = frozenset({"posted", "failed", "not_configured"})
+
+
+class TestTheDiscordTestResultVocabulary:
+    """Every id ``test_notifications`` can emit, under ``services.discord.testResult.*``,
+    both directions (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``).
+    """
+
+    def test_the_id_population_is_pinned(self) -> None:
+        assert len(_DISCORD_TEST_RESULT_IDS) == 3
+
+    def test_every_id_has_catalog_copy(self) -> None:
+        entries = set(catalog("services.discord.testResult"))
+        missing = _DISCORD_TEST_RESULT_IDS - entries
+        assert not missing, f"ids with no services.discord.testResult entry: {sorted(missing)}"
+
+    def test_every_catalog_entry_has_a_producer(self) -> None:
+        entries = set(catalog("services.discord.testResult"))
+        orphaned = entries - _DISCORD_TEST_RESULT_IDS
+        assert not orphaned, f"services.discord.testResult entries with no id: {sorted(orphaned)}"
+
+
+class TestTheMapErrorVocabulary:
+    """``test_new_instance``'s one Plex-couldn't-map reason, both directions (rule 145's
+    shape, scaled to a population of one id, the sibling of ``lists.py``'s ``plexError``)."""
+
+    def test_the_id_has_a_catalog_entry(self) -> None:
+        assert "mapError" in catalog("services.modal")
+
+    def test_the_entry_takes_the_integration_text_as_a_param(self) -> None:
+        assert "{error}" in catalog("services.modal")["mapError"]

@@ -1039,10 +1039,9 @@ class SimStale(enum.StrEnum):
 
     Three refusals with three different remedies, and until this existed the panel showed
     one paragraph naming every cause at once, so nine season controls, the protection lists
-    and the popularity window shared a sentence that could only be right about one of them. The
-    operator's copy lives in ``PolicySimulator.tsx`` and branches on this; the ``stale_reason``
-    beside it is the same fact as a sentence, for a reader of the API (rule 66: the frontend
-    handles an id it does not know by falling back to that sentence, never by guessing).
+    and the popularity window shared a sentence that could only be right about one of them.
+    The operator's heading lives in ``PolicySimulator.tsx`` and branches on this; the body
+    paragraph is ``stale_reason`` beside it, composed from the catalog.
     """
 
     GATHERS_DIFFERENTLY = "gathers_differently"
@@ -1089,16 +1088,20 @@ class SimulationOut(BaseModel):
     produced by the old ones, so every count below would be confidently stale.
 
     When this is false the counts are zeroed, ``stale_kind`` says which refusal it is and
-    ``stale_reason`` says the same thing in a sentence. Reaper would rather show nothing than
-    show a number it cannot stand behind -- a plausible wrong answer is worse than a blank,
-    because the owner acts on it.
+    ``stale_reason`` carries the same fact as a typed reason. Reaper would rather show
+    nothing than show a number it cannot stand behind -- a plausible wrong answer is worse
+    than a blank, because the owner acts on it.
     """
 
     stale_kind: SimStale | None = None
     """Which refusal this is, typed, so the panel can name the control at fault. ``None``
     exactly when ``exact`` is true."""
 
-    stale_reason: str | None = None
+    stale_reason: ReasonKey | None = None
+    """The catalog id for the refusal (docs/history/I18N_PLAN.md §5): the frontend composes
+    ``policySim.staleReason.<id>`` (``PolicySimulator.tsx``'s ``StaleNotice``, via
+    ``why.ts``'s ``composeIn``). One id per :class:`SimStale` value; the server never renders
+    English here (rule 92)."""
 
     condemned: int
     protected: int
@@ -1663,9 +1666,11 @@ class ListSyncOut(BaseModel):
     """Lists whose check failed. Each one's own error is on its row, which the screen
     refetches; this is only what the button says when it settles."""
 
-    plex_error: str | None
+    plex_error_reason: ReasonKey | None
     """Set when Plex could not be reached, so its collections were not checked at all and no
-    row carries an error explaining why. Null when Plex answered or none is linked."""
+    row carries an error explaining why. Null when Plex answered or none is linked. The
+    catalog id plus Plex's own error text as a raw ``error`` param (docs/history/
+    I18N_PLAN.md §5): ``ListsPanel.tsx`` composes ``lists.plexError`` (rule 92)."""
 
 
 class ListPolicyUseOut(BaseModel):

@@ -48,6 +48,7 @@ from reaper.api.schemas import (
     PolicyBodyOut,
     PolicyIn,
     SignalSettingIn,
+    SimStale,
 )
 from reaper.api.simulate import _fired_gates, _has_blocked_protections
 from reaper.clock import utcnow
@@ -71,6 +72,7 @@ from reaper.main import create_app
 
 from ._auth import login
 from ._lists import seeded_fingerprint
+from ._reasons import catalog
 
 #: The draft policy every simulation below is run under. Its scoring hash has to be the one
 #: the fixture snapshot was "scored" with, or the route refuses to re-decide at all -- so
@@ -933,7 +935,7 @@ class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
         body = response.json()
         assert body["exact"] is False
         assert body["condemned"] == 0
-        assert "scan" in body["stale_reason"].lower()
+        assert body["stale_reason"]["k"] == "gathers_differently"
 
 
 class TestTheWireRoundTripPreservesBothHashes:
@@ -1413,7 +1415,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         after = _simulate(client, 40)
         assert after["exact"] is False, "previewed a threshold against pre-edit list membership"
         assert after["condemned"] == 0
-        assert "scan" in after["stale_reason"].lower()
+        assert after["stale_reason"]["k"] == "gathers_differently"
 
     def test_the_replay_refuses_once_the_lists_move(self, replay_client: TestClient) -> None:
         draft = REPLAY_PAYLOAD.model_dump()
@@ -1425,7 +1427,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         after = replay_client.post("/api/policy/simulate", json=draft).json()
         assert after["exact"] is False, "replayed a scoring edit against pre-edit list membership"
         assert after["condemned"] == 0
-        assert "scan" in after["stale_reason"].lower()
+        assert after["stale_reason"]["k"] == "gathers_differently"
 
     def test_a_snapshot_that_never_recorded_its_lists_refuses(
         self, client: TestClient, tmp_path: Path
@@ -1448,7 +1450,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
 
         after = _simulate(client, 40)
         assert after["exact"] is False, "answered off a snapshot that cannot say its lists"
-        assert "scan" in after["stale_reason"].lower()
+        assert after["stale_reason"]["k"] == "gathers_differently"
 
     def test_two_unknowns_are_not_a_match(self, client: TestClient, tmp_path: Path) -> None:
         """Both sides ``None`` is the pairing an equality test reads as agreement.
@@ -1481,4 +1483,25 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
 
         after = _simulate(client, 40)
         assert after["exact"] is False, "previewed as exact with neither side able to say"
-        assert "scan" in after["stale_reason"].lower()
+        assert after["stale_reason"]["k"] == "gathers_differently"
+
+
+class TestTheSimStaleReasonVocabulary:
+    """Every ``SimStale`` member composes under ``policySim.staleReason.*``, both directions
+    (rule 145's shape, modeled on ``test_review_chips.TestTheChipVocabulary``). The
+    population is the enum itself rather than a hand-maintained id set, since ``_refused``
+    (``api/simulate.py``) emits exactly ``kind.value`` for every kind."""
+
+    def test_every_sim_stale_value_has_catalog_copy(self) -> None:
+        entries = set(catalog("policySim.staleReason"))
+        missing = {member.value for member in SimStale} - entries
+        assert not missing, (
+            f"SimStale values with no policySim.staleReason entry: {sorted(missing)}"
+        )
+
+    def test_every_catalog_entry_has_a_producer(self) -> None:
+        entries = set(catalog("policySim.staleReason"))
+        orphaned = entries - {member.value for member in SimStale}
+        assert not orphaned, (
+            f"policySim.staleReason entries with no SimStale member: {sorted(orphaned)}"
+        )

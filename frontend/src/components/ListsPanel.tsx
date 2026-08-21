@@ -31,6 +31,7 @@ import { announce } from "../announce";
 import { api, type ListConfig, type ProtectionList } from "../api";
 import { useBackGuard } from "../backnav";
 import i18next from "../i18n";
+import { composeIn } from "../why";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
 import { RESCAN_HEADING, RESCAN_QUEUED_LEAD } from "./PolicySimulator";
@@ -720,8 +721,8 @@ export function ListsPanel({
           the previous result until the next mutation replaces it, so a Plex warning from one
           check stayed on screen through an unrelated Edit or Add, reading as though it were
           about those (rule 85). A check in flight has not answered yet, so it says nothing. */}
-      {!check.isPending && check.data?.plex_error && (
-        <Notice tone="warn">{check.data.plex_error}</Notice>
+      {!check.isPending && check.data?.plex_error_reason && (
+        <Notice tone="warn">{composeIn("lists", check.data.plex_error_reason)}</Notice>
       )}
 
       {/* No "Check all now" here. Checking everything is the upkeep job's whole purpose --

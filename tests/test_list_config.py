@@ -29,11 +29,14 @@ from reaper.clients.plex import PlexError
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.session import create_engine, create_session_factory
+from reaper.engine.reason import from_wire
 from reaper.main import create_app
 from reaper.services import list_config, scan_runner
 from reaper.services import snapshot as snapshot_service
 from reaper.services.lists import ListSource
 from tests._auth import login
+from tests._reasons import catalog
+from tests._reasons import text as reason_text
 
 
 @pytest.fixture
@@ -780,7 +783,10 @@ class TestCheckingTheListsNow:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["plex_error"] and "couldn't reach Plex" in body["plex_error"]
+        reason = body["plex_error_reason"]
+        assert reason["k"] == "plexError"
+        assert reason["p"] == {"error": "unreachable (boom)"}
+        assert "couldn't reach Plex" in reason_text(from_wire(reason), namespace="lists")
         # The rest of the pass still ran, so a Plex outage does not stop the *arr tag sweeps.
         assert body["checked"] == 1
         assert body["failed"] == 0
@@ -815,7 +821,7 @@ class TestCheckingTheListsNow:
 
         assert body["checked"] == 2, "a list that matched nothing was still checked"
         assert body["failed"] == 1
-        assert body["plex_error"] is None
+        assert body["plex_error_reason"] is None
 
     def test_checking_one_list_passes_that_list_through(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -828,6 +834,17 @@ class TestCheckingTheListsNow:
 
         assert client.post("/api/lists/sync", json={"list_id": 1}).status_code == 200
         assert seen["only"] == 1
+
+
+class TestThePlexErrorVocabulary:
+    """The route's one Plex-unreachable reason, both directions (rule 145's shape, scaled
+    to a population of one id: ``sync_lists`` has exactly one call site for it)."""
+
+    def test_the_id_has_a_catalog_entry(self) -> None:
+        assert "plexError" in catalog("lists")
+
+    def test_the_entry_takes_the_transport_error_as_a_param(self) -> None:
+        assert "{error}" in catalog("lists")["plexError"]
 
 
 class TestTheUniqueNameConstraintIsTheThingThatHolds:

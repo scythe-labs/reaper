@@ -837,7 +837,7 @@ describe("why 'Add service' will not act", () => {
       version: "4.0.1",
       root_folders: [{ path: "/tv", suggested_library: null }],
       seerr_services: [],
-      map_error: null,
+      map_error_reason: null,
     });
     await user.tab();
     await waitFor(() =>
@@ -922,7 +922,7 @@ describe("what a failed folder read must not do", () => {
       version: "4.0.1",
       root_folders: [{ path: "/tv", suggested_library: null }],
       seerr_services: [],
-      map_error: null,
+      map_error_reason: null,
     });
     await fill(user, screen.getByLabelText(/Hostname or IP/), "10.0.0.9");
     await user.type(screen.getByLabelText(/New API key/), "k");
@@ -936,7 +936,7 @@ describe("what a failed folder read must not do", () => {
   });
 
   it("keeps the stored map when the test passes but the folder read fails", async () => {
-    // The silent-loss case. `map_error` means the probe RAN and failed, so its empty list is a
+    // The silent-loss case. `map_error_reason` means the probe RAN and failed, so its empty list is a
     // read that never landed -- and `[]` is truthy, so the save's prune walked it and sent `{}`,
     // which the server stores as NULL. The map that tells an HD copy from a 4K one was gone with
     // no confirmation, off a screen that had replaced the grid with a notice.
@@ -960,7 +960,7 @@ describe("what a failed folder read must not do", () => {
       version: "4.0.1",
       root_folders: [],
       seerr_services: [],
-      map_error: "Reaper reached this service but couldn't read what to map. It timed out.",
+      map_error_reason: { k: "mapError", p: { error: "It timed out." } },
     });
     await user.type(screen.getByLabelText(/New API key/), "fresh-key");
     await user.tab();

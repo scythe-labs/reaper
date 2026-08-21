@@ -1166,6 +1166,7 @@
       "imdbId": "ls000000000, or paste the list's URL",
       "movies": "Movies"
     },
+    "plexError": "Reaper couldn't reach Plex, so its collections were not checked: {error}",
     "plexWatchlistDescription": "The watchlist of the Plex account Reaper is signed in with.",
     "presetLabel": "{key, select, top250 {IMDb Top 250} popular {IMDb Popular Movies} other {{key}}}",
     "protectingTitle": "{only, select, true {Protecting {words} only} other {Protecting {words}}}",
@@ -1215,6 +1216,11 @@
       "savedAnnouncement": "Discord webhook saved.",
       "sendTestButton": "Send test",
       "sendTestPending": "Sending…",
+      "testResult": {
+        "failed": "Could not post to that webhook. Check the URL and that the channel still exists.",
+        "not_configured": "No Discord webhook is configured to test.",
+        "posted": "Posted a test message to your Discord channel."
+      },
       "titleAdd": "Add Discord",
       "titleEdit": "Edit Discord"
     },
@@ -1284,6 +1290,7 @@
         "reading": "Reading this instance's folders…",
         "staleWhat": "this instance's folders"
       },
+      "mapError": "Reaper reached this service but couldn't read what to map. {error}",
       "mapWarning": "Map a folder above, or Cancel to close without saving.",
       "missing": {
         "host": "Enter a hostname or IP address {willDo}.",
@@ -2049,6 +2056,11 @@
       "gathersDifferently": "Needs a fresh scan",
       "inProgressNotRead": "Your partway-through rule needs a fresh scan",
       "seasonsNotRecorded": "Your season rules need a fresh scan"
+    },
+    "staleReason": {
+      "gathers_differently": "Your {media_type, select, movie {movies} other {TV}} policy doesn't match the last scan, so these numbers can't be worked out from it. Run a scan to apply it, then this becomes exact again.",
+      "in_progress_not_read": "The last scan didn't read where anyone had gotten to in each show, so there are no numbers to show. Run a scan, then this becomes exact again.",
+      "seasons_not_recorded": "The last scan didn't record what your season rules need, so there are no numbers to show. Run a scan, then this becomes exact again."
     },
     "staleReasonFallback": "This policy doesn't match the last scan. Scan to apply it.",
     "summary": {

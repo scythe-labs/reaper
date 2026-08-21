@@ -45,6 +45,7 @@ from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import ListConfig
 from reaper.engine import policy_migrations
+from reaper.engine.reason import Reason, to_wire
 from reaper.services import app_settings, list_config, list_rules, lists, scan_runner, snapshot
 from reaper.services.snapshot import WHITELIST_STALE_AFTER
 from reaper.text import fold
@@ -293,14 +294,15 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
         # server no collection provider is built, so nothing is synced for one and nothing
         # is retired either. The stored membership stays as the last good check left it.
         plex_server: object | None = None
-        plex_error: str | None = None
+        # The wire dict rather than `ReasonKey` itself: pydantic coerces it when it lands on
+        # `ListSyncOut`'s constructor kwarg below, the same as `to_wire(...)` passed inline
+        # anywhere else in the tree (`ChipOut`/`PolicyWarningOut`).
+        plex_error_reason: dict[str, object] | None = None
         if plex is not None:
             try:
                 plex_server = await plex.connect()
             except PlexError as exc:
-                plex_error = (
-                    f"Reaper couldn't reach Plex, so its collections were not checked: {exc}"
-                )
+                plex_error_reason = to_wire(Reason("plexError", {"error": str(exc)}))
 
         async with app.state.session_factory() as session:
             try:
@@ -331,7 +333,7 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
     # twice (rule 144).
     failed = sum(1 for v in synced.values() if isinstance(v, str) and v.startswith("error:"))
     checked = sum(1 for v in synced.values() if isinstance(v, int))
-    return ListSyncOut(checked=checked, failed=failed, plex_error=plex_error)
+    return ListSyncOut(checked=checked, failed=failed, plex_error_reason=plex_error_reason)
 
 
 @router.delete("/lists/configured/{list_id}", status_code=204)
