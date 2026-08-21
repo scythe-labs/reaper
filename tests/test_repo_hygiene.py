@@ -4307,8 +4307,8 @@ _NEVER_LOADED_COPY = {
     "Couldn't load your review queue.": [
         "frontend/src/locales/en/ui.json",
     ],
-    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from"
-    " right now. The rules you've already added are still here.": [
+    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from. The"
+    " rules you've already added are still here.": [
         "frontend/src/locales/en/ui.json",
     ],
     "Reaper couldn't load this plan. Reload the page to try again.": [
@@ -4317,7 +4317,7 @@ _NEVER_LOADED_COPY = {
     "Reaper couldn't load this reap. Close this and try View again.": [
         "frontend/src/locales/en/ui.json",
     ],
-    "Reaper couldn't load your lists, so there's nothing to pick from right now.": [
+    "Reaper couldn't load your lists, so there's nothing to pick from.": [
         "frontend/src/locales/en/ui.json",
     ],
 }

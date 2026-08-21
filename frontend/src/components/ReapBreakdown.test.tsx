@@ -161,7 +161,7 @@ describe("the ledger", () => {
       }),
     );
     renderBreakdown();
-    expect(await screen.findByText(/would remove nothing right now/)).toBeInTheDocument();
+    expect(await screen.findByText(/would remove nothing/)).toBeInTheDocument();
     expect(screen.getByText(/couldn't measure any of the titles/)).toBeInTheDocument();
     expect(screen.queryByText("Will be reaped")).not.toBeInTheDocument();
   });
@@ -305,7 +305,7 @@ describe("the states that are not a full ledger", () => {
       full({ will_reap: 0, policy_condemned: 0, hand_spared: 0, hand_reaped: 0 }),
     );
     renderBreakdown();
-    expect(await screen.findByText(/would remove nothing right now/)).toBeInTheDocument();
+    expect(await screen.findByText(/would remove nothing/)).toBeInTheDocument();
   });
 
   it("prompts a scan before the first one", async () => {

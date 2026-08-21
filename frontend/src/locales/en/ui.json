@@ -1245,9 +1245,9 @@
     "breakdown": {
       "allowanceUnknown": "Reaper couldn't check how many titles with no known size it may remove, so it can't say how many this reap removes. {count} {n, plural, one {title} other {titles}} on the list can't be measured.",
       "condemnedByPolicy": "Condemned by your policy",
-      "emptyMeasured": "A reap would remove nothing right now. Reaper couldn't measure any of the titles on the list, so it won't remove them.",
-      "emptyNone": "A reap would remove nothing right now. The last scan condemned nothing.",
-      "emptySpared": "A reap would remove nothing right now. You've spared everything the last scan condemned.",
+      "emptyMeasured": "A reap would remove nothing. Reaper couldn't measure any of the titles on the list, so it won't remove them.",
+      "emptyNone": "A reap would remove nothing. The last scan condemned nothing.",
+      "emptySpared": "A reap would remove nothing. You've spared everything the last scan condemned.",
       "expiredSpares": "<strong>{count} {n, plural, one {title is} other {titles are}} kept by {n, plural, one {a spare that expired} other {spares that expired}}.</strong> This reap won't remove {n, plural, one {it} other {them}}. A new scan judges {n, plural, one {it} other {them}} again.",
       "handReaped": "You marked to reap by hand",
       "handReapedHeld": "{count} {n, plural, one {reap you marked is} other {reaps you marked are}} on hold, so this reap won't remove {n, plural, one {it} other {them}} yet.",
@@ -1286,7 +1286,7 @@
       "openAbove": ", open above"
     },
     "page": {
-      "blurb": "A plan records exactly what a reap <em>would</em> do. You can practice it end to end.",
+      "blurb": "A plan records exactly what a reap <em>would</em> do. You can do a practice run first. Nothing will be removed.",
       "buildButton": "Build a plan from the last scan",
       "title": "Reap plan"
     },
@@ -1490,8 +1490,8 @@
     "stateOn": "Deletion is on.",
     "turnOff": "Turn off",
     "turnOffHeading": "Turn deletion off",
-    "turnOffHelp": "Puts Reaper back to read-only right away.",
-    "turnOffHelpUnknown": "Puts Reaper back to read-only right away. Safe to press even if it was already off.",
+    "turnOffHelp": "Puts Reaper back to read-only.",
+    "turnOffHelpUnknown": "Puts Reaper back to read-only. Safe to press even if it was already off.",
     "turnOnButton": "Turn on…",
     "turnOnHeading": "Turn deletion on",
     "turnOnHelp": "Reaper will be allowed to delete media you approve. You'll still review and approve every run.",
@@ -1808,7 +1808,7 @@
       "noListsAllTaken": "Every list this policy can keep already has a rule. Remove one above to give it a different strength.",
       "noListsBlanketRule": "Your \"On a list you curate yourself\" rule already keeps every one of your lists. Remove it above to set a strength per list.",
       "noListsGeneric": "None of your lists can be kept here yet. Check them on Settings → Lists.",
-      "noListsLoadError": "Reaper couldn't load your lists, so there's nothing to pick from right now.",
+      "noListsLoadError": "Reaper couldn't load your lists, so there's nothing to pick from.",
       "noListsNone": "You have no lists yet. Add one on Settings → Lists first.",
       "noListsUnsynced": "Your lists haven't synced yet. Check them on Settings → Lists so Reaper knows what's on them.",
       "noListsWrongType": "None of your lists holds {mediaType, select, movie {movies} other {shows}}. Add a {mediaType, select, movie {movie} other {show}} list on Settings → Lists.",
@@ -1861,7 +1861,7 @@
     },
     "upToLabel": "up to",
     "valueLabel": "Value",
-    "vocabLoadError": "Reaper couldn't load the things a rule can look at, so there's nothing to pick from right now. The rules you've already added are still here.",
+    "vocabLoadError": "Reaper couldn't load the things a rule can look at, so there's nothing to pick from. The rules you've already added are still here.",
     "whenPlaceholder": "when…",
     "yesValue": "yes",
     "suffixPoints": "points",
@@ -1925,7 +1925,7 @@
         "label": "Spared by hand"
       },
       "minDormancy": {
-        "help": "Nothing is removed until it has gone at least this long without a single play.",
+        "help": "Nothing is condemned until it has gone at least this long without a single play.",
         "label": "Give every title time to be rewatched"
       },
       "othersWatching": {
@@ -2215,7 +2215,7 @@
       },
       "protect": {
         "blurb": "Something is protecting these souls. They stay, whatever they scored.",
-        "empty": "No souls are being spared by a protection right now.",
+        "empty": "No souls are spared by a protection.",
         "label": "Sanctuary"
       }
     },
@@ -2477,7 +2477,7 @@
   "login": {
     "authNoteSetup": "Set up Reaper by signing in as the owner of the Plex server.",
     "authNoteSignIn": "Sign in to review, explain, and prune your library.",
-    "authSafety": "Reaper can permanently delete media. Only the server’s owner is admitted. Authenticating with Plex is not enough.",
+    "authSafety": "Reaper can permanently delete media. Only the server’s owner can authenticate.",
     "localSheet": {
       "ariaLabel": "Local account sign-in",
       "blurbHasLocal": "The fallback for when Plex is unreachable. Reaper keeps at least one.",
