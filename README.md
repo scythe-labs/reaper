@@ -110,6 +110,11 @@ wrong or you see a better way, tell me. I'd rather hear it so we can make Reaper
 Setup instructions, the verification gates, commit conventions, and the AI policy are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+Translations happen on [Hosted Weblate](https://hosted.weblate.org/projects/reaper/), which
+opens the pull requests here. No git needed.
+
+[![Translation status](https://hosted.weblate.org/widget/reaper/ui/svg-badge.svg)](https://hosted.weblate.org/engage/reaper/)
+
 Bug reports and questions are welcome:
 [open an issue](https://github.com/scythe-labs/reaper/issues/new/choose) or start a
 [discussion](https://github.com/scythe-labs/reaper/discussions). Security problems go
