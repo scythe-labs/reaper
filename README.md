@@ -111,7 +111,7 @@ wrong or you see a better way, tell me. I'd rather hear it so we can make Reaper
 Setup instructions, the verification gates, commit conventions, and the AI policy are in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Translations happen on [Hosted Weblate](https://hosted.weblate.org/projects/reaper/), which
+Translations happen on [Weblate](https://hosted.weblate.org/projects/reaper/), which
 opens the pull requests here. No git needed.
 
 Bug reports and questions are welcome:
