@@ -22,6 +22,16 @@
 // A param may itself be a reason key, or a list of them (a blocked check's cause, the
 // rating gate's per-bar clauses): those compose recursively, lists joined with "; ",
 // so a message template only ever sees strings and numbers.
+//
+// composeIn(namespace, key) is the general form: it looks entries up under
+// `${namespace}.${key.k}` instead of the hardcoded `why.`, so a chip status or a policy
+// warning can carry its own catalog section (`chip.text.*`, `warning.*`) instead of
+// crowding `why.*`. composeReason is composeIn("why", key), unchanged. A nested Reason
+// param always recurses under "why", never the outer namespace: check/cause/because are
+// a shared vocabulary a chip or warning row QUOTES, the same entries a why-panel row
+// would show for the identical evidence, not copy that section owns. Splitting them by
+// namespace would mean writing (and translating) the same cause sentence once per
+// surface that can carry it.
 
 import i18next from "./i18n";
 import type { ReasonKey } from "./api";
@@ -37,14 +47,17 @@ function lookup(key: string, params?: Record<string, unknown>): string | undefin
   return i18next.exists(key) ? i18next.t(key, params ?? {}) : undefined;
 }
 
-export function composeReason(key: ReasonKey): string {
+export function composeIn(namespace: string, key: ReasonKey): string {
   if (key.k === "legacy") return String(key.p?.text ?? "");
   const params: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(key.p ?? {})) {
     if (isReasonKey(value)) {
-      params[name] = composeReason(value);
+      params[name] = composeIn("why", value);
     } else if (Array.isArray(value)) {
-      params[name] = value.filter(isReasonKey).map(composeReason).join("; ");
+      params[name] = value
+        .filter(isReasonKey)
+        .map((v) => composeIn("why", v))
+        .join("; ");
     } else {
       params[name] = value;
       if (typeof value === "number") {
@@ -65,7 +78,7 @@ export function composeReason(key: ReasonKey): string {
   if (typeof params.source === "string") {
     params.source_label = lookup(`why.source.${params.source}`) ?? params.source;
   }
-  const text = lookup(`why.${key.k}`, params);
+  const text = lookup(`${namespace}.${key.k}`, params);
   if (text !== undefined) return text;
   // An id this build has no entry for: a stored legacy sentence riding in a slot, or a
   // row written by a newer build. Render what identifies it rather than dropping the row
@@ -74,6 +87,10 @@ export function composeReason(key: ReasonKey): string {
   const raw = key.p?.text;
   if (typeof raw === "string" && raw) return raw;
   return key.k.replace(/^(cause|check)\./, "");
+}
+
+export function composeReason(key: ReasonKey): string {
+  return composeIn("why", key);
 }
 
 /** The check and cause of a blocked row, composed separately, or null where the row is

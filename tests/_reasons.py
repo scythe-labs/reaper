@@ -6,6 +6,13 @@ params -- and the sentence lives in ``frontend/src/locales/en/ui.json`` under ``
 Tests here assert on ids and params; the composed English is the frontend's to prove
 (``frontend/src/why.test.ts`` renders the catalog), and ``test_review_chips.py`` walks the
 two-way agreement between the ids the engine can emit and the entries the catalog holds.
+
+``text``'s ``namespace`` argument is this module's twin of ``why.ts``'s ``composeIn``: both
+default to ``"why"`` (the only namespace either side has production content for today), and
+both take a dotted namespace ("chip.text") the same way. A nested ``Reason`` param always
+composes under "why" regardless of the outer namespace -- see the paired comment atop
+``why.ts`` for why -- so ``text`` recurses on itself with no ``namespace`` argument, never
+the caller's.
 """
 
 from __future__ import annotations
@@ -40,10 +47,10 @@ def flat(reason: Reason) -> str:
     return f"{reason.id}[{' '.join(parts)}]"
 
 
-def text(reason: Reason) -> str:
+def text(reason: Reason, namespace: str = "why") -> str:
     """The reason composed into its English sentence, from the real catalog.
 
-    The test-side twin of ``frontend/src/why.ts``'s ``composeReason``, over the same
+    The test-side twin of ``frontend/src/why.ts``'s ``composeIn``, over the same
     ``ui.json`` -- so a sentence assertion in this suite pins the catalog entry AND the
     params the engine put in its slots, end to end. It implements only the ICU subset the
     ``why`` entries use (plural, select, selectordinal, number); ``why.test.ts`` proves
@@ -54,6 +61,9 @@ def text(reason: Reason) -> str:
     params: dict[str, Any] = {}
     for name, value in reason.params.items():
         if isinstance(value, Reason):
+            # Always "why": a nested reason quotes the shared check/cause/because
+            # vocabulary, never the outer namespace's own section (see the module
+            # docstring and why.ts's paired comment).
             params[name] = text(value)
         elif isinstance(value, tuple):
             params[name] = "; ".join(text(v) for v in value)
@@ -81,7 +91,7 @@ def text(reason: Reason) -> str:
     if isinstance(source, str):
         label = _lookup(f"source.{source}")
         params["source_label"] = label if label is not None else source
-    message = _lookup(reason.id)
+    message = _lookup(reason.id, namespace)
     if message is not None:
         return _icu(message, params)
     raw = reason.params.get("text")
@@ -90,8 +100,8 @@ def text(reason: Reason) -> str:
     return reason.id.removeprefix("cause.").removeprefix("check.")
 
 
-def _lookup(dotted: str) -> str | None:
-    node: Any = catalog()
+def _lookup(dotted: str, namespace: str = "why") -> str | None:
+    node: Any = catalog(namespace)
     for part in dotted.split("."):
         if not isinstance(node, dict) or part not in node:
             return None
@@ -202,19 +212,27 @@ def _icu(message: str, params: dict[str, Any]) -> str:
 
 
 @cache
-def catalog() -> dict[str, Any]:
-    """The English catalog's ``why`` namespace, for tests that pin a sentence's copy."""
+def catalog(namespace: str = "why") -> dict[str, Any]:
+    """The English catalog's ``<namespace>`` section, for tests that pin a sentence's copy.
+
+    ``namespace`` is dotted for a nested section ("chip.text"), the same path ``why.ts``'s
+    ``composeIn`` looks its namespace argument up under. A namespace with no production
+    content yet (``chip``, ``warning``, ahead of their first key) reads back ``{}`` rather
+    than raising, so a caller need not guard the phase-2 case.
+    """
     path = Path(__file__).resolve().parents[1] / "frontend" / "src" / "locales" / "en" / "ui.json"
     loaded: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    why = loaded["why"]
-    assert isinstance(why, dict)
-    return why
+    node: Any = loaded
+    for part in namespace.split("."):
+        node = node.get(part, {}) if isinstance(node, dict) else {}
+    assert isinstance(node, dict)
+    return node
 
 
-def catalog_entry(dotted: str) -> str:
-    """One ``why.*`` entry by its reason id (``"cause.plex_unmatched"``)."""
-    node: Any = catalog()
+def catalog_entry(dotted: str, namespace: str = "why") -> str:
+    """One ``<namespace>.*`` entry by its reason id (``"cause.plex_unmatched"``)."""
+    node: Any = catalog(namespace)
     for part in dotted.split("."):
         node = node[part]
-    assert isinstance(node, str), f"why.{dotted} is a section, not an entry"
+    assert isinstance(node, str), f"{namespace}.{dotted} is a section, not an entry"
     return node

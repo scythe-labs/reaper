@@ -6,7 +6,8 @@
 // exact strings from the same `ui.json`.
 
 import { describe, expect, it } from "vitest";
-import { blockedParts, cardReason, composeReason, dormantSpan } from "./why";
+import i18next from "./i18n";
+import { blockedParts, cardReason, composeIn, composeReason, dormantSpan } from "./why";
 
 describe("composeReason", () => {
   it("renders the worked example the repo quotes", () => {
@@ -98,6 +99,43 @@ describe("composeReason", () => {
     expect(composeReason({ k: "cause.the source is down" })).toBe("the source is down");
     // A future id this build has no entry for still names itself.
     expect(composeReason({ k: "sturdier_reason" })).toBe("sturdier_reason");
+  });
+});
+
+describe("composeIn", () => {
+  // Fixture entries, added to i18next at test time rather than reading real catalog
+  // content -- chip.text and warning have no production keys yet (Phase 1 only
+  // generalizes the composer). tests/_reasons.py's twin test uses the same two
+  // messages, so a passing pair here and there proves `text`'s namespace argument
+  // walks the catalog the same way this one does (rule 119).
+  i18next.addResourceBundle(
+    "en-US",
+    "ui",
+    {
+      chip: { text: { fixture_count: "{n, plural, one {# stray file} other {# stray files}}" } },
+      warning: { fixture_nested: "blocked because {cause}" },
+      why: { cause: { fixture_cause: "the fixture reason fired" } },
+    },
+    true,
+    true,
+  );
+
+  it("composes a chip.text entry under its own namespace", () => {
+    expect(composeIn("chip.text", { k: "fixture_count", p: { n: 3 } })).toBe("3 stray files");
+  });
+
+  it("composes a warning entry, whose nested reason still resolves under why", () => {
+    expect(
+      composeIn("warning", {
+        k: "fixture_nested",
+        p: { cause: { k: "cause.fixture_cause" } },
+      }),
+    ).toBe("blocked because the fixture reason fired");
+  });
+
+  it('composeReason is composeIn under "why"', () => {
+    const key = { k: "dormancy_past_floor", p: { days: 2059, floor_days: 1095 } };
+    expect(composeIn("why", key)).toBe(composeReason(key));
   });
 });
 

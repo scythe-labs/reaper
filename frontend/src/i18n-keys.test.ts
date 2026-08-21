@@ -31,8 +31,10 @@ import { shippedSource, sourceText, srcRelative } from "./test/sources";
 
 // The files allowed to hand t() a computed key, and the catalog namespaces they own.
 // A namespace listed here is proven by that file's own tests, not by this gate.
+// why.ts composes under any namespace (composeIn). "chip." and "warning." are the two #868
+// adds next (status chip text, policy warnings), registered ahead of their first key.
 const DYNAMIC: Record<string, string[]> = {
-  "why.ts": ["why."],
+  "why.ts": ["why.", "chip.", "warning."],
 };
 
 const T_CALLEES = new Set(["t", "i18next.t", "i18n.t"]);
