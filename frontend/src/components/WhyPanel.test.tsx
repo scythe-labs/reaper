@@ -1138,7 +1138,7 @@ describe("the verdict headline", () => {
   it("keeps the plain 'Limbo' note for an ordinary abstain", () => {
     show(detail(WORKED_ROWS, { verdict: "abstain" }));
     expect(screen.getByText("Limbo")).toBeInTheDocument();
-    expect(screen.getByText(/not confident enough to judge/i)).toBeInTheDocument();
+    expect(screen.getByText(/not sure enough to judge/i)).toBeInTheDocument();
   });
 
   it("does not read a mid-binge check that never ran as a conflict (#486)", () => {

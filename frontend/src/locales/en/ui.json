@@ -68,7 +68,7 @@
     "leavingSoon": {
       "counts": "<movieNum>{movieCount}</movieNum> {movies, plural, one {movie} other {movies}} and <seasonNum>{seasonCount}</seasonNum> {seasons, plural, one {season} other {seasons}} on the shelves",
       "countsAtLastUpdate": "<movieNum>{movieCount}</movieNum> {movies, plural, one {movie} other {movies}} and <seasonNum>{seasonCount}</seasonNum> {seasons, plural, one {season} other {seasons}} were on the shelves at the last update",
-      "desc": "Puts everything counting down on the Plex \"Leaving Soon\" shelf, so people see it before it goes.",
+      "desc": "Puts what's counting down on the Plex \"Leaving Soon\" shelf so people see it before it's removed.",
       "didNotUpdate": "It didn't update",
       "loadFailed": "Couldn't load the shelf status. Reload to try again.",
       "manageLink": "Manage in Plex → Leaving Soon",
@@ -463,10 +463,10 @@
       },
       "heldBackSizeUnknown": "Held back: size unknown. Sonarr and Radarr had none, so Reaper can't tell what removing this would free, and won't remove it.",
       "keeps": {
-        "blurb": "Soft keep rules lowered the score. These can only ever lower a score, and never overrule a protection.",
-        "blurbWithScores": "Soft keep rules lowered the score from {from} to {to}. These can only ever lower a score, and never overrule a protection.",
+        "blurb": "Soft keep rules lowered the score. They can only lower a score, never overrule a protection.",
+        "blurbWithScores": "Soft keep rules lowered the score from {from} to {to}. They can only lower a score, never overrule a protection.",
         "heading": "Leaning toward keeping",
-        "uncheckedNote": "Reaper couldn’t check this one, so it kept the file fully: missing data only ever leans toward <em>keeping</em>."
+        "uncheckedNote": "Reaper couldn’t check this one, so it kept the file. Missing data only ever leans toward <em>keeping</em>."
       },
       "keptNotice": {
         "ambiguous": "This looks like more than one thing in your Plex, so we couldn't tell which one it is.",
@@ -475,7 +475,7 @@
         "unmatched": "We couldn't find this in your Plex, so there's no way to tell if anyone still watches it."
       },
       "leftForYou": {
-        "blurb": "Reaper wasn't sure enough to act on these on its own: a rule was too close to call, or something couldn't be reached. Everything here is kept, never removed, until you look.",
+        "blurb": "Reaper wasn't sure enough to act on these: a rule was too close to call, or something couldn't be reached. Everything here is kept until you look.",
         "couldntCheck": "Couldn't check: {checks}.",
         "heading": "Left for you to decide"
       },
@@ -494,11 +494,11 @@
       "meta": {
         "runtime": "{minutes} min"
       },
-      "onListSince": "On the list since {when}. Watching it or sparing it keeps it, and you still start every removal by hand.",
+      "onListSince": "On the list since {when}. Watching it or sparing it keeps it.",
       "ratings": {
         "imdbLabel": "IMDb",
         "imdbTitleNoVotes": "The same number the score uses.",
-        "imdbTitleWithVotes": "IMDb {score} from {votes} votes. The same number the score uses.",
+        "imdbTitleWithVotes": "IMDb {score} from {votes} votes.",
         "rtAudienceLabel": "Rotten Tomatoes audience",
         "rtAudienceTitle": "Rotten Tomatoes audience score. Opens a Rotten Tomatoes search",
         "rtCriticsLabel": "Rotten Tomatoes critics",
@@ -552,13 +552,13 @@
         "heldUnmanaged": "You asked to remove this, but no app manages the file, so there's no safe way to remove it.",
         "heldUnmatched": "You asked to remove this, but Reaper couldn't find it in your Plex, so it can't tell which file to remove.",
         "limboLabel": "Limbo",
-        "limboNote": "Reaper is not confident enough to judge this one. It scored below your threshold, or too little of it could be seen. Either way, Reaper leaves it alone, and the file is kept.",
+        "limboNote": "Reaper is not sure enough to judge this one. It scored below your threshold, or too little of it could be seen. The file is kept.",
         "needsLookLabel": "Needs a look",
         "reapedByHandLabel": "Reaped by hand",
         "reapedByHandNote": "You marked this for removal, so it will be removed. Nothing is holding it back.",
         "sanctuaryLabel": "Sanctuary",
-        "sanctuaryOverridable": "Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept unless you Reap it yourself.",
-        "sanctuaryStructural": "Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept, and a Reap won't remove it.",
+        "sanctuaryOverridable": "Something is protecting this, so <strong>the score doesn't matter</strong>. It's kept unless you Reap it yourself.",
+        "sanctuaryStructural": "Something is protecting this, so <strong>the score doesn't matter</strong>. It's kept, and a Reap won't remove it.",
         "spareActive": "You chose to keep this. {phrase}, then Reaper judges it again.",
         "spareForever": "You chose to keep this, so it won't be removed.",
         "spareSeasonExpired": "Your spare on this season has run out.",
@@ -607,7 +607,7 @@
     "connectionSaved": "Connection saved.",
     "heading": "Plex",
     "leavingSoon": {
-      "allowUnarmedHelp": "Until deletion is on, Reaper writes nothing to Plex, this shelf included. Turn this on to show the shelf while Reaper is still read-only. It only manages the collection and label. It can never remove files.",
+      "allowUnarmedHelp": "Until deletion is on, Reaper writes nothing to Plex, this shelf included. Turn this on to show the shelf while Reaper is still read-only. It can never remove files.",
       "allowUnarmedLabel": "Update while read-only",
       "enableHelp": "Keeps a Leaving Soon collection in each library turned on above, and labels everything in it. Items appear when they start counting down and leave when spared or removed. Updates after every scan, or from the Jobs page.",
       "enableLabel": "Show \"Leaving Soon\" in Plex",
@@ -694,7 +694,7 @@
     },
     "trashNotice": {
       "ackLabel": "I understand, continue anyway",
-      "autoEmpties": "Plex also empties its own trash after every scan, so Reaper's refresh clears it even when Reaper's own checks would have left it alone.",
+      "autoEmpties": "Plex is set to empty its trash after every scan, so Reaper's refresh empties it too.",
       "knownReadable": "<strong>Plex may also remove records for items Reaper didn't delete.</strong> Its trash already holds {n, plural, one {# item} other {# items}}. Emptying it removes their watch history, ratings, and collections. No files are deleted.",
       "knownUnreadable": "<strong>Plex may also remove records for items Reaper didn't delete.</strong> Its trash already holds at least {n, plural, one {# item} other {# items}}, and some libraries couldn't be read. Emptying it removes their watch history, ratings, and collections. No files are deleted.",
       "unknown": "<strong>Reaper couldn't read Plex's trash.</strong> It can't say what's in there, and emptying it removes the watch history, ratings, and collections of everything that is. No files are deleted."
@@ -720,7 +720,7 @@
       "confirmButton": "Confirm forget",
       "forgetButton": "Forget…",
       "forgetTitle": "Reaper starts from what Plex holds now",
-      "help": "Reaper holds back a title whose plays stop being readable. After a library rebuild that can be every title at once, and this clears them all. For one title, use the button on its reasons panel instead.",
+      "help": "Reaper holds back a title whose plays it can no longer read. After a library rebuild that can be every title. This clears them all. For one title, use the button on its reasons panel.",
       "label": "Recorded watch history",
       "loadError": "Couldn't load the watch history record.",
       "safetyUnknown": "Reaper couldn't check whether an admin password is set.",
@@ -728,7 +728,7 @@
       "tautulliWarning": "A watched title scores as never watched until you repair its history in Tautulli."
     },
     "watchHistoryGroup": {
-      "blurb": "Plex gives every item a number, and issues a new one when a file leaves a library and comes back. Plays recorded before that stay under the old number.",
+      "blurb": "When a file leaves a Plex library and comes back, Plex gives it a new number. Plays recorded before that stay under the old one.",
       "heading": "Watch history"
     },
     "webAddress": {
@@ -800,7 +800,7 @@
     },
     "fields": {
       "applicationName": {
-        "help": "Shown in Discord messages and the browser tab, so you can tell two installs apart.",
+        "help": "Shown in Discord messages and the browser tab.",
         "label": "Application name"
       },
       "applicationUrl": {
@@ -825,9 +825,9 @@
       "addressesHelp": "Only requests arriving from these addresses may claim to be forwarded. Comma separated, single addresses or ranges like 172.16.0.0/12.",
       "addressesLabel": "Trusted proxy addresses",
       "addressesPlaceholder": "172.16.0.1, 10.0.0.0/8",
-      "enabledHelp": "Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper then trusts the proxy to say which address each visitor came from, so sign-in rate limits count per visitor instead of lumping everyone together. It is also how Reaper learns that visitors arrive over HTTPS, so it can mark the sign-in cookie HTTPS-only.",
+      "enabledHelp": "Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper then trusts the proxy for each visitor's real address and for whether they arrived over HTTPS.",
       "enabledLabel": "Behind a reverse proxy",
-      "hint": "Off by default. Forwarded headers from anywhere else are always ignored, so a stranger can't fake their address to dodge the login lockout."
+      "hint": "Off by default. Forwarded headers from any other address are ignored."
     },
     "savebar": {
       "accentBlocked": "Enter a hex code like #25c3ff to save.",
@@ -860,10 +860,10 @@
   },
   "logs": {
     "consoleLabel": "Application log",
-    "description": "What Reaper is doing right now, and the trail of what it did. Every removal decision is answerable from here. The newest {limit, number} lines are kept.",
+    "description": "What Reaper is doing now, and what it did. The newest {limit, number} lines are kept.",
     "downloadButton": "Download logs",
     "downloadError": "The download didn't start: {message}",
-    "downloadHelpBase": "Save the whole log to your computer, handy for a bug report.",
+    "downloadHelpBase": "Save the whole log to your computer.",
     "downloadLabel": "Log files",
     "downloadRetentionKnown": "Reaper keeps the newest {n, number} files on the server, a fuller trail than the window above.",
     "downloadRetentionUnknown": "Reaper keeps a fuller trail on the server than the window above.",
@@ -1023,7 +1023,7 @@
       "addPlexCollectionAria": "Add a Plex collection",
       "addPlexWatchlistAria": "Add a Plex watchlist",
       "addTagListAria": "Add a tag list",
-      "collectionBlurb": "A collection you curate in the Plex app. Add a title from your phone and it's covered.",
+      "collectionBlurb": "A collection you curate in the Plex app.",
       "collectionName": "Collection",
       "custom": "Custom",
       "imdbBlurb": "A public IMDb list or chart, refreshed on its own.",
@@ -1144,7 +1144,7 @@
       },
       "folders": {
         "beforeTest": "Your folders appear here once Reaper reaches this service, each with a suggested library.",
-        "help": "Which Plex library each folder lands in. This tells an HD copy from a 4K one when the same title is in two libraries. Matches are suggested from your folders. Map at least one. Leave the rest on \"Not set\" to keep both copies when they can't be told apart.",
+        "help": "Which Plex library each folder lands in, so Reaper can tell an HD copy from a 4K one. Matches are suggested from your folders. Map at least one. Leave the rest on \"Not set\" to keep both copies when they can't be told apart.",
         "librariesLoading": "Looking for your Plex libraries…",
         "librariesReadFailed": "Reaper couldn't read your Plex libraries. Try again.",
         "librariesStaleWhat": "your Plex libraries",
@@ -1167,7 +1167,7 @@
       "notSetOption": "Not set",
       "requesters": {
         "beforeTest": "This portal's services appear here once Reaper reaches it, each with a suggested connection.",
-        "help": "Which Sonarr or Radarr connection each of this portal's services adds to. This names the exact copy a person asked for when a title is in more than one library. Matches are suggested from the addresses. Leave a service on \"Not set\" to name everyone who asked for the title instead.",
+        "help": "Which Sonarr or Radarr connection each of this portal's services adds to, so Reaper knows the exact copy a person asked for. Matches are suggested from the addresses. Leave a service on \"Not set\" to name everyone who asked for the title instead.",
         "instancesReadFailed": "Reaper couldn't read your Sonarr and Radarr connections. Try again.",
         "instancesStaleWhat": "your Sonarr and Radarr connections",
         "noInstances": "No Sonarr or Radarr connections yet. Add them first, then map each service.",
@@ -1192,7 +1192,7 @@
     },
     "notifications": {
       "badFormat": "That doesn't look like a Discord webhook URL. Paste the full https://discord.com/api/webhooks/… URL from the channel's integration settings.",
-      "blurb": "Reaper warns your users here before anything is deleted. While a title is in its grace period it posts a \"leaving soon\" message, so someone can watch it or spare it in time. Optional, but it's the one warning that reaches people who don't look at the Plex \"Leaving Soon\" shelf.",
+      "blurb": "Reaper warns your users here before anything is deleted. While a title is in its grace period it posts a \"leaving soon\" message, so someone can watch it or spare it in time. Optional, and the one warning that reaches people who don't look at the Plex \"Leaving Soon\" shelf.",
       "checkError": "Couldn't check whether Discord is connected.",
       "checking": "Checking whether Discord is connected…",
       "connected": "Discord connected. Leaving-soon warnings post to your channel.",
@@ -1286,7 +1286,7 @@
       "openAbove": ", open above"
     },
     "page": {
-      "blurb": "A plan records exactly what a reap <em>would</em> do, down to the request behind every deletion. You can practice it end to end. Nothing here deletes anything.",
+      "blurb": "A plan records exactly what a reap <em>would</em> do. You can practice it end to end. Nothing here deletes anything.",
       "buildButton": "Build a plan from the last scan",
       "title": "Reap plan"
     },
@@ -1413,7 +1413,7 @@
       "errorFallback": "Something went wrong.",
       "failed": "The download didn't start: {error}",
       "heading": "Download a backup",
-      "help": "One file with everything Reaper decided and everything you set up, plus the keys that unlock your saved credentials. The rebuildable cache is left out to keep the file small.",
+      "help": "One file with everything Reaper decided and everything you set up, plus the keys that unlock your saved credentials. The rebuildable cache is left out.",
       "keyEnvWarning": "Your encryption key is set through the environment, so it is not inside this backup. Keep that key with the file, or a restore cannot read your saved credentials.",
       "keySafetyWarning": "This file can unlock your Plex and Sonarr/Radarr credentials. Keep it as safe as a password.",
       "lastBackupLabel": "Last backup",
@@ -1491,7 +1491,7 @@
     "turnOff": "Turn off",
     "turnOffHeading": "Turn deletion off",
     "turnOffHelp": "Puts Reaper back to read-only right away.",
-    "turnOffHelpUnknown": "Puts Reaper back to read-only right away. Safe to press either way: if it was already off, nothing changes.",
+    "turnOffHelpUnknown": "Puts Reaper back to read-only right away. Safe to press even if it was already off.",
     "turnOnButton": "Turn on…",
     "turnOnHeading": "Turn deletion on",
     "turnOnHelp": "Reaper will be allowed to delete media you approve. You'll still review and approve every run.",
@@ -1511,7 +1511,7 @@
     },
     "flags": {
       "blurb": "The reasons to believe nobody will watch it again. Nothing here removes a title on its own. The protections below can always overrule the score.",
-      "condemnAtHelp": "The higher you set this, the more sure Reaper has to be before it flags a title. Protections below still win. This only decides among titles nothing is keeping.",
+      "condemnAtHelp": "The higher you set this, the more sure Reaper has to be before it flags a title. Protections below still win.",
       "condemnAtLabel": "Put a title on the list once it scores",
       "coverageFloorHelp": "Reaper judges a title on the reasons below. If it can't check enough of them, it holds the title in Limbo for you to decide.",
       "coverageFloorLabel": "Judge a title only when there's enough to go on"
@@ -1565,7 +1565,7 @@
       "gracePeriodLabel": "Grace period",
       "limitHelp": "An extra ceiling on how much one run and a rolling month remove, on top of the deletion password. Turn off for a big first cleanup, back on for routine runs.",
       "limitLabel": "Limit how much each run removes",
-      "matrixNote": "Cross a limit and the whole run stops. It never deletes only the part that fits. One run takes 1,000 titles at most.",
+      "matrixNote": "Cross a limit and the whole run stops. One run takes 1,000 titles at most.",
       "mostDiskPer30dAriaLabel": "Most disk freed per 30 days",
       "mostDiskPerRunAriaLabel": "Most disk freed per run",
       "mostTitlesPer30dAriaLabel": "Most titles per 30 days",
@@ -1592,7 +1592,7 @@
       "custom": "Custom: your own tuning, not a preset."
     },
     "protections": {
-      "blurb": "Protections. Any one of these keeps a title no matter how it scored, and every one can only ever <em>keep</em> a file, never mark one for removal."
+      "blurb": "Any one of these keeps a title no matter how it scored. A protection can only ever <em>keep</em> a file, never mark one for removal."
     },
     "rampKey": {
       "alone": "left alone",
@@ -1633,7 +1633,7 @@
       "fellBack": "Your saved policy couldn't be read, so this shows the starting one instead. Nothing has changed on your server. Check the values below, then save to replace it.",
       "listsMigrated": "Your protected lists moved to Settings → Lists, and the keep rules below now do the protecting. The same titles stay covered. Reaper won't remove anything until you save this.",
       "ratingRulesRestored": "Keep well-rated titles had stopped keeping anything. Your saved rating is back below, unsaved. Reaper won't remove anything until you check it and save.",
-      "rescaled": "Your points were rescaled to add up to 100. Each rule keeps the same share, so your scores stay where they are. Nothing has changed on your server. Review and save.",
+      "rescaled": "Your points were rescaled to add up to 100. Each rule keeps the same share. Nothing has changed on your server. Review and save.",
       "unknown": "Reaper had to change your saved policy to load it, so what's below is not what's stored. Check it and save."
     },
     "rewatch": {
@@ -1691,7 +1691,7 @@
       "firstSeasonLabel": "Always keep a show's first season",
       "holdAfterLabel": "let go of their place after",
       "holdDaysAriaLabel": "Days without watching before a held place is released",
-      "holdDaysHelp": "After this many days without watching any of the show, a viewer counts as done with it and no longer holds a season. When Reaper can't tell when they last watched, it keeps holding. Set this longer than your watch history, or to 0, and Reaper keeps every season, since it can't tell who is partway through.",
+      "holdDaysHelp": "After this many days without watching any of the show, a viewer no longer holds a season. When Reaper can't tell when they last watched, it keeps holding. At 0, or longer than your watch history, every season is kept.",
       "incompleteHelp": "Keeps a season Sonarr still wants episodes for, so nothing mid-download is removed. Sonarr says the same about an ended show permanently missing an episode, so turn this off if that is your library.",
       "incompleteLabel": "Never remove a season with episodes missing",
       "keepNewestAriaLabel": "Newest seasons to always keep",
@@ -1741,8 +1741,8 @@
       "zeroWeightHelp": "Its points go back into the pot. Give them to another signal before saving."
     },
     "sim": {
-      "blurb": "Re-decided against your last scan, with zero API calls. Nothing here touches Sonarr, Radarr or Tautulli.",
-      "errorBody": "The simulator request failed, so there are no numbers to show. Nothing about your library or your saved policy has changed. Adjust any control to try again.",
+      "blurb": "Re-decided against your last scan. Nothing here touches Sonarr, Radarr or Tautulli.",
+      "errorBody": "Couldn't run the simulator, so there are no numbers to show. Nothing has changed. Adjust any control to try again.",
       "errorHeading": "Can't show what this would do",
       "fixPolicyFirst": "Fix the policy on the left, then this updates.",
       "heading": "What this would do",
@@ -1750,7 +1750,7 @@
     },
     "starting": {
       "label": "Starting point",
-      "presetHelpTail": "Picking one resets the built-in points and rescales your own rules to fit 100. Your scores stay where they are.",
+      "presetHelpTail": "Picking one resets the built-in points and rescales your own rules to fit 100.",
       "stagedNotice": "<strong>Staged, not saved.</strong> Review the changes below, then Save changes in the bar at the bottom."
     },
     "switchConfirm": {
@@ -1770,7 +1770,7 @@
     },
     "validation": {
       "cantSaveThisPrefix": "Can't save this:",
-      "validatorDown": "Couldn't check this draft just now, so no problems can be shown here. You can still save. The server checks it again when you do."
+      "validatorDown": "Couldn't check this draft for problems. Saving checks it again."
     }
   },
   "policyRules": {
@@ -1791,13 +1791,13 @@
     "fullEffectAriaLabel": "Full effect at",
     "keepEditor": {
       "alwaysLabel": "Keeps it, always",
-      "blurb": "A rule can keep a title <outright>outright</outright>, or <lean>lean toward keeping</lean> by lowering its score. Neither can ever flag anything, and missing data takes the full lean.",
+      "blurb": "A rule can keep a title <outright>outright</outright>, or <lean>lean toward keeping</lean> by lowering its score. Neither can flag anything. Missing data leans fully toward keeping.",
       "directionLabel": "Which way it leans",
       "directionLess": "the less, the safer",
       "directionMore": "the more, the safer",
       "fullEffectAt": "full effect at",
       "heading": "Your own keep rules",
-      "helpBlurb": "Suggestions are values from your own library. Pick one, or type anything else. Fields a protection you've turned on already covers aren't offered for outright keeps, so a rule never repeats a built-in. A list that already has a keep rule isn't offered either. One list takes one rule, at one strength.",
+      "helpBlurb": "Suggestions come from your own library. Pick one, or type anything else. A field a protection already covers isn't offered for outright keeps. A list that already has a keep rule isn't offered either.",
       "hiddenUnverified": "{n, plural, one {One list isn't shown here yet: it hasn't synced. Check it on Settings → Lists.} other {{count} lists aren't shown here yet: they haven't synced. Check them on Settings → Lists.}}",
       "hiddenWrongType": "{n, plural, one {One list isn't shown here: it holds only {mediaType, select, movie {shows} other {movies}}, which this policy can't keep.} other {{count} lists aren't shown here: they hold only {mediaType, select, movie {shows} other {movies}}, which this policy can't keep.}}",
       "keepWhenPlaceholder": "Keep it when…",
@@ -1843,11 +1843,11 @@
     "rampStartAriaLabel": "Starts counting at",
     "rampValueGb": "{gb} GB",
     "removeEditor": {
-      "blurb": "Add pressure to the score with a rule of your own. These can flag a title, but a protection still wins, and missing data only ever leans toward keeping.",
+      "blurb": "Add points to the score with a rule of your own. A rule can flag a title, but a protection still wins, and missing data only ever leans toward keeping.",
       "heading": "Your own reasons to remove",
-      "helpBlurb": "The choices match the field. Numbers get at least / at most, words get is / is one of / contains. A phrase like “the older it is” builds pressure gradually between two numbers, like the built-in signals above, and its weight is a ceiling. There is no “is not”.",
+      "helpBlurb": "“The older it is” and the other gradual rules add points from the first number to the second, up to the points you set.",
       "pointsAriaLabel": "Points this rule adds",
-      "rampBackwardsHelp": "The second number has to be higher than the first: a rule like this builds up between them.",
+      "rampBackwardsHelp": "The second number must be higher than the first.",
       "rampFrom": "from",
       "rampTo": "to",
       "removeAriaLabel": "Remove rule: {rule}",
@@ -1870,7 +1870,7 @@
   "policySim": {
     "appliesOnNextScan": "Policy changes apply on the next scan, which starts by itself after saving.",
     "comparisonLine": "Your last scan flags <beforeNum>{beforeCount}</beforeNum>. This draft flags <afterNum>{afterCount}</afterNum>.",
-    "deltaBlurb": "The delta is the number that matters before saving. It is what changes against the list you have already reviewed.",
+    "deltaBlurb": "What changes compared with the list you already reviewed.",
     "histogram": {
       "bucketTooltip": "{low}–{high}: {n} items"
     },
@@ -1917,7 +1917,7 @@
         "label": "A rule you wrote"
       },
       "dataHorizon": {
-        "help": "A title Reaper couldn't measure is left alone rather than judged. Either way, unwatched time is never counted further back than your history goes, so nothing older than it looks never-watched.",
+        "help": "A title Reaper couldn't measure is left alone. Unwatched time is never counted further back than your history goes.",
         "label": "Stop if the unwatched time can't be read"
       },
       "handSpare": {
@@ -1925,7 +1925,7 @@
         "label": "Spared by hand"
       },
       "minDormancy": {
-        "help": "Nothing is removed until it has gone at least this long without a single play. Under about three years, people still come back to a title often.",
+        "help": "Nothing is removed until it has gone at least this long without a single play.",
         "label": "Give every title time to be rewatched"
       },
       "othersWatching": {
@@ -1937,12 +1937,12 @@
         "label": "Keep well-rated titles"
       },
       "returned": {
-        "help": "A title that left your library and was fetched again is kept for a while. Coming back is the clearest sign removing it was wrong.",
+        "help": "A title that left your library and was fetched again is kept for a while.",
         "label": "Keep a title that came back",
         "lead": "keep it for",
         "window": {
           "aria": "How long an absence counts",
-          "help": "How long a title has to be missing before its return counts. A file swapped for a better copy is back within hours.",
+          "help": "How long a title has to be missing before its return counts.",
           "label": "counts as gone after"
         }
       },
@@ -1959,7 +1959,7 @@
         "label": "Keep what your users actually watch",
         "window": {
           "aria": "How far back recent plays count",
-          "help": "How far back “recently” reaches. A year is the usual setting. Make it much shorter and almost nothing counts as watched, so this protection stops catching anything.",
+          "help": "How far back “recently” reaches. A year is the usual setting. Much shorter and this protection catches almost nothing.",
           "label": "counting plays from the last"
         }
       },
@@ -2004,7 +2004,7 @@
         "label": "How old a season is"
       },
       "size": {
-        "help": "Off by default. Big files are usually big because they're popular, so size makes a poor reason to delete. Give it points and it becomes one.",
+        "help": "Off by default. Big files are usually popular ones, so size is a poor reason to delete. Give it points and it counts.",
         "label": "How big it is on disk"
       },
       "unwatched": {
@@ -2116,7 +2116,7 @@
     "removeFilterAria": "Remove the {label} filter",
     "requestedBy": "Requested by {who}",
     "requestedChipTitle": "Someone asked for this through Seerr",
-    "requestedExplainer": " None of them were requested, which is common. Requested media gets watched, and watched media doesn't end up condemned.",
+    "requestedExplainer": " None of them were requested.",
     "resolution": {
       "hd": "HD",
       "sd": "SD",
@@ -2402,7 +2402,7 @@
     },
     "password": {
       "adminNote": "Your local account will be called <code>admin</code>. You can rename it later in Settings.",
-      "blurb": "It signs you in when Plex can't be reached, and it confirms every deletion. Reaper needs it before it goes any further.",
+      "blurb": "It signs you in when Plex can't be reached, and it confirms every deletion.",
       "confirmLabel": "Confirm password",
       "minHelp": "At least {min} characters.",
       "mismatchError": "The two passwords don't match.",
@@ -2427,7 +2427,7 @@
       "signInTimeoutError": "The sign-in wasn't approved in time. Try again.",
       "signedIn": "Signed in",
       "signedInTo": "Signed in to {name}",
-      "skipHelp": "Skip and Reaper still scans and shows you what it would remove. It will not be able to remove anything until Plex is connected.",
+      "skipHelp": "Skip and Reaper still scans and shows what it would remove. It can't remove anything until Plex is connected.",
       "title": "Connect Plex"
     },
     "restore": {
@@ -2449,7 +2449,7 @@
       "laterHeading": "While that runs",
       "notReadyWarning": "Connect Tautulli and one of Radarr or Sonarr before your first scan. <btn>Connect services</btn>",
       "runFirstScanButton": "Run first scan",
-      "runningBlurb": "You can leave this page. The scan keeps running and the line at the top of the window follows it. The review queue fills in the moment it finishes.",
+      "runningBlurb": "You can leave this page. The scan keeps running, and the review queue fills in when it finishes.",
       "runningHeading": "Your first scan is running",
       "scanErrorNotice": "The scan hit a problem: {message}",
       "scannedBlurb": "Nothing has been touched. Open the queue to see what Reaper would remove, and why.",
@@ -2481,11 +2481,11 @@
     "authSafety": "Reaper can permanently delete media. Only the server’s owner is admitted. Authenticating with Plex is not enough.",
     "localSheet": {
       "ariaLabel": "Local account sign-in",
-      "blurbHasLocal": "The fallback for when Plex is unreachable. Reaper keeps at least one, so a plex.tv outage can’t lock you out.",
+      "blurbHasLocal": "The fallback for when Plex is unreachable. Reaper keeps at least one.",
       "blurbLoading": "The fallback for when Plex is unreachable.",
       "blurbNoLocalYet": "The fallback for when Plex is unreachable. This install doesn’t have one yet.",
       "heading": "Local account",
-      "noLocalYetNotice": "Sign in with Plex above and Reaper asks you to set a password, which creates it. You need that password to turn deletion on anyway. If Plex is unreachable now, Docker and snap installs can create one on the host with <code>reaper-admin create-admin --username admin</code>.",
+      "noLocalYetNotice": "Sign in with Plex above and Reaper asks you to set a password, which creates the account. You need that password to turn deletion on. If Plex is unreachable, Docker and snap installs can create one on the host with <code>reaper-admin create-admin --username admin</code>.",
       "passwordLabel": "Password",
       "signIn": "Sign in",
       "signInFailedFallback": "Sign-in failed.",

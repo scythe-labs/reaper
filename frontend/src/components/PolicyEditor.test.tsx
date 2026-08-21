@@ -759,7 +759,9 @@ describe("the hold on a title that came back (#553)", () => {
 
     await screen.findByLabelText("How long an absence counts");
     expect(screen.getByText(/left your library and was fetched again/)).toBeInTheDocument();
-    expect(screen.getByText(/A file swapped for a better copy is back within hours/)).toBeVisible();
+    expect(
+      screen.getByText(/How long a title has to be missing before its return counts/),
+    ).toBeVisible();
   });
 
   it("hides both durations while the protection is off", async () => {
