@@ -29,7 +29,7 @@ import json
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +42,7 @@ from reaper.api.deps import (
     secret_box,
     session_factory,
 )
+from reaper.api.errors import refuse
 from reaper.api.schemas import (
     NO_PLEX_FORWARD,
     PlexServerChoiceOut,
@@ -267,10 +268,7 @@ async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexS
     hosted default) and, once a server is linked, the certificate check. Each field is
     independent, and one left out is left alone."""
     cleaned = payload.web_url.strip() if payload.web_url is not None else None
-    _require_web_url(
-        cleaned,
-        refusal="The Plex web address must be a full web address, like https://192.0.2.10:32400.",
-    )
+    _require_web_url(cleaned, code="error.plex.web_url_invalid")
     async with session_factory(request)() as session:
         # Only when the caller sent the field. `cleaned` is `None` for "not sent" and `""` for
         # "reset to the hosted default", and those are different requests (rule 1).
@@ -279,9 +277,7 @@ async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexS
         if payload.verify_tls is not None:
             server = (await session.execute(select(PlexServer))).scalars().first()
             if server is None:
-                raise HTTPException(
-                    422, "No Plex server is linked yet. Link one before changing this."
-                )
+                refuse(422, "error.plex.verify_tls_no_server")
             server.verify_tls = payload.verify_tls
         status = await _plex_status(session)
         await session.commit()
@@ -337,7 +333,7 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
         # deadline passes.
         return PlexLinkPollOut(status="retrying", reason=str(exc))
     except PlexLinkError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        refuse(400, "error.plex.link_rejected", error=str(exc))
 
     if linked is None:
         return PlexLinkPollOut(status="pending")
@@ -365,7 +361,7 @@ async def plex_unlink(request: Request) -> RemovedOut:
 async def _linked_server(session: AsyncSession) -> PlexServer:
     server = (await session.execute(select(PlexServer))).scalars().first()
     if server is None:
-        raise HTTPException(400, "No Plex server is linked yet. Link one first.")
+        refuse(400, "error.plex.not_linked")
     return server
 
 
@@ -459,9 +455,9 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
             verify_tls=payload.verify_tls,
         )
     except PlexLinkRetryableError as exc:
-        raise HTTPException(502, str(exc)) from exc
+        refuse(502, "error.plex.switch_unreachable", error=str(exc))
     except PlexLinkError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        refuse(400, "error.plex.link_rejected", error=str(exc))
 
     # Switching cleared the library choices, which were keyed to the old server. Refill them
     # from the new one here, for the same reason the link path does (rule 72): the stored list
@@ -490,9 +486,7 @@ async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> Pl
     uri = payload.uri.strip().rstrip("/")
     # The required form: this address is dialed, not stored for display, so a blank one is refused
     # here rather than carried into the probe. `host` is the validated host the probe needs.
-    parts, host = _required_web_url(
-        uri, refusal="The server address must be a full web address, like https://192.0.2.10:32400."
-    )
+    parts, host = _required_web_url(uri, code="error.plex.connection_address_invalid")
 
     async with session_factory(request)() as session:
         server = await _linked_server(session)
@@ -511,19 +505,10 @@ async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> Pl
     )
     answered = await connection_identity(probe, token, verify=verify)
     if answered is None:
-        raise HTTPException(
-            502,
-            "Couldn't reach a Plex server at that address, so nothing was changed. "
-            "Check the address and port, and whether the certificate check should be off.",
-        )
+        refuse(502, "error.plex.connection_probe_failed")
     if answered != expected:
         log.warning("plex.connection_wrong_server")
-        raise HTTPException(
-            409,
-            f"That address is a different Plex server, so nothing was changed. Reaper is "
-            f"linked to {expected_name}; use an address for that server, or link the other "
-            f"one instead.",
-        )
+        refuse(409, "error.plex.connection_wrong_server", expected_name=expected_name)
 
     async with session_factory(request)() as session:
         server = await _linked_server(session)
@@ -596,7 +581,7 @@ async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
     try:
         return await _sync_libraries(request)
     except PlexError as exc:
-        raise HTTPException(502, f"Could not reach Plex: {exc}") from exc
+        refuse(502, "error.plex.libraries_sync_failed", error=str(exc))
 
 
 async def _sync_libraries(request: Request) -> list[PlexLibraryOut]:
@@ -704,16 +689,13 @@ async def reset_watch_evidence(
     keys = (f"ip:{client_ip(request)}", "account:watch-evidence-reset")
     async with session_factory(request)() as session:
         if not await admin_password.has_password(session):
-            raise HTTPException(
-                400,
-                "Set an admin password first. It's what confirms forgetting the record.",
-            )
+            refuse(400, "error.plex.no_password_set_for_watch_reset")
         await require_admin_password(
             session,
             payload.password or "",
             keys=keys,
             gate="forget_watch_record",
-            refusal="That password didn't match. The record was kept.",
+            code="error.auth.forget_watch_password_mismatch",
         )
         forgotten = await watch_evidence.forget_all(session)
         await session.commit()

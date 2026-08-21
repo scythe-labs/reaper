@@ -1038,6 +1038,17 @@ A legacy row whose stored prose already holds an English span gets its own id
 leak is visible and scoped to rows a rescan replaces. A rule name the operator typed travels as a
 param. It is their data in their language.
 
-What stays English on purpose: HTTP error `detail` bodies until each refusal carries a code,
-log lines, the confirmation phrase, the `reaper-admin` CLI, OpenAPI tag descriptions and the
-API-key auth box, and Discord posts and the tray until the backend has a catalog of its own.
+What stays English on purpose: log lines, the confirmation phrase, the `reaper-admin` CLI,
+OpenAPI tag descriptions and the API-key auth box, and Discord posts and the tray until the
+backend has a catalog of its own.
+
+**HTTP error `detail` bodies are the one surface where "stays English" and "gets a code" are
+not the same choice.** `detail` keeps
+carrying the formatted English permanently, deliberately never `{code, params, message}`: an
+API-key client or a documented example already reads `detail` as a sentence, and the plan's
+own draft envelope would have broken that reader on every existing integration for a case none
+of them asked to be fixed. `code` and a raw `params` map ride beside it at the top level
+instead (`reaper.refusal.MESSAGES`, `api.errors.refuse`), so a typed reader composes its own
+sentence and an untyped one keeps reading the same body it always has. The browser is the
+first typed reader; composing `error.*` through `ui.json` the way `why`, `chip` and `warning`
+already do is the one thing left, since the catalog itself does not exist yet.

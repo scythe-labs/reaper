@@ -31,7 +31,7 @@ from urllib.parse import SplitResult, urlsplit
 from zoneinfo import ZoneInfo
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +46,7 @@ from reaper.api.deps import (
     secret_box,
     session_factory,
 )
+from reaper.api.errors import refuse
 from reaper.api.schemas import JobRunOut, OkOut, RemovedOut
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate
@@ -90,11 +91,8 @@ router = APIRouter(prefix="/api/settings")
 def _kind(value: str) -> InstanceKind:
     try:
         return InstanceKind(value)
-    except ValueError as exc:
-        raise HTTPException(
-            422,
-            f'"{value}" is not a service Reaper knows. Use sonarr, radarr, tautulli or seerr.',
-        ) from exc
+    except ValueError:
+        refuse(422, "error.settings.unknown_service_kind", value=value)
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +260,10 @@ class LeavingSoonLastSkipOut(BaseModel):
     """
 
     at: str
-    #: Why, in one clause, because the Jobs row trails it after the exact time.
-    result: str
+    #: Why, as a typed reason (phase 8a): the browser composes it, the same as any other
+    #: ``ReasonKey``. A row written before this conversion carries a bare English phrase,
+    #: thawed as ``Reason("legacy", {"text": ...})`` -- ``services.app_settings`` says how.
+    result_reason: ReasonKey
 
 
 class LeavingSoonSettingsOut(BaseModel):
@@ -311,12 +311,6 @@ class ScheduleOut(BaseModel):
 
 class JobScheduleIn(BaseModel):
     cron: str | None = None
-
-
-#: What both arms of :func:`set_job_schedule` answer with when the scheduler will not take a
-#: cron. One declaration, so the two cannot drift into two sentences (rule 144). ``reason``
-#: is the parser's own words about what it choked on.
-_BAD_CRON = "That is not a valid schedule: {reason}. Use cron form, e.g. '30 4 * * *'."
 
 
 class SafetyOut(BaseModel):
@@ -370,7 +364,7 @@ class NotificationsTestIn(BaseModel):
 _DISCORD_WEBHOOK_HOSTS = ("discord.com", "discordapp.com")
 
 
-def _required_web_url(raw: str, *, refusal: str) -> tuple[SplitResult, str]:
+def _required_web_url(raw: str, *, code: str) -> tuple[SplitResult, str]:
     """Rule 84's one shared check: a real http(s) address with a host, else 422.
 
     A scheme-less paste (``host:8989``), a ``javascript:``/``data:`` value, a scheme with no host
@@ -378,8 +372,8 @@ def _required_web_url(raw: str, *, refusal: str) -> tuple[SplitResult, str]:
     (rules 84/13). A ``type="url"`` input is not validation, so this is the real check even where
     the browser mirrors it.
 
-    ``refusal`` is the operator's sentence, one per field, because they need to know which box to
-    fix and not merely that some URL somewhere was wrong.
+    ``code`` is the catalog code for the operator's sentence, one per field, because they need to
+    know which box to fix and not merely that some URL somewhere was wrong.
 
     Returns the parsed URL and its host, so a caller that needs the pieces (a probe wanting the
     host and port) reads them from the value this validated instead of re-parsing and re-deciding
@@ -392,11 +386,11 @@ def _required_web_url(raw: str, *, refusal: str) -> tuple[SplitResult, str]:
     """
     parts = urlsplit(raw.strip())
     if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise HTTPException(422, refusal)
+        refuse(422, code)
     return parts, parts.hostname
 
 
-def _require_web_url(raw: str | None, *, refusal: str) -> None:
+def _require_web_url(raw: str | None, *, code: str) -> None:
     """The same check for an OPTIONAL field, where blank is a real answer and passes.
 
     Blank means the operator turned the setting off (a link address cleared, a Plex web address
@@ -406,20 +400,15 @@ def _require_web_url(raw: str | None, *, refusal: str) -> None:
     """
     if raw is None or not raw.strip():
         return
-    _required_web_url(raw, refusal=refusal)
+    _required_web_url(raw, code=code)
 
 
 #: The address every Reaper request for a service goes to, so it is the most consequential URL an
 #: operator types -- and the one that used to reach storage unchecked, surfacing much later as a
 #: connection or scan failure rather than at the box that was wrong (#255).
-_BASE_URL_REFUSAL = "The service address must be a full web address, like https://192.0.2.10:8989."
-
-
 def _validate_external_url(raw: str | None) -> None:
     """The per-service link address Reaper renders into a jump link for every signed-in user."""
-    _require_web_url(
-        raw, refusal="The external URL must be a full web address, like https://192.0.2.10:8989."
-    )
+    _require_web_url(raw, code="error.settings.external_url_invalid")
 
 
 def _validated_discord_webhook(raw: str) -> str:
@@ -432,11 +421,7 @@ def _validated_discord_webhook(raw: str) -> str:
         host.endswith("." + h) for h in _DISCORD_WEBHOOK_HOSTS
     )
     if parsed.scheme != "https" or not ok_host or not parsed.path.startswith("/api/webhooks/"):
-        raise HTTPException(
-            422,
-            "That is not a Discord webhook URL. Paste the full "
-            "https://discord.com/api/webhooks/… URL from the channel's integration settings.",
-        )
+        refuse(422, "error.settings.discord_webhook_invalid")
     return url
 
 
@@ -463,7 +448,7 @@ async def list_instances(request: Request) -> list[InstanceOut]:
 
 @router.post("/instances", tags=[api_tags.SERVICES])
 async def create_instance(request: Request, payload: InstanceCreateIn) -> InstanceOut:
-    _require_web_url(payload.base_url, refusal=_BASE_URL_REFUSAL)
+    _require_web_url(payload.base_url, code="error.settings.instance_base_url_invalid")
     _validate_external_url(payload.external_url)
     async with session_factory(request)() as session:
         try:
@@ -481,7 +466,7 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
                 service_instance_map=payload.service_instance_map,
             )
         except instances.InstanceError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
         await session.commit()
         return InstanceOut.of(view)
 
@@ -490,7 +475,7 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
 async def update_instance(
     request: Request, instance_id: int, payload: InstanceUpdateIn
 ) -> InstanceOut:
-    _require_web_url(payload.base_url, refusal=_BASE_URL_REFUSAL)
+    _require_web_url(payload.base_url, code="error.settings.instance_base_url_invalid")
     _validate_external_url(payload.external_url)
     async with session_factory(request)() as session:
         try:
@@ -509,7 +494,7 @@ async def update_instance(
                 service_instance_map=payload.service_instance_map,
             )
         except instances.InstanceError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
         await session.commit()
         return InstanceOut.of(view)
 
@@ -627,7 +612,7 @@ async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
         try:
             result = await instances.test_saved_instance(session, secret_box(request), instance_id)
         except instances.InstanceError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
         await session.commit()
     return TestOut(ok=result.ok, detail=result.detail, version=result.version)
 
@@ -651,9 +636,9 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
                 session, secret_box(request), instance_id, section_paths=section_paths
             )
         except instances.InstanceError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
         except IntegrationError as exc:
-            raise HTTPException(502, f"Could not read the folder list: {exc}") from exc
+            refuse(502, "error.settings.folder_list_unreachable", error=str(exc))
     return [RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in folders]
 
 
@@ -670,9 +655,9 @@ async def instance_seerr_services(request: Request, instance_id: int) -> list[Se
         try:
             services = await instances.seerr_services(session, secret_box(request), instance_id)
         except instances.InstanceError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
         except IntegrationError as exc:
-            raise HTTPException(502, f"Could not read the service list: {exc}") from exc
+            refuse(502, "error.settings.service_list_unreachable", error=str(exc))
     return [SeerrServiceOut.model_validate(s, from_attributes=True) for s in services]
 
 
@@ -688,8 +673,8 @@ async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> Leavin
         enabled=await app_settings.leaving_soon_enabled(session),
         allow_unarmed=await app_settings.leaving_soon_unarmed(session, settings),
         last_skip=LeavingSoonLastSkipOut(
-            at=str(skip.get("at", "")),
-            result=str(skip.get("result", "")),
+            at=skip[0],
+            result_reason=ReasonKey.model_validate(to_wire(skip[1])),
         )
         if skip
         else None,
@@ -817,7 +802,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 timezone=job_tz,
             )
         except ValueError as exc:
-            raise HTTPException(422, _BAD_CRON.format(reason=exc)) from exc
+            refuse(422, "error.settings.bad_cron", reason=str(exc))
         async with session_factory(request)() as session:
             await app_settings.set_scan_schedule(session, cron)
             await session.commit()
@@ -835,12 +820,12 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 timezone=job_tz,
             )
         except ValueError as exc:
-            raise HTTPException(422, _BAD_CRON.format(reason=exc)) from exc
+            refuse(422, "error.settings.bad_cron", reason=str(exc))
         async with session_factory(request)() as session:
             await app_settings.set_maintenance_schedule(session, job_id, cron)
             await session.commit()
     else:
-        raise HTTPException(404, f'No schedulable job named "{job_id}".')
+        refuse(404, "error.settings.unknown_schedulable_job", job_id=job_id)
 
     log.info("schedule.updated", job=job_id, cron=cron)
     return await get_schedule(request)
@@ -858,7 +843,7 @@ async def run_job(request: Request, job_id: str) -> JobRunOut:
     ``/api/scan/start`` as a polled background job so the UI can show progress.
     """
     if job_id not in MAINTENANCE_JOB_IDS:
-        raise HTTPException(404, f'No runnable job named "{job_id}".')
+        refuse(404, "error.settings.unknown_runnable_job", job_id=job_id)
     run_maintenance_now(
         request.app.state.scheduler,
         job_id,
@@ -916,21 +901,15 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
             # `true` the app then ignores and the banner contradicts. Answering here is what
             # keeps the switch and the state one thing.
             if runtime_settings(request).recovery:
-                raise HTTPException(
-                    409,
-                    "Recovery mode is on, so deletion stays off. Turn it off and restart first.",
-                )
+                refuse(409, "error.settings.recovery_mode_blocks_arming")
             if not await admin_password.has_password(session):
-                raise HTTPException(
-                    400,
-                    "Set an admin password first. It's what confirms turning deletion on.",
-                )
+                refuse(400, "error.settings.no_password_set_for_arming")
             await require_admin_password(
                 session,
                 payload.password or "",
                 keys=keys,
                 gate="arm_deletion",
-                refusal="That password didn't match. Deletion stays off.",
+                code="error.auth.arm_deletion_password_mismatch",
             )
         await app_settings.set_destructive_enabled(session, enabled=payload.enabled)
         await session.commit()
@@ -974,7 +953,7 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
                 payload.current_password or "",
                 keys=keys,
                 gate="change_password",
-                refusal="The current password didn't match. Nothing was changed.",
+                code="error.auth.change_password_mismatch",
             )
         # Hashing the NEW password is one more Argon2 run, so it takes its own slot. Not part
         # of the gate above: the verify has already passed, so a refusal here records nothing.
@@ -985,7 +964,7 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
                 session, payload.password, keep_session_token=keep
             )
         except admin_password.PasswordError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            refuse(422, "error.settings.password_change_rejected", error=str(exc))
         finally:
             argon2_gate.release()
         # After set_password, so a refused password (too short) leaves the mark intact and
@@ -1236,10 +1215,7 @@ class _GeneralField[T]:
 
 
 def _clean_application_url(value: str) -> str:
-    _require_web_url(
-        value,
-        refusal="The application URL must be a full web address, like https://reaper.example.com",
-    )
+    _require_web_url(value, code="error.settings.application_url_invalid")
     return value
 
 
@@ -1249,7 +1225,7 @@ def _clean_timezone(value: str) -> str:
     would leave every timed job on whatever the host happens to be set to."""
     stripped = value.strip()
     if not stripped or not app_settings.is_valid_timezone(stripped):
-        raise HTTPException(422, "That is not a known time zone. Pick one from the list.")
+        refuse(422, "error.settings.timezone_unknown")
     return stripped
 
 
@@ -1260,7 +1236,7 @@ def _clean_accent_color(value: str) -> str:
     whitespace itself."""
     stripped = value.strip()
     if stripped and not _HEX_COLOR.match(stripped):
-        raise HTTPException(422, "The accent color must be a hex code like #25c3ff.")
+        refuse(422, "error.settings.accent_color_invalid")
     return value
 
 
@@ -1272,11 +1248,7 @@ def _clean_trusted_proxies(value: list[str]) -> list[str]:
         try:
             ip_network(cleaned_entry, strict=False)
         except ValueError:
-            raise HTTPException(
-                422,
-                f'"{cleaned_entry}" is not an address or a range. Use entries '
-                "like 172.16.0.1 or 172.16.0.0/12.",
-            ) from None
+            refuse(422, "error.settings.trusted_proxy_invalid", entry=cleaned_entry)
     return value
 
 
@@ -1356,12 +1328,12 @@ def _validated_desktop_values(payload: GeneralSettingsIn) -> dict[str, str]:
         return {}
     platform = launcher.desktop_platform()
     if platform is None:
-        raise HTTPException(422, "These settings exist only on the Windows and macOS apps.")
+        refuse(422, "error.settings.desktop_only")
     # Refused where it is inert: accepting it would write a launcher.conf line
     # nothing on Windows reads, and every later read would echo a switch the
     # platform cannot honor.
     if payload.dock_icon is not None and platform != "macos":
-        raise HTTPException(422, "The Dock icon setting exists only on the macOS app.")
+        refuse(422, "error.settings.dock_icon_macos_only")
     values: dict[str, str] = {}
     if payload.tray is not None:
         values[launcher.DESKTOP_TRAY_KEY] = "true" if payload.tray else "false"
@@ -1376,9 +1348,7 @@ def _write_desktop_values(data_dir: Path, values: dict[str, str]) -> None:
     try:
         launcher.write_conf_values(data_dir, values)
     except OSError:
-        raise HTTPException(
-            500, "Reaper couldn't save this to launcher.conf in its data folder."
-        ) from None
+        refuse(500, "error.settings.launcher_conf_write_failed")
     # The environment is the boot-resolved record _desktop_out reads (the
     # launcher seeded the file into it), so mirror the write there too:
     # the response and every later read then show the value the next start
@@ -1442,7 +1412,7 @@ async def reveal_api_key(request: Request) -> ApiKeyOut:
     async with session_factory(request)() as session:
         key = await app_settings.get_api_key(session, secret_box(request))
     if key is None:
-        raise HTTPException(404, "No API key exists yet. Generate one first.")
+        refuse(404, "error.settings.no_api_key")
     return ApiKeyOut(key=key)
 
 

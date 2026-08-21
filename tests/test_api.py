@@ -61,6 +61,7 @@ from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
 from ._lists import seeded_fingerprint
+from ._reasons import refusal_text
 from ._reasons import text as reason_text
 
 
@@ -410,9 +411,10 @@ class TestTheRunsApi:
         )
 
         assert refused.status_code == 404, refused.text
-        assert refused.json()["detail"] == (
-            "Reaper has no record of that item. It keeps only the last 7 scans."
-        )
+        body = refused.json()
+        assert body["code"] == "error.whitelist.unknown_item"
+        assert body["params"] == {"keep_scans": 7}
+        assert body["detail"] == refusal_text("error.whitelist.unknown_item", keep_scans=7)
 
     def test_a_plan_shows_the_literal_steps_and_the_confirmation_phrase(
         self, client: TestClient
@@ -532,7 +534,7 @@ class TestTheRunsApi:
             json={"confirmation_phrase": run["confirmation_phrase"]},
         )
         assert resp.status_code == 403
-        assert "deletion is turned off" in resp.json()["detail"].lower()
+        assert resp.json()["code"] == "error.runs.deletion_disabled"
 
 
 @pytest.fixture
@@ -637,7 +639,11 @@ class TestTheRunSelectionIsExplicit:
         refused = selection_client.post("/api/runs", json={"media_keys": []})
 
         assert refused.status_code == 422
-        assert "no items were selected" in refused.json()["detail"].lower()
+        body = refused.json()
+        assert body["code"] == "error.runs.plan_refused"
+        # PlanError's own words ride in `params["error"]` raw, so the specific sentence is
+        # planner.py's to own, not the catalog's; the code above is what phase 8a covers.
+        assert "no items were selected" in body["params"]["error"].lower()
         # And nothing was journalled: a refused selection leaves no plan behind at all.
         assert selection_client.get("/api/runs").json() == []
 
@@ -765,7 +771,7 @@ class TestExecuteGates:
             json={"confirmation_phrase": "REAP 999 SOULS 999 GB"},
         )
         assert resp.status_code == 409
-        assert "does not match" in resp.json()["detail"].lower()
+        assert resp.json()["code"] == "error.runs.confirmation_mismatch"
 
     def test_the_right_phrase_but_no_plex_is_refused_before_any_delete(
         self, armed_client: TestClient
@@ -779,7 +785,7 @@ class TestExecuteGates:
             json={"confirmation_phrase": run["confirmation_phrase"]},
         )
         assert resp.status_code == 409
-        assert "without plex" in resp.json()["detail"].lower()
+        assert resp.json()["code"] == "error.runs.preflight_no_plex"
 
     def test_executing_a_missing_run_is_a_404(self, armed_client: TestClient) -> None:
         resp = armed_client.post(
@@ -800,7 +806,7 @@ class TestExecuteGates:
         run = armed_client.post("/api/runs").json()
         resp = armed_client.post(f"/api/runs/{run['id']}/stop")
         assert resp.status_code == 409
-        assert "not currently running" in resp.json()["detail"].lower()
+        assert resp.json()["code"] == "error.runs.not_running"
 
     def test_a_reap_refused_because_one_is_running_says_so_in_the_log(
         self, armed_client: TestClient
@@ -1020,7 +1026,7 @@ class TestLimitsNobodySavedDoNotBoundAReap:
         )
 
         assert reaped.status_code == 409
-        assert "limits you saved" in reaped.json()["detail"]
+        assert reaped.json()["code"] == "error.runs.limits_unreadable"
 
     def test_the_refusal_says_what_to_fix(self, client: TestClient, tmp_path: Path) -> None:
         """Rule 21. The operator has to be able to act on this without reading the code, so
@@ -1029,7 +1035,10 @@ class TestLimitsNobodySavedDoNotBoundAReap:
         client.put("/api/profile", json=saved)
         self._break_the_saved_limits(tmp_path)
 
-        detail = client.post("/api/runs").json()["detail"]
+        body = client.post("/api/runs").json()
+        assert body["code"] == "error.runs.limits_unreadable"
+        detail = body["detail"]
+        assert detail == refusal_text("error.runs.limits_unreadable")
         assert "couldn't read the limits you saved" in detail
         assert "Pace and limits" in detail
 
@@ -1278,7 +1287,9 @@ class TestPlexWebUrlSetting:
         # http://" while the check behind it was a `startswith` pair that let a bare scheme with
         # no host through; both moved to the shared check together (#255, rule 84). The sibling
         # cases live in test_settings_api.py's TestPlexStatus.
-        assert "full web address" in refused.json()["detail"]
+        body = refused.json()
+        assert body["code"] == "error.plex.web_url_invalid"
+        assert "full web address" in body["detail"]
 
     def test_clearing_resets_to_the_default(self, client: TestClient) -> None:
         client.put("/api/settings/plex", json={"web_url": "https://plex.example"})
@@ -1766,7 +1777,9 @@ class TestPolicyPersistence:
             refused = client.post("/api/policy", json=out["body"])
 
             assert refused.status_code == 422
-            message = " ".join(d["msg"] for d in refused.json()["detail"])
+            items = refused.json()["detail"]
+            assert any(item.get("code") == "error.policy.retired_gate" for item in items)
+            message = " ".join(d["msg"] for d in items)
             assert "left over from an older version" in message
             # Not the gate id: this is the editor's "Can't save this" banner on arrival, and
             # the row it names is labeled in the operator's words on the same screen (rule 21).
@@ -1930,6 +1943,7 @@ class TestPolicyPersistence:
         assert "Value error" not in message
         assert "Turn it off, then save." in message
         assert ["body", "gates", "3", "gate"] in [d["loc"] for d in detail]
+        assert any(d.get("code") == "error.policy.retired_gate" for d in detail)
 
         # And the stored policy is untouched, so the install still scans.
         assert client.get("/api/policy").status_code == 200

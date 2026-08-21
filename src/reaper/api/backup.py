@@ -28,7 +28,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
@@ -40,6 +40,7 @@ from reaper.api.deps import (
     runtime_settings,
     session_factory,
 )
+from reaper.api.errors import refuse
 from reaper.api.runs import reap_in_flight
 from reaper.api.schemas import OkOut, RestoreCancelOut
 from reaper.buildinfo import build_version
@@ -188,7 +189,7 @@ async def _spool_body(request: Request, settings: Settings) -> Path:
             async for chunk in request.stream():
                 total += len(chunk)
                 if total > _MAX_UPLOAD_BYTES:
-                    raise HTTPException(413, "That file is too large to be a Reaper backup.")
+                    refuse(413, "error.backup.upload_too_large")
                 out.write(chunk)
     except BaseException:
         # mkstemp created it, so it exists to remove. os.unlink (not Path.unlink) because
@@ -197,7 +198,7 @@ async def _spool_body(request: Request, settings: Settings) -> Path:
         raise
     if total == 0:
         os.unlink(path)  # noqa: PTH108 -- see above
-        raise HTTPException(400, "No file was uploaded.")
+        refuse(400, "error.backup.no_file_uploaded")
     return path
 
 
@@ -214,7 +215,7 @@ async def restore_prepare(request: Request) -> RestoreSummaryOut:
     try:
         summary = await asyncio.to_thread(restore.stage_upload, settings, archive_path)
     except restore.RestoreError as exc:
-        raise HTTPException(exc.status, str(exc)) from exc
+        refuse(exc.status, "error.backup.restore_refused", error=str(exc))
     finally:
         archive_path.unlink(missing_ok=True)
     # Field for field off the staging summary, less `revision`: an Alembic id is not
@@ -240,22 +241,19 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> OkOut:
     keys = (f"ip:{client_ip(request)}", "account:restore")
     async with session_factory(request)() as session:
         if not await admin_password.has_password(session):
-            raise HTTPException(
-                400,
-                "Set an admin password first. It's what confirms a restore.",
-            )
+            refuse(400, "error.backup.no_password_set")
         await require_admin_password(
             session,
             payload.password or "",
             keys=keys,
             gate="restore",
-            refusal="That password didn't match. Nothing was restored.",
+            code="error.auth.restore_password_mismatch",
         )
 
     try:
         await asyncio.to_thread(restore.arm, settings, payload.token)
     except restore.RestoreError as exc:
-        raise HTTPException(exc.status, str(exc)) from exc
+        refuse(exc.status, "error.backup.restore_refused", error=str(exc))
     log.warning("restore.confirmed")
     return OkOut(ok=True)
 
@@ -344,11 +342,9 @@ async def restore_restart(request: Request) -> JSONResponse:
     """
     settings = runtime_settings(request)
     if not await asyncio.to_thread(restore.is_armed, settings):
-        raise HTTPException(409, "There's no restore waiting, so nothing was stopped.")
+        refuse(409, "error.backup.restore_not_waiting")
     if reap_in_flight(request.app):
-        raise HTTPException(
-            409, "A reap is running. Let it finish or stop it, then restart Reaper."
-        )
+        refuse(409, "error.backup.reap_in_progress")
     # The stop rides the response's background task, so it runs after the last byte is on its
     # way and the browser has an answer to render. A route that stopped the process inline
     # would close the connection first and leave the operator looking at a network error.

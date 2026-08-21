@@ -21,11 +21,12 @@ from __future__ import annotations
 
 from contextlib import AsyncExitStack
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from sqlalchemy import select
 
 from reaper.api import tags as api_tags
 from reaper.api.deps import state_singleton
+from reaper.api.errors import refuse
 from reaper.api.schemas import (
     FairnessReportOut,
     PersonDetailOut,
@@ -68,12 +69,6 @@ def _unmatched_out(u: fairness.UnmatchedTitle) -> UnmatchedRequestOut:
     )
 
 
-_NEEDS_BOTH = (
-    "Scales needs a Seerr and a Tautulli instance: Seerr for who requested what, Tautulli "
-    "for who watched it. Configure them in Settings."
-)
-
-
 async def _seerr_rows(request: Request) -> list[Instance]:
     """The enabled Seerr instances, or a 400 when Scales cannot run (no Seerr, or no
     Tautulli to read watches from). Seerr is multi-instance, so every portal is returned."""
@@ -86,7 +81,7 @@ async def _seerr_rows(request: Request) -> list[Instance]:
     seerr_rows = [r for r in rows if r.kind is InstanceKind.SEERR]
     tautulli_row = next((r for r in rows if r.kind is InstanceKind.TAUTULLI), None)
     if not seerr_rows or tautulli_row is None:
-        raise HTTPException(400, _NEEDS_BOTH)
+        refuse(400, "error.fairness.needs_seerr_and_tautulli")
     return seerr_rows
 
 
@@ -136,7 +131,7 @@ async def get_fairness(request: Request) -> FairnessReportOut:
         # Any unreachable Seerr is a 502 with the reason -- never a partial leaderboard that
         # looks complete. (Seerr's user list / quota are best-effort inside build_report and
         # do not reach here.)
-        raise HTTPException(502, f"Could not build Scales: {exc}") from exc
+        refuse(502, "error.fairness.build_failed", error=str(exc))
 
     return FairnessReportOut(
         total_requests=report.total_requests,
@@ -180,10 +175,10 @@ async def get_person(request: Request, identity: str) -> PersonDetailOut:
                 cache=_request_cache(request),
             )
     except IntegrationError as exc:
-        raise HTTPException(502, f"Could not build Scales: {exc}") from exc
+        refuse(502, "error.fairness.build_failed", error=str(exc))
 
     if detail is None:
-        raise HTTPException(404, "No one by that id is in the last scan.")
+        refuse(404, "error.fairness.person_not_found")
 
     return _person_out(detail)
 

@@ -29,6 +29,7 @@ from reaper.api.about import router as about_router
 from reaper.api.auth import router as auth_router
 from reaper.api.backup import router as backup_router
 from reaper.api.breakdown import router as breakdown_router
+from reaper.api.errors import RefusalHTTPException, refusal_body, validation_error_items
 from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
 from reaper.api.lists import router as lists_router
@@ -525,29 +526,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_reason(_: Request, exc: RequestValidationError) -> JSONResponse:
-        """Strip pydantic's ``Value error,`` prefix off a wire-schema refusal.
+        """Strip pydantic's ``Value error,`` prefix off a wire-schema refusal, and type it.
 
         The SPA renders ``detail[].msg`` verbatim (``api.ts``'s ``reason``), so a domain
         refusal raised in a schema validator reached the operator as "Value error, There is
         no ... protection to switch on" -- internal vocabulary in front of a plain sentence,
-        which rule 21 does not allow. ``policy._to_body`` already strips exactly this for
-        refusals raised inside a route; this is the same removal for the ones FastAPI
-        handles before the route body ever runs, so both paths read alike.
+        which rule 21 does not allow. ``policy._to_body`` and ``runs.update_profile`` strip
+        exactly this for a refusal raised inside a route by constructing an engine model
+        directly; this is the same removal, through the same ``validation_error_items``, for
+        the ones FastAPI handles before the route body ever runs, so all three paths read
+        alike and carry the same ``code``/``params`` where the underlying error is typed.
 
         Shape is otherwise FastAPI's own, so nothing downstream has to change.
         """
         return JSONResponse(
             status_code=422,
-            content={
-                "detail": [
-                    {
-                        "loc": [str(part) for part in error.get("loc", ())],
-                        "msg": str(error.get("msg", "")).removeprefix("Value error, "),
-                        "type": error.get("type", ""),
-                    }
-                    for error in exc.errors()
-                ]
-            },
+            content={"detail": validation_error_items(exc.errors())},
+        )
+
+    @app.exception_handler(RefusalHTTPException)
+    async def _refusal_reason(_: Request, exc: RefusalHTTPException) -> JSONResponse:
+        """Every coded refusal's wire shape: the English ``detail`` an API client already
+        reads, plus ``code`` and ``params`` beside it at the top level for a typed reader
+        (the SPA's composer, a test). One serializer (``refusal_body``) shared with
+        ``api.middleware``'s raw ASGI rejections, so the two cannot drift apart.
+
+        A plain ``HTTPException`` that is not this subclass -- FastAPI's own 404/405,
+        Starlette's -- is untouched and keeps its default shape; this handler is registered
+        for ``RefusalHTTPException`` alone.
+        """
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=refusal_body(exc.status_code, exc.code, exc.params),
+            headers=exc.headers,
         )
 
     @app.get("/api/health", tags=[api_tags.SETUP])

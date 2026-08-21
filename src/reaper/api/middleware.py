@@ -49,12 +49,14 @@ import hashlib
 import hmac
 import json
 import time
+from typing import Any
 
 import structlog
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from starlette.websockets import WebSocketClose
 
+from reaper.api.errors import refusal_body
 from reaper.auth.proxy import client_ip
 from reaper.auth.ratelimit import Throttle
 from reaper.auth.sessions import resolve_session_from_cookies
@@ -227,8 +229,10 @@ def api_key_scope_description() -> str:
     )
 
 
-def api_key_refusal_detail(method: str) -> str:
-    """What the key holder is told at the moment the fence turns them away.
+def api_key_refusal(method: str) -> tuple[str, dict[str, str]]:
+    """What the key holder is told at the moment the fence turns them away, as a code and
+    its params: a denied read hears which reads are denied, a refused write hears which
+    writes are allowed.
 
     The third place this fence is described in the operator's words, and the only one they
     read while it is stopping them, so it is generated from the same two declarations as
@@ -238,19 +242,10 @@ def api_key_refusal_detail(method: str) -> str:
     write told the caller the run caps were out of reach, in the request right before the
     one that turned them off (S-2). That is the drift ``api_key_scope_description``'s
     comment describes, in the copy nobody thought to generate.
-
-    Says only the half that explains THIS refusal: a denied read hears which reads are
-    denied, a refused write hears which writes are allowed. The other half would be twice
-    the words for the question the caller did not ask.
     """
     if method in _SAFE_METHODS:
-        return (
-            "This needs the web app, signed in. An API key reads everything except "
-            f"{_read_exclusions()}."
-        )
-    return (
-        f"This needs the web app, signed in. An API key writes only these: {_write_permissions()}."
-    )
+        return "error.auth.api_key_read_denied", {"exclusions": _read_exclusions()}
+    return "error.auth.api_key_write_denied", {"permissions": _write_permissions()}
 
 
 def _api_key_allowed(method: str, path: str) -> bool:
@@ -359,8 +354,8 @@ def _csrf_ok(request: Request) -> bool:
     return site is None or site in ("same-origin", "same-site", "none")
 
 
-async def _reject(send: Send, status: int, detail: str) -> None:
-    body = json.dumps({"detail": detail}).encode("utf-8")
+async def _reject(send: Send, status: int, code: str, params: dict[str, Any] | None = None) -> None:
+    body = json.dumps(refusal_body(status, code, params)).encode("utf-8")
     await send(
         {
             "type": "http.response.start",
@@ -459,7 +454,7 @@ class AuthGuard:
 
         if scope["method"] not in _SAFE_METHODS and not _csrf_ok(request):
             _refused(request, path, 403, "csrf")
-            await _reject(send, 403, "This request was blocked by Reaper's CSRF protection.")
+            await _reject(send, 403, "error.auth.csrf_blocked")
             return
 
         if _is_open(path):
@@ -473,7 +468,7 @@ class AuthGuard:
 
         if user is None:
             _refused(request, path, 401, "no_session")
-            await _reject(send, 401, "Not authenticated.")
+            await _reject(send, 401, "error.auth.not_authenticated")
             return
 
         await self._traced(scope, receive, send, path)
@@ -497,9 +492,7 @@ class AuthGuard:
         throttle_key = f"api-key:{client_ip(request)}"
         if api_key_throttle.retry_after(throttle_key) > 0:
             _refused(request, path, 429, "api_key_throttled")
-            await _reject(
-                send, 429, "Too many bad API keys from this address. Wait a moment and try again."
-            )
+            await _reject(send, 429, "error.auth.api_key_throttled")
             return
 
         digest: bytes | None = getattr(request.app.state, "api_key_digest", None)
@@ -518,13 +511,14 @@ class AuthGuard:
                 )
             else:
                 _refused(request, path, 401, "api_key_invalid")
-            await _reject(send, 401, "That API key is not valid.")
+            await _reject(send, 401, "error.auth.api_key_invalid")
             return
         api_key_throttle.record_success(throttle_key)
 
         if not _api_key_allowed(scope["method"], path):
             _refused(request, path, 403, "api_key_not_allowed_here")
-            await _reject(send, 403, api_key_refusal_detail(scope["method"]))
+            code, params = api_key_refusal(scope["method"])
+            await _reject(send, 403, code, params)
             return
 
         await self._traced(scope, receive, send, path)

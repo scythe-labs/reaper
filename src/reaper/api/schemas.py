@@ -16,6 +16,7 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_core import PydanticCustomError
 
 from reaper.engine.explanation import (
     Explanation,
@@ -757,9 +758,10 @@ class GateSettingIn(GateSettingOut):
             # through here: the editor re-validates the loaded draft on mount, so an upgraded
             # install meets this before touching anything. The 422's ``loc`` still carries
             # ``body.gates.<i>.gate``, so an API caller can still tell which row.
-            raise ValueError(
+            raise PydanticCustomError(
+                "error.policy.retired_gate",
                 "That protection is left over from an older version and can't be saved. "
-                "Turn it off, then save."
+                "Turn it off, then save.",
             )
         return v
 
@@ -1181,8 +1183,10 @@ class FieldOut(BaseModel):
     """A field's key, type and operators only. The browser says the words: the catalog's
     ``why.field.<key>`` is the label the policy editor renders, ``policyRules.fieldHelp.<key>``
     and ``policyRules.fieldUnit.<key>`` the help paragraph and unit where the field carries one
-    (#868 phase 4). ``FieldSpec.label`` still exists server-side, for the save-boundary
-    ``ValueError``s in ``engine/fields.py`` and ``engine/policy.py`` -- never serialized here."""
+    (#868 phase 4). The save-boundary refusals in ``engine/fields.py`` and ``engine/policy.py``
+    carry the raw ``field`` key as a param instead of a server-composed label (phase 8a): the
+    browser composes ``why.field.<key>`` for the sentence, and an API client reads the key it
+    sent."""
 
     key: str
     type: FieldType
@@ -1516,9 +1520,15 @@ class PlexStartIn(BaseModel):
             return None
         parsed = urlparse(value)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("expected an http or https origin")
+            raise PydanticCustomError(
+                "error.auth.forward_origin_invalid",
+                "That address must start with http:// or https://.",
+            )
         if parsed.path or parsed.params or parsed.query or parsed.fragment:
-            raise ValueError("expected an origin with no path")
+            raise PydanticCustomError(
+                "error.auth.forward_origin_has_path",
+                "That address must be just the site, with nothing after it.",
+            )
         return value
 
     def forward_url(self) -> str | None:

@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from sqlalchemy import and_, asc, case, desc, func, null, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 from reaper.api import tags as api_tags
 from reaper.api.deps import newest_snapshot, session_factory
+from reaper.api.errors import refuse
 from reaper.api.schemas import (
     CandidateDetail,
     CandidateOut,
@@ -156,7 +157,7 @@ async def latest_snapshot(request: Request) -> SnapshotOut:
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
         if snapshot is None:
-            raise HTTPException(404, "No scan has run yet.")
+            refuse(404, "error.review.no_scan")
         return await _snapshot_out(session, snapshot)
 
 
@@ -1710,7 +1711,7 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
     async with session_factory(request)() as session:
         row = await session.get(Candidate, candidate_id)
         if row is None:
-            raise HTTPException(404, "No such candidate.")
+            refuse(404, "error.review.candidate_not_found")
 
         flagged = await session.get(FirstFlagged, row.media_key)
         decisions = await whitelist.overrides(session)
@@ -1746,7 +1747,7 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
         if snapshot is None:
-            raise HTTPException(404, "No scan has run yet.")
+            refuse(404, "error.review.no_scan")
         rows = (
             (
                 await session.execute(
@@ -1760,7 +1761,7 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             .all()
         )
         if not rows:
-            raise HTTPException(404, "That show is not in the latest scan.")
+            refuse(404, "error.review.show_not_in_scan")
 
         flagged = {
             f.media_key: f.first_flagged_at

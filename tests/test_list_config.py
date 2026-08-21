@@ -572,7 +572,10 @@ class TestTheRoutes:
         )
 
         assert r.status_code == 400
-        assert r.json()["detail"] == "Say which collection in that library to read."
+        body = r.json()
+        assert body["code"] == "error.lists.config_rejected"
+        assert body["params"]["error"] == "Say which collection in that library to read."
+        assert body["detail"] == "Say which collection in that library to read."
 
     def test_editing_the_config_leaves_the_name_alone(self, client: TestClient) -> None:
         """Rule 1: an omitted field and an explicit one are different requests. The edit
@@ -599,7 +602,9 @@ class TestTheRoutes:
         r = client.patch("/api/lists/configured/9999", json={"name": "Keep"})
 
         assert r.status_code == 400
-        assert "no longer exists" in r.json()["detail"]
+        body = r.json()
+        assert body["code"] == "error.lists.config_rejected"
+        assert "no longer exists" in body["detail"]
 
 
 def _definition(**overrides: object) -> list_config.ListDefinition:
@@ -763,7 +768,9 @@ class TestCheckingTheListsNow:
         response = client.post("/api/lists/sync", json={})
 
         assert response.status_code == 409, response.text
-        assert "can't read" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.lists.registry_unreadable"
+        assert "can't read" in body["detail"]
         assert not seen, "checked the lists anyway, which retires what it could not read"
 
     def test_plex_not_answering_is_said_plainly_and_retires_nothing(
@@ -803,7 +810,10 @@ class TestCheckingTheListsNow:
         response = client.post("/api/lists/sync", json={})
 
         assert response.status_code == 400, response.text
-        assert response.json()["detail"] == "Add a Radarr before checking."
+        body = response.json()
+        assert body["code"] == "error.lists.sync_sources_failed"
+        assert body["params"]["error"] == "Add a Radarr before checking."
+        assert body["detail"] == "Add a Radarr before checking."
         assert not seen
 
     def test_it_counts_the_checks_that_landed_apart_from_the_ones_that_failed(
@@ -938,4 +948,6 @@ class TestARowStaysOnScreenSoTheOperatorCanFixIt:
         response = client.delete("/api/lists/configured/9999")
 
         assert response.status_code == 400, response.text
-        assert "no longer exists" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.lists.config_rejected"
+        assert "no longer exists" in body["detail"]

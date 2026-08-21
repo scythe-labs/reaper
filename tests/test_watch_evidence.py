@@ -411,7 +411,9 @@ class TestTheStartFreshRoute:
         for payload in ({"password": "not-the-admin-password"}, {}):
             refused = client.post("/api/settings/watch-evidence/reset", json=payload)
             assert refused.status_code == 403, refused.text
-            assert refused.json()["detail"] == "That password didn't match. The record was kept."
+            refused_body = refused.json()
+            assert refused_body["code"] == "error.auth.forget_watch_password_mismatch"
+            assert refused_body["detail"] == "That password didn't match. The record was kept."
             assert _marks_held(client) == 2
 
         # And the right one still works afterwards: a refusal locks nothing but the attempt.
@@ -430,7 +432,9 @@ class TestTheStartFreshRoute:
 
         refused = client.post("/api/settings/watch-evidence/reset", json={"password": ""})
         assert refused.status_code == 400, refused.text
-        assert refused.json()["detail"] == (
+        refused_body = refused.json()
+        assert refused_body["code"] == "error.plex.no_password_set_for_watch_reset"
+        assert refused_body["detail"] == (
             "Set an admin password first. It's what confirms forgetting the record."
         )
         assert _marks_held(client) == 1

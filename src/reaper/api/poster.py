@@ -21,11 +21,12 @@ import asyncio
 from typing import cast
 
 import structlog
-from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
+from fastapi import APIRouter, FastAPI, Request, Response
 from sqlalchemy import select
 
 from reaper.api import tags as api_tags
 from reaper.api.deps import state_singleton
+from reaper.api.errors import refuse
 from reaper.clients.tautulli import TautulliClient
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
@@ -127,13 +128,13 @@ async def poster(request: Request, rating_key: int, kind: str = "poster") -> Res
         )
 
     if row is None:
-        raise HTTPException(404, "No Tautulli configured to fetch artwork from.")
+        refuse(404, "error.poster.no_tautulli")
 
     client = await _artwork_client(request.app, row, box)
     result = await (client.art(rating_key) if kind == "art" else client.poster(rating_key))
 
     if result is None:
-        raise HTTPException(404, "No artwork for this item.")
+        refuse(404, "error.poster.not_found")
 
     content, content_type = result
     # The bytes are relayed from Plex on Reaper's own origin, so pin how the browser reads

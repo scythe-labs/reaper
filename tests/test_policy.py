@@ -25,7 +25,7 @@ from reaper.api.schemas import GateSettingIn, GateSettingOut, PolicyIn
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
-from reaper.engine.fields import RECENT_WATCHERS, Op, ReachSpan
+from reaper.engine.fields import Op, ReachSpan
 from reaper.engine.gates import (
     POLICY_AUTHORABLE_GATES,
     Facts,
@@ -69,7 +69,7 @@ from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 from reaper.services.scan_runner import GATE_TYPES, ScanConfigError, build_gates
 from reaper.services.season_pruning import plan_series_prune
-from tests._reasons import catalog, flat
+from tests._reasons import catalog, catalog_entry, flat
 from tests._reasons import text as reason_text
 
 
@@ -1541,10 +1541,13 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         [flagged] = self._rule_warnings(self._owner_rule_only(), reach=90.0)
 
-        assert f'"{RECENT_WATCHERS.label}"' in _msg(flagged)
-        # The label is the registry's, not a second spelling of it: the editor renders this
-        # exact string through GET /api/vocabulary, so a copy here would drift from the card.
-        assert RECENT_WATCHERS.label == "People who watched it recently"
+        field_label = catalog_entry("field.recent_watchers")
+        assert f'"{field_label}"' in _msg(flagged)
+        # The label is the catalog's, not a second spelling of it: the editor renders this
+        # exact string through the same ``why.field.<key>`` entry, so a copy here would
+        # drift from the card. ``FieldSpec`` carries no label of its own (phase 8a): the
+        # save-boundary refusals it used to feed now carry the raw ``field`` key instead.
+        assert field_label == "People who watched it recently"
 
     def test_two_rules_on_one_field_are_counted_and_the_remedy_goes_plural(self) -> None:
         """A singular remedy is factually wrong once a second rule blocks on the same span.

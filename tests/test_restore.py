@@ -792,7 +792,9 @@ class TestApi:
 
         refused = client.post("/api/settings/backup/restore/confirm", json={"password": ""})
         assert refused.status_code == 400, refused.text
-        assert refused.json()["detail"] == (
+        refused_body = refused.json()
+        assert refused_body["code"] == "error.backup.no_password_set"
+        assert refused_body["detail"] == (
             "Set an admin password first. It's what confirms a restore."
         )
         assert client.get("/api/settings/backup").json()["restore_armed"] is False
@@ -929,7 +931,9 @@ class TestRestartNow:
         response = client.post("/api/settings/backup/restore/restart")
 
         assert response.status_code == 409, response.text
-        assert response.json()["detail"] == "There's no restore waiting, so nothing was stopped."
+        body = response.json()
+        assert body["code"] == "error.backup.restore_not_waiting"
+        assert body["detail"] == "There's no restore waiting, so nothing was stopped."
         assert stops == []
 
     def test_a_staged_restore_nobody_confirmed_is_not_enough(
@@ -975,7 +979,9 @@ class TestRestartNow:
         response = client.post("/api/settings/backup/restore/restart")
 
         assert response.status_code == 409, response.text
-        assert response.json()["detail"] == (
+        body = response.json()
+        assert body["code"] == "error.backup.reap_in_progress"
+        assert body["detail"] == (
             "A reap is running. Let it finish or stop it, then restart Reaper."
         )
         assert stops == []

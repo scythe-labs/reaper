@@ -206,14 +206,12 @@ def _gate_role(gate: GateId) -> str:
 #: behavioral ones, so a new attribute defaults to being *recorded*: forgetting to classify
 #: a display string costs a re-record, forgetting to classify a behavioral one costs a
 #: protection. ``test_every_field_spec_attribute_is_classified`` fails until it is decided.
-#: ``help_text`` and ``unit_suffix`` are gone (#868 phase 4): the browser reads a field's help
-#: and unit from the catalog by key now, and ``label`` survives only for the save-boundary
-#: ``ValueError``s in ``engine/fields.py`` and ``engine/policy.py``, still wording either way.
-_DISPLAY_ONLY_SPEC_ATTRS = frozenset(
-    {
-        "label",
-    }
-)
+#: ``help_text``, ``unit_suffix`` and now ``label`` are gone (#868 phase 4, phase 8a): the
+#: browser reads a field's help, unit and label from the catalog by key, and the
+#: save-boundary refusals in ``engine/fields.py``/``engine/policy.py`` that used to read
+#: ``label`` now carry the raw ``field`` key as a param instead. Empty rather than removed:
+#: a future display-only attribute still has somewhere to be classified.
+_DISPLAY_ONLY_SPEC_ATTRS: frozenset[str] = frozenset()
 
 #: A ``Facts`` whose every observation announces its own field name, so ``spec.read`` can be
 #: asked which fact it dereferences instead of the answer being transcribed beside it. A read
@@ -383,7 +381,6 @@ class TestTheWalkSeesWhatItClaimsTo:
         stored rule dereferences by string."""
         probe = FieldSpec(
             key="surface_walk_probe",
-            label="Probe",
             type=FieldType.COUNT,
             lanes=(Lane.CONDEMN,),
             ops=(Op.GTE,),
@@ -413,7 +410,6 @@ class TestTheWalkSeesWhatItClaimsTo:
         spec's key, or a re-pointed read would record identically."""
         repointed = FieldSpec(
             key="on_list",
-            label="On a protected list",
             type=FieldType.TEXT,
             lanes=(Lane.PROTECT,),
             ops=(Op.EQ,),
