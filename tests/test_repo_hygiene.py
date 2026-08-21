@@ -2495,7 +2495,7 @@ _EXPECTED_MYPY_SITES = 4
 #: Files that quote the command as a record rather than as the instruction to follow. A record
 #: is pinned to its moment, so holding it to today's gate would ask a finished plan to be edited
 #: every time the gate moves.
-_MYPY_RECORDS = ("docs/history/", "docs/history/I18N_PLAN.md")
+_MYPY_RECORDS = ("docs/history/",)
 
 
 def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
