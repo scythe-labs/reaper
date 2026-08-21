@@ -220,8 +220,8 @@
     "popularity_nobody": "Nobody here watched it in the last {window_days_window}.",
     "popularity_few": "Only {count, plural, one {# person} other {# people}} watched it here in the last {window_days_window} (it takes {floor} to keep on that alone).",
     "dormancy_unestablished": "no watch history, so its dormancy cannot be established",
-    "dormancy_under_floor": "untouched for just {days_span}, less than the {floor_days_window} Reaper waits",
-    "dormancy_past_floor": "Untouched for {days_span}, past the {floor_days_window} it has to sit unwatched first.",
+    "dormancy_under_floor": "unwatched for {days_span}, less than the {floor_days_window} Reaper waits",
+    "dormancy_past_floor": "Unwatched for {days_span}, past the {floor_days_window} Reaper waits.",
     "rewatch_no_history": "Not enough watch history to say how often titles like this get watched.",
     "rewatch_thin": "Too few titles like this to say.",
     "rewatch_watched_again": "titles like this keep getting watched: {k} of {n} within a year",
@@ -1546,7 +1546,7 @@
       "scoresOnce": " once it scores ",
       "seasonWord": "season",
       "tvLead": "Right now Reaper flags a ",
-      "untouchedLessThan": "untouched for less than {span}",
+      "unwatchedLessThan": "unwatched for less than {span}",
       "watchedByPeople": "watched by {n}+ people",
       "withinCaps": "removes only within your caps"
     },
@@ -1723,7 +1723,7 @@
     },
     "signalProbe": {
       "failed": "Reaper couldn't work that one out. Your setting is fine. Only the preview failed.",
-      "historyCap": "Your watch history goes back {span}, and nothing can show as untouched for longer than that.",
+      "historyCap": "Your watch history goes back {span}, and nothing can show as unwatched for longer than that.",
       "pending": "Working out what that earns…",
       "said": "{lead} <valueNum>{value}</valueNum> adds <pointsNum>{points}</pointsNum> of these <weightNum>{weight}</weightNum> points."
     },
@@ -2008,7 +2008,7 @@
         "label": "How big it is on disk"
       },
       "unwatched": {
-        "help": "The longer it sits untouched, the stronger the reason to remove it. The clock starts at the last play, or at the day it arrived when there has never been one.",
+        "help": "The longer it sits unwatched, the stronger the reason to remove it. The clock starts at the last play, or at the day it arrived when there has never been one.",
         "label": "How long it's gone unwatched"
       }
     },

@@ -899,7 +899,7 @@ VERDICT: CONDEMN   score 91/100  (threshold 70)
   +20.0/20   nobody watched it in the last year
   + 1.0/10   IMDb 5.4
 
-  ✓ Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first.
+  ✓ Unwatched for 5 years, 7 months, past the 3 years Reaper waits.
   ✓ 5.4 on IMDb from 6,000 votes, below the 7.5 you keep.
   ✓ Nobody here watched it in the last year.
 ```

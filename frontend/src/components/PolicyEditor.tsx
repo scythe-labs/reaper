@@ -1967,7 +1967,7 @@ export function PolicyEditor({
     // the same claim the review queue's chip used to make, on the sentence this comment
     // block below calls the one an operator scans before arming (rules 21/72).
     dormancy
-      ? t("policyEditor.intent.untouchedLessThan", { span: humanDays(dormancy.threshold) })
+      ? t("policyEditor.intent.unwatchedLessThan", { span: humanDays(dormancy.threshold) })
       : null,
   ].filter((c): c is string => c !== null);
   // TV's protections are built the same way, and for the same reason: every clause is

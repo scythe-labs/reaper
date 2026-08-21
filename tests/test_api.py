@@ -114,7 +114,7 @@ def _fixture_policy_hash() -> str:
 # the source text. It used to be an invented "checked: <label> -- <numbers>" shape no gate has
 # ever emitted (#419), and asserting THAT survived the wire is what made the format read as
 # load-bearing.
-CHECKED_DETAIL = "Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first."
+CHECKED_DETAIL = "Unwatched for 5 years, 7 months, past the 3 years Reaper waits."
 
 
 def _explanation(score: float) -> str:

@@ -1224,7 +1224,7 @@ def _kept_phrase(gate: str, reason: Reason | None) -> str:
         # recently" -- asserted a play that never happened, on a card whose own panel said
         # "nobody watched it in the last year" three lines above. ``MinDormancyGate`` words
         # its own detail "untouched" for exactly this reason; the chip beside it now does too.
-        return "hasn't sat untouched long enough"
+        return "hasn't sat unwatched long enough"
     if gate == "unmanaged":
         # Retired gate, kept for stored explanations only -- a snapshot taken before the
         # retirement can still be read back, and this is what renders its chip. No new scan

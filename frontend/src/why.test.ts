@@ -13,7 +13,7 @@ describe("composeReason", () => {
     // The same sentence README.md and DECISIONS.md quote, off the same catalog entry
     // (tests/test_repo_hygiene.py derives it through the backend twin).
     expect(composeReason({ k: "dormancy_past_floor", p: { days: 2059, floor_days: 1095 } })).toBe(
-      "Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first.",
+      "Unwatched for 5 years, 7 months, past the 3 years Reaper waits.",
     );
   });
 

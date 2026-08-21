@@ -915,7 +915,7 @@ class ServerPopularityGate:
 
 @dataclass(frozen=True, slots=True)
 class MinDormancyGate:
-    """Nothing may be deleted until it has sat untouched for long enough.
+    """Nothing may be deleted until it has sat unwatched for long enough.
 
     A hard gate, not a weight, because a weight can be outvoted by other signals --
     and that is exactly how an early version of this engine ended up condemning films

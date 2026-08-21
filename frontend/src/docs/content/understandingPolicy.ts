@@ -45,7 +45,7 @@ export const understandingPolicy: Doc = {
         // the history source supplies the last play when there is one, and it also sets
         // how far back Reaper is willing to count. Neither is the whole answer for a title
         // nobody has ever played. See `engine/dormancy.py`.
-        text: "Scores are based on how long a title has sat untouched. Your history source tells Reaper when a title was last played and how far back it can look. Connect it and let one scan finish against real data before you tune anything.",
+        text: "Scores are based on how long a title has sat unwatched. Your history source tells Reaper when a title was last played and how far back it can look. Connect it and let one scan finish against real data before you tune anything.",
       },
       {
         title: "Start on the Cautious footing.",

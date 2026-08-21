@@ -39,7 +39,7 @@ policy tuning, and the safety model in full.
   carries a cushion in front of it, so someone on season 1 keeps what they are about to reach.
 - **A score that shows its work.** Not just *which* rules matched, but every protection that
   was *checked and didn't fire*, with the actual numbers:
-  `✓ Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first.` It
+  `✓ Unwatched for 5 years, 7 months, past the 3 years Reaper waits.` It
   explains the **keeps** as well as the deletes.
 - **Curated lists as protection.** Never reap anything in the IMDb Top 250.
 - **Keep tags** in Sonarr and Radarr, or a Plex collection you curate from your phone.
