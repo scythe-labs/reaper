@@ -31,10 +31,8 @@ import { shippedSource, sourceText, srcRelative } from "./test/sources";
 
 // The files allowed to hand t() a computed key, and the catalog namespaces they own.
 // A namespace listed here is proven by that file's own tests, not by this gate.
-// composeIn generalized why.ts's lookup to any namespace (docs/history/I18N_PLAN.md
-// phase 1); "chip." and "warning." are the two later phases wire up (chip.text.* status
-// text, warning.* policy warnings), registered ahead of their first real key so the
-// orphan check (direction 3 below) never has to be touched again for them.
+// why.ts composes under any namespace (composeIn). "chip." and "warning." are the two #868
+// adds next (status chip text, policy warnings), registered ahead of their first key.
 const DYNAMIC: Record<string, string[]> = {
   "why.ts": ["why.", "chip.", "warning."],
 };

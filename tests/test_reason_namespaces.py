@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """``_reasons.text``'s namespace argument, proven against a fixture (rule 119).
 
-Phase 1 of the i18n plan (docs/history/I18N_PLAN.md) generalized the reason composer so a
-chip status or a policy warning can carry its own catalog section instead of crowding
-``why.*``: ``why.ts``'s ``composeIn(namespace, key)`` and this module's twin,
-``_reasons.text(reason, namespace=...)``. Neither namespace has production content yet, so
-this test injects the same two fixture messages ``why.test.ts``'s "composeIn" describe
-block uses and checks both composers render them the same way -- proving the namespace
-argument walks the catalog identically on both sides, not just that "why" still works.
+#868 moves the status chip and the policy warnings onto their own catalog sections, so
+``why.ts`` gained ``composeIn(namespace, key)`` and this module's twin gained
+``_reasons.text(reason, namespace=...)``. Neither section has production content yet. This
+test injects the two fixture messages ``why.test.ts``'s "composeIn" block uses and checks
+both composers render them the same way.
 """
 
 from __future__ import annotations
