@@ -63,7 +63,6 @@ Last verified against the code: 2026-08-02.
    generated into `manual/` from the app's typed blocks, fifteen hand-written beside them, all
    twenty-one served by `website/` on Docusaurus. `manual.gen.test.ts` fails on drift. Pages
    publishes from `dev`; revisit at the first release, probably as Docusaurus versioning.
-5. **Weblate reads `i18n` until #862 lands.** Then flip the component's branch to `dev`.
 
 ## Decisions locked
 
