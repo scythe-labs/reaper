@@ -126,11 +126,11 @@ inside a conditional subtree takes its warning off the page altogether on the br
 does not mount, rather than down to the bottom, and its anchor names that condition as its
 `guard` so it claims only while the condition holds. The warning lost that way was the one about
 a setting that lets deletions past the size caps (#145). Both directions are proven in
-`PolicyEditor.test.tsx`, never argued here: every anchor is driven through the state its guard
-requires, and through every branch it does not name, so a guard that is missing fails as loudly
-as one that is wrong (#167). Action failures everywhere are `.notice.notice-error` with a
-plain-language lead ("The scan didn't start: …"); bare red `.error` text survives only in the
-review surfaces and the simulator's dedicated failure panel.
+`PolicyEditor.warnings.test.tsx`, never argued here: every anchor is driven through the state
+its guard requires, and through every branch it does not name, so a guard that is missing fails
+as loudly as one that is wrong (#167). Action failures everywhere are `.notice.notice-error`
+with a plain-language lead ("The scan didn't start: …"); bare red `.error` text survives only in
+the review surfaces and the simulator's dedicated failure panel.
 
 **43. One save affordance per page.** The policy editor's sticky `.savebar` is the only save UI
 on that page: it names what is dirty, states when each part takes effect, saves everything with
