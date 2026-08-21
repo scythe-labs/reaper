@@ -41,7 +41,7 @@ Last verified against the code: 2026-08-02.
 | **First start** — four steps, password forced, restore door, resume from the server | ✅ done |
 | **Packaged installs** — Win/macOS binaries + tray, snap, CalVer, update check | 🟡 no cut yet |
 | **Collections** — chip, picker, collection screen, search reaches names | ✅ done, #816 |
-| **i18n** — ICU catalog, typed reasons, manual per locale, Weblate | ✅ landed, #NNN, RTL is #861 |
+| **i18n** — ICU catalog, typed reasons, manual per locale, Weblate | ✅ landed, #862, RTL is #861 |
 
 ## Open work
 
@@ -63,7 +63,7 @@ Last verified against the code: 2026-08-02.
    generated into `manual/` from the app's typed blocks, fifteen hand-written beside them, all
    twenty-one served by `website/` on Docusaurus. `manual.gen.test.ts` fails on drift. Pages
    publishes from `dev`; revisit at the first release, probably as Docusaurus versioning.
-5. **Weblate reads `i18n` until #NNN lands.** Then flip the component's branch to `dev`.
+5. **Weblate reads `i18n` until #862 lands.** Then flip the component's branch to `dev`.
 
 ## Decisions locked
 

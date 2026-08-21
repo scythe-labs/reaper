@@ -126,4 +126,4 @@ auto-memory note to explain the product, move it here.
 | `history/REWATCH_PLAN.md` | history | frozen — movie stages landed as #803 and #805; TV validated, unscoped, #554 |
 | `history/RETURN_PLAN.md` | history | frozen — the one stage landed as #812, opt-in; #553 closed |
 | `history/COLLECTIONS_PLAN.md` | history | frozen — chip, picker and collection screen landed, #816 |
-| `history/I18N_PLAN.md` | history | frozen — Stages 1 through 6 landed as #NNN; Stage 7 (RTL) is #861 |
+| `history/I18N_PLAN.md` | history | frozen — Stages 1 through 6 landed as #862; Stage 7 (RTL) is #861 |

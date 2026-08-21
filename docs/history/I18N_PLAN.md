@@ -1,6 +1,6 @@
 # Translating Reaper: what it would take
 
-> **FROZEN 2026-08-21. Stages 1 through 6 landed on `dev` as #NNN. Stage 7 (RTL) is optional
+> **FROZEN 2026-08-21. Stages 1 through 6 landed on `dev` as #862. Stage 7 (RTL) is optional
 > and tracked as #861.** Each stage's Status line below is its record. Written 2026-07-30 as a
 > proposal, against `frontend/src/` at 26,554 lines and `src/reaper/` at 100 files, and run
 > 2026-08-20 to 2026-08-21 on the `i18n` integration branch (§10).
