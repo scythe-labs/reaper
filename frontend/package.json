@@ -33,6 +33,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@formatjs/icu-messageformat-parser": "3.5.17",
     "@resvg/resvg-js": "^2.6.2",
     "@scalar/api-reference": "^1.64.0",
     "@testing-library/dom": "^10.4.1",
@@ -46,8 +47,8 @@
     "axe-core": "^4.12.1",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "intl-messageformat": "11.2.14",
     "globals": "^17.9.0",
+    "intl-messageformat": "11.2.14",
     "jsdom": "^30.0.1",
     "prettier": "3.9.6",
     "typescript": "5.9.3",

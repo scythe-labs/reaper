@@ -299,6 +299,22 @@ def _code_and_live_docs() -> list[Path]:
     return [*_code_files(), *_live_docs()]
 
 
+#: The directories holding copy in a language other than English: a UI catalog Weblate writes
+#: under ``frontend/src/locales/<tag>/`` and a manual under ``frontend/src/docs/content/<tag>/``.
+#: The English originals sit at ``locales/en/`` and directly in ``content/``. The
+#: American-English gate reads source copy and leaves these alone (docs/I18N_PLAN.md §8); every
+#: other gate walking the tree is language-neutral and keeps reading them.
+_TRANSLATED_ROOTS = (FRONTEND_SRC / "locales", FRONTEND_SRC / "docs" / "content")
+
+
+def _is_translated_copy(path: Path) -> bool:
+    for root in _TRANSLATED_ROOTS:
+        if path.is_relative_to(root):
+            parts = path.relative_to(root).parts
+            return len(parts) > 1 and parts[0] != "en"
+    return False
+
+
 def _defined_rules() -> dict[int, list[Path]]:
     defined: dict[int, list[Path]] = {}
     for path in INSTRUCTION_FILES:
@@ -966,15 +982,34 @@ def test_american_english_everywhere() -> None:
     ``aria-labelledby`` attribute keep their real spelling.
     """
     offenders: list[str] = []
-    for path in _code_and_live_docs():
+    # The English catalog joins the walk: since Stage 4 it holds the operator copy the walk
+    # used to read in the components. A translated catalog or manual is the one thing this
+    # gate leaves alone, because a French manual is French.
+    for path in [*_code_and_live_docs(), FRONTEND_SRC / "locales" / "en" / "ui.json"]:
         # This file spells every banned word once, in the pattern above.
-        if path.resolve() == SELF:
+        if path.resolve() == SELF or _is_translated_copy(path):
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             stripped = _SANCTIONED.sub("", line)
             for match in _BRITISH.finditer(stripped):
                 offenders.append(f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)}")
     assert not offenders, "use the American spelling:\n" + "\n".join(offenders)
+
+
+def test_the_translated_copy_exemption_reads_both_layouts() -> None:
+    """Rule 147: the exemption above is run against the paths it accepts and the ones it rejects.
+
+    A catalog is a directory per tag under ``locales/``. A manual is a directory per tag under
+    ``docs/content/``, beside the English files that sit in ``content/`` itself.
+    """
+    locales = FRONTEND_SRC / "locales"
+    content = FRONTEND_SRC / "docs" / "content"
+    assert _is_translated_copy(locales / "pt-BR" / "ui.json")
+    assert _is_translated_copy(content / "de" / "index.ts")
+    assert not _is_translated_copy(locales / "en" / "ui.json")
+    assert not _is_translated_copy(content / "en" / "index.ts")
+    assert not _is_translated_copy(content / "overview.ts")
+    assert not _is_translated_copy(FRONTEND_SRC / "components" / "de.tsx")
 
 
 def test_dynamic_favicon_link_is_declared_last() -> None:
@@ -5901,7 +5936,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 233
+_EXPECTED_FRONTEND_MODULES = 235
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")

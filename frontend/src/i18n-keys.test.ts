@@ -26,6 +26,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import ui from "./locales/en/ui.json";
+import { leaves } from "./test/catalog";
 import { shippedSource, sourceText, srcRelative } from "./test/sources";
 
 // The files allowed to hand t() a computed key, and the catalog namespaces they own.
@@ -160,16 +161,6 @@ export function catalogRefs(fileName: string, text: string): Refs {
   };
   visit(sf);
   return refs;
-}
-
-/** The catalog's leaf keys, dot-joined the way t() spells them. */
-function leaves(node: unknown, prefix = ""): Record<string, string> {
-  if (typeof node === "string") return { [prefix]: node };
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-    Object.assign(out, leaves(v, prefix ? `${prefix}.${k}` : k));
-  }
-  return out;
 }
 
 const CATALOG = leaves(ui);

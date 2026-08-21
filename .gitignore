@@ -268,3 +268,6 @@ docs/media/review-queue.html
 
 # Generated per build by scripts/write_buildinfo.py; never committed.
 packaging/pyinstaller/buildinfo.json
+
+# The Hosted Weblate API key, read by the session that configures the project. Never in a commit.
+.weblate_api

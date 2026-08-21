@@ -29,7 +29,7 @@ undercount a tree a third larger.
 
 | Surface | Count |
 | --- | --- |
-| Frontend source files (non-test) | 126 files, 37,234 lines (re-measured after Stage 5) |
+| Frontend source files (non-test) | 126 files, 37,295 lines (re-measured after Stage 6) |
 | `aria-label=` / `title=` / `placeholder=` literals | 0 in the 74 converted files (Stage 4; was 122 / 70 / 29) |
 | JSX text nodes † | 0 in the 74 converted files (Stage 4; was ~322) |
 | Multi-word quoted string literals † | ~446 |
@@ -378,37 +378,56 @@ English blocks; translating the site is out of scope.
 
 ### Stage 6 — the translation platform
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #860). The operator re-decided for Weblate and created the
+project the same day. The Hosted Weblate side was set through its API and is recorded here
+because it lives nowhere in the tree:
 
-> **The tie-breakers below were inverted by the move to GitHub (2026-07-31), so this
-> recommendation is no longer settled and is left standing only until someone re-runs it.** Two
-> of the three reasons Weblate won were about *not* being on GitHub: Crowdin's sync would have
-> had to be rebuilt on the old forge's Actions, and Weblate's native support for that forge
-> avoided a self-hosted instance. Reaper now runs on GitHub Actions, where Crowdin's ecosystem
-> already fits and where Weblate's GitHub backend is at least as good as the one that won it
-> this slot. Only the third reason survives the move untouched. Nothing here is wrong about
-> Weblate; the comparison simply no longer discriminates the way it did, and re-deciding is
-> cheaper before the stage is taken up than after a sync exists.
+| Setting | Value |
+| --- | --- |
+| Project, component | `reaper`, `ui` (`hosted.weblate.org/projects/reaper/ui/`) |
+| Repository, branch | `github.com/scythe-labs/reaper`, **`i18n`** until the final PR, then `dev` |
+| Push URL | empty, so Weblate pushes to its own fork and opens a pull request |
+| File mask, base file | `frontend/src/locales/*/ui.json`, `frontend/src/locales/en/ui.json`, base not editable |
+| File format | JSON nested structure file |
+| Language code style | BCP 47 with hyphens (`pt-BR`), which the gate below also requires |
+| New languages | translators add them; the file is created from the English one |
+| Flags, enforced | `icu-message-format, icu-flags:xml`; `icu_message_format` cannot be dismissed |
+| Add-on | Cleanup translation files, so a key English drops leaves every catalog |
+| Push on commit, age | on, 24 hours |
+| Repository webhook | GitHub push events to `hosted.weblate.org/hooks/github/` |
+
+Weblate's default pull request title is `chore(l10n): update translations`, which
+`pr-validation.yml` accepts unchanged. **When the final PR lands, the component's `branch`
+moves from `i18n` to `dev`**, since the merge deletes `i18n`. That is the one step left, and
+§10's final-PR paragraph carries it.
+
+The repository side. `applyBrowserLanguage` (`i18n.ts`) loads the browser's catalog before the
+first paint, and only for a tag whose catalog shipped, so `format.ts` and the strings move
+together or stay English together. There is no language picker. `i18n-locales.test.ts` is the
+review of every Weblate pull request: each shipped catalog has only English keys, per key only
+the English message's ICU arguments and tags, and a canonical BCP 47 directory name. It was
+proven on a copied English catalog (green) and a mutated one (red, three findings named).
+`.prettierignore` leaves every catalog but the English one to Weblate.
+`test_american_english_everywhere` now reads the English catalog, which it had missed since
+Stage 4 moved the copy there, and skips a translated catalog or manual (`_is_translated_copy`).
+CONTRIBUTING says where to translate and that the non-English files are overwritten.
+
+Findings. A regex read of ICU arguments counted a one-word plural branch, `other {files}`, as
+an argument (rule 147), so the gate reads the parser's AST, and
+`@formatjs/icu-messageformat-parser`, already in the tree under `intl-messageformat`, became an
+exact devDependency for that one test. The plan's "CI sync" is nothing in CI: Weblate pulls on
+the webhook and pushes pull requests, and the gates that bind those pull requests are the ones
+above. Weblate's API rejects a push URL without a push branch; the fork flow wants the push URL
+empty.
 
 **Hosted Weblate, on the Libre plan**, on the Audiobookshelf and Uptime Kuma precedent, which is
-where community-scale self-hosted projects land. Crowdin is the alternative and is what the
-larger projects use.
-
-Three things this depends on, all checked rather than assumed:
+where community-scale self-hosted projects land. Three things this depends on, all checked:
 
 - **The Libre plan is gratis for public projects** and carries the 160k-string limit. Reaper's
-  ~1,500 source strings are two orders of magnitude under it.
+  2,095 source strings are two orders of magnitude under it.
 - **Reaper is AGPL-3.0-or-later**, an OSI-approved license.
-- **Weblate speaks GitHub natively**, as it did the previous forge, so the unanimous workflow
-  from §2 — bot opens a PR with completed translations — works without a self-hosted Weblate.
-
-**Reaper being public at release is what makes this the answer**, and that is settled. One
-practical requirement remains and is the thing to confirm when the stage is actually taken up:
-hosted Weblate needs its own account with push rights on a translations branch. Reaching the
-host over the internet was the other, and the move to GitHub retired it.
-
-Also this stage: the CONTRIBUTING note that non-English files are overwritten, the CI sync, and
-the hygiene-gate scoping from §8, which lands beside the first non-English file.
+- **Weblate speaks GitHub natively**, so the unanimous workflow from §2, a bot opening a PR with
+  completed translations, works without a self-hosted Weblate and without push rights: it forks.
 
 ### Stage 7 — RTL, and it is optional
 
@@ -425,12 +444,10 @@ overlap this and should be sequenced with it rather than against it.
   makes the existing tests a proof rather than a cost.
 - **No new numbered rule proposed.** Rules 21, 68, 92, 134, 142 and 144 already govern this, and
   the two new checks in Stage 4 are gates, which `CLAUDE.md` asks for ahead of appending prose.
-- **No hygiene gate is loosened, but two must be scoped.**
-  `test_american_english_everywhere` and the middot family in `tests/test_repo_hygiene.py` scan
-  all source text and would fire on a non-English catalog. They must bind the **`en-US` catalog
-  only** — the American-English rule is about Reaper's source copy, not about French. That
-  scoping is Stage 6 work: it is needed the day the first non-English file lands, and not
-  before.
+- **No hygiene gate is loosened, but one is scoped.** `test_american_english_everywhere` reads
+  source copy, and a French manual is French, so since Stage 6 it skips a translated catalog or
+  manual (`_is_translated_copy`) and reads the English catalog it had missed. The
+  middot gates turned out to be spelling checks, language-neutral, and keep binding every file.
 - **No translated string is trusted with a safety decision.** §6 is a hard boundary.
 - **No claim that translation quality is free.** Rule 21 asks for copy a maintainer can verify at
   a glance, and nobody here can verify Polish. That is an accepted, stated cost of shipping
@@ -460,7 +477,9 @@ session can pick up any stage from this file alone.
 
 All stages land on one integration branch, `i18n`, cut from `origin/dev` when Stage 1 starts.
 Stage PRs merge into `i18n`, so `dev` never carries a half-translated app. When the operator
-calls the work done, one final PR squash-merges `i18n` into `dev`.
+calls the work done, one final PR squash-merges `i18n` into `dev`, and the same sitting moves
+the Weblate component's `branch` from `i18n` to `dev` (Stage 6), because the merge deletes
+`i18n` and the component would be reading a branch that is gone.
 
 Each stage is run by a fresh Fable session, called the orchestrator below. The kickoff prompt
 is `Run Stage N of docs/I18N_PLAN.md`. The session:
