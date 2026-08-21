@@ -8,11 +8,16 @@
 // opens an empty modal; in the manual the path 404s. Neither shows up in a type error, and
 // prose asking authors to check ids does nothing, so this is the gate instead (rule 72's
 // "write the gate" clause).
+//
+// Every manual the build ships is read, not only the English one: a translator respelling
+// `(doc-id#section)` is the same dead link. Targets resolve against English, because
+// `manual.locales.test.ts` holds every locale to the same ids.
 
 import { describe, expect, it } from "vitest";
 
 import type { Block } from "./blocks";
 import { DOCS } from "./registry";
+import { MANUALS } from "../test/manuals";
 
 /** `[text](doc-id#section)`, the same shape DocBody's REF and toMdx's resolveRefs read. */
 const REF = /\[([^\]\n]+)\]\(([a-z0-9-]+)(?:#([a-z0-9-]+))?\)/g;
@@ -44,20 +49,26 @@ function sectionIds(docId: string): Set<string> {
   );
 }
 
-const refs = DOCS.flatMap((doc) =>
-  doc.body
-    .flatMap(strings)
-    .flatMap((text) => [...text.matchAll(REF)])
-    .map((m) => ({ from: doc.id, label: m[1] ?? "", target: m[2] ?? "", anchor: m[3] })),
+const refs = MANUALS.flatMap(({ lng, docs }) =>
+  docs.flatMap((doc) =>
+    doc.body
+      .flatMap(strings)
+      .flatMap((text) => [...text.matchAll(REF)])
+      .map((m) => ({
+        at: `${lng}/${doc.id}`,
+        from: doc.id,
+        label: m[1] ?? "",
+        target: m[2] ?? "",
+        anchor: m[3],
+      })),
+  ),
 );
 
 describe("doc cross-references", () => {
   it("point at a page that exists", () => {
     const ids = new Set(DOCS.map((d) => d.id));
     const dead = refs.filter((r) => !ids.has(r.target));
-    expect(dead.map((r) => `${r.from}: [${r.label}](${r.target}) -- no doc has that id`)).toEqual(
-      [],
-    );
+    expect(dead.map((r) => `${r.at}: [${r.label}](${r.target}) -- no doc has that id`)).toEqual([]);
   });
 
   it("point at a section that exists", () => {
@@ -65,7 +76,7 @@ describe("doc cross-references", () => {
     expect(
       dead.map(
         (r) =>
-          `${r.from}: [${r.label}](${r.target}#${r.anchor}) -- ` +
+          `${r.at}: [${r.label}](${r.target}#${r.anchor}) -- ` +
           `${r.target} has no section with that id`,
       ),
     ).toEqual([]);
@@ -76,6 +87,6 @@ describe("doc cross-references", () => {
     // the manual jumps to the heading. Same page with NO anchor is the no-op -- it reopens
     // what you are already reading.
     const selfies = refs.filter((r) => r.target === r.from && r.anchor === undefined);
-    expect(selfies.map((r) => `${r.from}: [${r.label}](${r.target})`)).toEqual([]);
+    expect(selfies.map((r) => `${r.at}: [${r.label}](${r.target})`)).toEqual([]);
   });
 });
