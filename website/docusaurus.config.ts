@@ -22,10 +22,19 @@ const config: Config = {
   tagline: TAGLINE,
   favicon: "img/favicon.svg",
 
-  // GitHub Pages for a project repository serves under /<repo>/. Both halves are read by the
-  // deploy workflow and by every absolute link the theme builds.
-  url: `https://${ORG}.github.io`,
-  baseUrl: `/${REPO}/`,
+  // Cloudflare Pages serves this from its own subdomain, so it sits at the root rather than
+  // under /<repo>/. The project builds this directory out of the repository it already lives
+  // in, and its four settings are in the Cloudflare dashboard rather than in any file here:
+  //
+  //   Root directory           website
+  //   Build command            git fetch --unshallow || true && npm ci && npm run build
+  //   Build output directory   build
+  //   Custom domain            docs.scythelabs.dev
+  //
+  // The `--unshallow` is load-bearing. Pages clones one commit deep, and `showLastUpdateTime`
+  // below reads each page's git history, so without it every page reports the same date.
+  url: "https://docs.scythelabs.dev",
+  baseUrl: "/",
   organizationName: ORG,
   projectName: REPO,
   trailingSlash: false,

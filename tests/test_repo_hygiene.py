@@ -2428,15 +2428,16 @@ def test_the_codeql_analysis_still_covers_every_tree() -> None:
 #: edit that is not even a change (rule 147).
 _NODE_MAJOR = re.compile(r"""(?:FROM\s+node:|node-version:\s*)["']?(\d+)""")
 
-#: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), docs-deploy.yml, and
-#: binaries.yml (the packaged builds bundle the SPA on the same Node the frontend job tested
-#: it on). Pinned because the agreement assertion below is vacuously true on one site, or on
-#: none (rule 145).
+#: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), and binaries.yml (the
+#: packaged builds bundle the SPA on the same Node the frontend job tested it on). Pinned
+#: because the agreement assertion below is vacuously true on one site, or on none (rule 145).
 #:
-#: The manual site's two are here for the same reason as the others rather than as bookkeeping:
-#: it builds with `npm ci` against a committed lockfile, so a Node major that drifts from the
-#: one the lockfile was resolved on is a publish that fails on a tree nothing else exercises.
-_EXPECTED_NODE_SITES = 5
+#: The manual site's `site` job is here for the same reason as the others rather than as
+#: bookkeeping: it builds with `npm ci` against a committed lockfile, so a Node major that
+#: drifts from the one the lockfile was resolved on breaks a tree nothing else exercises.
+#: Cloudflare Pages builds that same directory on its own Node and reads nothing from this
+#: repository, so its major is set in the dashboard and cannot be pinned from here.
+_EXPECTED_NODE_SITES = 4
 
 
 def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> None:
@@ -2549,22 +2550,21 @@ def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() ->
 
 
 #: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand and
-#: **named, not counted**. `codeql.yml` filters both its triggers, `docs-deploy.yml` filters its
-#: one, and `ci.yml` has none deliberately -- it runs on everything and classifies the diff
-#: inside a job, so its verdict can be read by other jobs and a skipped lane still reports.
+#: **named, not counted**. `codeql.yml` filters both its triggers, and `ci.yml` has none
+#: deliberately -- it runs on everything and classifies the diff inside a job, so its verdict
+#: can be read by other jobs and a skipped lane still reports.
 #:
 #: This is here because two sentences describe the arrangement in prose and both were wrong:
 #: `ci.yml`'s `changes` comment and CLAUDE.md's "which jobs appear" paragraph each said nothing
 #: else in the repository restated the path list, while three lists sat in two files (rule
 #: 7/24). It is a SET rather than a number because those sentences name which file holds which,
-#: and a count cannot see a filter moving between files -- move `docs-deploy.yml`'s to
-#: `release.yml` and a pinned `3` stays green while both sentences go false (rule 145: pin the
+#: and a count cannot see a filter moving between files -- move one of codeql's to
+#: `release.yml` and a pinned `2` stays green while both sentences go false (rule 145: pin the
 #: population, and a scalar is not one).
 _WORKFLOW_PATH_FILTERS = frozenset(
     {
         "codeql.yml:push:paths-ignore",
         "codeql.yml:pull_request:paths-ignore",
-        "docs-deploy.yml:push:paths",
     }
 )
 
@@ -2623,7 +2623,8 @@ _CI_LANE_REF = re.compile(r"needs\.changes\.outputs\.(\w+)\s*==\s*'true'")
 
 #: `ci.yml`'s lane classification, in the order the `case` tries the arms. First match wins, so
 #: the order is load-bearing: `*.md` matches at any depth, and with prose ahead of site a
-#: `manual/guide.md` skipped the site build while docs-deploy.yml published it (#589).
+#: `manual/guide.md` skipped the site build while the publisher of the day pushed it live
+#: anyway (#589). Cloudflare Pages publishes on the same trigger now, so the order still is.
 _CI_LANE_ARMS = (
     ("manual/*|website/*", "site"),
     ("docs/*|.claude/*|*.md", "prose"),

@@ -23,12 +23,12 @@ each item is expendable**, and removes it safely through [Sonarr](https://sonarr
 requests from [Seerr](https://github.com/seerr-team/seerr), and refreshes
 [Plex](https://plex.tv) when it is done.
 
-📖 **[Read the manual](https://scythe-labs.github.io/reaper/)** for install, configuration,
+📖 **[Read the manual](https://docs.scythelabs.dev/)** for install, configuration,
 policy tuning, and the safety model in full.
 
 > **Status: in development.** Deletion is implemented and tested, but it ships **off**: a new
 > install can only scan, score and explain until you deliberately arm it. Expect rough edges,
-> and read the [install guide](https://scythe-labs.github.io/reaper/getting-started/install)
+> and read the [install guide](https://docs.scythelabs.dev/getting-started/install)
 > before you point it at a library you care about.
 
 ## Current features
@@ -55,14 +55,14 @@ policy tuning, and the safety model in full.
 - **Installs as a container, a desktop app, or a snap**, with no access to your media and one
   small data folder.
 
-[What makes it different](https://scythe-labs.github.io/reaper/features) covers these in full,
+[What makes it different](https://docs.scythelabs.dev/features) covers these in full,
 including the ones that ship switched off.
 
 ## Getting started
 
 Read the documentation to install and run Reaper:
 
-https://scythe-labs.github.io/reaper/getting-started/install
+https://docs.scythelabs.dev/getting-started/install
 
 ## Preview
 
@@ -88,7 +88,7 @@ Reaper deletes irreplaceable data from a server other people depend on.
 > including permanent deletion. Treat Reaper's database as equivalent to your Plex password.**
 > It's encrypted at rest and redacted from logs.
 
-[How a delete is kept safe](https://scythe-labs.github.io/reaper/safety/how-a-delete-is-kept-safe)
+[How a delete is kept safe](https://docs.scythelabs.dev/safety/how-a-delete-is-kept-safe)
 walks the whole path through.
 
 ## How Reaper is built
