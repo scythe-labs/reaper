@@ -34,6 +34,8 @@ import { sourceText } from "./test/sources";
 // one surface at a time, never by an extraction agent (the list is shared state).
 const CONVERTED = [
   "components/AboutPanel.tsx",
+  "components/BackupPanel.tsx",
+  "components/DeletionToggle.tsx",
   "components/DiscordModal.tsx",
   "components/GeneralPanel.tsx",
   "components/JobStatus.tsx",
@@ -45,7 +47,13 @@ const CONVERTED = [
   "components/PlexPanel.tsx",
   "components/PlexPin.tsx",
   "components/PlexTrashNotice.tsx",
+  "components/ReapBar.tsx",
+  "components/ReapBreakdown.tsx",
+  "components/ReapConfirm.tsx",
+  "components/ReapPlan.tsx",
+  "components/RestoreCard.tsx",
   "components/SafetyBanner.tsx",
+  "components/SecurityPanel.tsx",
   "components/ServiceModal.tsx",
   "components/ServicesPanel.tsx",
 ];

@@ -18,9 +18,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { ApiError, api, type Run, type RunReport } from "../api";
 import { DegradedDocLink } from "../docs/DocLink";
 import { bytes, count, date, souls } from "../format";
+import i18next from "../i18n";
 import { reapBlockers } from "../reapReadiness";
 import { usePlexTrash, trashWarning } from "../usePlexTrash";
 import { useSafety } from "../useSafety";
@@ -32,12 +34,13 @@ import { Notice } from "./Notice";
 /** A stored run state, in the words the rest of the app uses for it. "Stopped", never
  *  "aborted" -- one word for one mechanism, the same as the reap bar and the report above
  *  (U-15). An unknown state (an older or newer build) reads through unchanged rather than
- *  being hidden. */
+ *  being hidden. A plain function, not a component, so it reads the catalog through the
+ *  shared `i18next` instance rather than the `useTranslation` hook (docs/I18N_PLAN.md §3). */
 function runState(state: string): string {
-  if (state === "planned") return "not run";
-  if (state === "executing") return "running";
-  if (state === "completed") return "done";
-  if (state === "aborted") return "stopped";
+  if (state === "planned") return i18next.t("reapPlan.runState.notRun");
+  if (state === "executing") return i18next.t("reapPlan.runState.running");
+  if (state === "completed") return i18next.t("reapPlan.runState.done");
+  if (state === "aborted") return i18next.t("reapPlan.runState.stopped");
   return state;
 }
 
@@ -57,6 +60,7 @@ function Steps({ run }: { run: Run }) {
   // the response no longer carries the rows it is counting, so subtracting the page from
   // itself would silently zero the line below and leave the operator reading 50 rows with
   // nothing saying the plan is 500.
+  const { t } = useTranslation();
   const shown = run.steps.slice(0, LIST_CAP);
   const more = run.step_count - shown.length;
   return (
@@ -69,7 +73,12 @@ function Steps({ run }: { run: Run }) {
     // `tabIndex={0}` makes the wrapper its own stop, named so it is worth stopping on. Same
     // sweep as `.docs-content`, `.log-console`, `.dryrun-outcomes` and `docs/DocBody.tsx`'s
     // two (rule 72).
-    <div className="table-scroll" tabIndex={0} role="region" aria-label="Plan steps">
+    <div
+      className="table-scroll"
+      tabIndex={0}
+      role="region"
+      aria-label={t("reapPlan.steps.regionLabel")}
+    >
       <table className="plan-steps">
         <thead>
           <tr>
@@ -77,10 +86,10 @@ function Steps({ run }: { run: Run }) {
                 single-row `<thead>` is one browsers infer reliably, so the real-world harm is
                 low -- but inferring is not the same as being told, and this is the table an
                 operator reads to decide (#177). `docs/DocBody.tsx` is the twin (rule 72). */}
-            <th scope="col">#</th>
-            <th scope="col">Action</th>
-            <th scope="col">Request</th>
-            <th scope="col">State</th>
+            <th scope="col">{t("reapPlan.steps.headers.ordinal")}</th>
+            <th scope="col">{t("reapPlan.steps.headers.action")}</th>
+            <th scope="col">{t("reapPlan.steps.headers.request")}</th>
+            <th scope="col">{t("reapPlan.steps.headers.state")}</th>
           </tr>
         </thead>
         <tbody>
@@ -91,7 +100,9 @@ function Steps({ run }: { run: Run }) {
             <tr key={`${step.media_key}-${step.kind}`}>
               <td className="num">
                 {step.ordinal}
-                {step.is_canary && <span className="canary-tag">test item</span>}
+                {step.is_canary && (
+                  <span className="canary-tag">{t("reapPlan.steps.testItem")}</span>
+                )}
               </td>
               <td>{step.kind.replace(/_/g, " ")}</td>
               <td>
@@ -116,23 +127,21 @@ function Steps({ run }: { run: Run }) {
         </tbody>
       </table>
       {more > 0 && (
-        <p className="muted">
-          …and {count(more)} more {more === 1 ? "step" : "steps"}, not shown. The run still covers
-          every one of them.
-        </p>
+        <p className="muted">{t("reapPlan.steps.more", { n: more, count: count(more) })}</p>
       )}
     </div>
   );
 }
 
 function Report({ report }: { report: RunReport }) {
+  const { t } = useTranslation();
   // "stopped", not "aborted": one word for one mechanism. The docs say caps stop the whole
   // run, and the app-wide reap bar already reports this exact state as "Stopped." (`ReapBar.tsx`).
   // "Abort" was operator vocabulary nowhere else in the product (U-15).
   if (report.state === "aborted") {
     return (
       <div className="sim sim-info">
-        <h3>The run stopped. Nothing was touched</h3>
+        <h3>{t("reapPlan.report.stoppedTitle")}</h3>
         <p>{report.aborted_reason}</p>
       </div>
     );
@@ -143,25 +152,32 @@ function Report({ report }: { report: RunReport }) {
           used to lead with "N souls were actually reaped", a number that is zero by
           construction here and so says nothing, and then called the per-item outcomes
           "steps" -- a plan of 3 seasons read "3 steps were walked" over the 9 journalled
-          steps in the table below it (I-1). */}
+          steps in the table below it (I-1). The two branches are separate whole messages
+          (docs/I18N_PLAN.md §3, SafetyBanner precedent), never a shared stem: word order is
+          the translator's to choose. */}
       <p className="blurb">
-        Practice run complete. Every safety check ran and nothing was sent.{" "}
         {report.skipped > 0 ? (
-          <>
-            <strong>{souls(report.outcomes.length)}</strong> were walked, and{" "}
-            <strong>{count(report.skipped)}</strong> of them would be skipped.
-          </>
+          <Trans
+            i18nKey="reapPlan.report.walkedSkipped"
+            values={{
+              soulsCount: souls(report.outcomes.length),
+              skippedCount: count(report.skipped),
+            }}
+            components={{ walkedNum: <strong />, skipNum: <strong /> }}
+          />
         ) : (
-          <>
-            <strong>{souls(report.outcomes.length)}</strong> were walked end to end.
-          </>
+          <Trans
+            i18nKey="reapPlan.report.walkedAll"
+            values={{ soulsCount: souls(report.outcomes.length) }}
+            components={{ walkedNum: <strong /> }}
+          />
         )}
       </p>
       {/* Every row is text, so this list scrolls with nothing to tab onto (WCAG 2.1.1, #177).
           `tabIndex={0}` on the list itself keeps its `listitem`s intact where a wrapper with
           `role="region"` would not, and it is named for what it holds. Same sweep as the plan
           table above (rule 72). */}
-      <ul className="dryrun-outcomes" tabIndex={0} aria-label="What the practice run walked">
+      <ul className="dryrun-outcomes" tabIndex={0} aria-label={t("reapPlan.report.outcomesLabel")}>
         {report.outcomes.slice(0, LIST_CAP).map((o) => (
           // One outcome per item, never more: executor._run_deletes records exactly one
           // StepOutcome per delete, so the item's own key is unique among siblings.
@@ -178,7 +194,9 @@ function Report({ report }: { report: RunReport }) {
         ))}
       </ul>
       {report.outcomes.length > LIST_CAP && (
-        <p className="muted">…and {count(report.outcomes.length - LIST_CAP)} more.</p>
+        <p className="muted">
+          {t("reapPlan.report.moreOutcomes", { count: count(report.outcomes.length - LIST_CAP) })}
+        </p>
       )}
     </div>
   );
@@ -197,6 +215,7 @@ export function ReapPlan({
   /** Jump to the Review queue, where per-title decisions are made. */
   onGoToReview: () => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   // The plan shown is held by ID and read through the cache, never captured as a local copy.
   // A captured run goes stale the moment the reap it describes finishes: its state stays
@@ -285,18 +304,17 @@ export function ReapPlan({
   return (
     <section className="reap">
       <div className="reap-head">
-        <h2>Reap plan</h2>
+        <h2>{t("reapPlan.page.title")}</h2>
         <button
           className="primary"
           onClick={() => plan.mutate()}
           disabled={plan.isPending || degraded}
         >
-          {plan.isPending ? "Planning…" : "Build a plan from the last scan"}
+          {plan.isPending ? t("reapPlan.page.building") : t("reapPlan.page.buildButton")}
         </button>
       </div>
       <p className="blurb">
-        A plan records exactly what a reap <em>would</em> do: the literal request behind every
-        deletion. You can practice it end to end. Nothing here deletes anything.
+        <Trans i18nKey="reapPlan.page.blurb" components={{ em: <em /> }} />
       </p>
 
       {degraded && (
@@ -307,9 +325,15 @@ export function ReapPlan({
         // same field and moves with it (rule 72).
         <Notice tone="warn" standing as="div" className="notice-doc">
           <span>
-            <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You
-            can still look at it, but Reaper won't act on it, so a plan can't be built. Fix the
-            source and scan again.
+            {/* The stored reason is server-composed operator copy, already English (§5/§6 of
+                docs/I18N_PLAN.md), so it rides through as a value rather than being reworded
+                here. `?? ""` keeps a null reason from interpolating as the literal text
+                "null" -- the original JSX simply skipped rendering it. */}
+            <Trans
+              i18nKey="reapPlan.degraded.notice"
+              values={{ reason: latestSnapshot?.degraded_reason ?? "" }}
+              components={{ strong: <strong /> }}
+            />
           </span>
           {/* Nothing renders for a degradation with no page, which is most of them. `ScanBar`
               carries the same pair (rule 72). */}
@@ -328,12 +352,12 @@ export function ReapPlan({
       {runId != null &&
         !run &&
         (runPending ? (
-          <p className="help">Loading the plan…</p>
+          <p className="help">{t("reapPlan.plan.loading")}</p>
         ) : (
           <Notice tone="error">
             {runError instanceof ApiError && runError.status === 404
-              ? "That plan is no longer available."
-              : "Reaper couldn't load this plan. Reload the page to try again."}
+              ? t("reapPlan.plan.notFound")
+              : t("reapPlan.plan.loadFailed")}
           </Notice>
         ))}
 
@@ -342,17 +366,19 @@ export function ReapPlan({
           <div className="plan-summary">
             <span className="confirm-phrase">{run.confirmation_phrase}</span>
             <span className="muted">
-              {souls(run.item_count)}, {bytes(run.total_bytes)}, smallest first, and the first is a
-              test: if it doesn't go exactly as planned, the run stops.
+              {t("reapPlan.summary.planLine", {
+                souls: souls(run.item_count),
+                bytes: bytes(run.total_bytes),
+              })}
             </span>
             {/* The plan is smaller than the queue implied, and this is where the owner
                 finds out. Silence here reads as "that was everything". */}
             {run.held_back_unknown_size > 0 && (
               <Notice tone="warn">
-                {souls(run.held_back_unknown_size)}{" "}
-                {run.held_back_unknown_size === 1 ? "is" : "are"} held back. Reaper couldn't measure{" "}
-                {run.held_back_unknown_size === 1 ? "its" : "their"} size, so it won't delete{" "}
-                {run.held_back_unknown_size === 1 ? "it" : "them"}.
+                {t("reapPlan.summary.heldBackUnknownSize", {
+                  n: run.held_back_unknown_size,
+                  soulsCount: souls(run.held_back_unknown_size),
+                })}
               </Notice>
             )}
             {/* Informational here, and acknowledged in the sheet. Execute only opens the
@@ -369,10 +395,18 @@ export function ReapPlan({
               // screen, which is a background event with no press to attach it to, and it is
               // then part of the page until a new plan is built.
               <Notice tone="warn" standing>
-                This plan came from an older scan, so it can list titles you have since protected.{" "}
-                <button className="link" onClick={() => plan.mutate()} disabled={plan.isPending}>
-                  Build a new plan
-                </button>
+                <Trans
+                  i18nKey="reapPlan.summary.staleRun"
+                  components={{
+                    btn: (
+                      <button
+                        className="link"
+                        onClick={() => plan.mutate()}
+                        disabled={plan.isPending}
+                      />
+                    ),
+                  }}
+                />
               </Notice>
             )}
             {/* The check is in flight, so there is nothing to warn about yet. This used to be the
@@ -383,16 +417,24 @@ export function ReapPlan({
                 only once the wait has been one (#332, `useSlowWait`), so it is the page's plain
                 help line here, the same one the plan loader above uses. */}
             {staleUnknown && snapshot.isPending && (
-              <p className="help">Checking whether this plan came from the latest scan…</p>
+              <p className="help">{t("reapPlan.summary.staleCheckPending")}</p>
             )}
             {staleUnknown && !snapshot.isPending && (
               // `standing`: a snapshot read that would not answer is the state of this page until
               // the read succeeds, not a reply to anything pressed.
               <Notice tone="warn" standing>
-                Reaper couldn't check whether this plan came from the latest scan.{" "}
-                <button className="link" onClick={() => plan.mutate()} disabled={plan.isPending}>
-                  Build a new plan
-                </button>
+                <Trans
+                  i18nKey="reapPlan.summary.staleUnknown"
+                  components={{
+                    btn: (
+                      <button
+                        className="link"
+                        onClick={() => plan.mutate()}
+                        disabled={plan.isPending}
+                      />
+                    ),
+                  }}
+                />
               </Notice>
             )}
             {/* Above Execute, because that is the button the refusal fires from. The Plex one
@@ -406,42 +448,41 @@ export function ReapPlan({
                   <>
                     {" "}
                     <button className="link" onClick={onGoToPlexSettings}>
-                      Connect Plex in Settings
+                      {t("reapPlan.summary.connectPlex")}
                     </button>
                   </>
                 )}
               </Notice>
             ))}
             {setup.isError && !setup.data && (
-              <Notice tone="warn">
-                Reaper couldn't check whether Plex and Tautulli are connected. Without either one a
-                real run is refused.
-              </Notice>
+              <Notice tone="warn">{t("reapPlan.summary.setupUnknown")}</Notice>
             )}
             <button onClick={() => dry.mutate(run.id)} disabled={dry.isPending}>
-              {dry.isPending ? "Checking…" : "Practice run"}
+              {dry.isPending
+                ? t("reapPlan.summary.practiceRunChecking")
+                : t("reapPlan.summary.practiceRun")}
             </button>
             {run.state === "planned" && (
               <button
                 className="danger"
                 disabled={!armed}
-                title={armed ? undefined : "Turn deletion on first"}
+                title={armed ? undefined : t("reapPlan.summary.executeDisabledTitle")}
                 onClick={() => setConfirming(true)}
               >
-                Execute…
+                {t("reapPlan.summary.execute")}
               </button>
             )}
             {run.state === "planned" && !armed && (
               <span className="exec-note">
                 {safety.isPending ? (
-                  "Checking whether deletion is on…"
+                  t("reapPlan.summary.checkingSafety")
                 ) : (
                   <>
                     {safety.isError || !safety.data
-                      ? "Reaper couldn't confirm whether deletion is on, so this plan can't run from here."
-                      : "Deletion is off, so this plan can't run."}{" "}
+                      ? t("reapPlan.summary.safetyUnknown")
+                      : t("reapPlan.summary.deletionOff")}{" "}
                     <button className="link" onClick={onGoToDeletion}>
-                      Turn it on in Policy → Deletion
+                      {t("reapPlan.summary.turnOnLink")}
                     </button>
                   </>
                 )}
@@ -460,7 +501,7 @@ export function ReapPlan({
 
       {history && history.length > 0 && (
         <div className="run-history">
-          <h3>Recent plans</h3>
+          <h3>{t("reapPlan.history.heading")}</h3>
           <ul>
             {history.map((r) => {
               // Clicking a row swaps the plan shown above, so the row that is open says
@@ -481,7 +522,7 @@ export function ReapPlan({
                   </button>{" "}
                   <span className="muted">
                     {date(r.approved_at)}, {runState(r.state)}
-                    {open && ", open above"}
+                    {open && t("reapPlan.history.openAbove")}
                     {/* The stored reason, under the state it explains, in the step table's
                         `.step-why` box. Its only surface: the report panel is dry-run state
                         and the reap sheet reads the in-memory status, so a reload leaves

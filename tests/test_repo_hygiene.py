@@ -4126,19 +4126,16 @@ def test_every_query_failure_branch_is_counted() -> None:
 # construction. Its line now points at the close the modal already has, and ``App.tsx`` is gone
 # from this dict.
 _RELOAD_ADVICE = {
-    "frontend/src/components/BackupPanel.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
     "frontend/src/components/NotInScanPanel.tsx": 1,
     "frontend/src/components/PolicyEditor.tsx": 1,
-    "frontend/src/components/ReapBreakdown.tsx": 1,
-    "frontend/src/components/ReapConfirm.tsx": 1,
-    "frontend/src/components/ReapPlan.tsx": 1,
-    "frontend/src/components/RestoreCard.tsx": 3,
-    "frontend/src/components/SecurityPanel.tsx": 1,
-    # The Stage 4 conversions to date: About's, General's, Plex's, and Jobs' two, each moved
-    # here with its surface. A count leaves a component row for this one as its surface
-    # converts; the advice itself stays deliberate either way.
-    "frontend/src/locales/en/ui.json": 5,
+    # The word survives inside the backup.restore.reloadButton key literals; the advice
+    # itself lives in the catalog rows below.
+    "frontend/src/components/RestoreCard.tsx": 2,
+    # Every converted surface's advice, one count per catalog message carrying the word:
+    # About, General, Plex, Jobs' two, and group 2's Backup, Security, and the three reap
+    # sentences, plus the catalog's own reloadButton label.
+    "frontend/src/locales/en/ui.json": 12,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -4223,8 +4220,8 @@ _NEVER_LOADED_COPY = {
     "Couldn't load the reasons for this item. Close this panel and click the item to try again.": [
         "frontend/src/components/WhyPanelFallback.tsx"
     ],
-    "Couldn't load the rest of the list, so nothing was selected. Your picks are as they were."
-    " Try again.": ["frontend/src/components/ReviewQueue.tsx"],
+    "Couldn't load the rest of the list, so nothing was selected. Your picks are as they"
+    " were. Try again.": ["frontend/src/components/ReviewQueue.tsx"],
     "Couldn't load the seasons. Collapse and expand to try again.": [
         "frontend/src/components/ReviewQueue.tsx"
     ],
@@ -4234,38 +4231,35 @@ _NEVER_LOADED_COPY = {
     "Couldn't load these settings.": ["frontend/src/components/PolicyEditor.tsx"],
     "Couldn't load these settings. Reload to try again.": [
         "frontend/src/components/PolicyEditor.tsx",
-        "frontend/src/components/SecurityPanel.tsx",
-        # general.loadError and plex.loadError, still the one shared sentence.
+        "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this page. Reload to try again.": [
-        "frontend/src/components/BackupPanel.tsx",
+        "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this person's requests. Close this panel and click the card to try again.": [
         "frontend/src/components/ScalesPanel.tsx"
     ],
-    "Couldn't load what a reap would remove. Reaper just can't show it right now."
-    " Reload to try again.": ["frontend/src/components/ReapBreakdown.tsx"],
+    "Couldn't load what a reap would remove. Reaper just can't show it right now. Reload"
+    " to try again.": ["frontend/src/locales/en/ui.json"],
     "Couldn't load your connections.": [
         "frontend/src/components/SetupConnectStep.tsx",
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your lists, so there is no way to tell here whether they are working.": [
-        # lists.loadError and lists.loadErrorRetrying: one sentence, two button states,
-        # the SafetyBanner linked/link-less precedent.
         "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your review queue.": ["frontend/src/components/ReviewQueue.tsx"],
-    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from right"
-    " now. The rules you've already added are still here.": [
+    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from"
+    " right now. The rules you've already added are still here.": [
         "frontend/src/components/PolicyRuleEditors.tsx",
         "frontend/src/components/PolicyRuleEditors.tsx",
     ],
     "Reaper couldn't load this plan. Reload the page to try again.": [
-        "frontend/src/components/ReapPlan.tsx"
+        "frontend/src/locales/en/ui.json"
     ],
     "Reaper couldn't load this reap. Close this and try View again.": ["frontend/src/App.tsx"],
     "Reaper couldn't load your lists, so there's nothing to pick from right now.": [

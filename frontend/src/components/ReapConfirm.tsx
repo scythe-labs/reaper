@@ -31,6 +31,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { ApiError, api, type ReapStatus, type Run, type RunReport } from "../api";
 import { bytes, count, souls } from "../format";
@@ -52,6 +53,7 @@ export function ReapConfirm({
   onDone?: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   // The plan, read through the one cache key every surface uses for it. The caller's copy seeds
   // it, so opening the sheet never waits on (or costs) a fetch.
   //
@@ -229,26 +231,29 @@ export function ReapConfirm({
   useEffect(() => {
     if (report || failed) return;
     if (running)
-      return say(stopping ? "Stopping after the current one." : `${tenth * 10}% deleted.`);
+      return say(
+        stopping
+          ? t("reapConfirm.progress.announceStopping")
+          : t("reapConfirm.progress.announceTick", { pct: tenth * 10 }),
+      );
     if (!dryClean) return;
     // From here the spoken stage reads the SAME gates the screen does, rather than re-deriving a
     // weaker version of them (rule 144). Both divergences were real: another reap holding the
     // slot renders that notice and NO phrase field, so the old code told the operator to type one
     // that was not there -- and `say`'s dedupe then swallowed the correct sentence as a repeat
     // when the field finally arrived, leaving silence at the only moment they could act.
-    if (otherRunning)
-      return say("Another reap is running. Wait for it to finish, then reopen this to reap.");
+    if (otherRunning) return say(t("reapConfirm.otherRunning"));
     // Three states, never one definite claim -- the same three the arm block below shows. `armed`
     // is `destructive_enabled === true`, so a switch nobody could read collapses into "off", and
     // saying that out loud is the reassuring direction to be wrong in, on the last screen before
     // files go.
     if (safety.isPending) return;
     if (safety.isError || !safety.data)
-      return say("Practice run passed, but Reaper couldn't confirm whether deletion is on.");
-    if (!armed) return say("Practice run passed, but deletion is off, so nothing can be reaped.");
+      return say(t("reapConfirm.practiceRun.announceUnknownSafety"));
+    if (!armed) return say(t("reapConfirm.practiceRun.announceOff"));
     // `pct` is deliberately absent from the deps: `tenth` is the throttle, and depending on the
     // percent would re-run this on every poll to re-derive the same sentence.
-    say("Practice run passed. Type the confirmation phrase to reap.");
+    say(t("reapConfirm.practiceRun.announcePassed"));
   }, [
     failed,
     report,
@@ -262,15 +267,18 @@ export function ReapConfirm({
     safety.isError,
     safety.data,
     say,
+    t,
   ]);
 
   return (
-    <ModalShell title={`Reap ${souls(run.item_count)}`} onClose={onClose} className="reap-confirm">
+    <ModalShell
+      title={t("reapConfirm.reapCount", { souls: souls(run.item_count) })}
+      onClose={onClose}
+      className="reap-confirm"
+    >
       <p className="reap-confirm-phrase">{run.confirmation_phrase}</p>
       <p className="muted small">
-        {souls(run.item_count)}, {bytes(run.total_bytes)}, smallest first, and the first is a test:
-        if it doesn't go exactly as planned, the run stops. This removes the files through
-        Sonarr/Radarr and adds an import exclusion so they won't silently re-download.
+        {t("reapConfirm.summary", { souls: souls(run.item_count), bytes: bytes(run.total_bytes) })}
       </p>
 
       {/* Said again here, not only on the plan screen: this is the last surface before
@@ -278,9 +286,10 @@ export function ReapConfirm({
           owner is entitled to know while deciding. */}
       {run.held_back_unknown_size > 0 && (
         <Notice tone="warn">
-          {souls(run.held_back_unknown_size)} {run.held_back_unknown_size === 1 ? "is" : "are"} held
-          back. Reaper couldn't measure {run.held_back_unknown_size === 1 ? "its" : "their"} size,
-          so it won't delete {run.held_back_unknown_size === 1 ? "it" : "them"}.
+          {t("reapConfirm.heldBack", {
+            n: run.held_back_unknown_size,
+            souls: souls(run.held_back_unknown_size),
+          })}
         </Notice>
       )}
 
@@ -291,18 +300,16 @@ export function ReapConfirm({
           after reopening a live run from the app-wide bar). */}
       {!running && !report && !failed && (
         <>
-          {dry.isPending && (
-            <p className="blurb">Checking every safety stop with a practice run…</p>
-          )}
+          {dry.isPending && <p className="blurb">{t("reapConfirm.practiceRun.checking")}</p>}
           {dry.error && (
             <Notice tone="error">
-              The practice run failed, so nothing can be executed: {dry.error.message}
+              {t("reapConfirm.practiceRun.failed", { message: dry.error.message })}
             </Notice>
           )}
           {dryReport?.dry_run && dryReport.state === "aborted" && (
             <div className="sim sim-info">
               {/* "stopped", the one word the product uses for this (U-15). */}
-              <strong>The plan stopped. Nothing would be touched.</strong>
+              <strong>{t("reapConfirm.practiceRun.stopped")}</strong>
               <p>{dryReport.aborted_reason}</p>
             </div>
           )}
@@ -311,7 +318,7 @@ export function ReapConfirm({
               <span className="gate-mark" aria-hidden="true">
                 ✓
               </span>{" "}
-              Practice run passed: the plan is sound, and it sent nothing.
+              {t("reapConfirm.practiceRun.passed")}
             </p>
           )}
         </>
@@ -326,7 +333,7 @@ export function ReapConfirm({
         // the slot, and the sheet reads in document order by design (the focus move below is
         // withheld for the same reason).
         <Notice tone="warn" standing>
-          Another reap is running. Wait for it to finish, then reopen this to reap.
+          {t("reapConfirm.otherRunning")}
         </Notice>
       )}
 
@@ -352,22 +359,27 @@ export function ReapConfirm({
             // Three states, never one definite claim: only a switch we actually read may
             // be reported as off.
             safety.isPending ? (
-              <p className="reap-disarmed">Checking whether deletion is on…</p>
+              <p className="reap-disarmed">{t("reapConfirm.arm.checking")}</p>
             ) : safety.isError || !safety.data ? (
               <Notice tone="warn">
-                Reaper couldn't confirm whether deletion is on, so nothing can be reaped from here.
-                Check <em>Policy → Deletion</em>, then reload this page.
+                <Trans i18nKey="reapConfirm.arm.unknown" components={{ em: <em /> }} />
               </Notice>
             ) : (
               <p className="reap-disarmed">
-                Deletion is <strong>off</strong>. Turn it on in <em>Policy → Deletion</em> (it asks
-                for your admin password), then come back here.
+                <Trans
+                  i18nKey="reapConfirm.arm.off"
+                  components={{ strong: <strong />, em: <em /> }}
+                />
               </p>
             )
           ) : (
             <>
               <label className="reap-confirm-label" htmlFor="reap-phrase">
-                Type <code>{run.confirmation_phrase}</code> to confirm:
+                <Trans
+                  i18nKey="reapConfirm.arm.typePhrase"
+                  values={{ phrase: run.confirmation_phrase }}
+                  components={{ code: <code /> }}
+                />
               </label>
               <input
                 ref={phraseRef}
@@ -384,10 +396,12 @@ export function ReapConfirm({
           {exec.error && <Notice tone="error">{exec.error.message}</Notice>}
           <div className="reap-confirm-actions">
             <button className="ghost" onClick={onClose} disabled={exec.isPending}>
-              Cancel
+              {t("reapConfirm.cancel")}
             </button>
             <button className="danger" disabled={!canExecute} onClick={() => exec.mutate()}>
-              {exec.isPending ? "Reaping…" : `Reap ${souls(run.item_count)}`}
+              {exec.isPending
+                ? t("reapConfirm.reapingLabel")
+                : t("reapConfirm.reapCount", { souls: souls(run.item_count) })}
             </button>
           </div>
         </div>
@@ -400,11 +414,14 @@ export function ReapConfirm({
           <div className="reap-progress">
             <div className="prog-head">
               <span className="prog-count">
-                {count(status.done)} of {count(status.total)} souls
+                {t("reapConfirm.progress.count", {
+                  done: count(status.done),
+                  total: count(status.total),
+                })}
               </span>
               <span className="prog-note">
-                {bytes(status.deleted_bytes)} freed
-                {status.skipped > 0 && `, ${count(status.skipped)} spared`}
+                {t("reapConfirm.freedAmount", { bytes: bytes(status.deleted_bytes) })}
+                {status.skipped > 0 && t("reapConfirm.sparedAmount", { n: count(status.skipped) })}
               </span>
             </div>
             {/* A bare `<div>` with an inline width is a picture of a number and nothing else.
@@ -415,11 +432,15 @@ export function ReapConfirm({
             <div
               className="prog-track"
               role="progressbar"
-              aria-label="Reaping"
+              aria-label={t("reapConfirm.progress.ariaLabel")}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={pct}
-              aria-valuetext={`${pct}%, ${count(status.done)} of ${count(status.total)} removed`}
+              aria-valuetext={t("reapConfirm.progress.valueText", {
+                pct,
+                done: count(status.done),
+                total: count(status.total),
+              })}
             >
               <div className="prog-fill" style={{ width: `${pct}%` }} />
             </div>
@@ -428,14 +449,14 @@ export function ReapConfirm({
           <div className="reap-confirm-actions">
             <span className={`reap-running ${stopping ? "stopping" : "deleting"}`}>
               <span className="spinner" aria-hidden="true" />
-              {stopping ? "Stopping after the current one…" : "Reaping…"}
+              {stopping ? t("reapConfirm.stoppingLabel") : t("reapConfirm.reapingLabel")}
             </span>
             <button
               className="stop-btn"
               disabled={stopping || stop.isPending}
               onClick={() => stop.mutate()}
             >
-              {stopping ? "Stopping…" : "Stop"}
+              {stopping ? t("reapConfirm.stopping") : t("reapConfirm.stop")}
             </button>
           </div>
         </div>
@@ -449,13 +470,15 @@ export function ReapConfirm({
         // become the only account of what happened to files that are already gone.
         <div className="reap-arm" ref={outcomeRef} tabIndex={-1}>
           <Notice tone="error">
-            <strong>The reap stopped on a problem.</strong>{" "}
-            {status?.error ?? "Reaper couldn't say what went wrong."} Anything already removed is
-            gone; check the Review queue after the next scan.
+            <Trans
+              i18nKey="reapConfirm.failed.body"
+              values={{ error: status?.error ?? t("reapConfirm.failed.unknownError") }}
+              components={{ strong: <strong /> }}
+            />
           </Notice>
           <div className="reap-confirm-actions">
             <button className="primary" onClick={onClose}>
-              Done
+              {t("reapConfirm.done")}
             </button>
           </div>
         </div>
@@ -467,22 +490,24 @@ export function ReapConfirm({
         // is here for now.
         <div className="reap-result" ref={outcomeRef} tabIndex={-1}>
           <div className="reap-tally">
-            <strong className="reap-souls">{souls(report.would_delete_items)} reclaimed</strong>
+            <strong className="reap-souls">
+              {t("reapConfirm.result.reclaimed", { souls: souls(report.would_delete_items) })}
+            </strong>
             <span className="muted">
               {/* The count above covers every item; this covers only the ones with a
                   size. When they differ, say so, rather than letting the byte figure
                   read as the whole story. */}
-              {bytes(report.deleted_bytes)} freed
+              {t("reapConfirm.freedAmount", { bytes: bytes(report.deleted_bytes) })}
               {report.deleted_unmeasured > 0 &&
-                `, ${count(report.deleted_unmeasured)} of unknown size`}
-              {report.skipped > 0 && `, ${count(report.skipped)} spared at the last moment`}
+                t("reapConfirm.result.unmeasuredSuffix", { n: count(report.deleted_unmeasured) })}
+              {report.skipped > 0 &&
+                t("reapConfirm.result.sparedAtLastMoment", { n: count(report.skipped) })}
             </span>
           </div>
           {report.state === "aborted" && (
             <p className="reap-halt">
               {report.aborted_reason}
-              {report.would_delete_items > 0 &&
-                " Plex is refreshed for what was removed, and a fresh scan is running so the queue matches your library."}
+              {report.would_delete_items > 0 && t("reapConfirm.result.refreshedNote")}
             </p>
           )}
           <ul className="reap-checklist">
@@ -499,7 +524,11 @@ export function ReapConfirm({
                       <span className="gate-mark" aria-hidden="true">
                         {c.ok ? "✓" : "✗"}
                       </span>
-                      <span className="sr-only">{c.ok ? "Passed: " : "Failed: "}</span>
+                      <span className="sr-only">
+                        {c.ok
+                          ? t("reapConfirm.result.checkPassed")
+                          : t("reapConfirm.result.checkFailed")}
+                      </span>
                       {c.label}
                     </li>
                   ))}
@@ -509,7 +538,7 @@ export function ReapConfirm({
           </ul>
           <div className="reap-confirm-actions">
             <button className="primary" onClick={onClose}>
-              Done
+              {t("reapConfirm.done")}
             </button>
           </div>
         </div>
