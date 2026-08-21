@@ -7,6 +7,7 @@
 // reader gets from it, and two copies of it are two chances for one of them to stop matching the
 // legend beside it.
 
+import { useTranslation } from "react-i18next";
 import { bytes } from "../format";
 
 /** The kept/reclaimable split for one requester.
@@ -26,6 +27,7 @@ export function BalanceBar({
    *  so, so it is passed rather than derived from `reclaim`. */
   hasReclaim: boolean;
 }) {
+  const { t } = useTranslation();
   const used = Math.max(0, granted - reclaim);
   const usedPct = granted > 0 ? (100 * used) / granted : 100;
   const reclaimPct = granted > 0 ? (100 * reclaim) / granted : 0;
@@ -35,8 +37,8 @@ export function BalanceBar({
       role="img"
       aria-label={
         hasReclaim
-          ? `${bytes(used)} kept, ${bytes(reclaim)} the scan would reclaim`
-          : `${bytes(used)} kept, nothing reclaimable`
+          ? t("scales.balanceBar.ariaReclaim", { used: bytes(used), reclaim: bytes(reclaim) })
+          : t("scales.balanceBar.ariaNoReclaim", { used: bytes(used) })
       }
     >
       <i className="used" style={{ width: `${usedPct}%` }} />

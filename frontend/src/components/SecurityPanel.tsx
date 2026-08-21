@@ -9,6 +9,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ChangeEvent, type ReactNode, useEffect, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api } from "../api";
 import { useSafety } from "../useSafety";
@@ -38,6 +39,7 @@ function AdminPasswordForm({
   needed: boolean;
   onDirtyChange?: ((dirty: boolean) => void) | undefined;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [current, setCurrent] = useState("");
   const [pw, setPw] = useState("");
@@ -66,12 +68,12 @@ function AdminPasswordForm({
       setCurrent("");
       setPw("");
       setConfirm("");
-      setMsg("Password saved.");
+      setMsg(t("security.form.saved"));
       // The visible half is a `.muted` span beside the button, which announces nothing. The
       // failure half of this form already speaks (`Notice`, `role="alert"`), so success was
       // the only outcome of changing the password that arms deletion an operator could not
       // hear -- the one asymmetry the comment below is careful about, reached another way.
-      announce("Password saved.");
+      announce(t("security.form.saved"));
       void queryClient.invalidateQueries({ queryKey: ["safety"] });
       // The server spends the recovery mark in the same transaction as the new hash, so this
       // session is an ordinary one from here on. Re-read it, or the current-password box would
@@ -112,18 +114,20 @@ function AdminPasswordForm({
   // fix right now -- including a current password they have just cleared, which is why
   // `askCurrent` sits above `save.error` rather than below it.
   const errorNode: ReactNode = tooShort ? (
-    <>
-      Use at least {MIN_ADMIN_PASSWORD} characters. <b>{pw.length} so far.</b>
-    </>
+    <Trans
+      i18nKey="security.form.tooShortError"
+      values={{ min: MIN_ADMIN_PASSWORD, count: pw.length }}
+      components={{ b: <b /> }}
+    />
   ) : mismatch ? (
-    "The passwords don't match."
+    t("security.form.mismatchError")
   ) : askCurrent ? (
-    "Enter the current password to save."
+    t("security.form.currentRequiredError")
   ) : save.error ? (
     needed ? (
-      `The password wasn't set: ${save.error.message}`
+      t("security.form.setFailedError", { message: save.error.message })
     ) : (
-      `The password wasn't changed: ${save.error.message}`
+      t("security.form.changeFailedError", { message: save.error.message })
     )
   ) : null;
 
@@ -168,13 +172,13 @@ function AdminPasswordForm({
   return (
     <div className="safety-row pw-row">
       <div className="pw-head">
-        <strong>{needed ? "Set an admin password" : "Change the admin password"}</strong>
+        <strong>{needed ? t("security.form.setTitle") : t("security.form.changeTitle")}</strong>
         <p className="help">
           {needed
-            ? "Choose something long, and keep it somewhere safe."
+            ? t("security.form.setHelp")
             : viaRecovery
-              ? "You can set a new one without the old password."
-              : "Changing it needs the current password first."}
+              ? t("security.form.recoveryHelp")
+              : t("security.form.changeHelp")}
         </p>
       </div>
       <div className="pw-col">
@@ -197,7 +201,7 @@ function AdminPasswordForm({
           {!needed && (
             <>
               <label className={viaRecovery ? "field-sm dim" : "field-sm"}>
-                <span className="field-label">Current password</span>
+                <span className="field-label">{t("security.form.currentPasswordLabel")}</span>
                 <input
                   type="password"
                   value={viaRecovery ? "" : current}
@@ -208,14 +212,14 @@ function AdminPasswordForm({
                   aria-describedby={errorOwner === "current" ? PASSWORD_ERROR_ID : undefined}
                 />
                 {viaRecovery && (
-                  <span className="help">Not needed. A recovery code signed you in.</span>
+                  <span className="help">{t("security.form.recoveryNotNeeded")}</span>
                 )}
               </label>
               <hr className="pw-sep" />
             </>
           )}
           <label className="field-sm">
-            <span className="field-label">New password</span>
+            <span className="field-label">{t("security.form.newPasswordLabel")}</span>
             {/* The placeholder states the length up front; the label names the field. The
                 cap is the server's own, so a long pasted passphrase is stopped in the box
                 rather than coming back as a validator's sentence. */}
@@ -223,7 +227,7 @@ function AdminPasswordForm({
               type="password"
               value={pw}
               onChange={onEdit(setPw)}
-              placeholder={`at least ${MIN_ADMIN_PASSWORD} characters`}
+              placeholder={t("security.form.newPasswordPlaceholder", { min: MIN_ADMIN_PASSWORD })}
               autoComplete="new-password"
               maxLength={128}
               // One region carries three different complaints, so each box describes itself
@@ -235,7 +239,7 @@ function AdminPasswordForm({
             />
           </label>
           <label className="field-sm">
-            <span className="field-label">Confirm new password</span>
+            <span className="field-label">{t("security.form.confirmPasswordLabel")}</span>
             <input
               type="password"
               value={confirm}
@@ -248,7 +252,7 @@ function AdminPasswordForm({
           </label>
           <div className="add-actions">
             <button type="submit" className="primary" disabled={!valid || save.isPending}>
-              Save
+              {t("security.form.save")}
             </button>
             {msg && <span className="muted">{msg}</span>}
           </div>
@@ -283,13 +287,14 @@ export function SecurityPanel({
 }: {
   onDirtyChange?: ((dirty: boolean) => void) | undefined;
 } = {}) {
+  const { t } = useTranslation();
   const { data, isLoading, isError } = useSafety();
 
   if (isLoading) {
     return (
       <div className="panel">
-        <h2>Security</h2>
-        <p className="muted">Loading…</p>
+        <h2>{t("security.heading")}</h2>
+        <p className="muted">{t("security.loading")}</p>
       </div>
     );
   }
@@ -304,18 +309,17 @@ export function SecurityPanel({
   if (!data) {
     return (
       <div className="panel">
-        <h2>Security</h2>
-        <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>
+        <h2>{t("security.heading")}</h2>
+        <Notice tone="error">{t("security.loadError")}</Notice>
       </div>
     );
   }
 
   return (
     <div className="panel">
-      <h2>Security</h2>
+      <h2>{t("security.heading")}</h2>
       <p className="blurb">
-        The admin password. It confirms turning deletion on (in <strong>Policy → Deletion</strong>),
-        and it's also how you sign in without Plex.
+        <Trans i18nKey="security.blurb" />
       </p>
 
       {isError && <StaleReadNotice />}

@@ -5,6 +5,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { setUnauthorizedHandler } from "./api";
+import { applyBrowserLanguage } from "./i18n";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -29,10 +30,14 @@ setUnauthorizedHandler(() => queryClient.setQueryData(["me"], null));
 const root = document.getElementById("root");
 if (!root) throw new Error("No #root element; index.html is not what we think it is.");
 
-createRoot(root).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </StrictMode>,
-);
+// The browser's catalog, when one shipped, loads before the first paint (i18n.ts), so the app
+// never renders English and then switches under the operator.
+void applyBrowserLanguage().then(() => {
+  createRoot(root).render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+});

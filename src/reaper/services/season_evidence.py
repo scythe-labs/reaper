@@ -51,10 +51,12 @@ from typing import Any
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import from_epoch
 from reaper.engine import identity
+from reaper.engine.facts_codec import LEGACY_REASON_IDS
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
-from reaper.engine.gates import GateId, GateResult, progress_is_establishable
+from reaper.engine.gates import GateId, GateResult, blocked_reason, progress_is_establishable
 from reaper.engine.policy import PolicyBody
+from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.services.season_pruning import SeriesPrunePlan, active_progress, plan_series_prune
 
 
@@ -99,7 +101,7 @@ class SeasonPruneInput:
     reproduces what it decided, and :func:`missing_episode_map` lets that show through."""
 
     watchers_by_season: Mapping[int, int | None]
-    shortfall_by_season: Mapping[int, str | None]
+    shortfall_by_season: Mapping[int, Reason | None]
     progress_unreadable: bool
     progress_seasons_unmatched: bool
     progress_unknown_reason: str | None
@@ -371,22 +373,22 @@ def guard_result(
         # count is None, and every count is None when no season carries a rating key -- but
         # the order is what makes that safe rather than the coincidence.
         #
-        # Worded as the `could not check {what}: {cause}` shape `engine.gates._blocked`
-        # produces, on the SAME cause string this season's four Plex-dependent gates carry, so
-        # the panel folds all five into one box naming the cause once instead of opening a
-        # second box that says it again (`WhyPanel.LeftForYou`, rule 144).
+        # The `blocked` shape `engine.gates.blocked_reason` produces, on the SAME cause id
+        # this season's four Plex-dependent gates carry, so the panel folds all five into
+        # one box naming the cause once instead of opening a second box that says it again
+        # (`WhyPanel.LeftForYou`, rule 144).
         return GateResult(
             GateId.SEASON_PROGRESSION,
             GATE_ABSTAIN,
             blocked=True,
             unestablishable=True,
-            detail=f"could not check who is part-way through it: {progress_unknown_reason}",
+            detail=blocked_reason("season_progress", progress_unknown_reason),
         )
 
     return GateResult(
         GateId.SEASON_PROGRESSION,
         GATE_ABSTAIN,
-        detail="checked: prunable by the keep-last / keep-first season rules",
+        detail=Reason("season_prunable"),
     )
 
 
@@ -397,9 +399,9 @@ def guard_result(
 #: there. Two maps rather than one shared with the movie lane because the subjects differ
 #: ("this season" against "this item", "this show" against "this title").
 _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
-    identity.MatchStatus.UNMATCHED: "Plex has not matched this season",
-    identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this show",
-    identity.MatchStatus.CONFLICTED: "Plex and Sonarr describe this show differently",
+    identity.MatchStatus.UNMATCHED: "plex_season_unmatched",
+    identity.MatchStatus.AMBIGUOUS: "plex_show_ambiguous",
+    identity.MatchStatus.CONFLICTED: "sonarr_plex_disagree",
 }
 
 
@@ -412,7 +414,7 @@ def no_key_reason(show_match_status: identity.MatchStatus | None) -> str:
     with two fallbacks is how the guard's sentence would come to name a different cause from
     the four gates printed beside it.
     """
-    return _NO_KEY_REASONS.get(show_match_status, "Plex has not matched this season")
+    return _NO_KEY_REASONS.get(show_match_status, "plex_season_unmatched")
 
 
 #: Every field of :class:`SeasonPruneInput`, and the codec key it is stored under. Written
@@ -533,7 +535,9 @@ def to_dict(inp: SeasonPruneInput) -> dict[str, Any]:
         ),
         _KEYS["episodes_unreadable"]: inp.episodes_unreadable,
         _KEYS["watchers_by_season"]: {str(n): c for n, c in inp.watchers_by_season.items()},
-        _KEYS["shortfall_by_season"]: {str(n): r for n, r in inp.shortfall_by_season.items()},
+        _KEYS["shortfall_by_season"]: {
+            str(n): None if r is None else to_wire(r) for n, r in inp.shortfall_by_season.items()
+        },
         _KEYS["progress_unreadable"]: inp.progress_unreadable,
         _KEYS["progress_seasons_unmatched"]: inp.progress_seasons_unmatched,
         _KEYS["progress_unknown_reason"]: inp.progress_unknown_reason,
@@ -583,8 +587,10 @@ def from_dict(d: Mapping[str, Any]) -> SeasonPruneInput:
         watchers_by_season={
             int(n): None if c is None else int(c) for n, c in d[_KEYS["watchers_by_season"]].items()
         },
+        # A str here is a shortfall frozen before reasons were typed; it thaws as a
+        # legacy reason and renders raw in the conflict sentence, as it did before.
         shortfall_by_season={
-            int(n): None if r is None else str(r)
+            int(n): None if r is None else from_wire(r)
             for n, r in d[_KEYS["shortfall_by_season"]].items()
         },
         progress_unreadable=bool(d[_KEYS["progress_unreadable"]]),
@@ -592,7 +598,10 @@ def from_dict(d: Mapping[str, Any]) -> SeasonPruneInput:
         progress_unknown_reason=(
             None
             if d[_KEYS["progress_unknown_reason"]] is None
-            else str(d[_KEYS["progress_unknown_reason"]])
+            else LEGACY_REASON_IDS.get(
+                str(d[_KEYS["progress_unknown_reason"]]),
+                str(d[_KEYS["progress_unknown_reason"]]),
+            )
         ),
         requested_known_false=bool(d[_KEYS["requested_known_false"]]),
         reach_days=int(d[_KEYS["reach_days"]]),

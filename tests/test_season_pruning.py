@@ -17,6 +17,7 @@ from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine.gates import GateId, progress_is_establishable
 from reaper.engine.policy import GateSetting, PolicyBody, ProfileSettings, SignalSetting
 from reaper.engine.policy_warnings import inspect
+from reaper.engine.reason import Reason, legacy
 from reaper.engine.signals import SignalId
 from reaper.services.season_pruning import (
     UNANSWERABLE_REASONS,
@@ -25,6 +26,7 @@ from reaper.services.season_pruning import (
     plan_series_prune,
     sequential_protections,
 )
+from tests._reasons import text
 
 GB = 1024**3
 
@@ -61,7 +63,7 @@ def _season(
 
 
 def _reasons(plan: object) -> dict[int, str]:
-    return {p.season_number: p.reason for p in plan.protected}  # type: ignore[attr-defined]
+    return {p.season_number: text(p.reason) for p in plan.protected}  # type: ignore[attr-defined]
 
 
 class TestKeepLastN:
@@ -184,7 +186,7 @@ class TestEveryKeepReasonStatesOnlyWhatWasObserved:
         the claim onto one season -- and ``sequential_protections`` protects the untouched
         NEXT season too, so the same sentence could say nobody had played it while
         claiming someone was midway through it."""
-        assert _because("a viewer is part-way through the show") == (
+        assert text(_because(Reason("season_keep.midbinge"))) == (
             "a viewer is part-way through the show"
         )
 
@@ -220,14 +222,14 @@ class TestEveryKeepReasonStatesOnlyWhatWasObserved:
                 keep_first_season=False,
             ),
         ]
-        produced = {r for plan in plans for r in _reasons(plan).values()}
-        produced -= {"specials are never auto-pruned"}
-        for reason in produced:
-            assert _because(reason) != "your season rule keeps it", reason
-        # And the fixtures really did reach every clause, so a branch losing its parser
-        # cannot hide behind a thin set. Counted on the clauses, not the reasons: the
-        # keep-last one carries the rank, so it is several strings and one clause.
-        assert len({_because(r) for r in produced}) == 5, sorted(produced)
+        produced = {p.reason.id: p.reason for plan in plans for p in plan.protected}
+        produced.pop("season_keep.specials", None)
+        for reason in produced.values():
+            assert _because(reason) != Reason("because.rule"), reason
+        # And the fixtures really did reach every clause, so a branch losing its map entry
+        # cannot hide behind a thin set. Counted on the clauses, not the reasons: keep_all
+        # and keep_last are two ids sharing one clause.
+        assert len({_because(r).id for r in produced.values()}) == 5, sorted(produced)
 
 
 class TestSpecialsAndIncomplete:
@@ -464,10 +466,10 @@ class TestKeepRuleConflict:
         assert [(c.pruned_season, c.kept_season) for c in plan.conflicts] == [(1, 3), (2, 3)]
         conflict = plan.conflicts[0]
         assert conflict.kept_watchers is None
-        assert "could not check" in conflict.message
+        assert "could not check" in text(conflict.message)
         # And it never asserts the comparison it could not make. That phrase is the whole
         # bug: it read as a measured fact about a number nobody ever took.
-        assert "more than watched" not in conflict.message
+        assert "more than watched" not in text(conflict.message)
 
     def test_zero_still_means_measured_and_unwatched(self) -> None:
         """The three-state map must not collapse "nobody watched it" into "unmeasured":
@@ -539,8 +541,8 @@ class TestKeepRuleConflict:
         assert "episodes are missing" in _reasons(plan)[4]  # season 4 kept only for that
         conflict = next(c for c in plan.conflicts if c.pruned_season == 3)
         assert conflict.kept_season == 4
-        assert "episodes are missing from it" in conflict.message
-        assert "which your keep rule protects" not in conflict.message
+        assert "episodes are missing from it" in text(conflict.message)
+        assert "which your keep rule protects" not in text(conflict.message)
 
     def test_the_message_names_a_keep_last_kept_season(self) -> None:
         """When the kept season is held by keep-last, the message says so in plain words."""
@@ -553,13 +555,13 @@ class TestKeepRuleConflict:
             watchers_by_season={1: 40, 2: 5, 3: 2, 4: 1},
         )
         conflict = next(c for c in plan.conflicts if c.pruned_season == 1)
-        assert "one of the newest seasons your rule keeps" in conflict.message
+        assert "one of the newest seasons your rule keeps" in text(conflict.message)
 
 
 #: What ``engine.gates.lifetime_shortfall`` hands the planner for a season that arrived
 #: before the mirror did. Its exact wording is that function's business; what matters here is
 #: that a season carries one at all.
-SHORT = "your watch history only goes back 12 months"
+SHORT = legacy("your watch history only goes back 12 months")
 
 
 class TestATruncatedMirrorCannotClearTheConflict:
@@ -710,7 +712,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
         # All of them carry the reason, so none of them is reported as a comparison made.
         assert all(c.shortfall == SHORT for c in plan.conflicts)
         # And no message asserts a count off a mirror that cannot support one.
-        assert not any("0 people watched" in c.message for c in plan.conflicts)
+        assert not any("0 people watched" in text(c.message) for c in plan.conflicts)
 
     def test_the_policy_page_now_speaks_for_the_hold_this_test_pins(self) -> None:
         """The other half of #224, tied to this test so neither can drift alone.
@@ -773,7 +775,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
         )
         conflict = next(c for c in plan.conflicts if c.pruned_season == 1)
         assert conflict.shortfall is None
-        assert "more than watched Season 3" in conflict.message
+        assert "more than watched Season 3" in text(conflict.message)
 
     def test_a_truncated_kept_count_stops_asserting_arithmetic_it_cannot_take(self) -> None:
         """The rule lost, but only against a lower bound: more history could lift the kept
@@ -790,8 +792,8 @@ class TestATruncatedMirrorCannotClearTheConflict:
         )
         conflict = next(c for c in plan.conflicts if c.pruned_season == 1 and c.kept_season == 3)
         assert conflict.shortfall == SHORT
-        assert "more than watched" not in conflict.message
-        assert "Reaper cannot tell whether Season 1 is watched more than Season 3" in (
+        assert "more than watched" not in text(conflict.message)
+        assert "Reaper cannot tell whether Season 1 is watched more than Season 3" in text(
             conflict.message
         )
         # Season 4 out-watches Season 1 on counts the mirror supports, so it raises nothing:
@@ -810,7 +812,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
             watchers_by_season={1: 0, 2: 0, 3: 1},
             shortfall_by_season={1: SHORT, 2: SHORT, 3: SHORT},
         )
-        message = plan.conflicts[0].message
+        message = text(plan.conflicts[0].message)
         assert message == (
             "Reaper cannot tell whether Season 1 is watched more than Season 3, since your "
             "watch history only goes back 12 months. Season 3 is kept because it is one of "
@@ -857,16 +859,16 @@ class TestATruncatedMirrorCannotClearTheConflict:
             watchers_by_season={1: 9, 2: 0, 3: 1},
         )
         for plan in (unsupported, unreadable, settleable):
-            message = plan.conflicts[0].message
+            message = text(plan.conflicts[0].message)
             assert message.endswith("Left for you to decide instead of removing it.")
             assert "Kept for now" not in message
         # The two Reaper could not settle still assert no arithmetic. The unsupported one
         # cannot stand behind its own count; the unreadable one cannot stand behind the
         # kept season's.
-        assert "0 people watched" not in unsupported.conflicts[0].message
-        assert "more than watched" not in unreadable.conflicts[0].message
+        assert "0 people watched" not in text(unsupported.conflicts[0].message)
+        assert "more than watched" not in text(unreadable.conflicts[0].message)
         # ...while the comparison that WAS made still states it.
-        assert "more than watched Season 3" in settleable.conflicts[0].message
+        assert "more than watched Season 3" in text(settleable.conflicts[0].message)
 
     def test_an_unreadable_kept_count_never_prints_a_bound_as_a_measurement(self) -> None:
         """The pruned season's own shortfall rides on the conflict even when what could not
@@ -888,8 +890,8 @@ class TestATruncatedMirrorCannotClearTheConflict:
         conflict = next(c for c in plan.conflicts if c.pruned_season == 1)
         assert conflict.kept_watchers is None  # the kept count really is the unreadable one
         assert conflict.shortfall == SHORT  # ...and the pruned bound still reached the message
-        assert "0 people watched" not in conflict.message
-        assert "Reaper cannot tell whether Season 1" in conflict.message
+        assert "0 people watched" not in text(conflict.message)
+        assert "Reaper cannot tell whether Season 1" in text(conflict.message)
 
     def test_the_off_switch_silences_the_reach_arm_too(self) -> None:
         """``flag_keep_conflicts`` off means the operator asked Reaper to follow the keep
@@ -1064,7 +1066,7 @@ class TestTheMirrorMustSpanTheHold:
         assert shallow.prunable == []
         assert (
             _reasons(shallow)[4]
-            == "your watch history is too short to tell who is part-way through"
+            == "Your watch history is too short to tell who's part-way through."
         )
 
     def test_an_unbounded_hold_is_never_establishable(self) -> None:
@@ -1094,7 +1096,7 @@ class TestTheMirrorMustSpanTheHold:
         )
         reasons = _reasons(plan)
         assert reasons[4] == "a viewer is part-way through the show"
-        assert reasons[1] == "your watch history is too short to tell who is part-way through"
+        assert reasons[1] == "Your watch history is too short to tell who's part-way through."
 
     def test_the_guards_off_switch_also_silences_the_reach_check(self) -> None:
         """An operator who turned the guard off is making no claim for a shallow mirror to
@@ -1171,8 +1173,8 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
         assert hidden.prunable == []
         assert (
             _reasons(hidden)[4]
-            == "a season of this show is not matched in Plex, so who is part-way through is "
-            "unknown"
+            == "A season of this show isn't matched in Plex, so who's part-way through is "
+            "unknown."
         )
 
     def test_the_hold_is_marked_unanswerable_and_a_visible_viewer_is_not(self) -> None:
@@ -1224,13 +1226,13 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
             progress_show_unmatched=True,
         )
         assert _reasons(unbound)[1] == (
-            "this show is not matched in Plex, so who is part-way through is unknown"
+            "This show isn't matched in Plex, so who's part-way through is unknown."
         )
         # The premise: without the show-level fact the same call names the mirror, so the
         # assertion above is reading the new arm and not a coincidence.
         assert _reasons(
             plan_series_prune(**common, progress_established=False)  # type: ignore[arg-type]
-        )[1] == ("your watch history is too short to tell who is part-way through")
+        )[1] == ("Your watch history is too short to tell who's part-way through.")
         # And it holds the same seasons either way.
         assert unbound.prunable == []
 
@@ -1252,7 +1254,7 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
             progress_seasons_unmatched=True,
         )
         assert _reasons(all_three)[1] == (
-            "your watch history is too short to tell who is part-way through"
+            "Your watch history is too short to tell who's part-way through."
         )
         both_readable_ones = plan_series_prune(
             **common,  # type: ignore[arg-type]
@@ -1260,7 +1262,7 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
             progress_seasons_unmatched=True,
         )
         assert _reasons(both_readable_ones)[1] == (
-            "some plays are no longer readable, so who is part-way through is unknown"
+            "Some plays are no longer readable, so who's part-way through is unknown."
         )
 
     def test_every_unanswerable_cause_produces_a_reason_the_flag_set_names(self) -> None:
@@ -1301,8 +1303,8 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
                 **{name: not default},  # type: ignore[arg-type]
             )
             assert plan.prunable == [], f"{name} did not hold the seasons"
-            held = _reasons(plan)[1]
-            assert held in UNANSWERABLE_REASONS, (
+            held = {p.season_number: p.reason for p in plan.protected}[1]
+            assert held.id.removeprefix("cause.") in UNANSWERABLE_REASONS, (
                 f"{name} holds seasons with {held!r}, which UNANSWERABLE_REASONS does not "
                 "name, so season_evidence.guard_result renders that hold as a definite keep"
             )

@@ -9,10 +9,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type PlexLinkPoll, type PlexResourceConnection, type WatchEvidence } from "../api";
 import { useSuccessorFocus } from "../focus";
-import { count, countBesideServerText, since } from "../format";
+import i18next from "../i18n";
+import { countBesideServerText, since } from "../format";
 import { invalidateAllPlex as invalidateAllPlexQueries } from "../plexServerQueries";
 import { shelfSkipIsCurrent } from "../shelfStatus";
 import { usePlexLibraries } from "../usePlexLibraries";
@@ -31,14 +33,19 @@ const MANUAL_CONNECTION = "__manual__";
  *  which reads as noise; show the address itself and keep the certificate goodness as
  *  the "secure" tag. The full URI stays the option's value, so what is saved is exact. */
 function connectionLabel(c: PlexResourceConnection): string {
-  const kind = c.relay ? "Relay" : c.local ? "Local" : "Remote";
+  const kind = c.relay
+    ? i18next.t("plex.connectionKind.relay")
+    : c.local
+      ? i18next.t("plex.connectionKind.local")
+      : i18next.t("plex.connectionKind.remote");
   let host = c.uri.replace(/^https?:\/\//, "");
   const direct = /^(\d+)-(\d+)-(\d+)-(\d+)\.[0-9a-f]+\.plex\.direct(:\d+)?$/i.exec(host);
   if (direct) {
     host = `${direct[1]}.${direct[2]}.${direct[3]}.${direct[4]}${direct[5] ?? ""}`;
   }
-  const secure = c.protocol === "https" ? ", secure" : "";
-  return `${kind}, ${host}${secure}`;
+  return c.protocol === "https"
+    ? i18next.t("plex.connectionLabel.secure", { kind, host })
+    : i18next.t("plex.connectionLabel.plain", { kind, host });
 }
 
 /** The address the Manual address row would save, or "" when it has no host to send. One
@@ -90,14 +97,16 @@ function seedManual(uri: string): { host: string; port: string; ssl: boolean } {
  *  It names the LAST SCAN rather than "right now" because that is where the number comes from:
  *  it does not move until the next scan runs, which is also why the reset leaves it standing. */
 function watchEvidenceStatus(evidence: WatchEvidence): string {
-  const titles = evidence.titles === 1 ? "1 title" : `${evidence.titles.toLocaleString()} titles`;
-  if (evidence.held_back === null) return `Holding a record for ${titles}.`;
-  if (evidence.held_back === 0) {
-    return `Holding a record for ${titles}. The last scan found no unreadable plays.`;
+  if (evidence.held_back === null) {
+    return i18next.t("plex.watchEvidence.holding", { n: evidence.titles });
   }
-  const items =
-    evidence.held_back === 1 ? "1 item" : `${evidence.held_back.toLocaleString()} items`;
-  return `Holding a record for ${titles}. The last scan couldn't read the plays for ${items}.`;
+  if (evidence.held_back === 0) {
+    return i18next.t("plex.watchEvidence.holdingClean", { n: evidence.titles });
+  }
+  return i18next.t("plex.watchEvidence.holdingUnreadable", {
+    n: evidence.titles,
+    items: evidence.held_back,
+  });
 }
 
 export function PlexPanel({
@@ -107,6 +116,7 @@ export function PlexPanel({
 }: {
   onDirtyChange?: ((dirty: boolean) => void) | undefined;
 } = {}) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const plex = useQuery({ queryKey: ["plex"], queryFn: api.plexStatus });
   const data = plex.data;
@@ -212,7 +222,7 @@ export function PlexPanel({
       // Its whole success signal was the Save button going away, which is an absence: the manual
       // address row beside it has said "Connection saved." all along, so this was the asymmetric
       // half of a pair (#173, rule 72).
-      announce("Plex web address saved.");
+      announce(t("plex.webAddress.saved"));
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
     onError: (e: Error) => setWebUrlError(e.message),
@@ -257,7 +267,8 @@ export function PlexPanel({
   const pin = usePlexPinPoll<PlexLinkPoll>({
     poll: (pinId, machineId) => api.plexLinkPoll(pinId, machineId, verifyRef.current),
     onOk: (poll) => {
-      const said = `Linked to ${poll.server?.name ?? "your server"}.`;
+      const server = poll.server?.name ?? t("plex.linked.defaultServerName");
+      const said = t("plex.linked.said", { server });
       setMessage(said);
       // `message` renders as a plain `.muted` paragraph, which is not a live region, and the
       // failure siblings below reach `Notice`'s `role="alert"` and so DO speak -- the same
@@ -272,7 +283,7 @@ export function PlexPanel({
     // A sign-in that never completed is a failure, not status: it goes to `plexError`
     // so it renders as an error, not in the gray slot "Linked to ..." uses.
     onTimedOut: () => {
-      setPlexError("Plex sign-in timed out. Try again.");
+      setPlexError(t("plex.signInTimedOut"));
       done();
     },
     onFailed: (failure) => {
@@ -345,7 +356,11 @@ export function PlexPanel({
       // doing nothing. Named from the list rather than the id, falling back to a plain
       // sentence if the picker's own label cannot be resolved.
       const picked = resources.data?.servers.find((s) => s.machine_identifier === machineId);
-      announce(picked ? `Now using ${picked.name}.` : "Server changed.");
+      announce(
+        picked
+          ? t("plex.serverSwitched.named", { name: picked.name })
+          : t("plex.serverSwitched.generic"),
+      );
       setMessage(null);
       setPlexError(null);
       invalidateAllPlex();
@@ -362,7 +377,7 @@ export function PlexPanel({
   const setConnection = useMutation({
     mutationFn: (uri: string) => api.plexSetConnection(uri),
     onSuccess: () => {
-      announce("Connection saved.");
+      announce(t("plex.connectionSaved"));
       setConnError(null);
       // A successful connection save fixes reachability, so a prior "couldn't reach"
       // from a failed switch is now stale: clear it, or a red notice lingers beside a
@@ -461,11 +476,7 @@ export function PlexPanel({
       // The status line's own sentence, said out loud: it is the only thing that moves and it
       // sits in an unfocused subtree (rule 144: the visible copy is a few lines down). From
       // the settled mutation, never at issuance (rule 85).
-      announce(
-        `Forgotten for ${result.forgotten.toLocaleString()} ${
-          result.forgotten === 1 ? "title" : "titles"
-        }. The next scan uses what Plex holds now.`,
-      );
+      announce(t("plex.watchEvidence.forgotten", { n: result.forgotten }));
       // Refetch rather than patch: the reset moves `titles` to zero, but `held_back` is a
       // property of the LAST SCAN and does not change until the next one runs. Writing the
       // pair by hand here would have to restate that, and would be the place it drifts.
@@ -504,28 +515,36 @@ export function PlexPanel({
     const skipped = shelfSkipIsCurrent(leavingSoon.data);
     if (!last) {
       return skipped
-        ? "The last scan didn't update the shelves. The Jobs page says why."
-        : "Not updated yet. It runs after every scan, or from the Jobs page.";
+        ? t("plex.leavingSoon.status.neverRanSkipped")
+        : t("plex.leavingSoon.status.neverRan");
     }
     // Not `count` -- `last.result` below is the service's own sentence and already carries
     // comma-grouped numbers, so a browser-locale count beside it puts two thousands
     // separators in one line. `countBesideServerText` is that rule; its docstring holds why.
-    const movies = `${countBesideServerText(last.movies)} movie${last.movies === 1 ? "" : "s"}`;
-    const seasons = `${countBesideServerText(last.seasons)} season${last.seasons === 1 ? "" : "s"}`;
+    const movies = t("plex.leavingSoon.status.moviesCount", {
+      count: countBesideServerText(last.movies),
+      n: last.movies,
+    });
+    const seasons = t("plex.leavingSoon.status.seasonsCount", {
+      count: countBesideServerText(last.seasons),
+      n: last.seasons,
+    });
     // How the pass went is the pass's own sentence (rule 104), never one worded here. This
     // line used to read `applied` and word the caveat itself, which called a pass with no
     // libraries turned on a preview, on the very screen those libraries are turned on (#555).
     // A row stored before that field existed thaws as "" and is left out, rather than opening
     // the line with a stray period.
     const went = skipped
-      ? "A later scan didn't update the shelves. The Jobs page says why. "
+      ? `${t("plex.leavingSoon.status.laterScanSkipped")} `
       : last.result
         ? `${last.result}. `
         : "";
     // The counts survive a skip -- nothing was written, so the shelves still hold them -- and
     // past tense is the whole correction, exactly as the Jobs row's counts line puts it.
-    const held = skipped ? "were on the shelves at the last update" : "on the shelves";
-    return `${went}Last updated ${since(last.at)}, ${movies} and ${seasons} ${held}, next update after the next scan.`;
+    const held = skipped
+      ? t("plex.leavingSoon.status.heldSkipped")
+      : t("plex.leavingSoon.status.held");
+    return `${went}${t("plex.leavingSoon.status.line", { since: since(last.at), movies, seasons, held })}`;
   })();
 
   // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask
@@ -573,8 +592,8 @@ export function PlexPanel({
   if (plex.isPending) {
     return (
       <div className="panel">
-        <h2>Plex</h2>
-        <p className="muted">Loading…</p>
+        <h2>{t("plex.heading")}</h2>
+        <p className="muted">{t("plex.loading")}</p>
       </div>
     );
   }
@@ -588,8 +607,8 @@ export function PlexPanel({
   if (!data) {
     return (
       <div className="panel">
-        <h2>Plex</h2>
-        <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>
+        <h2>{t("plex.heading")}</h2>
+        <Notice tone="error">{t("plex.loadError")}</Notice>
       </div>
     );
   }
@@ -599,20 +618,23 @@ export function PlexPanel({
   // below shows its own never-loaded notice when nothing ever landed, which is a different claim
   // and must not pull the panel into a collapse. `plex` needs no `data` test -- the guard above
   // already returned when it has none.
-  const stale = collapseStaleReads("the Plex settings", [
-    { what: "these settings", stale: plex.isError },
-    { what: "the library list", stale: libraries.isError && !!libraries.data },
-    { what: "the watch history record", stale: watchEvidence.isError && !!watchEvidence.data },
-    { what: "the Leaving Soon settings", stale: leavingSoon.isError && !!leavingSoon.data },
+  const stale = collapseStaleReads(t("plex.stale.panel"), [
+    { what: t("plex.stale.connection"), stale: plex.isError },
+    { what: t("plex.stale.libraries"), stale: libraries.isError && !!libraries.data },
+    {
+      what: t("plex.stale.watchHistory"),
+      stale: watchEvidence.isError && !!watchEvidence.data,
+    },
+    {
+      what: t("plex.stale.leavingSoon"),
+      stale: leavingSoon.isError && !!leavingSoon.data,
+    },
   ]);
 
   return (
     <div className="panel">
-      <h2>Plex</h2>
-      <p className="blurb">
-        Linking Plex lets Reaper warn your library with a "Leaving Soon" shelf and read your "Never
-        Reap" collection. It's optional. Scanning works without it.
-      </p>
+      <h2>{t("plex.heading")}</h2>
+      <p className="blurb">{t("plex.blurb")}</p>
 
       {/* The failed refetch the `!data` branch above deliberately no longer swallows the form
           for. Keeping the form is right; keeping it SILENTLY is not, because everything below
@@ -621,10 +643,10 @@ export function PlexPanel({
           This slot carries the collapsed line too, because it is the only one above all four
           groups (#198): `invalidateAllPlex` refetches every read below, so one server switch
           against an unreachable Plex used to draw four of these down the page. */}
-      <StaleReadSlot plan={stale} slot="these settings" />
+      <StaleReadSlot plan={stale} slot={t("plex.stale.connection")} />
 
       <div className="set-group">
-        <h3>Connection</h3>
+        <h3>{t("plex.connectionGroup.heading")}</h3>
         <div className="set-rows">
           {linked && data ? (
             /* One Unlink button, not a box, so it releases the control track
@@ -638,24 +660,21 @@ export function PlexPanel({
                  server name once resources has actually settled without a username (plex.tv
                  unreachable). */
               label={
-                resources.isPending ? "Loading…" : (resources.data?.owner_username ?? data.name)
+                resources.isPending
+                  ? t("plex.loading")
+                  : (resources.data?.owner_username ?? data.name)
               }
-              help={<>Signed in with Plex. {data.connection_uri}</>}
+              help={t("plex.linkedAccount.help", { uri: data.connection_uri })}
             >
               <button className="ghost" onClick={() => unlink.mutate()} disabled={unlink.isPending}>
-                Unlink
+                {t("plex.unlinkButton")}
               </button>
             </SetRow>
           ) : pin.servers ? (
             <SetRow
               controlClass="server-pick"
-              label="Which server should Reaper manage?"
-              help={
-                <>
-                  This account owns more than one Plex server. Reaper will only ever scan and prune
-                  the one you pick.
-                </>
-              }
+              label={t("plex.chooseServer.label")}
+              help={t("plex.chooseServer.help")}
             >
               <ServerPickList
                 servers={pin.servers}
@@ -664,46 +683,39 @@ export function PlexPanel({
               />
             </SetRow>
           ) : (
-            <SetRow
-              label="No Plex server linked"
-              help={
-                <>
-                  Sign in with Plex and Reaper discovers your servers. It never asks for a token by
-                  hand.
-                </>
-              }
-            >
+            <SetRow label={t("plex.noServer.label")} help={t("plex.noServer.help")}>
               {linking ? (
                 // The same wait the login screen shows, worded the same: a fallback link
                 // for a blocked popup, and a way out that stops the polling.
                 <div className="plex-waiting">
                   <span className="spinner" aria-hidden="true" />
                   <div>
-                    <strong>Waiting for Plex…</strong>
+                    <strong>{t("plex.waitingForPlex")}</strong>
                     {/* Once the sign-in is approved, the wait can continue for a second
                           reason: the server itself isn't answering yet. Say which one it
                           is, so a longer wait doesn't read as a hang. Reaper keeps
                           polling either way; the sign-in stays good. */}
                     <p className="muted">
-                      {pin.retrying ?? (
-                        <>
-                          Approve the sign-in in the Plex window.{" "}
-                          {authUrl !== "" && (
-                            <a href={authUrl} target="_blank" rel="noreferrer">
-                              Didn’t open?
-                            </a>
-                          )}
-                        </>
-                      )}
+                      {pin.retrying ??
+                        (authUrl !== "" ? (
+                          <Trans
+                            i18nKey="plex.waiting.approveWithLink"
+                            components={{
+                              btn: <a href={authUrl} target="_blank" rel="noreferrer" />,
+                            }}
+                          />
+                        ) : (
+                          <Trans i18nKey="plex.waiting.approveNoLink" />
+                        ))}
                     </p>
                   </div>
                   <button className="link" onClick={cancelLink}>
-                    Cancel
+                    {t("plex.cancel")}
                   </button>
                 </div>
               ) : (
                 <button className="btn-plex" onClick={startLink}>
-                  Link with Plex
+                  {t("plex.linkButton")}
                 </button>
               )}
             </SetRow>
@@ -711,22 +723,21 @@ export function PlexPanel({
 
           {linked && (
             <SetRow
-              label="Server"
+              label={t("plex.serverField.label")}
               help={
                 <>
-                  Plex servers this account can manage. Reaper works with one at a time.
-                  {resources.data?.source === "stored" &&
-                    " Showing what was remembered at link time; plex.tv didn't answer."}
+                  {t("plex.server.help")}
+                  {resources.data?.source === "stored" && ` ${t("plex.server.helpStoredNote")}`}
                 </>
               }
             >
               {resources.isPending ? (
-                <span className="muted">Looking for servers…</span>
+                <span className="muted">{t("plex.server.looking")}</span>
               ) : resources.isError ? (
                 <>
-                  <span className="muted">Couldn't list this account's servers.</span>
+                  <span className="muted">{t("plex.server.listError")}</span>
                   <button className="ghost sm" onClick={() => void resources.refetch()}>
-                    Retry
+                    {t("plex.server.retry")}
                   </button>
                 </>
               ) : (
@@ -738,14 +749,14 @@ export function PlexPanel({
                         alerts. */}
                   {linkedServerMissing && (
                     <Notice tone="warn" standing>
-                      Plex's list came back without the server Reaper uses
-                      {data?.name ? `, ${data.name}` : ""}. Nothing has changed. Refresh to look
-                      again; the server and connection stay as they are until it is back.
+                      {data?.name
+                        ? t("plex.server.missingNamed", { name: data.name })
+                        : t("plex.server.missingUnnamed")}
                     </Notice>
                   )}
                   <select
                     value={currentServer?.machine_identifier ?? ""}
-                    aria-label="Server"
+                    aria-label={t("plex.serverField.label")}
                     disabled={switchServer.isPending || linkedServerMissing}
                     onChange={(e) => {
                       const next = e.target.value;
@@ -759,7 +770,7 @@ export function PlexPanel({
                       // listing the others here would still show one of them as the current
                       // server -- the exact misreading this fix exists to stop, merely no
                       // longer savable. The box names what Reaper actually uses instead.
-                      <option value="">{data?.name ?? "The linked server"}</option>
+                      <option value="">{data?.name ?? t("plex.server.fallbackOptionLabel")}</option>
                     ) : (
                       (resources.data?.servers ?? []).map((s) => (
                         <option key={s.machine_identifier} value={s.machine_identifier}>
@@ -772,9 +783,11 @@ export function PlexPanel({
                     className="ghost sm"
                     disabled={resources.isFetching}
                     onClick={() => void resources.refetch()}
-                    title="Look for servers again"
+                    title={t("plex.server.refreshTitle")}
                   >
-                    {resources.isFetching ? "Refreshing…" : "Refresh"}
+                    {resources.isFetching
+                      ? t("plex.server.refreshing")
+                      : t("plex.server.refreshButton")}
                   </button>
                 </>
               )}
@@ -782,19 +795,11 @@ export function PlexPanel({
           )}
 
           {linked && (
-            <SetRow
-              label="Connection"
-              help={
-                <>
-                  How Reaper reaches the server. A local address is usually faster; remote works
-                  from anywhere. Pick "Manual address" to type your own.
-                </>
-              }
-            >
+            <SetRow label={t("plex.connectionField.label")} help={t("plex.connectionField.help")}>
               <select
                 ref={afterManualSave.ref as RefObject<HTMLSelectElement>}
                 value={connectionValue}
-                aria-label="Connection"
+                aria-label={t("plex.connectionField.label")}
                 // Without the linked server there is nothing to list but the saved address,
                 // and every choice here would point at another server's addresses (B-10).
                 disabled={setConnection.isPending || resources.isPending || linkedServerMissing}
@@ -813,9 +818,13 @@ export function PlexPanel({
                   </option>
                 ))}
                 {!savedIsDiscovered && savedUri !== "" && (
-                  <option value={savedUri}>Manual, {savedUri}</option>
+                  <option value={savedUri}>
+                    {t("plex.connection.manualOption", { uri: savedUri })}
+                  </option>
                 )}
-                <option value={MANUAL_CONNECTION}>Manual address…</option>
+                <option value={MANUAL_CONNECTION}>
+                  {t("plex.connection.manualAddressOption")}
+                </option>
               </select>
             </SetRow>
           )}
@@ -825,8 +834,8 @@ export function PlexPanel({
             // this row keeps the shrink-to-fit control column (see `.set-row-cluster`).
             <SetRow
               variant="cluster"
-              label="Manual address"
-              help="Hostname or IP, port, and whether to use SSL."
+              label={t("plex.manualAddress.label")}
+              help={t("plex.manualAddress.help")}
             >
               {/* Two boxes under one `.set-label`, named the way the accent row names its
                     pair: the row's label, then which half this is. A placeholder is a name of
@@ -836,23 +845,27 @@ export function PlexPanel({
                 type="text"
                 className="input-host"
                 value={manualHost}
-                aria-label="Manual address host or IP"
+                aria-label={t("plex.manualAddress.hostAriaLabel")}
                 onChange={(e) => setManualHost(e.target.value)}
-                placeholder="plex.example.net"
+                placeholder={t("plex.manualAddress.hostPlaceholder")}
                 autoComplete="off"
               />
               <input
                 type="text"
                 className="input-port"
                 value={manualPort}
-                aria-label="Manual address port"
+                aria-label={t("plex.manualAddress.portAriaLabel")}
                 onChange={(e) => setManualPort(e.target.value.replace(/\D/g, ""))}
                 placeholder="32400"
                 inputMode="numeric"
               />
-              <label className="toggle" title="Use SSL">
-                <Switch checked={manualSsl} onChange={setManualSsl} ariaLabel="Use SSL" />
-                <span>SSL</span>
+              <label className="toggle" title={t("plex.manualAddress.useSslLabel")}>
+                <Switch
+                  checked={manualSsl}
+                  onChange={setManualSsl}
+                  ariaLabel={t("plex.manualAddress.useSslLabel")}
+                />
+                <span>{t("plex.manualAddress.sslShort")}</span>
               </label>
               <button
                 className="primary sm"
@@ -862,7 +875,7 @@ export function PlexPanel({
                   saveManual();
                 }}
               >
-                {setConnection.isPending ? "Checking…" : "Save"}
+                {setConnection.isPending ? t("plex.manualAddress.checking") : t("plex.save")}
               </button>
             </SetRow>
           )}
@@ -870,25 +883,14 @@ export function PlexPanel({
           {/* A Switch, not a box, so it releases the control track (`.set-row-plain`). */}
           <SetRow
             variant="plain"
-            label="Check the server's certificate"
-            help={
-              <>
-                Turn this off only for a server you run yourself, like one with a self-signed
-                certificate.
-              </>
-            }
-            after={
-              !verifyCert && (
-                <Notice tone="warn">
-                  Reaper will accept this server's certificate without checking who issued it.
-                </Notice>
-              )
-            }
+            label={t("plex.verifyCert.label")}
+            help={t("plex.verifyCert.help")}
+            after={!verifyCert && <Notice tone="warn">{t("plex.verifyCert.warning")}</Notice>}
           >
             <Switch
               checked={verifyCert}
               disabled={saveVerify.isPending}
-              ariaLabel="Check the server's certificate"
+              ariaLabel={t("plex.verifyCert.label")}
               onChange={(next) => {
                 setVerifyCert(next);
                 verifyRef.current = next;
@@ -907,25 +909,17 @@ export function PlexPanel({
                 landed on them too, through `onDirtyChange` above -- a panel need not have a save
                 bar to be asked about before it is unmounted. Whoever gives Plex a save bar takes
                 both rows together. */}
-          <SetRow
-            label="Plex web address"
-            help={
-              <>
-                Where links to your library open. Keep the default unless you host your own Plex
-                Web. Clear it and save to go back to the default.
-              </>
-            }
-          >
+          <SetRow label={t("plex.webAddress.label")} help={t("plex.webAddress.help")}>
             <input
               type="url"
               ref={afterWebUrlSave.ref as RefObject<HTMLInputElement>}
               value={webUrl}
-              aria-label="Plex web address"
+              aria-label={t("plex.webAddress.label")}
               onChange={(e) => {
                 setWebUrl(e.target.value);
                 setWebUrlError(null);
               }}
-              placeholder="https://app.plex.tv"
+              placeholder={t("plex.webAddress.placeholder")}
               autoComplete="off"
             />
             {/* `webUrlDirty` above, not a second copy of its comparison: the report and this
@@ -941,7 +935,7 @@ export function PlexPanel({
                   saveWebUrl.mutate();
                 }}
               >
-                {saveWebUrl.isPending ? "Saving…" : "Save"}
+                {saveWebUrl.isPending ? t("plex.webAddress.saving") : t("plex.save")}
               </button>
             )}
           </SetRow>
@@ -955,12 +949,8 @@ export function PlexPanel({
 
       {linked && (
         <div className="set-group">
-          <h3>Libraries</h3>
-          <p className="group-blurb">
-            The libraries Reaper may touch in Plex. Leaving Soon shelves are managed only in
-            libraries you turn on. This doesn't change what gets scanned: scanning reads from Radarr
-            and Sonarr.
-          </p>
+          <h3>{t("plex.librariesGroup.heading")}</h3>
+          <p className="group-blurb">{t("plex.librariesGroup.blurb")}</p>
           {/* Only when there is nothing to render, the same divided test the panel's own status
               read settled on above (rule 72). An undivided `isError` traded the whole grid, every
               per-library Switch and the Refresh button for one paragraph while React Query still
@@ -993,23 +983,22 @@ export function PlexPanel({
               typed value -- but a switch the operator cannot see is a library they cannot turn
               off. */}
           {libraries.isPending || syncLibraries.isPending ? (
-            <p className="muted">Loading libraries…</p>
+            <p className="muted">{t("plex.libraries.loading")}</p>
           ) : libraries.isError && !libraries.data ? (
-            <Notice tone="error">Couldn't load the library list.</Notice>
+            <Notice tone="error">{t("plex.libraries.loadError")}</Notice>
           ) : (
             <>
-              <StaleReadSlot plan={stale} slot="the library list" />
+              <StaleReadSlot plan={stale} slot={t("plex.stale.libraries")} />
               <div className="lib-head">
                 <span className="muted">
-                  {count((libraries.data ?? []).length)}{" "}
-                  {(libraries.data ?? []).length === 1 ? "library" : "libraries"} found
+                  {t("plex.libraries.foundCount", { n: (libraries.data ?? []).length })}
                 </span>
                 <button
                   className="ghost sm"
                   disabled={syncLibraries.isPending}
                   onClick={() => syncLibraries.mutate()}
                 >
-                  Refresh libraries
+                  {t("plex.libraries.refreshButton")}
                 </button>
               </div>
               <div className="lib-grid">
@@ -1017,12 +1006,16 @@ export function PlexPanel({
                   <div key={lib.key} className={lib.enabled ? "lib-card" : "lib-card off"}>
                     <span>
                       {lib.title}
-                      <span className="lib-kind">{lib.kind === "movie" ? "movies" : "tv"}</span>
+                      <span className="lib-kind">
+                        {lib.kind === "movie"
+                          ? t("plex.libraries.kindMovie")
+                          : t("plex.libraries.kindTv")}
+                      </span>
                     </span>
                     <Switch
                       checked={lib.enabled}
                       disabled={saveLibraries.isPending}
-                      ariaLabel={`Let Reaper touch ${lib.title}`}
+                      ariaLabel={t("plex.libraries.toggleLabel", { title: lib.title })}
                       onChange={(next) => toggleLibrary(lib.key, next)}
                     />
                   </div>
@@ -1040,32 +1033,23 @@ export function PlexPanel({
 
       {linked && (
         <div className="set-group">
-          <h3>Watch history</h3>
-          <p className="group-blurb">
-            Plex gives every item a number, and issues a new one when a file leaves a library and
-            comes back. Plays recorded before that stay under the old number.
-          </p>
+          <h3>{t("plex.watchHistoryGroup.heading")}</h3>
+          <p className="group-blurb">{t("plex.watchHistoryGroup.blurb")}</p>
           {/* Same shape as the two groups around it: a failed read keeps the last good answer
               on screen and says so, rather than blanking a control the operator came here for
               (rule 17/36, and rule 72 with the library grid and the shelf switches). */}
           {watchEvidence.isPending ? (
-            <p className="muted">Loading…</p>
+            <p className="muted">{t("plex.loading")}</p>
           ) : !watchEvidence.data ? (
-            <Notice tone="error">Couldn't load the watch history record.</Notice>
+            <Notice tone="error">{t("plex.watchHistory.loadError")}</Notice>
           ) : (
             <>
-              <StaleReadSlot plan={stale} slot="the watch history record" />
+              <StaleReadSlot plan={stale} slot={t("plex.stale.watchHistory")} />
               <div className="set-rows">
                 <SetRow
                   variant="plain"
-                  label="Recorded watch history"
-                  help={
-                    <>
-                      Reaper holds back a title whose plays stop being readable. After a library
-                      rebuild that can be every title at once, and this clears them all. For one
-                      title, use the button on its reasons panel instead.
-                    </>
-                  }
+                  label={t("plex.watchHistory.label")}
+                  help={t("plex.watchHistory.help")}
                 >
                   {/* Five states, all explicit (rule 17/36). The three that are not the form
                       all fail closed: this control withdraws a protection, so a safety read
@@ -1075,15 +1059,11 @@ export function PlexPanel({
                       direction can only make Reaper safer -- this one has no such direction,
                       which is why unknown ends the branch here. */}
                   {safety.isLoading ? (
-                    <span className="muted">Checking…</span>
+                    <span className="muted">{t("plex.watchHistory.safetyChecking")}</span>
                   ) : !safety.data ? (
-                    <span className="muted">
-                      Reaper couldn't check whether an admin password is set.
-                    </span>
+                    <span className="muted">{t("plex.watchHistory.safetyUnknown")}</span>
                   ) : !safety.data.has_password ? (
-                    <span className="muted">
-                      Set an admin password first, in Settings → Security.
-                    </span>
+                    <span className="muted">{t("plex.watchHistory.noPassword")}</span>
                   ) : forgetting ? (
                     /* The same form as arming deletion: one password box, Confirm, Cancel.
                          The placeholder is a hint that disappears on the first keystroke, so
@@ -1103,8 +1083,8 @@ export function PlexPanel({
                         value={forgetPassword}
                         onChange={(e) => setForgetPassword(e.target.value)}
                         maxLength={128}
-                        placeholder="admin password"
-                        aria-label="Admin password"
+                        placeholder={t("plex.watchHistory.passwordPlaceholder")}
+                        aria-label={t("plex.watchHistory.passwordAriaLabel")}
                         autoComplete="current-password"
                         autoFocus
                       />
@@ -1118,7 +1098,7 @@ export function PlexPanel({
                         className="danger"
                         disabled={!forgetPassword || forgetWatchEvidence.isPending}
                       >
-                        Confirm forget
+                        {t("plex.watchHistory.confirmButton")}
                       </button>
                       {/* Cancel drops the typed password with the form, same as the arming
                             form's own Cancel (S-5). */}
@@ -1131,20 +1111,20 @@ export function PlexPanel({
                           setForgetPassword("");
                         }}
                       >
-                        Cancel
+                        {t("plex.cancel")}
                       </button>
                     </form>
                   ) : (
                     <button
                       ref={afterForget.ref as RefObject<HTMLButtonElement>}
                       className="ghost"
-                      title="Reaper starts from what Plex holds now"
+                      title={t("plex.watchHistory.forgetTitle")}
                       onClick={() => {
                         setForgotten(null);
                         setForgetting(true);
                       }}
                     >
-                      Forget…
+                      {t("plex.watchHistory.forgetButton")}
                     </button>
                   )}
                 </SetRow>
@@ -1156,9 +1136,7 @@ export function PlexPanel({
                       next, which does cost files. Same clause as the restore notice and the
                       shelf hint (rule 72). */}
                   {forgotten !== null
-                    ? `Forgotten for ${forgotten.toLocaleString()} ${
-                        forgotten === 1 ? "title" : "titles"
-                      }. The next scan uses what Plex holds now.`
+                    ? t("plex.watchEvidence.forgotten", { n: forgotten })
                     : watchEvidenceStatus(watchEvidence.data)}
                 </div>
               </div>
@@ -1172,19 +1150,15 @@ export function PlexPanel({
               {forgetWatchEvidence.error && (
                 <Notice tone="error">
                   {forgetWatchEvidence.error.message ||
-                    "Couldn't forget the record. Nothing changed. Try again."}
+                    t("plex.watchEvidence.forgetFailedFallback")}
                 </Notice>
               )}
               {/* `standing`: it is always on screen, so it must not announce itself as an
                   alert every time this panel renders. */}
               <Notice tone="warn" standing>
-                A title that really was watched will score as never watched until you repair its
-                history in Tautulli.
+                {t("plex.watchHistory.tautulliWarning")}
               </Notice>
-              <p className="group-hint muted">
-                Tautulli only moves old plays to the new number when you use its Fix Metadata
-                screen.
-              </p>
+              <p className="group-hint muted">{t("plex.watchHistory.tautulliHint")}</p>
             </>
           )}
         </div>
@@ -1192,12 +1166,8 @@ export function PlexPanel({
 
       {linked && (
         <div className="set-group">
-          <h3>Leaving Soon</h3>
-          <p className="group-blurb">
-            While an item counts down its grace period, Reaper can put it on a "Leaving Soon" shelf
-            in Plex, so people get a heads-up before it goes: movies in your movie libraries,
-            seasons in your TV libraries.
-          </p>
+          <h3>{t("plex.leavingSoonGroup.heading")}</h3>
+          <p className="group-blurb">{t("plex.leavingSoonGroup.blurb")}</p>
           {/* `!leavingSoon.data` alone: a read that never landed leaves it undefined and still
               reaches the sentence below, so dropping the `isError ||` in front of it costs nothing
               there and stops a failed REFETCH taking both switches off screen while the last good
@@ -1206,49 +1176,36 @@ export function PlexPanel({
               writes to Plex before deletion is armed -- so blanking them hides a control the
               operator came here to set. */}
           {leavingSoon.isPending ? (
-            <p className="muted">Loading…</p>
+            <p className="muted">{t("plex.loading")}</p>
           ) : !leavingSoon.data ? (
-            <Notice tone="error">Couldn't load the Leaving Soon settings.</Notice>
+            <Notice tone="error">{t("plex.leavingSoon.loadError")}</Notice>
           ) : (
             <>
-              <StaleReadSlot plan={stale} slot="the Leaving Soon settings" />
+              <StaleReadSlot plan={stale} slot={t("plex.stale.leavingSoon")} />
               <div className="set-rows">
                 {/* Both rows here carry a Switch and nothing else, so they release the control
                   track (`.set-row-plain`). */}
                 <SetRow
                   variant="plain"
-                  label={'Show "Leaving Soon" in Plex'}
-                  help={
-                    <>
-                      Reaper keeps a Leaving Soon collection in each library you turned on above,
-                      and puts the matching label on everything in it. Items appear when they start
-                      counting down and drop off when they're spared or removed. Updates after every
-                      scan, or from the Jobs page.
-                    </>
-                  }
+                  label={t("plex.leavingSoon.enableLabel")}
+                  help={t("plex.leavingSoon.enableHelp")}
                 >
                   <Switch
                     checked={leavingSoon.data.enabled}
                     disabled={saveLeavingSoon.isPending}
-                    ariaLabel='Show "Leaving Soon" in Plex'
+                    ariaLabel={t("plex.leavingSoon.enableLabel")}
                     onChange={(enabled) => saveLeavingSoon.mutate({ enabled })}
                   />
                 </SetRow>
                 <SetRow
                   variant="plain"
-                  label="Update while read-only"
-                  help={
-                    <>
-                      Until deletion is on, Reaper writes nothing to Plex, including this shelf.
-                      Turn this on to let the warning appear while Reaper is still read-only. It can
-                      only manage the collection and label. It can never remove files.
-                    </>
-                  }
+                  label={t("plex.leavingSoon.allowUnarmedLabel")}
+                  help={t("plex.leavingSoon.allowUnarmedHelp")}
                 >
                   <Switch
                     checked={leavingSoon.data.allow_unarmed}
                     disabled={saveLeavingSoon.isPending}
-                    ariaLabel="Update while read-only"
+                    ariaLabel={t("plex.leavingSoon.allowUnarmedLabel")}
                     onChange={(allow_unarmed) => saveLeavingSoon.mutate({ allow_unarmed })}
                   />
                 </SetRow>
@@ -1264,9 +1221,7 @@ export function PlexPanel({
         </div>
       )}
 
-      {!linked && (
-        <p className="help">Link Plex to pick libraries and turn on the "Leaving Soon" shelf.</p>
-      )}
+      {!linked && <p className="help">{t("plex.linkPrompt")}</p>}
     </div>
   );
 }

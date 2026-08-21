@@ -14,6 +14,19 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { PlexPanel } from "./PlexPanel";
 
+// jsdom has no window.open, so any test that reaches "Link with Plex" -- the linking
+// describe and the whole-panel control sweep alike -- printed "Not implemented: Window's
+// open() method" into the CI log, noise a reader has to clear every run. The stub also
+// lets the linking test pin the noopener feature string, which Login.test.tsx and
+// SetupPlexStep.test.tsx already do for their copies of this popup (rule 72): without
+// noopener, plex.tv gets a handle on the page it could navigate.
+const opened = vi.fn<typeof window.open>(() => null);
+beforeEach(() => vi.stubGlobal("open", opened));
+afterEach(() => {
+  opened.mockClear();
+  vi.unstubAllGlobals();
+});
+
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
@@ -257,6 +270,8 @@ describe("linking with Plex", () => {
 
     const link = await screen.findByRole("link", { name: "Didn’t open?" });
     expect(link).toHaveAttribute("href", "https://plex.tv/link/pin");
+    expect(opened).toHaveBeenCalled();
+    expect(opened.mock.calls[0]?.[2] ?? "").toContain("noopener");
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await screen.findByRole("button", { name: "Link with Plex" })).toBeInTheDocument();

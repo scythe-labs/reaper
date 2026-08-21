@@ -19,6 +19,7 @@ from reaper.engine.fields import Condition, Op
 from reaper.engine.gates import ABSTAIN, Evaluation, Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import PolicyBody, SignalSetting
+from reaper.engine.reason import legacy
 from reaper.engine.signals import (
     CustomSignalConfig,
     SignalConfig,
@@ -29,13 +30,14 @@ from reaper.engine.signals import (
     score,
 )
 from reaper.services.snapshot import _explain
+from tests._reasons import text
 
 EVALUATION = Evaluation(
     results=[
         GateResult(
             GateId.RATING_FLOOR,
             ABSTAIN,
-            detail="5.4 on IMDb from 6,000 votes, below the 7.5 you keep.",
+            detail=legacy("5.4 on IMDb from 6,000 votes, below the 7.5 you keep."),
         )
     ]
 )
@@ -100,7 +102,7 @@ class TestTheFourStates:
         )
         result = evaluate_custom(rule, _facts(season_rank=Absent(source="sonarr")))
 
-        assert result.detail.endswith(": none recorded")
+        assert text(result.detail).endswith(": none recorded")
         assert result.evaluated is True
         assert result.state is SignalState.NOT_APPLICABLE
 
@@ -139,7 +141,7 @@ class TestTheFourStates:
         assert result.pressure == 0
         assert result.evaluated is True
         assert result.state is SignalState.NOT_APPLICABLE
-        assert result.detail == "not one of the numbered seasons"
+        assert text(result.detail) == "not one of the numbered seasons"
 
     def test_a_rank_we_could_not_read_is_still_unreadable(self) -> None:
         # A genuine Sonarr read failure is Unknown, not Absent, and stays "we could not
@@ -151,7 +153,7 @@ class TestTheFourStates:
 
         assert result.evaluated is False
         assert result.state is SignalState.UNREADABLE
-        assert result.detail == "could not tell which season this is"
+        assert text(result.detail) == "could not tell which season this is"
 
 
 def _policy() -> PolicyBody:
@@ -181,7 +183,7 @@ class TestWhatReachesTheWire:
         rows = json.loads(_explain(EVALUATION, item, _policy()))["signals"]
 
         assert [row["id"] for row in rows] == [SignalId.UNWATCHED.value]
-        assert all(row["detail"] != "disabled" for row in rows)
+        assert all(row["detail_key"] != {"k": "disabled"} for row in rows)
         assert all(row["weight"] > 0 for row in rows)
 
     def test_the_rows_add_up_to_the_score(self) -> None:

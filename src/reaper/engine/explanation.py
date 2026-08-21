@@ -43,11 +43,47 @@ from reaper.engine.gates import thaw_defers_to_owner
 from reaper.engine.signals import SignalState
 
 
+class ReasonKey(BaseModel):
+    """A typed detail on the wire: the catalog key ``why.<k>`` plus its params.
+
+    Param values may be nested reason keys (``{"k": ..., "p": ...}``) or lists of them --
+    the rating gate's per-bar clauses, a blocked check's cause -- so ``p`` stays untyped
+    here and the frontend's composer recurses (``frontend/src/why.ts``). Rows written
+    before the conversion carry a prose ``detail`` and no key; rows written after carry a
+    key and no prose. See docs/history/I18N_PLAN.md §5.
+    """
+
+    k: str
+    p: dict[str, object] | None = None
+
+
+def thaw_reason_key(value: object) -> ReasonKey | None:
+    """Read a stored detail key, or nothing where the row carries no legible one.
+
+    One derivation for every reader of this byte (rule 104), and lenient the way the gate
+    flags are (rule 96): a malformed key fails THIS clause, never the enclosing
+    ``Explanation`` -- which would blank the operator's whole panel over one field the
+    prose ``detail`` may still cover.
+    """
+    if isinstance(value, ReasonKey):
+        return value
+    if isinstance(value, dict) and isinstance(value.get("k"), str):
+        p = value.get("p")
+        return ReasonKey(k=value["k"], p=p if isinstance(p, dict) else None)
+    return None
+
+
 class SignalContribution(BaseModel):
     id: str
     contribution: float
     weight: int
-    detail: str
+    detail: str | None = None
+    """The prose line of a row frozen before details were typed, rendered verbatim.
+    ``None`` on every row written since; ``detail_key`` carries the sentence instead."""
+
+    detail_key: ReasonKey | None = None
+    """The typed detail the panel composes from the catalog. ``None`` on a legacy row."""
+
     evaluated: bool
     """False means the input was Unknown. Its weight still counts in the denominator,
     so an unevaluated signal drags the score DOWN, never up."""
@@ -75,6 +111,12 @@ class SignalContribution(BaseModel):
     (rule 142's three-state -- a `0` default would assert a line about every legacy row)."""
     saturate_at: int | None = None
 
+    @field_validator("detail_key", mode="before")
+    @classmethod
+    def _thaw_detail_key(cls, value: object) -> ReasonKey | None:
+        """Lenient for ``thaw_reason_key``'s reason: one bad key must not blank the panel."""
+        return thaw_reason_key(value)
+
 
 class GateOutcomeOut(BaseModel):
     """One protection's outcome on one item.
@@ -100,7 +142,12 @@ class GateOutcomeOut(BaseModel):
     """
 
     gate: str
-    detail: str
+    detail: str | None = None
+    """The prose line of a row frozen before details were typed, rendered verbatim.
+    ``None`` on every row written since; ``detail_key`` carries the sentence instead."""
+
+    detail_key: ReasonKey | None = None
+    """The typed detail the panel composes from the catalog. ``None`` on a legacy row."""
 
     defers_to_owner: bool | None = None
     """Whether the comparison behind this hold is one Reaper actually made.
@@ -151,6 +198,13 @@ class GateOutcomeOut(BaseModel):
     disk. Declared here because a wire schema must name every key the UI reads
     (``WhyPanel.keepRuleConflict``)."""
 
+    @field_validator("detail_key", mode="before")
+    @classmethod
+    def _thaw_detail_key(cls, value: object) -> ReasonKey | None:
+        """Lenient for the reason ``thaw_reason_key`` records: one bad key must not blank
+        the panel. ``mode="before"`` so it runs instead of pydantic's strict parse."""
+        return thaw_reason_key(value)
+
     @field_validator("defers_to_owner", "unestablishable", mode="before")
     @classmethod
     def _thaw_gate_flag(cls, value: object) -> bool | None:
@@ -197,8 +251,16 @@ class KeepContributionOut(BaseModel):
     name: str
     discount: float
     max_discount: float
-    detail: str
+    detail: str | None = None
+    """Legacy prose, exactly as the two detail pairs above."""
+    detail_key: ReasonKey | None = None
     evaluated: bool
+
+    @field_validator("detail_key", mode="before")
+    @classmethod
+    def _thaw_detail_key(cls, value: object) -> ReasonKey | None:
+        """Lenient for ``thaw_reason_key``'s reason: one bad key must not blank the panel."""
+        return thaw_reason_key(value)
 
 
 class RewatchOddsOut(BaseModel):

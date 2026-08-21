@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import functools
 import hashlib
 import json
 import os
@@ -46,6 +47,7 @@ from reaper.services import app_settings, plex_link
 from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
 from reaper.services.season_scan import SeasonJudgment
 from reaper.services.snapshot import Display, RawItem
+from tests._reasons import text as reason_text
 
 REPO = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
@@ -295,6 +297,22 @@ def _code_files() -> list[Path]:
 
 def _code_and_live_docs() -> list[Path]:
     return [*_code_files(), *_live_docs()]
+
+
+#: The directories holding copy in a language other than English: a UI catalog Weblate writes
+#: under ``frontend/src/locales/<tag>/`` and a manual under ``frontend/src/docs/content/<tag>/``.
+#: The English originals sit at ``locales/en/`` and directly in ``content/``. The
+#: American-English gate reads source copy and leaves these alone (docs/history/I18N_PLAN.md
+#: §8); every other gate walking the tree is language-neutral and keeps reading them.
+_TRANSLATED_ROOTS = (FRONTEND_SRC / "locales", FRONTEND_SRC / "docs" / "content")
+
+
+def _is_translated_copy(path: Path) -> bool:
+    for root in _TRANSLATED_ROOTS:
+        if path.is_relative_to(root):
+            parts = path.relative_to(root).parts
+            return len(parts) > 1 and parts[0] != "en"
+    return False
 
 
 def _defined_rules() -> dict[int, list[Path]]:
@@ -964,15 +982,34 @@ def test_american_english_everywhere() -> None:
     ``aria-labelledby`` attribute keep their real spelling.
     """
     offenders: list[str] = []
-    for path in _code_and_live_docs():
+    # The English catalog joins the walk: since Stage 4 it holds the operator copy the walk
+    # used to read in the components. A translated catalog or manual is the one thing this
+    # gate leaves alone, because a French manual is French.
+    for path in [*_code_and_live_docs(), FRONTEND_SRC / "locales" / "en" / "ui.json"]:
         # This file spells every banned word once, in the pattern above.
-        if path.resolve() == SELF:
+        if path.resolve() == SELF or _is_translated_copy(path):
             continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             stripped = _SANCTIONED.sub("", line)
             for match in _BRITISH.finditer(stripped):
                 offenders.append(f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)}")
     assert not offenders, "use the American spelling:\n" + "\n".join(offenders)
+
+
+def test_the_translated_copy_exemption_reads_both_layouts() -> None:
+    """Rule 147: the exemption above is run against the paths it accepts and the ones it rejects.
+
+    A catalog is a directory per tag under ``locales/``. A manual is a directory per tag under
+    ``docs/content/``, beside the English files that sit in ``content/`` itself.
+    """
+    locales = FRONTEND_SRC / "locales"
+    content = FRONTEND_SRC / "docs" / "content"
+    assert _is_translated_copy(locales / "pt-BR" / "ui.json")
+    assert _is_translated_copy(content / "de" / "index.ts")
+    assert not _is_translated_copy(locales / "en" / "ui.json")
+    assert not _is_translated_copy(content / "en" / "index.ts")
+    assert not _is_translated_copy(content / "overview.ts")
+    assert not _is_translated_copy(FRONTEND_SRC / "components" / "de.tsx")
 
 
 def test_dynamic_favicon_link_is_declared_last() -> None:
@@ -2451,14 +2488,14 @@ _MYPY_INVOCATION = re.compile(r"uv run mypy ((?:[\w./\[\]*-]+ ?)+?)(?=\s*(?:#|`|
 #: `.github/workflows/ci.yml`, `CONTRIBUTING.md`, `.claude/skills/reaper-review/SKILL.md`, and
 #: `tests/_fakes.py`'s own docstring -- which is the copy most likely to go stale, since it is
 #: the file arguing for its place on the gate. `docs/history/**` is frozen and records what the
-#: gate was at the time, so it is skipped rather than counted, and `docs/I18N_PLAN.md` proposes
-#: a gate for a plan nothing has started.
+#: gate was at the time, so it is skipped rather than counted. The translation plan's proposed
+#: gate sits there now.
 _EXPECTED_MYPY_SITES = 4
 
 #: Files that quote the command as a record rather than as the instruction to follow. A record
 #: is pinned to its moment, so holding it to today's gate would ask a finished plan to be edited
 #: every time the gate moves.
-_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md")
+_MYPY_RECORDS = ("docs/history/",)
 
 
 def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
@@ -3017,14 +3054,14 @@ def _checked_examples() -> dict[str, list[Path]]:
     dormancy = MinDormancyGate(GateConfig(threshold=1_095))
     popularity = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
     examples = {
-        dormancy.evaluate(_worked_example_facts(watchers=0)).detail: [
+        reason_text(dormancy.evaluate(_worked_example_facts(watchers=0)).detail): [
             REPO / "README.md",
             DECISIONS_DOC,
             SRC / "engine" / "explanation.py",
             FRONTEND_SRC / "components" / "WhyPanel.tsx",
             TESTS / "test_api.py",
         ],
-        popularity.evaluate(_worked_example_facts(watchers=2)).detail: [
+        reason_text(popularity.evaluate(_worked_example_facts(watchers=2)).detail): [
             REPO / "manual" / "features.mdx",
         ],
     }
@@ -3103,8 +3140,10 @@ TAGLINE = "Grave decisions, clearly explained"
 #: tagline in the one place it does not belong.
 TAGLINE_SITES = (
     "README.md",
-    "frontend/src/App.tsx",
-    "frontend/src/components/Login.tsx",
+    # The masthead (App.tsx) and the sign-in card (Login.tsx) both read the catalog's one
+    # `shell.app.brandTagline` key since Stage 4, so the catalog is their site; the
+    # frontend's key gate holds each component to that key.
+    "frontend/src/locales/en/ui.json",
     "website/docusaurus.config.ts",
     "manual/index.mdx",
     "src/reaper/main.py",
@@ -3305,6 +3344,28 @@ def test_docs_referenced_from_code_exist() -> None:
 #: `reaper.api.review._chip` matches on its `api.` segment. Adding `.` to that class reads as
 #: tighter and silently drops every `:func:`reaper.…`` cross-reference in the tree, which is the
 #: spelling both pre-existing stale citations this guard first caught were written in.
+@functools.cache
+def _ui_catalog_leaves() -> tuple[tuple[str, str], ...]:
+    """Every (dotted key, message) leaf of the hand-edited en-US UI catalog."""
+    catalog = json.loads((FRONTEND_SRC / "locales" / "en" / "ui.json").read_text(encoding="utf-8"))
+    leaves: list[tuple[str, str]] = []
+
+    def walk(node: object, prefix: str) -> None:
+        if isinstance(node, str):
+            leaves.append((prefix, node))
+            return
+        assert isinstance(node, dict)
+        for name, child in node.items():
+            walk(child, f"{prefix}.{name}" if prefix else name)
+
+    walk(catalog, "")
+    return tuple(leaves)
+
+
+def _ui_catalog_keys() -> frozenset[str]:
+    return frozenset(key for key, _ in _ui_catalog_leaves())
+
+
 _DOTTED_SYMBOL = re.compile(
     r"(?<![/\w])(api|services|clients|engine|db|auth)((?:\.[a-z_][\w]*)+)\.([A-Za-z_]\w{1,})\b"
 )
@@ -3381,6 +3442,12 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
                     )
             for match in _DOTTED_SYMBOL.finditer(line):
                 if match.group(0).endswith(suffixes):
+                    continue
+                # An i18n catalog key ("services.discord.badge") is shaped exactly like a
+                # dotted citation of `reaper.services`. It resolves in its own symbol
+                # table -- the en-US catalog -- and the frontend's missing-key gate
+                # (i18n-keys.test.ts) is what holds a stale one, so this guard defers.
+                if match.group(0) in _ui_catalog_keys():
                     continue
                 package, middle, symbol = match.groups()
                 # Resolve by importing the longest prefix that IS a module, then walking what is
@@ -4096,19 +4163,14 @@ def test_every_query_failure_branch_is_counted() -> None:
 # construction. Its line now points at the close the modal already has, and ``App.tsx`` is gone
 # from this dict.
 _RELOAD_ADVICE = {
-    "frontend/src/components/AboutPanel.tsx": 1,
-    "frontend/src/components/BackupPanel.tsx": 1,
-    "frontend/src/components/Fairness.tsx": 1,
-    "frontend/src/components/GeneralPanel.tsx": 1,
-    "frontend/src/components/JobsPanel.tsx": 2,
-    "frontend/src/components/NotInScanPanel.tsx": 1,
-    "frontend/src/components/PlexPanel.tsx": 1,
-    "frontend/src/components/PolicyEditor.tsx": 1,
-    "frontend/src/components/ReapBreakdown.tsx": 1,
-    "frontend/src/components/ReapConfirm.tsx": 1,
-    "frontend/src/components/ReapPlan.tsx": 1,
-    "frontend/src/components/RestoreCard.tsx": 3,
-    "frontend/src/components/SecurityPanel.tsx": 1,
+    # The word survives inside the backup.restore.reloadButton key literals; the advice
+    # itself lives in the catalog row below.
+    "frontend/src/components/RestoreCard.tsx": 2,
+    # Every converted surface's advice, one count per catalog message carrying the
+    # word, plus the catalog's own reloadButton label. Stage 4 converted every
+    # component that gave it, so this is the whole population but for RestoreCard's
+    # key literals above.
+    "frontend/src/locales/en/ui.json": 15,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -4145,6 +4207,14 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
         n = len(re.findall(r"(?i)\breload", _without_comments(path.read_text(encoding="utf-8"))))
         if n:
             found[str(path.relative_to(REPO))] = n
+    # Stage 4 moves a converted surface's sentences into the catalog, advice included, so the
+    # catalog is part of the population: an extraction moves a count here, and a NEW advice
+    # sentence still cannot arrive unpinned through either door.
+    in_catalog = len(
+        re.findall(r"(?i)\breload", " ".join(value for _, value in _ui_catalog_leaves()))
+    )
+    if in_catalog:
+        found["frontend/src/locales/en/ui.json"] = in_catalog
     assert found == _RELOAD_ADVICE, (
         "the reload-advice population moved.\n"
         f"expected: {_RELOAD_ADVICE}\nfound:    {found}\n"
@@ -4155,7 +4225,9 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     )
 
 
-# Every "couldn't load" sentence the shipped tree renders, and the file rendering each one. The
+# Every "couldn't load" sentence the shipped tree renders, and the file rendering each one --
+# which, for a surface Stage 4 has converted, is the en-US catalog: the sentence moves there
+# with its surface, one entry per key that spells it. The
 # count above matches the WORD `reload` per file, so it is blind to two panels drifting apart on
 # the sentence they print when a read never landed. That is what W11-36 is about: "Couldn't load
 # these settings. Reload to try again." is written at four sites and "Couldn't load this page.
@@ -4170,66 +4242,90 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # keys differing by exactly that clause are both correct, and a sixth site dropping the advice
 # earns its own key here with the same reasoning written down.
 _NEVER_LOADED_COPY = {
-    "Couldn't load Scales.": ["frontend/src/components/Fairness.tsx"],
-    "Couldn't load new lines, and updates are paused.": ["frontend/src/components/LogsPanel.tsx"],
-    "Couldn't load new lines. Reaper is trying again.": ["frontend/src/components/LogsPanel.tsx"],
-    "Couldn't load the Leaving Soon settings.": ["frontend/src/components/PlexPanel.tsx"],
+    "Couldn't load Scales.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load new lines, and updates are paused.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load new lines. Reaper is trying again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the Leaving Soon settings.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load the library list.": [
-        "frontend/src/components/PlexPanel.tsx",
-        "frontend/src/components/SetupPlexStep.tsx",
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load the library list. Try again.": ["frontend/src/components/SetupPlexStep.tsx"],
-    "Couldn't load the log.": ["frontend/src/components/LogsPanel.tsx"],
+    "Couldn't load the library list. Try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the log.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load the reasons for this item. Close this panel and click the item to try again.": [
-        "frontend/src/components/WhyPanelFallback.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load the rest of the list, so nothing was selected. Your picks are as they were."
-    " Try again.": ["frontend/src/components/ReviewQueue.tsx"],
+    "Couldn't load the rest of the list, so nothing was selected. Your picks are as they"
+    " were. Try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load the seasons. Collapse and expand to try again.": [
-        "frontend/src/components/ReviewQueue.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the shelf status. Reload to try again.": [
-        "frontend/src/components/JobsPanel.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the upkeep jobs. Reload to try again.": [
-        "frontend/src/components/JobsPanel.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load the watch history record.": ["frontend/src/components/PlexPanel.tsx"],
-    "Couldn't load these settings.": ["frontend/src/components/PolicyEditor.tsx"],
+    "Couldn't load the watch history record.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load these settings.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load these settings. Reload to try again.": [
-        "frontend/src/components/GeneralPanel.tsx",
-        "frontend/src/components/PlexPanel.tsx",
-        "frontend/src/components/PolicyEditor.tsx",
-        "frontend/src/components/SecurityPanel.tsx",
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this page. Reload to try again.": [
-        "frontend/src/components/AboutPanel.tsx",
-        "frontend/src/components/BackupPanel.tsx",
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this person's requests. Close this panel and click the card to try again.": [
-        "frontend/src/components/ScalesPanel.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load what a reap would remove. Reaper just can't show it right now."
-    " Reload to try again.": ["frontend/src/components/ReapBreakdown.tsx"],
+    "Couldn't load what a reap would remove. Reaper just can't show it right now. Reload"
+    " to try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load your connections.": [
-        "frontend/src/components/ServicesPanel.tsx",
-        "frontend/src/components/SetupConnectStep.tsx",
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your lists, so there is no way to tell here whether they are working.": [
-        "frontend/src/components/ListsPanel.tsx"
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load your review queue.": ["frontend/src/components/ReviewQueue.tsx"],
-    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from right"
-    " now. The rules you've already added are still here.": [
-        "frontend/src/components/PolicyRuleEditors.tsx",
-        "frontend/src/components/PolicyRuleEditors.tsx",
+    "Couldn't load your review queue.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Reaper couldn't load the things a rule can look at, so there's nothing to pick from"
+    " right now. The rules you've already added are still here.": [
+        "frontend/src/locales/en/ui.json",
     ],
     "Reaper couldn't load this plan. Reload the page to try again.": [
-        "frontend/src/components/ReapPlan.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
-    "Reaper couldn't load this reap. Close this and try View again.": ["frontend/src/App.tsx"],
+    "Reaper couldn't load this reap. Close this and try View again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Reaper couldn't load your lists, so there's nothing to pick from right now.": [
-        "frontend/src/components/PolicyRuleEditors.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
 }
 
@@ -4272,6 +4368,12 @@ def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
         for run in _TEXT_RUN.split(flat):
             if _NEVER_LOADED.search(run):
                 found.setdefault(run.strip(), []).append(str(path.relative_to(REPO)))
+    # The catalog carries a converted surface's sentences (Stage 4), one value per key, so a
+    # sentence two panels share appears once per key that spells it and drift stays visible.
+    for _, value in _ui_catalog_leaves():
+        for run in _TEXT_RUN.split(" ".join(value.split())):
+            if _NEVER_LOADED.search(run):
+                found.setdefault(run.strip(), []).append("frontend/src/locales/en/ui.json")
     assert {sentence: sorted(files) for sentence, files in found.items()} == _NEVER_LOADED_COPY, (
         "the never-loaded copy moved.\n"
         f"expected: {_NEVER_LOADED_COPY}\nfound:    {found}\n"
@@ -4763,10 +4865,13 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # +1 for `JobsSweepSchedule.test.tsx`, which mounts the Jobs panel to read the history sweep's
 # every-3-days schedule back in words, and opens its editor. It audits the editor open over the
 # panel, the state no other Jobs file drives.
+# +1 for `docs/DocsModal.locale.test.tsx`, which mounts the docs modal over a translated manual,
+# the state `docs.test.tsx` cannot reach with the real loader. It audits that state, where the
+# pane and the index carry a `lang` the dialog around them does not.
 # +1 for `PolicyEditor.warnings.test.tsx`, the warning-anchor walk split out of
 # `PolicyEditor.test.tsx` so the two run on different workers. It mounts the same page, which the
 # file it left audits, so it is named in the map rather than audited twice.
-_EXPECTED_RENDERING_TEST_FILES = 61
+_EXPECTED_RENDERING_TEST_FILES = 62
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5210,17 +5315,20 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
 
 
 _JOBS_PANEL_TSX = FRONTEND_SRC / "components" / "JobsPanel.tsx"
-#: ``JOB_META`` read as the whole declaration up to the ``};`` that closes it, then picked
-#: apart inside, rather than anchored on a delimiter one spelling happens to put there
-#: (rule 147): a key may be a bare identifier or the computed ``[SCAN_ID]``, and both are
-#: ordinary here.
-_JOB_META_BLOCK = re.compile(r"const JOB_META: Record<string, JobMeta> = \{(.*?)\n\};", re.DOTALL)
-_JOB_META_KEY = re.compile(r'^  (?:\[(\w+)\]|"?(\w+)"?):\s*\{', re.MULTILINE)
-_SCAN_ID_CONST = re.compile(r'const SCAN_ID = "([\w]+)";')
-#: Every entry carries exactly one ``title:``, so counting them counts the population the key
-#: matcher is supposed to collect. A flag-shaped assertion cannot tell an entry that complies
-#: from one this parser stopped seeing -- both read green (rule 145/147).
-_JOB_META_TITLE = re.compile(r"^    title:", re.MULTILINE)
+#: ``jobMeta`` read as the whole function up to the ``}`` that closes it, then picked apart
+#: inside, rather than anchored on a delimiter one spelling happens to put there (rule 147).
+#: It was a frozen ``JOB_META`` table until Stage 4 moved the copy into the i18n catalog;
+#: now each job id is a ``case`` whose arm reads its ``jobs.meta.*`` keys, and a case may
+#: name the id as a literal or through a module constant -- both are ordinary here.
+_JOB_META_BLOCK = re.compile(r"function jobMeta\(id: string\): JobMeta \{(.*?)\n\}", re.DOTALL)
+_JOB_META_KEY = re.compile(r'^    case (?:(\w+)|"(\w+)"):', re.MULTILINE)
+_ID_CONST = re.compile(r'const (SCAN_ID|UPDATE_CHECK_ID) = "(\w+)";')
+#: Every case's arm carries exactly one multiline ``title:``, so counting them counts the
+#: population the key matcher is supposed to collect (the ``default`` arm returns inline and
+#: is rightly not counted: it is the fallback, not copy). A flag-shaped assertion cannot
+#: tell an entry that complies from one this parser stopped seeing -- both read green
+#: (rule 145/147).
+_JOB_META_TITLE = re.compile(r"^        title:", re.MULTILINE)
 
 
 def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
@@ -5239,14 +5347,11 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     """
     source = _JOBS_PANEL_TSX.read_text(encoding="utf-8")
     block_match = _JOB_META_BLOCK.search(source)
-    assert block_match, (
-        "parsed no JOB_META declaration out of JobsPanel.tsx -- the matcher is stale"
-    )
+    assert block_match, "parsed no jobMeta function out of JobsPanel.tsx -- the matcher is stale"
     block = block_match.group(1)
 
-    scan_id = _SCAN_ID_CONST.search(source)
-    assert scan_id, "parsed no SCAN_ID constant out of JobsPanel.tsx -- the matcher is stale"
-    constants = {"SCAN_ID": scan_id.group(1)}
+    constants = dict(_ID_CONST.findall(source))
+    assert constants, "parsed no id constants out of JobsPanel.tsx -- the matcher is stale"
 
     keys = {
         constants[computed] if computed else literal
@@ -5254,18 +5359,19 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     }
     entries = len(_JOB_META_TITLE.findall(block))
     assert len(keys) == entries, (
-        f"JOB_META holds {entries} entries but this test collected {len(keys)} keys. "
+        f"jobMeta holds {entries} arms but this test collected {len(keys)} case keys. "
         "The key matcher missed a spelling -- fix it before trusting the comparison below, "
         "which cannot tell an entry that complies from one it never saw (rule 147)."
     )
 
     assert keys == set(SCHEDULABLE_JOB_IDS), (
-        "frontend/src/components/JobsPanel.tsx's JOB_META and the jobs the server schedules "
+        "frontend/src/components/JobsPanel.tsx's jobMeta and the jobs the server schedules "
         "disagree.\n"
         f"  scheduled with no copy: {sorted(set(SCHEDULABLE_JOB_IDS) - keys) or 'none'}\n"
         f"  copy for no such job:   {sorted(keys - set(SCHEDULABLE_JOB_IDS)) or 'none'}\n"
-        "Add the title/desc/offWarning to JOB_META, or drop the stale entry. The off-warning "
-        "states what stops happening when the job is off (rule 55)."
+        "Add a case reading the job's jobs.meta.* title/desc/offWarning from the catalog, or "
+        "drop the stale one. The off-warning states what stops happening when the job is off "
+        "(rule 55)."
     )
 
 
@@ -5298,7 +5404,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 87
+_EXPECTED_LAYERED_MODULES = 88
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -5619,7 +5725,7 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
 #: A different population from that constant, which counts the 87 under the four packages only.
-_EXPECTED_SOURCE_MODULES = 119
+_EXPECTED_SOURCE_MODULES = 120
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`
@@ -5836,7 +5942,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 225
+_EXPECTED_FRONTEND_MODULES = 237
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -7537,7 +7643,8 @@ def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None
 _ACCENT_DEFAULT_COPIES: dict[str, int] = {
     "src/reaper/api/settings.py": 1,
     "frontend/src/accent.ts": 1,
-    "frontend/src/components/GeneralPanel.tsx": 2,
+    # The two refusal sentences naming the color are catalog messages since Stage 4.
+    "frontend/src/locales/en/ui.json": 2,
     "frontend/src/styles/00-tokens.css": 4,
 }
 

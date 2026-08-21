@@ -9,8 +9,10 @@
 // hands off to that season's complete reasoning.
 
 import { useId } from "react";
+import { useTranslation } from "react-i18next";
 import type { Candidate, Group, Verdict } from "../api";
 import { itemBytes, totalBytes } from "../format";
+import { cardReason } from "../why";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { handFate, laneOf, showReapIsNoop } from "./reviewFate";
@@ -50,17 +52,17 @@ export function ShowPanel({
   onOpenSeason: (id: number, lane: Verdict) => void;
   onClose: () => void;
 }) {
-  const seasonLabel = group.seasons.length === 1 ? "1 season" : `${group.seasons.length} seasons`;
-
   // The show panel is where a whole-show call gets made, so Spare and Reap live at its bottom
   // edge too, through the same shared hook the cards and the why-panel use so every view
   // refreshes together. The decision covers every season; the control toggles the show's OWN
   // key, so it reads the show's own decision (show_override), never an aggregate of the
   // seasons' own marks -- clearing this key cannot clear those, so lighting it from them was a
   // dead toggle. A season overridden on its own keeps its mark in the strip and its row.
+  const { t } = useTranslation();
   const { setOverride, clearOverride } = useOverrideMutations();
   const showOverride = group.show_override;
   const headingId = useId();
+  const reason = cardReason(group);
 
   return (
     <WhyShell headingId={headingId} onClose={onClose}>
@@ -73,7 +75,10 @@ export function ShowPanel({
         links={group.links}
         sub={
           <>
-            TV show, {seasonLabel}, {totalBytes(group.size_bytes, group.unknown_size_seasons)}
+            {t("reviewQueue.showPanel.subtitle", {
+              n: group.seasons.length,
+              size: totalBytes(group.size_bytes, group.unknown_size_seasons),
+            })}
             {/* The Plex library the show lives in -- the same quiet chip the card carries. */}
             <LibraryChip library={group.library} />
             {/* Named here as well as on the card: the card is where you notice a show has
@@ -89,7 +94,7 @@ export function ShowPanel({
       <StatusChip chip={group.chip} />
       {/* The full sentence behind the chip -- a keep-rule conflict's complete wording,
           or whatever line put this show in front of you. */}
-      {group.reason && <p className="show-reason">{group.reason}</p>}
+      {reason && <p className="show-reason">{reason}</p>}
       {/* The Plex rows an abstain could not choose between, directly under the sentence
           naming the problem -- the same pairing the season why-panel uses (rule 72). The
           header's own Plex link above is built from the show's rating key, which is null on
@@ -98,10 +103,8 @@ export function ShowPanel({
       <MatchCandidates links={group.links} />
 
       <section className="block">
-        <h3>Seasons</h3>
-        <p className="blurb">
-          Every season on disk, whatever Reaper decided. Click one for its full reasoning.
-        </p>
+        <h3>{t("reviewQueue.showPanel.seasonsHeading")}</h3>
+        <p className="blurb">{t("reviewQueue.showPanel.seasonsBlurb")}</p>
         <ul className="panel-seasons">
           {group.seasons.map((season) => (
             <li key={season.id}>
@@ -121,9 +124,9 @@ export function ShowPanel({
                   }`}
                 >
                   {season.season_number === 0
-                    ? "Specials"
+                    ? t("reviewQueue.specials")
                     : season.season_number != null
-                      ? `Season ${season.season_number}`
+                      ? t("reviewQueue.seasonNumber", { n: season.season_number })
                       : season.title}
                 </span>
                 <SeasonPill season={season} />
@@ -152,7 +155,7 @@ export function ShowPanel({
             roomy
           />
           {(setOverride.isError || clearOverride.isError) && (
-            <span className="error">Couldn't save that. Try again.</span>
+            <span className="error">{t("reviewQueue.saveError")}</span>
           )}
         </div>
       </div>

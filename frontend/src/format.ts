@@ -1,5 +1,40 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Everything here formats through the locale i18next serves strings in, so a number, date
+// or list can never disagree with the sentence around it (docs/history/I18N_PLAN.md, Stage 2).
+// Before this, `date()` and `time()` passed `undefined` as the locale, so a German browser
+// got German dates inside English sentences.
+
+import i18next from "./i18n";
+
+/** One Intl formatter per locale, built on first use. The active locale is read on every
+ *  call, so a language change simply stops hitting the old entry. */
+function perLocale<T>(make: (locale: string) => T): () => T {
+  const cache = new Map<string, T>();
+  return () => {
+    const locale = i18next.language;
+    let made = cache.get(locale);
+    if (made === undefined) {
+      made = make(locale);
+      cache.set(locale, made);
+    }
+    return made;
+  };
+}
+
+// No grouping: the scaled value only reaches four digits at the PiB cap.
+const wholeNumber = perLocale(
+  (locale) => new Intl.NumberFormat(locale, { useGrouping: false, maximumFractionDigits: 0 }),
+);
+const oneDecimal = perLocale(
+  (locale) =>
+    new Intl.NumberFormat(locale, {
+      useGrouping: false,
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    }),
+);
+
 /** Bytes, in the units people actually reason about disk in.
  *
  *  Binary units (TiB), because that is what `df`, Sonarr and Radarr report -- showing
@@ -14,7 +49,7 @@ export function bytes(value: number): string {
 
   // One decimal below 100, none above: "5.9 GiB", "214 GiB".
   const digits = exponent === 0 || scaled >= 100 ? 0 : 1;
-  return `${scaled.toFixed(digits)} ${units[exponent]}`;
+  return `${(digits ? oneDecimal() : wholeNumber()).format(scaled)} ${units[exponent]}`;
 }
 
 /** One item's size on disk, for the surfaces the operator scans while deciding.
@@ -25,7 +60,7 @@ export function bytes(value: number): string {
  *
  *  Totals use `totalBytes` below, which carries the unknown count beside the sum. */
 export function itemBytes(value: number | null): string {
-  return value === null ? "Size unknown" : bytes(value);
+  return value === null ? i18next.t("format.sizeUnknown") : bytes(value);
 }
 
 /** A total, plus how many items it could not include.
@@ -36,17 +71,19 @@ export function itemBytes(value: number | null): string {
  *  answer sees exactly what they saw before. */
 export function totalBytes(known: number, unknown: number): string {
   if (unknown === 0) return bytes(known);
-  return `${bytes(known)}, ${count(unknown)} ${unknown === 1 ? "size" : "sizes"} unknown`;
+  return i18next.t("format.totalWithUnknown", { known: bytes(known), n: unknown });
 }
 
+const grouped = perLocale((locale) => new Intl.NumberFormat(locale));
+
 export function count(value: number): string {
-  return value.toLocaleString();
+  return grouped().format(value);
 }
 
 /** A count sharing a line with a number the server already wrote into a sentence.
  *
  *  The server groups with a literal comma (Python's `:,`) and cannot know the browser's
- *  locale; `count` above follows that locale. Put the two in one sentence and a `de-DE`
+ *  locale; `count` above follows the app's locale. Put the two in one sentence and a `de-DE`
  *  browser reads "1,234 added, 5,678 cleared. Last updated 5 minutes ago, 1.234 movies …" --
  *  two thousands separators in one line, neither of them wrong on its own. Every number on
  *  such a line goes through here instead, so the line agrees with itself. `en-US` is the
@@ -62,7 +99,7 @@ export function countBesideServerText(value: number): string {
 /** The Reaper's tally, singular-aware: "1 soul", "7 souls". Every reap surface counts in
  *  souls, not items, so the count and its noun stay together in one place. */
 export function souls(value: number): string {
-  return `${value.toLocaleString()} ${value === 1 ? "soul" : "souls"}`;
+  return i18next.t("format.souls", { n: value });
 }
 
 /** Basis points to a percentage. Coverage is stored as bp because the policy body is
@@ -112,28 +149,69 @@ export function humanDays(days: number): string {
     .join(", ");
 }
 
-export function date(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+/** A window length phrased for "in the last {window}": `humanDays`, except a single-unit
+ *  window drops the redundant "1" -- you say "in the last year", not "in the last 1 year".
+ *  A multi-unit window ("1 year, 6 months") keeps it. Mirrors the retired
+ *  `clock.humanize_window`, whose sentences moved into the catalog (docs/history/I18N_PLAN.md §5). */
+export function humanWindow(days: number): string {
+  const text = humanDays(days);
+  return text.startsWith("1 ") && !text.includes(",") ? text.slice(2) : text;
 }
+
+const dayFormat = perLocale(
+  (locale) => new Intl.DateTimeFormat(locale, { year: "numeric", month: "short", day: "numeric" }),
+);
+
+// `Intl.DateTimeFormat.format` THROWS on an invalid date where `toLocaleDateString`
+// rendered "Invalid Date", and one bad timestamp must not unmount the panel around it.
+// The raw value is the honest degraded state, and the operator can quote it in a report.
+export function date(iso: string): string {
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.getTime()) ? iso : dayFormat().format(parsed);
+}
+
+const clockFormat = perLocale(
+  (locale) => new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }),
+);
 
 /** The clock time, for the surfaces that want the hour a thing happened, not just the day. */
 export function time(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.getTime()) ? iso : clockFormat().format(parsed);
 }
+
+const listFormat = perLocale(
+  (locale) => new Intl.ListFormat(locale, { style: "long", type: "conjunction" }),
+);
+
+/** "a, b, and c", in the locale's own list grammar. */
+export function list(items: string[]): string {
+  return listFormat().format(items);
+}
+
+const weekdayFormat = perLocale(
+  (locale) => new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }),
+);
+
+/** A weekday's name from its cron index, 0 = Sunday. */
+export function weekday(dayIndex: number): string {
+  // 2023-01-01 was a Sunday, so day 1 + index lands on the named weekday.
+  return weekdayFormat().format(new Date(Date.UTC(2023, 0, 1 + dayIndex)));
+}
+
+const relative = perLocale((locale) => new Intl.RelativeTimeFormat(locale, { numeric: "auto" }));
 
 /** How long ago, in the coarse terms the decisions are actually made in. */
 export function since(iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
 
-  if (days < 1) return "today";
-  if (days === 1) return "yesterday";
-  if (days < 60) return `${days} days ago`;
-  if (days < 730) return `${Math.floor(days / 30)} months ago`;
-  return `${(days / 365).toFixed(1)} years ago`;
+  if (Number.isNaN(days)) return iso;
+  if (days < 1) return relative().format(0, "day");
+  if (days === 1) return relative().format(-1, "day");
+  if (days < 60) return relative().format(-days, "day");
+  if (days < 730) return relative().format(-Math.floor(days / 30), "month");
+  // One decimal past two years ("2.4 years ago"); the formatter drops a trailing .0.
+  return relative().format(-Number((days / 365).toFixed(1)), "year");
 }
 
 /** A spare is always set to a WHOLE number of days on the server (`now + N days`), so its true
@@ -202,15 +280,15 @@ export function spareRemaining(iso: string | null): {
   }
   const ms = new Date(iso).getTime() - Date.now();
   if (ms <= 0) {
-    const expiredOn = `Your spare expired on ${date(iso)}`;
+    const expiredOn = i18next.t("format.spareExpiredOn", { date: date(iso) });
     return {
       forever: false,
       days: 0,
       expired: true,
-      short: "0d",
-      phrase: "expired",
+      short: i18next.t("format.spareShort", { n: 0 }),
+      phrase: i18next.t("format.spareExpiredPhrase"),
       until: "",
-      note: `${expiredOn}. Still kept until the next scan judges it again`,
+      note: i18next.t("format.spareStillKept", { expiredOn }),
       expiredOn,
     };
   }
@@ -221,9 +299,9 @@ export function spareRemaining(iso: string | null): {
     forever: false,
     days,
     expired: false,
-    short: `${days}d`,
-    phrase: days === 1 ? "1 day left" : `${days} days left`,
-    until: `Kept until ${date(iso)}`,
+    short: i18next.t("format.spareShort", { n: days }),
+    phrase: i18next.t("format.spareLeft", { n: days }),
+    until: i18next.t("format.spareUntil", { date: date(iso) }),
     note: "",
     expiredOn: "",
   };

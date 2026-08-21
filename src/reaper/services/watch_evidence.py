@@ -91,12 +91,12 @@ _CHUNK = 200
 #: Says the outcome, names no internal machinery (rule 21). Being a constant is not what
 #: makes it safe: it reaches the panel through the dormancy and popularity gates and had no
 #: ``CAUSE_COPY`` entry either, so the drift test now walks it with the rest (rule 144).
-BLIND_REASON = "plays recorded on an earlier scan are no longer readable"
+BLIND_REASON = "plays_unreadable"
 
 #: What the operator is told when the activity read failed, so nobody knows what is playing
 #: right now. Both lanes report it in the same words, so it is named once here beside its
 #: sibling rather than typed on each side of the tree (rule 144).
-NO_SESSIONS_REASON = "could not read active sessions"
+NO_SESSIONS_REASON = "sessions_unreadable"
 
 
 @dataclass(frozen=True)

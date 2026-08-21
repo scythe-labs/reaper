@@ -1,8 +1,9 @@
 # Translating Reaper: what it would take
 
-> **PROPOSAL — nothing here is landed, and no stage is committed to.** Written 2026-07-30 against
-> `frontend/src/` at 26,554 lines and `src/reaper/` at 100 files. It exists to be argued with
-> before any code moves.
+> **FROZEN 2026-08-21. Stages 1 through 6 landed on `dev` as #862. Stage 7 (RTL) is optional
+> and tracked as #861.** Each stage's Status line below is its record. Written 2026-07-30 as a
+> proposal, against `frontend/src/` at 26,554 lines and `src/reaper/` at 100 files, and run
+> 2026-08-20 to 2026-08-21 on the `i18n` integration branch (§10).
 >
 > **Reviewed 2026-08-20 against a tree a third larger** (123 non-test frontend files, 36,287
 > lines). Every load-bearing claim held: the three parse sites, the copy maps, the §4
@@ -28,17 +29,18 @@ undercount a tree a third larger.
 
 | Surface | Count |
 | --- | --- |
-| Frontend source files (non-test) | 123 files, 36,287 lines |
-| `aria-label=` / `title=` / `placeholder=` literals | 122 / 70 / 29 |
-| JSX text nodes † | ~322 |
+| Frontend source files (non-test) | 126 files, 37,295 lines (re-measured after Stage 6) |
+| `aria-label=` / `title=` / `placeholder=` literals | 0 in the 74 converted files (Stage 4; was 122 / 70 / 29) |
+| JSX text nodes † | 0 in the 74 converted files (Stage 4; was ~322) |
 | Multi-word quoted string literals † | ~446 |
-| `announce()` call sites (live-region copy) | 56 |
+| `announce()` call sites (live-region copy) | every one reads the catalog (Stage 4; was 56 English) |
+| Catalog keys in `locales/en/ui.json` (Stage 4, plus Stage 5's four group names) | 2,095 |
 | In-app manual (`frontend/src/docs/content/*.ts`) | 6,509 words |
 | **Frontend test queries bound to English copy (`getBy*`/`findBy*`/`queryBy*` by Text/Role/Label)** | **2,434** |
-| Backend prose-bearing kwargs (`detail=`, `why=`, `text=`) | 61 |
+| Backend prose-bearing kwargs (`detail=`, `why=`, `text=`) | 39 (was 61; Stage 3 converted the gate, signal and keep details to ids) |
 | Backend helpers that compose English (`humanize_*`, `describe_*`) | 6 |
 | `raise HTTPException` sites | 83 |
-| Named `*_REASON` constants (were 14 hand-typed `Unknown(reason="…")` literals) | 22 |
+| Named `*_REASON` constants (values are stable ids since Stage 3) | 22 |
 | Python test assertions on `detail` † | ~47 |
 | CSS physical direction properties (`margin-left`, `left:`) | 101 |
 | CSS logical properties (`margin-inline`, `inset-inline`) | **1** |
@@ -231,7 +233,11 @@ state, and the session that changes a stage updates its line in the same PR.
 
 ### Stage 1 — the scaffold, and the test proof
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #845). The gate held: `SafetyBanner.test.tsx` passed
+unchanged, and a throwaway render check showed the converted banner's HTML byte-identical to
+the old one in all four states, linked and link-less. One finding for Stage 4: a `Trans`
+placeholder may not be named after an HTML void element (`<link>` swallowed the button's
+children), so name placeholders after the control, like `<btn>`.
 
 Add `i18next`, `react-i18next`, `i18next-icu`. Wire the provider, add `en.json`, pin `en-US` in
 the Vitest setup, and convert **one** component end to end. Set `<html lang>` from the active
@@ -242,7 +248,13 @@ and the rest of this plan needs re-costing before anything else moves.
 
 ### Stage 2 — `format.ts` and the Intl layer
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #846). The gate held: suite and build green, English output
+byte-identical except `since()`, which says "2 years ago" where it said "2.0 years ago"
+(nothing pinned the old form). One finding: `Intl.DateTimeFormat.format` throws on an invalid
+date where `toLocaleDateString` rendered "Invalid Date", so `date()`, `time()` and `since()`
+guard and return the raw value. Deferred in writing: `humanDays()` moves with the server's
+`clock.humanize_days` (Stage 3), and `JobsPanel`'s `clockLabel()`/`whenText()` with their
+surface (Stage 4).
 
 The single highest-value file: it already centralizes every number, byte, date and plural.
 `souls()`, `totalBytes()` and `spareRemaining()` hand-roll English plurals (`value === 1 ?
@@ -263,7 +275,32 @@ reduced to a formatter, so it becomes ICU messages per cron shape.
 
 ### Stage 3 — the backend typed-reason conversion
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #847). The gate held: `uv run pytest` (4,720) and
+`uv run mypy src/reaper tests/` green, and a pre-conversion snapshot still renders, proven
+both ways: the untouched legacy fixtures across `WhyPanel.test.tsx` and the chip suite keep
+passing on stored prose, and new tests drive the fresh id+params path end to end. Details
+are a `Reason` (id + params, nesting for the blocked check/cause, the rating clauses and
+the conflict's because-slot); the explanation stores `detail_key`, legacy rows keep
+`detail`; the card serves `reason_key`/`dormant_days` and the frontend composes everything
+from the catalog's `why.*` namespace (`frontend/src/why.ts`).
+
+Three deviations from §5 as written, each deliberate. **The parse sites survive as frozen
+legacy renderers rather than being deleted**: `WhyPanel`'s maps and regexes (and
+`api.review`'s) now serve only rows stored before the conversion, because deleting them
+prints raw stored prose at an operator who upgrades before their next scan (#282's class).
+Nothing can produce new prose for them, so rule 92's hazard, a producer rewording what a
+consumer parses, is structurally gone; the maps are marked frozen and the walk no longer
+counts them. **§5's "the parse sites are all in `WhyPanel.tsx`" was stale**: `api.review`
+carried five regex parsers and two prefix tests over the same vocabulary, all re-keyed to
+ids with the prose kept as their legacy fallback. **Chip and card sentences the backend
+composes (`ChipOut.text`/`why`, the warning copy) stay English**: they now read ids and
+params instead of parsing prose, but extracting their own copy is Stage 4+ work, and
+`policy_warnings` renders the shared shortfall reason through one English helper
+(`_shortfall_text`) rather than a second sentence. Findings for later stages: the backend
+suite asserts operator sentences through a test-side composer over the real catalog
+(`tests/_reasons.py`), with `frontend/src/why.test.ts` holding the two composers to the
+same output, and `humanDays`/`humanWindow` (`format.ts`) are still English-only span
+builders, to be localized when a first non-English locale lands.
 
 §5. Convert `GateResult.detail` and `SignalResult.detail` to id + params; delete the three parse
 sites; retire `CHECK_COPY`/`CAUSE_COPY` into the catalog keyed by id. The `*_REASON` constants
@@ -279,7 +316,22 @@ opens in the why-panel.
 
 ### Stage 4 — extract the UI catalog
 
-**Status:** not started.
+**Status:** done (2026-08-20, PRs #848, #849, #850, #856). The gates and the workflow landed
+first (#848): `i18n-extraction.test.ts` fails on any user-visible literal left in a file its
+CONVERTED list declares extracted, `i18n-keys.test.ts` fails on a referenced key missing from
+the catalog, an orphaned key, a message ICU cannot parse, and a `Trans` tag its site cannot
+draw (#852), and `.claude/workflows/i18n-stage4-extract.js` is the committed per-surface
+harness. Three extraction PRs then moved every UI surface: the settings panels (#849), the
+reap, security, backup and deletion surfaces (#850), and the rest in one run (#856). CONVERTED
+holds 74 files and the catalog 2,091 keys, extracted verbatim, so the suite's copy-bound
+queries pass unchanged. Findings: the gate's first live run needed value-position scanning
+(a `title` component prop, `===` operands, ICU discriminant params are data, not copy);
+ten cross-language guards that pin English sentences followed them into the catalog; a
+missing ICU param fails silently at format time and only a copy-pinned test catches it; the
+product's name stays a source literal, exempt from the gate, because the README-banner
+generator parses it. Still English by design: the frozen legacy why-maps serving
+pre-Stage 3 rows, `humanDays`/`humanWindow` span builders, and `api.ts`'s error sentences,
+each to be localized when a first non-English locale lands.
 
 The mechanical bulk: ~1,200 strings, `Settings.tsx` and the seven panels split out of it (142
 between them, measured before the split) and `WhyPanel.tsx` (70) heaviest. The shell kept a share
@@ -301,7 +353,22 @@ they are what makes §10's fan-out safe to delegate.
 
 ### Stage 5 — the in-app manual
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #859). The English blocks stayed in `content/*.ts`, statically
+imported, as the fallback and the site generator's source. A translated manual is
+`content/<tag>/index.ts` exporting `DOCS`. `docs/localized.ts` finds every one with
+`import.meta.glob`, so each ships as its own chunk, and the modal reads it through React's
+`use()` behind the Suspense boundary `DocsContext` already had. The lookup goes by
+`i18n.language`, the exact tag and then its language, so the manual and the UI catalog fall
+back to English independently, each entire. Group names became catalog keys
+(`shell.docsModal.group.*`) over a closed `DocGroup` union, so the index headings follow the
+UI language and a fifth group fails to compile. The pane and the index entries carry `lang`
+with the manual's tag. The gate is `manual.locales.test.ts`: every shipped manual has the
+English skeleton (doc ids, groups, section ids, block kinds, table and diagram shapes), its tag
+is one `Intl` accepts, the lazy and eager globs agree, and the locale count is pinned at one.
+`manual.links.test.ts` reads every manual's cross-references. Findings: a suspended `use()`
+never resumes under a bare testing-library `render()` in this suite, so the translated path
+renders inside an async `act()`. Axe's valid-lang rule is what made the tag check a gate. Ran
+without subagents, since nothing moved that was mechanical enough to delegate.
 
 6,509 words in `frontend/src/docs/content/*.ts`, typed blocks already: the app renders them
 through `DocBody`, and `toMdx.ts` generates the manual site's pages from the same blocks
@@ -311,37 +378,58 @@ English blocks; translating the site is out of scope.
 
 ### Stage 6 — the translation platform
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #860). The operator re-decided for Weblate and created the
+project the same day. The Hosted Weblate side was set through its API and is recorded here
+because it lives nowhere in the tree:
 
-> **The tie-breakers below were inverted by the move to GitHub (2026-07-31), so this
-> recommendation is no longer settled and is left standing only until someone re-runs it.** Two
-> of the three reasons Weblate won were about *not* being on GitHub: Crowdin's sync would have
-> had to be rebuilt on the old forge's Actions, and Weblate's native support for that forge
-> avoided a self-hosted instance. Reaper now runs on GitHub Actions, where Crowdin's ecosystem
-> already fits and where Weblate's GitHub backend is at least as good as the one that won it
-> this slot. Only the third reason survives the move untouched. Nothing here is wrong about
-> Weblate; the comparison simply no longer discriminates the way it did, and re-deciding is
-> cheaper before the stage is taken up than after a sync exists.
+| Setting | Value |
+| --- | --- |
+| Project, component | `reaper`, `ui` (`hosted.weblate.org/projects/reaper/ui/`) |
+| Repository, branch | `github.com/scythe-labs/reaper`, **`i18n`** until the final PR, then `dev` |
+| Push URL | empty, so Weblate pushes to its own fork and opens a pull request |
+| File mask, base file | `frontend/src/locales/*/ui.json`, `frontend/src/locales/en/ui.json`, base not editable |
+| File format | JSON nested structure file |
+| Language code style | BCP 47 with hyphens (`pt-BR`), which the gate below also requires |
+| New languages | translators add them; the file is created from the English one |
+| Flags, enforced | `icu-message-format, icu-flags:xml`; `icu_message_format` cannot be dismissed |
+| Add-on | Cleanup translation files, so a key English drops leaves every catalog |
+| Push on commit, age | on, 24 hours |
+| Repository webhook | GitHub push events to `hosted.weblate.org/hooks/github/` |
+
+Weblate's default pull request title is `chore(l10n): update translations`, which
+`pr-validation.yml` accepts unchanged. **When the final PR lands, the component's `branch`
+moves from `i18n` to `dev`**, since the merge deletes `i18n`. That is the one step left, and
+§10's final-PR paragraph carries it.
+
+The repository side. `applyBrowserLanguage` (`i18n.ts`) loads the browser's catalog before the
+first paint, and only for a tag whose catalog shipped, so `format.ts` and the strings move
+together or stay English together. There is no language picker. `i18n-locales.test.ts` is the
+review of every Weblate pull request: each shipped catalog has only English keys, per key only
+the English message's ICU arguments and tags, and a canonical BCP 47 directory name. It was
+proven on a copied English catalog (green) and a mutated one (red, three findings named).
+`.prettierignore` leaves every catalog but the English one to Weblate.
+`test_american_english_everywhere` now reads the English catalog, which it had missed since
+Stage 4 moved the copy there, and skips a translated catalog or manual (`_is_translated_copy`).
+CONTRIBUTING says where to translate and that the non-English files are overwritten.
+
+Findings. A regex read of ICU arguments counted a one-word plural branch, `other {files}`, as
+an argument (rule 147), so the gate reads the parser's AST, and
+`@formatjs/icu-messageformat-parser`, already in the tree under `intl-messageformat`, became an
+exact devDependency for that one test. The plan's "CI sync" is nothing in CI: Weblate pulls on
+the webhook and pushes pull requests, and the gates that bind those pull requests are the ones
+above. Weblate's API rejects a push URL without a push branch; the fork flow wants the push URL
+empty. Weblate also refuses a branch that lacks the base file (`template: File does not
+exist`), so the component could not read `dev` before the final PR landed. The flip to `dev`
+is `docs/STATUS.md` open work 5 until it is done.
 
 **Hosted Weblate, on the Libre plan**, on the Audiobookshelf and Uptime Kuma precedent, which is
-where community-scale self-hosted projects land. Crowdin is the alternative and is what the
-larger projects use.
-
-Three things this depends on, all checked rather than assumed:
+where community-scale self-hosted projects land. Three things this depends on, all checked:
 
 - **The Libre plan is gratis for public projects** and carries the 160k-string limit. Reaper's
-  ~1,500 source strings are two orders of magnitude under it.
+  2,095 source strings are two orders of magnitude under it.
 - **Reaper is AGPL-3.0-or-later**, an OSI-approved license.
-- **Weblate speaks GitHub natively**, as it did the previous forge, so the unanimous workflow
-  from §2 — bot opens a PR with completed translations — works without a self-hosted Weblate.
-
-**Reaper being public at release is what makes this the answer**, and that is settled. One
-practical requirement remains and is the thing to confirm when the stage is actually taken up:
-hosted Weblate needs its own account with push rights on a translations branch. Reaching the
-host over the internet was the other, and the move to GitHub retired it.
-
-Also this stage: the CONTRIBUTING note that non-English files are overwritten, the CI sync, and
-the hygiene-gate scoping from §8, which lands beside the first non-English file.
+- **Weblate speaks GitHub natively**, so the unanimous workflow from §2, a bot opening a PR with
+  completed translations, works without a self-hosted Weblate and without push rights: it forks.
 
 ### Stage 7 — RTL, and it is optional
 
@@ -358,12 +446,10 @@ overlap this and should be sequenced with it rather than against it.
   makes the existing tests a proof rather than a cost.
 - **No new numbered rule proposed.** Rules 21, 68, 92, 134, 142 and 144 already govern this, and
   the two new checks in Stage 4 are gates, which `CLAUDE.md` asks for ahead of appending prose.
-- **No hygiene gate is loosened, but two must be scoped.**
-  `test_american_english_everywhere` and the middot family in `tests/test_repo_hygiene.py` scan
-  all source text and would fire on a non-English catalog. They must bind the **`en-US` catalog
-  only** — the American-English rule is about Reaper's source copy, not about French. That
-  scoping is Stage 6 work: it is needed the day the first non-English file lands, and not
-  before.
+- **No hygiene gate is loosened, but one is scoped.** `test_american_english_everywhere` reads
+  source copy, and a French manual is French, so since Stage 6 it skips a translated catalog or
+  manual (`_is_translated_copy`) and reads the English catalog it had missed. The
+  middot gates turned out to be spelling checks, language-neutral, and keep binding every file.
 - **No translated string is trusted with a safety decision.** §6 is a hard boundary.
 - **No claim that translation quality is free.** Rule 21 asks for copy a maintainer can verify at
   a glance, and nobody here can verify Polish. That is an accepted, stated cost of shipping
@@ -393,7 +479,9 @@ session can pick up any stage from this file alone.
 
 All stages land on one integration branch, `i18n`, cut from `origin/dev` when Stage 1 starts.
 Stage PRs merge into `i18n`, so `dev` never carries a half-translated app. When the operator
-calls the work done, one final PR squash-merges `i18n` into `dev`.
+calls the work done, one final PR squash-merges `i18n` into `dev`, and the same sitting moves
+the Weblate component's `branch` from `i18n` to `dev` (Stage 6), because the merge deletes
+`i18n` and the component would be reading a branch that is gone.
 
 Each stage is run by a fresh Fable session, called the orchestrator below. The kickoff prompt
 is `Run Stage N of docs/I18N_PLAN.md`. The session:
@@ -446,7 +534,7 @@ result. Merge, never rebase: the branch is shared.
 | 2 | Fable, no subagents | One file plus a handful of call sites. Delegating costs more than the work. |
 | 3 | Fable, no subagents | Evidence-path change, governed by rules 92, 127, 140, 142, 143. A `/reaper-review` pass runs on the diff before the PR opens; this is the one stage that earns it. |
 | 4 | Fable orchestrates, Sonnet extracts and verifies | Mechanical, high-volume, and verifiable by the two CI gates. The workflow below. |
-| 5 | Sonnet converts, Fable reviews the diff | The manual is typed data, and `manual.gen.test.ts` already guards its shape. |
+| 5 | Fable, no subagents | Planned as a Sonnet conversion. The English blocks stayed where they were, so the stage was a loader, a gate and four catalog keys, smaller than the handoff would have been. |
 | 6 | Fable, with the operator | The platform re-decision and the Weblate account are the operator's. The CI sync, the CONTRIBUTING note, and the gate scoping are the session's. |
 | 7 | Nobody yet | Judged after a shipped locale. |
 

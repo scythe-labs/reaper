@@ -1722,3 +1722,113 @@ describe("the synopsis disclosure", () => {
     expect(CSS).toMatch(/\.why-synopsis:not\(\.clamp-2\)\s*\{[^}]*display:\s*block/);
   });
 });
+
+describe("a fresh explanation composes from the catalog", () => {
+  // Rows written since the typed-reason conversion (docs/history/I18N_PLAN.md §5) carry
+  // `detail_key` and no prose; the panel composes each sentence via `why.ts`. The legacy
+  // fixtures across the rest of this file are the other half of the contract: a stored
+  // pre-conversion snapshot still renders its prose verbatim.
+  it("composes gate, custom-rule and signal rows from their keys", () => {
+    show(
+      detail([], {
+        explanation: {
+          score: 55,
+          base_score: 55,
+          keep_discount: 0,
+          threshold: 70,
+          coverage: 10_000,
+          signals: [
+            signal({
+              id: "unwatched",
+              contribution: 55,
+              weight: 60,
+              detail: null,
+              detail_key: { k: "signal_unwatched", p: { days: 830 } },
+              state: "adds",
+            }),
+          ],
+          protections_fired: [
+            { gate: "streaming_now", detail: null, detail_key: { k: "streaming_now" } },
+          ],
+          protections_checked: [
+            {
+              gate: "custom",
+              detail: null,
+              detail_key: {
+                k: "custom_checked",
+                p: {
+                  cond: {
+                    k: "cond_text.not_includes",
+                    p: { field: "genre", wanted: "Documentary" },
+                  },
+                },
+              },
+            },
+          ],
+          protections_unknown: [],
+        },
+      }),
+    );
+
+    expect(screen.getByText("someone is watching it right now")).toBeInTheDocument();
+    expect(screen.getByText("not watched in 2 years, 3 months")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Your rule didn't match: Genre does not include Documentary/),
+    ).toBeInTheDocument();
+  });
+
+  it("groups fresh blocked rows by their composed cause, once", () => {
+    const blocked = (check: string) => ({
+      gate: "min_dormancy",
+      detail: null,
+      detail_key: {
+        k: "blocked",
+        p: { check: { k: `check.${check}` }, cause: { k: "cause.plex_unmatched" } },
+      },
+    });
+    show(
+      detail([], {
+        explanation: {
+          score: 55,
+          base_score: 55,
+          keep_discount: 0,
+          threshold: 70,
+          coverage: 10_000,
+          signals: [],
+          protections_fired: [],
+          protections_checked: [],
+          protections_unknown: [
+            blocked("last_watched"),
+            blocked("watch_horizon"),
+            {
+              gate: "season_progression",
+              detail: null,
+              detail_key: {
+                k: "conflict.counted",
+                p: {
+                  pruned_season: 3,
+                  kept_season: 4,
+                  pruned_watchers: 2,
+                  because: { k: "because.airing" },
+                },
+              },
+              defers_to_owner: true,
+            },
+          ],
+        },
+      }),
+    );
+
+    // One cause heading for the two blocked checks, both checks listed under it.
+    expect(screen.getAllByText("This title couldn't be found in Plex.")).toHaveLength(1);
+    expect(
+      screen.getByText(
+        /Couldn't check: when it was last watched and how far back its history goes\./,
+      ),
+    ).toBeInTheDocument();
+    // The deliberate conflict keeps its own composed row.
+    expect(
+      screen.getByText(/2 people watched Season 3, more than watched Season 4/),
+    ).toBeInTheDocument();
+  });
+});

@@ -36,6 +36,7 @@ from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN, PROTECT, Facts, GateConfig, GateId, ReturnedGate
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.services import library_seen
+from tests._reasons import text
 
 # Whole seconds: ``UtcTimestamp`` stores epoch seconds, so a microsecond would survive in
 # memory and not in the row (``test_watch_evidence``'s NOW, same reason).
@@ -375,14 +376,14 @@ class TestTheGate:
         result = self._gate().evaluate(self._facts(100))
         assert result.outcome == PROTECT
         assert result.gate is GateId.RETURNED
-        assert result.detail.endswith(" left")
-        assert "came back" in result.detail
+        assert text(result.detail).endswith(" left")
+        assert "came back" in text(result.detail)
 
     def test_reaper_says_so_when_its_own_journal_shows_the_removal(self) -> None:
         ours = self._gate().evaluate(self._facts(100, by_reaper=True))
         theirs = self._gate().evaluate(self._facts(100, by_reaper=False))
-        assert ours.detail.startswith("you removed this before")
-        assert theirs.detail.startswith("this left your library")
+        assert text(ours.detail).startswith("you removed this before")
+        assert text(theirs.detail).startswith("this left your library")
         # Same hold either way: splitting the length would mean a second knob for a
         # difference nobody has measured.
         assert ours.outcome == theirs.outcome == PROTECT
@@ -392,13 +393,13 @@ class TestTheGate:
         # constant instead of the config cannot pass this.
         near_end = self._gate().evaluate(self._facts(HOLD_DAYS - 2))
         assert near_end.outcome == PROTECT
-        assert "2 days left" in near_end.detail
+        assert "2 days left" in text(near_end.detail)
 
     def test_an_expired_hold_stops_keeping_the_file(self) -> None:
         result = self._gate().evaluate(self._facts(HOLD_DAYS + 1))
         assert result.outcome == ABSTAIN
         assert result.blocked is False
-        assert "came back" in result.detail
+        assert "came back" in text(result.detail)
 
     def test_a_title_that_never_left_does_not_fire(self) -> None:
         result = self._gate().evaluate(self._facts(None))

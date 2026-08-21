@@ -28,6 +28,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import {
   api,
   type Candidate,
@@ -47,11 +48,13 @@ import { announce } from "../announce";
 import { useBackGuard } from "../backnav";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
+import i18next from "../i18n";
 import { reviewUrl, writeUrl } from "../navUrl";
 import { useGeneralSettings } from "../useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
+import { cardReason, dormantSpan } from "../why";
 import { useArtFallback } from "./artFallback";
 import { CardOpen } from "./CardOpen";
 import { CollectionChip } from "./CollectionChip";
@@ -114,9 +117,9 @@ import { staleReadLine, StaleReadNotice } from "./StaleReadNotice";
  *  `role="status"` nodes mounted with their own text, which several readers never announce -- and
  *  a hand-copied sentence in the announcement would be a second copy of an operator-facing claim
  *  free to drift from the one on screen (rule 144). */
-const NUDGE_NEWER_SCAN = "A newer scan just finished";
-const NUDGE_VIEWING_PREVIOUS = "You're viewing the previous scan.";
-const TOAST_CAUGHT_UP = "Updated to the latest scan.";
+const NUDGE_NEWER_SCAN = i18next.t("reviewQueue.nudge.newerScan");
+const NUDGE_VIEWING_PREVIOUS = i18next.t("reviewQueue.nudge.viewingPrevious");
+const TOAST_CAUGHT_UP = i18next.t("reviewQueue.toast.caughtUp");
 
 const PAGE = 40;
 
@@ -128,21 +131,21 @@ const FETCH_PAGE = 100;
 const TABS: { verdict: Verdict; label: string; blurb: string; empty: string }[] = [
   {
     verdict: "condemn",
-    label: "Condemned",
-    blurb: "Scored at or above your threshold, with nothing protecting them.",
-    empty: "No souls are on the block.",
+    label: i18next.t("reviewQueue.tabs.condemn.label"),
+    blurb: i18next.t("reviewQueue.tabs.condemn.blurb"),
+    empty: i18next.t("reviewQueue.tabs.condemn.empty"),
   },
   {
     verdict: "protect",
-    label: "Sanctuary",
-    blurb: "Something is protecting these souls. They stay, whatever they weigh.",
-    empty: "No souls are being spared by a protection right now.",
+    label: i18next.t("reviewQueue.tabs.protect.label"),
+    blurb: i18next.t("reviewQueue.tabs.protect.blurb"),
+    empty: i18next.t("reviewQueue.tabs.protect.empty"),
   },
   {
     verdict: "abstain",
-    label: "Limbo",
-    blurb: "Below your threshold, or too little to go on. Reaper leaves them be.",
-    empty: "No souls in Limbo.",
+    label: i18next.t("reviewQueue.tabs.abstain.label"),
+    blurb: i18next.t("reviewQueue.tabs.abstain.blurb"),
+    empty: i18next.t("reviewQueue.tabs.abstain.empty"),
   },
 ];
 
@@ -164,9 +167,10 @@ const LANE_LABEL = Object.fromEntries(TABS.map((t) => [t.verdict, t.label])) as 
  *  the library is unknown (unmatched, or a row from before this shipped). Shared by movie and
  *  show cards and both info panels, so movies and seasons read the same. */
 export function LibraryChip({ library }: { library: string | null }) {
+  const { t } = useTranslation();
   if (!library) return null;
   return (
-    <span className="lib-chip" title={`Plex library: ${library}`}>
+    <span className="lib-chip" title={t("reviewQueue.libraryChipTitle", { library })}>
       <LibraryIcon />
       {library}
     </span>
@@ -268,8 +272,12 @@ export function Poster({ url, alt }: { url: string | null; alt: string }) {
 
 /** The score chip. Color carries the item's fate so it reads without the label. */
 function Score({ item }: { item: Candidate }) {
+  const { t } = useTranslation();
   return (
-    <span className={`score score-${handFate(item)}`} title={`Score ${item.score} of 100`}>
+    <span
+      className={`score score-${handFate(item)}`}
+      title={t("reviewQueue.scoreTitle", { score: item.score })}
+    >
       {item.score}
     </span>
   );
@@ -278,19 +286,25 @@ function Score({ item }: { item: Candidate }) {
 /** The label the resolution badge wears: 4K, HD or SD. Null (no data) shows nothing. */
 function resolutionLabel(value: string | null): string | null {
   if (!value) return null;
-  if (value === "2160") return "4K";
-  if (value === "1080" || value === "720") return "HD";
-  return "SD";
+  if (value === "2160") return i18next.t("reviewQueue.resolution.uhd");
+  if (value === "1080" || value === "720") return i18next.t("reviewQueue.resolution.hd");
+  return i18next.t("reviewQueue.resolution.sd");
 }
 
 function ResolutionBadge({ value }: { value: string | null }) {
+  const { t } = useTranslation();
   const label = resolutionLabel(value);
   if (!label) return null;
   const detail = value && value !== "sd" ? `${value}p` : null;
   return (
-    <span className="res-badge" title="The file's resolution">
+    <span className="res-badge" title={t("reviewQueue.resolutionBadgeTitle")}>
       {label}
-      {detail && <span className="res-detail">&nbsp;{detail}</span>}
+      {detail && (
+        <span className="res-detail">
+          {" "}
+          {detail}
+        </span>
+      )}
     </span>
   );
 }
@@ -310,11 +324,12 @@ export function compactSpan(text: string): string {
 
 /** The dormancy pill: how long the item has sat unwatched, in the shared amber tone. */
 function DormantPill({ dormantFor }: { dormantFor: string | null }) {
+  const { t } = useTranslation();
   if (!dormantFor) return null;
   return (
-    <span className="dormant-pill" title={`Not watched in ${dormantFor}`}>
+    <span className="dormant-pill" title={t("reviewQueue.dormantPillTitle", { span: dormantFor })}>
       <ClockGlyph size={12} />
-      Not watched in {compactSpan(dormantFor)}
+      {t("reviewQueue.dormantPillTitle", { span: compactSpan(dormantFor) })}
     </span>
   );
 }
@@ -352,6 +367,7 @@ function CardStatusLine({
    *  count on the plan screen cannot name the item. */
   unmeasured?: boolean;
 }) {
+  const { t } = useTranslation();
   const heldBack = useHoldsBackUnmeasured().holdsBack && unmeasured;
   // A condemned row carries no chip by construction, so the moment a hand spare flips
   // `condemned` false the card would lose this line outright and reflow under the cursor --
@@ -362,7 +378,7 @@ function CardStatusLine({
   return (
     <>
       <DormantPill dormantFor={dormantFor} />
-      {heldBack && <p className="card-reason">Held back: size unknown</p>}
+      {heldBack && <p className="card-reason">{t("reviewQueue.heldBackSizeUnknown")}</p>}
       {reason && !dormantFor && !heldBack && <p className="card-reason">{reason}</p>}
     </>
   );
@@ -433,9 +449,9 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
           title: item.group_title ?? item.title,
           year: item.year,
           poster: item.poster_url,
-          reason: item.reason,
+          reason: cardReason(item),
           requestedBy: item.requested_by,
-          dormantFor: item.dormant_for,
+          dormantFor: dormantSpan(item),
           library: item.library,
           collections: item.collections ?? null,
           matchedCollection: item.matched_collection ?? null,
@@ -453,9 +469,9 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
         title: item.title,
         year: item.year,
         poster: item.poster_url,
-        reason: item.reason,
+        reason: cardReason(item),
         requestedBy: item.requested_by,
-        dormantFor: item.dormant_for,
+        dormantFor: dormantSpan(item),
         library: item.library,
         collections: item.collections ?? null,
         matchedCollection: item.matched_collection ?? null,
@@ -469,10 +485,11 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
 }
 
 function RequestedChip({ who }: { who: string | null }) {
+  const { t } = useTranslation();
   if (!who) return null;
   return (
-    <span className="chip chip-requested" title="Someone asked for this through Seerr">
-      Requested by {who}
+    <span className="chip chip-requested" title={t("reviewQueue.requestedChipTitle")}>
+      {t("reviewQueue.requestedBy", { who })}
     </span>
   );
 }
@@ -484,11 +501,17 @@ function RequestedChip({ who }: { who: string | null }) {
  *  actually told us. A chip beside a title is ambiguous to a screen reader ("Ended" what?),
  *  so each one names its subject in the long form. */
 const SHOW_STATUS_TEXT: Record<ShowStatus, { label: string; about: string }> = {
-  ended: { label: "Ended", about: "This show has ended" },
-  continuing: { label: "Still going", about: "This show hasn't ended, so more may still come" },
+  ended: {
+    label: i18next.t("reviewQueue.showStatus.ended.label"),
+    about: i18next.t("reviewQueue.showStatus.ended.about"),
+  },
+  continuing: {
+    label: i18next.t("reviewQueue.showStatus.continuing.label"),
+    about: i18next.t("reviewQueue.showStatus.continuing.about"),
+  },
   unknown: {
-    label: "Status unknown",
-    about: "We couldn't check whether this show has ended",
+    label: i18next.t("reviewQueue.showStatus.unknown.label"),
+    about: i18next.t("reviewQueue.showStatus.unknown.about"),
   },
 };
 
@@ -532,9 +555,9 @@ export function ShowStatusChip({
 
 /** What a strip square's tooltip says about its season's lane. */
 const MARK_LABELS: Record<string, string> = {
-  condemn: "would be removed",
-  protect: "kept",
-  abstain: "left alone",
+  condemn: i18next.t("reviewQueue.markLabels.condemn"),
+  protect: i18next.t("reviewQueue.markLabels.protect"),
+  abstain: i18next.t("reviewQueue.markLabels.abstain"),
 };
 
 /** The season strip: one small square per season of the show, colored by its fate
@@ -551,10 +574,14 @@ function SeasonStrip({
   marks: GroupSeasonMark[];
   onOpen: (id: number) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="season-strip">
       {marks.map((mark, i) => {
-        const name = mark.season === 0 ? "Specials" : `Season ${mark.season ?? "?"}`;
+        const name =
+          mark.season === 0
+            ? t("reviewQueue.specials")
+            : t("reviewQueue.seasonNumber", { n: mark.season ?? "?" });
         const fate = handFate(mark);
         const reapRefused = fate === "refused";
         // The base square is the scan verdict; a hand decision paints over it. A reap the
@@ -574,13 +601,13 @@ function SeasonStrip({
                   : "";
         const overrideNote =
           fate === "spare-expired"
-            ? ", you spared it and that spare has expired"
+            ? t("reviewQueue.stripOverrideNote.spareExpired")
             : mark.override === "spare"
-              ? ", you spared it"
+              ? t("reviewQueue.stripOverrideNote.spared")
               : reapRefused
-                ? ", reap requested but it is kept for now"
+                ? t("reviewQueue.stripOverrideNote.reapHeld")
                 : mark.override === "reap"
-                  ? ", you reaped it by hand"
+                  ? t("reviewQueue.stripOverrideNote.reaped")
                   : "";
         // The lane word follows the EFFECTIVE fate (handFate), not the raw verdict, so a spared
         // condemnation reads "kept, you spared it" and never "would be removed, you spared it".
@@ -599,8 +626,8 @@ function SeasonStrip({
             // to its position, stable within the response.
             key={mark.season ?? `unnumbered-${i}`}
             className={`strip-sq strip-${mark.verdict}${handClass}`}
-            title={`${name}: ${lane}${overrideNote}. Open for its full reasoning.`}
-            aria-label={`Open ${name}, ${lane}`}
+            title={t("reviewQueue.stripTitle", { name, lane, overrideNote })}
+            aria-label={t("reviewQueue.stripOpenAria", { name, lane })}
             onClick={(e) => {
               // The whole card head still opens the show on a click; a square opens just its
               // season. No key guard beside it any more: the head's `role="button"` and its
@@ -611,7 +638,7 @@ function SeasonStrip({
               onOpen(mark.id);
             }}
           >
-            {mark.season === 0 ? "SP" : (mark.season ?? "·")}
+            {mark.season === 0 ? t("reviewQueue.specialsAbbrev") : (mark.season ?? "·")}
             {/* A held reap keeps the scythe so the square still reads as YOUR ask, the way a
                 movie card's resting OverrideMark does -- the strip has no such mark of its own. */}
             {reapRefused && (
@@ -638,12 +665,15 @@ function SeasonExpander({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
       className="season-expander"
       aria-expanded={open}
-      title={open ? "Hide the season list" : "Show every season and where it stands"}
+      title={
+        open ? t("reviewQueue.seasonExpander.hideTitle") : t("reviewQueue.seasonExpander.showTitle")
+      }
       onClick={(e) => {
         // A click still bubbles into the head, which opens the show, so it stops here.
         // Enter/Space needs no guard: the head no longer handles keys at all (#169).
@@ -660,7 +690,7 @@ function SeasonExpander({
       >
         <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.8" />
       </svg>
-      {seasonCount === 1 ? "1 season" : `${seasonCount} seasons`}
+      {t("reviewQueue.seasonCount", { n: seasonCount })}
     </button>
   );
 }
@@ -712,6 +742,7 @@ function ShowInheritBanner({
 }) {
   const reap = override === "reap";
   const remaining = spareRemaining(spareExpiresAt);
+  const sparedSuffix = remaining.short ? `, ${remaining.phrase}` : "";
   return (
     <div className={`show-inherit ${reap ? "show-inherit-reap" : "show-inherit-spare"}`}>
       <span className="show-inherit-mark" aria-hidden="true">
@@ -729,33 +760,22 @@ function ShowInheritBanner({
           // held, the seasons are kept; with a mix, only some go (rule 61). The per-row chips
           // still mark each held season, so this just stops the header contradicting them (U-2).
           reapReach === "none" ? (
-            <>
-              <b>The whole show is set to reap.</b> The reap is noted, but the seasons are kept for
-              now.
-            </>
+            <Trans i18nKey="reviewQueue.showInherit.reapNone" components={{ b: <b /> }} />
           ) : reapReach === "some" ? (
-            <>
-              <b>The whole show is set to reap.</b> Reaper removes the seasons it can, unless you
-              spare them here. The rest are kept for now.
-            </>
+            <Trans i18nKey="reviewQueue.showInherit.reapSome" components={{ b: <b /> }} />
           ) : (
-            <>
-              <b>The whole show is set to reap.</b> Every season below is removed unless you spare
-              it here.
-            </>
+            <Trans i18nKey="reviewQueue.showInherit.reapAll" components={{ b: <b /> }} />
           )
         ) : remaining.expired ? (
           // Still kept, and it must say so: only a scan realizes a spare's clock, so until one
           // runs nothing will remove these seasons (rule 61). What has run out is the decision.
-          <>
-            <b>The whole show's spare has run out.</b> The seasons are still kept until the next
-            scan judges them again.
-          </>
+          <Trans i18nKey="reviewQueue.showInherit.spareExpired" components={{ b: <b /> }} />
         ) : (
-          <>
-            <b>The whole show is spared{remaining.short ? `, ${remaining.phrase}` : ""}.</b> Every
-            season below is kept unless you reap it here.
-          </>
+          <Trans
+            i18nKey="reviewQueue.showInherit.spared"
+            values={{ suffix: sparedSuffix }}
+            components={{ b: <b /> }}
+          />
         )}
       </span>
     </div>
@@ -784,9 +804,15 @@ function seasonDivergence(
     // short phrase, which beats a generic line -- so the row says WHY, e.g. that the season it
     // was compared against is kept because Sonarr is still downloading it.
     const why =
-      season.reason ?? chipWhy(season.chip) ?? "Reaper couldn't confirm it's safe to remove";
+      cardReason(season) ??
+      chipWhy(season.chip) ??
+      i18next.t("reviewQueue.seasonDivergence.confirmSafeUnknown");
     return {
-      chip: <span className="status-chip status-reap-held">Kept for now</span>,
+      chip: (
+        <span className="status-chip status-reap-held">
+          {i18next.t("reviewQueue.seasonDivergence.keptForNowChip")}
+        </span>
+      ),
       reason: capitalizeSentence(why),
     };
   }
@@ -806,17 +832,23 @@ function seasonDivergence(
     return {
       chip: (
         <span className={`status-chip ${expired ? "status-spare-expired" : "status-hand-spare"}`}>
-          {expired ? "Spare expired" : "Spared"}
+          {expired
+            ? i18next.t("reviewQueue.seasonDivergence.spareExpiredChip")
+            : i18next.t("reviewQueue.seasonDivergence.sparedChip")}
         </span>
       ),
       reason: expired
-        ? "Kept even though the whole show is set to reap. Your spare ran out, so the next scan judges it again."
-        : "Kept even though the whole show is set to reap.",
+        ? i18next.t("reviewQueue.seasonDivergence.keptDespiteReapExpired")
+        : i18next.t("reviewQueue.seasonDivergence.keptDespiteReap"),
     };
   }
   return {
-    chip: <span className="status-chip status-hand-reap">Reaped</span>,
-    reason: "Removed even though the whole show is spared.",
+    chip: (
+      <span className="status-chip status-hand-reap">
+        {i18next.t("reviewQueue.seasonDivergence.reapedChip")}
+      </span>
+    ),
+    reason: i18next.t("reviewQueue.seasonDivergence.removedDespiteSpare"),
   };
 }
 
@@ -847,6 +879,7 @@ function SeasonList({
    *  were already keyed, these rows were not). */
   busyKey: string | null;
 }) {
+  const { t } = useTranslation();
   // One request per expanded show, and with "Expand seasons by default" on that is one per
   // drawn card -- unbounded as the render window grows, and fired all over again every time
   // entering or leaving Select mode remounts the lists (P-2). The five minutes is the same
@@ -868,14 +901,10 @@ function SeasonList({
   // its loading and failed lines already speak. Not a rule: nothing keeps a `.notice` out of a
   // review surface, and the queue one screen out renders one.
   if (isPending) {
-    return <p className="season-list-note muted">Loading seasons…</p>;
+    return <p className="season-list-note muted">{t("reviewQueue.seasonList.loading")}</p>;
   }
   if (!data) {
-    return (
-      <p className="season-list-note error">
-        Couldn't load the seasons. Collapse and expand to try again.
-      </p>
-    );
+    return <p className="season-list-note error">{t("reviewQueue.seasonList.loadFailed")}</p>;
   }
 
   // The Reap column is reserved only when some season in this show can actually show a Reap
@@ -889,7 +918,9 @@ function SeasonList({
   const showOverride = data.show_override;
   return (
     <>
-      {error && <p className="season-list-note stale">{staleReadLine("the seasons")}</p>}
+      {error && (
+        <p className="season-list-note stale">{staleReadLine(t("reviewQueue.staleSeasonsWhat"))}</p>
+      )}
       {showOverride && (
         <ShowInheritBanner
           override={showOverride}
@@ -958,7 +989,10 @@ function SeasonList({
               <Score item={season} />
               <span className="season-title">
                 <CardOpen
-                  name={`Why ${seasonName(season.title, data.title)} scored ${season.score}`}
+                  name={t("reviewQueue.whyScoredAria", {
+                    title: seasonName(season.title, data.title),
+                    score: season.score,
+                  })}
                   onActivate={() => onOpen(season.id)}
                 >
                   <span className="season-name">{seasonName(season.title, data.title)}</span>
@@ -1023,6 +1057,7 @@ const MovieCard = memo(function MovieCard({
   pending: boolean;
   hideReap: boolean;
 }) {
+  const { t } = useTranslation();
   const state =
     item.override === "spare" ? "card-spared" : item.override === "reap" ? "card-reaped" : "";
   const { selectMode } = select;
@@ -1049,7 +1084,11 @@ const MovieCard = memo(function MovieCard({
         <div className="card-title-row">
           <h3 className="card-title">
             <CardOpen
-              name={selectMode ? `Select ${item.title}` : `Why ${item.title} scored ${item.score}`}
+              name={
+                selectMode
+                  ? t("reviewQueue.selectCardAria", { title: item.title })
+                  : t("reviewQueue.whyScoredAria", { title: item.title, score: item.score })
+              }
               pressed={selectMode ? isSelected : undefined}
               pressHandledByCard={selectMode}
               onActivate={() =>
@@ -1072,7 +1111,7 @@ const MovieCard = memo(function MovieCard({
         {/* The type chip lives on the meta line, not the title row, so a long title
             never fights a chip for space and the year stays glued to the title. */}
         <div className="card-meta">
-          <span className="chip chip-movie">Movie</span>
+          <span className="chip chip-movie">{t("reviewQueue.movieChipLabel")}</span>
           <LibraryChip library={item.library} />
           <CollectionChip
             collections={item.collections}
@@ -1086,8 +1125,8 @@ const MovieCard = memo(function MovieCard({
         </div>
         <CardStatusLine
           condemned={isCondemned(item)}
-          dormantFor={item.dormant_for}
-          reason={item.reason}
+          dormantFor={dormantSpan(item)}
+          reason={cardReason(item)}
           chip={item.chip}
           unmeasured={item.size_bytes === null}
         />
@@ -1156,6 +1195,7 @@ const ShowCard = memo(function ShowCard({
    *  `media_key` and no boolean computed from the show's key can speak for them. */
   busyKey: string | null;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
   // The operator's "expand by default" preference may resolve a tick after this card first
   // mounts (it rides its own query), so apply it once known -- but never stomp a toggle the
@@ -1273,7 +1313,11 @@ const ShowCard = memo(function ShowCard({
           <div className="card-title-row">
             <h3 className="card-title">
               <CardOpen
-                name={selectMode ? `Select ${group.title}` : `About ${group.title}`}
+                name={
+                  selectMode
+                    ? t("reviewQueue.selectCardAria", { title: group.title })
+                    : t("reviewQueue.aboutCardAria", { title: group.title })
+                }
                 pressed={selectMode ? isSelected : undefined}
                 pressHandledByCard={selectMode}
                 onActivate={() =>
@@ -1302,7 +1346,7 @@ const ShowCard = memo(function ShowCard({
             />
           </div>
           <div className="card-meta">
-            <span className="chip chip-tv">TV</span>
+            <span className="chip chip-tv">{t("reviewQueue.tvChipLabel")}</span>
             <LibraryChip library={group.library} />
             <CollectionChip
               collections={group.collections}
@@ -1320,7 +1364,11 @@ const ShowCard = memo(function ShowCard({
             />
             <span>
               {isReapTab
-                ? `${condemnedCount} of ${totalSeasons} would be removed, ${totalBytes(condemnedBytes, condemnedUnknown)}`
+                ? t("reviewQueue.condemnedOfTotal", {
+                    condemned: condemnedCount,
+                    total: totalSeasons,
+                    size: totalBytes(condemnedBytes, condemnedUnknown),
+                  })
                 : totalBytes(wholeShowBytes ?? fetchedSize, unknownSeasons)}
             </span>
             {/* Ended, or a status we couldn't read. A show that is still going wears
@@ -1416,6 +1464,7 @@ export function ReviewQueue({
    *  the snapshot this list is showing, a scan has landed a fresher one underneath. */
   latestScanSnapshotId?: number | null;
 }) {
+  const { t } = useTranslation();
   // Seeded from the jump that opened this queue, not set by an effect afterwards: the queue is
   // unmounted while the operator is on Scales, so a jump from there mounts it, and an effect
   // would let one unfiltered request for the whole lane go out before the seeded one replaced
@@ -1532,12 +1581,12 @@ export function ReviewQueue({
     if (activeCollection === announcedCollection.current) return;
     announcedCollection.current = activeCollection;
     if (activeCollection === null) {
-      announce("Back in the review queue.");
+      announce(t("reviewQueue.announce.backInQueue"));
       return;
     }
     collHeadingRef.current?.focus();
-    announce(`Showing the ${activeCollection} collection.`);
-  }, [activeCollection]);
+    announce(t("reviewQueue.announce.showingCollection", { collection: activeCollection }));
+  }, [activeCollection, t]);
   // How many of the last bulk override's requests failed, so the operator learns that a bulk
   // action was partial rather than seeing it silently succeed. 0 means nothing to report.
   const [bulkFailures, setBulkFailures] = useState(0);
@@ -1817,7 +1866,7 @@ export function ReviewQueue({
     // race with a refresh) must never widen into a whole-library plan. The disabled button
     // above is a convenience, not the control.
     mutationFn: (keys: string[]) => {
-      if (keys.length === 0) throw new Error("Nothing is selected, so there is nothing to reap.");
+      if (keys.length === 0) throw new Error(t("reviewQueue.nothingSelectedError"));
       return api.createRun(keys);
     },
     onSuccess: (run) => setReapRun(run),
@@ -2015,7 +2064,7 @@ export function ReviewQueue({
     });
   };
 
-  const tab = TABS.find((t) => t.verdict === verdict) ?? TABS[0]!;
+  const tab = TABS.find((tb) => tb.verdict === verdict) ?? TABS[0]!;
   // Memoized on the loaded set. Without it, every render re-folded every fetched candidate
   // into groups -- and a drag-select across a long list renders once per `pointerenter`
   // (P-1). Everything derived from it is memoized on it, all the way to the card props.
@@ -2088,7 +2137,7 @@ export function ReviewQueue({
     () => [
       {
         id: "mediaType",
-        label: "Type",
+        label: t("reviewQueue.filterDim.type"),
         icon: <LayersIcon />,
         defaultValue: "",
         options: MEDIA_FILTERS.filter((f) => f.value !== ""),
@@ -2097,7 +2146,7 @@ export function ReviewQueue({
       },
       {
         id: "library",
-        label: "Library",
+        label: t("reviewQueue.filterDim.library"),
         icon: <LibraryIcon />,
         defaultValue: "",
         options: libraryOptions.map((l) => ({ value: l, label: l })),
@@ -2106,7 +2155,7 @@ export function ReviewQueue({
       },
       {
         id: "requested",
-        label: "Requested",
+        label: t("reviewQueue.filterDim.requested"),
         icon: <FunnelIcon />,
         defaultValue: "any",
         options: REQUESTED_FILTERS.filter((f) => f.value !== "any"),
@@ -2115,7 +2164,7 @@ export function ReviewQueue({
       },
       {
         id: "genre",
-        label: "Genre",
+        label: t("reviewQueue.filterDim.genre"),
         icon: <GenreIcon />,
         defaultValue: "",
         options: genreOptions.map((g) => ({ value: g, label: g })),
@@ -2124,7 +2173,7 @@ export function ReviewQueue({
       },
       {
         id: "override",
-        label: "Your decision",
+        label: t("reviewQueue.filterDim.yourDecision"),
         icon: <OverrideIcon />,
         defaultValue: "any",
         options: OVERRIDE_FILTERS.filter((f) => f.value !== "any"),
@@ -2132,7 +2181,7 @@ export function ReviewQueue({
         set: (f, v) => ({ ...f, override: v as OverrideFilter }),
       },
     ],
-    [genreOptions, libraryOptions],
+    [genreOptions, libraryOptions, t],
   );
 
   const activeDimensions = dimensions.filter((d) => d.value(filters) !== d.defaultValue);
@@ -2320,21 +2369,14 @@ export function ReviewQueue({
   // "Requested" on the reap tab is empty because requested media gets watched, and watched
   // media is protected, not reaped.
   const hiddenCount = unfilteredPage?.total ?? 0;
-  const [hiddenOne, hiddenMany] =
-    verdict === "condemn"
-      ? ["condemned item", "condemned items"]
-      : verdict === "protect"
-        ? ["protected item", "protected items"]
-        : ["item in Limbo", "items in Limbo"];
   const hiddenLine =
-    hiddenCount === 1
-      ? `1 ${hiddenOne} is hidden.`
-      : `${count(hiddenCount)} ${hiddenMany} are hidden.`;
+    verdict === "condemn"
+      ? t("reviewQueue.hiddenLine.condemn", { n: hiddenCount })
+      : verdict === "protect"
+        ? t("reviewQueue.hiddenLine.protect", { n: hiddenCount })
+        : t("reviewQueue.hiddenLine.abstain", { n: hiddenCount });
   const requestedExplainer =
-    filters.requested === "yes" && verdict === "condemn"
-      ? " None of them were requested, which is common: requested media gets watched, and " +
-        "watched media doesn't end up condemned."
-      : "";
+    filters.requested === "yes" && verdict === "condemn" ? t("reviewQueue.requestedExplainer") : "";
 
   return (
     // Every row below reads the operator's spare length and the unmeasured allowance, and
@@ -2353,7 +2395,7 @@ export function ReviewQueue({
               <span className="back-arrow" aria-hidden="true">
                 ←
               </span>{" "}
-              Review queue
+              {t("reviewQueue.heading")}
             </button>
             {/* `tabIndex={-1}` so the swap can put focus here without adding a tab stop. */}
             <h2 className="coll-title" ref={collHeadingRef} tabIndex={-1}>
@@ -2368,12 +2410,13 @@ export function ReviewQueue({
                 be the lie by omission. */}
             {collLoaded && collPlexCount !== null && collPlexCount !== collScanned && (
               <p className="blurb">
-                {count(collPlexCount)} in the collection, {count(collScanned)} in the last scan.
+                {t("reviewQueue.collCounts", {
+                  plexCount: count(collPlexCount),
+                  scannedCount: count(collScanned),
+                })}
               </p>
             )}
-            {collFateError && (
-              <p className="error">Couldn't read the counts for this collection.</p>
-            )}
+            {collFateError && <p className="error">{t("reviewQueue.collFateError")}</p>}
             {collLoaded && collScanned > 0 && (
               <div className="coll-fates coll-head-fates">
                 {/* Named for the lanes the operator just came from, and derived from the one
@@ -2387,12 +2430,14 @@ export function ReviewQueue({
                 )}
                 {collProtected > 0 && (
                   <span className="coll-fate coll-fate-protect">
-                    <b>{count(collProtected)}</b> in {LANE_LABEL.protect}
+                    <b>{count(collProtected)}</b>{" "}
+                    {t("reviewQueue.collFateInLane", { lane: LANE_LABEL.protect })}
                   </span>
                 )}
                 {collAbstained > 0 && (
                   <span className="coll-fate coll-fate-abstain">
-                    <b>{count(collAbstained)}</b> in {LANE_LABEL.abstain}
+                    <b>{count(collAbstained)}</b>{" "}
+                    {t("reviewQueue.collFateInLane", { lane: LANE_LABEL.abstain })}
                   </span>
                 )}
               </div>
@@ -2402,22 +2447,22 @@ export function ReviewQueue({
           <>
             {/* A view-level heading, for parity with Policy/Fairness/Settings so heading
               navigation can land on "Review queue" the way it lands on those views. */}
-            <h2>Review queue</h2>
-            <nav className="tabs" aria-label="Queue lists">
-              {TABS.map((t) => (
+            <h2>{t("reviewQueue.heading")}</h2>
+            <nav className="tabs" aria-label={t("reviewQueue.tabsNavAria")}>
+              {TABS.map((tb) => (
                 <button
-                  key={t.verdict}
-                  className={t.verdict === verdict ? "tab active" : "tab"}
+                  key={tb.verdict}
+                  className={tb.verdict === verdict ? "tab active" : "tab"}
                   // Reserve the bold (active) width so switching lists never shifts the tab row.
-                  data-label={t.label}
+                  data-label={tb.label}
                   // The list you are on is stated, not just colored, the same as the masthead
                   // and the settings rail. Plain buttons, not the tabs pattern: these switch a
                   // whole list rather than swapping panels, and none of that pattern's keyboard
                   // contract (arrow keys, a tabpanel to point at) exists here.
-                  aria-current={t.verdict === verdict ? "page" : undefined}
-                  onClick={() => onVerdictChange(t.verdict)}
+                  aria-current={tb.verdict === verdict ? "page" : undefined}
+                  onClick={() => onVerdictChange(tb.verdict)}
                 >
-                  {t.label}
+                  {tb.label}
                 </button>
               ))}
             </nav>
@@ -2442,14 +2487,14 @@ export function ReviewQueue({
             </span>
             <span className="nudge-actions">
               <button type="button" className="primary sm" onClick={showLatest}>
-                Show latest
+                {t("reviewQueue.showLatest")}
               </button>
               <button
                 type="button"
                 className="nudge-x"
                 onClick={freshness.dismiss}
-                aria-label="Keep viewing this scan"
-                title="Keep viewing this scan"
+                aria-label={t("reviewQueue.keepViewingThisScan")}
+                title={t("reviewQueue.keepViewingThisScan")}
               >
                 <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
                   <path
@@ -2466,7 +2511,8 @@ export function ReviewQueue({
         {freshness.showMarker && (
           <button type="button" className="scan-behind" onClick={showLatest}>
             <span className="nudge-dot" aria-hidden="true" />
-            One scan behind. <span className="scan-behind-cta">Show latest</span>
+            {t("reviewQueue.oneScanBehind")}{" "}
+            <span className="scan-behind-cta">{t("reviewQueue.showLatest")}</span>
           </button>
         )}
         {/* Same as the nudge above (rule 72): the role is gone and the sentence is announced. */}
@@ -2510,8 +2556,8 @@ export function ReviewQueue({
               // The name repeats the placeholder word for word, because the placeholder is this
               // box's only visible label: a name that says "and years" where the screen says
               // "years" cannot be reached by someone who speaks what they can see.
-              aria-label="Search titles, shows, years"
-              placeholder="Search titles, shows, years…"
+              aria-label={t("reviewQueue.searchAria")}
+              placeholder={t("reviewQueue.searchPlaceholder")}
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
             />
@@ -2531,10 +2577,10 @@ export function ReviewQueue({
                 onClick={(e) => openMenuFrom("add", e.currentTarget)}
               >
                 <PlusIcon />
-                Filter
+                {t("reviewQueue.filterButton")}
               </button>
               {openMenu === "add" && (
-                <FilterMenu id={`${menuIdBase}-add`} label="Add a filter">
+                <FilterMenu id={`${menuIdBase}-add`} label={t("reviewQueue.addFilterLabel")}>
                   {addableDimensions.map((d) => (
                     <li key={d.id}>
                       <button
@@ -2565,7 +2611,7 @@ export function ReviewQueue({
               icon={<SortIcon />}
               value={filters.sort}
               onChange={(v) => setFilters((f) => ({ ...f, sort: v as SortKey }))}
-              title="Sort by"
+              title={t("reviewQueue.sortByTitle")}
             >
               {SORTS.map((s) => (
                 <option key={s.value} value={s.value}>
@@ -2578,8 +2624,16 @@ export function ReviewQueue({
               onClick={() =>
                 setFilters((f) => ({ ...f, order: f.order === "desc" ? "asc" : "desc" }))
               }
-              title={filters.order === "desc" ? "High to low" : "Low to high"}
-              aria-label={filters.order === "desc" ? "Descending" : "Ascending"}
+              title={
+                filters.order === "desc"
+                  ? t("reviewQueue.sortHighToLow")
+                  : t("reviewQueue.sortLowToHigh")
+              }
+              aria-label={
+                filters.order === "desc"
+                  ? t("reviewQueue.sortDescendingAria")
+                  : t("reviewQueue.sortAscendingAria")
+              }
             >
               <svg
                 viewBox="0 0 16 16"
@@ -2612,12 +2666,12 @@ export function ReviewQueue({
               aria-pressed={selectMode}
               title={
                 selectMode
-                  ? "Done selecting. Clears your picks"
-                  : "Select several at once to spare or reap"
+                  ? t("reviewQueue.doneSelectingTitle")
+                  : t("reviewQueue.selectSeveralTitle")
               }
             >
               <CheckSquareIcon />
-              {selectMode ? "Done" : "Select"}
+              {selectMode ? t("reviewQueue.done") : t("reviewQueue.select")}
             </button>
           )}
         </div>
@@ -2629,8 +2683,8 @@ export function ReviewQueue({
           <div className="active-filters" ref={chips.ref as RefObject<HTMLDivElement>}>
             {search && (
               <FilterChip
-                label={<>&ldquo;{search}&rdquo;</>}
-                clearLabel={`Stop searching for ${search}`}
+                label={t("reviewQueue.searchChipLabel", { search })}
+                clearLabel={t("reviewQueue.stopSearchingClearLabel", { search })}
                 onClear={() => {
                   // Always index 0: the search chip is rendered first in the row.
                   chips.removing(0);
@@ -2651,7 +2705,7 @@ export function ReviewQueue({
                       // The handle `focusChip` above finds this chip by, when the press that
                       // created it also removed the ＋ Filter button focus would have gone back to.
                       data-dim={d.id}
-                      title={`Filter: ${d.label}`}
+                      title={t("reviewQueue.filterChipTitle", { label: d.label })}
                       aria-expanded={openMenu === d.id}
                       aria-controls={openMenu === d.id ? `${menuIdBase}-${d.id}` : undefined}
                       onClick={(e) => openMenuFrom(d.id, e.currentTarget)}
@@ -2666,7 +2720,7 @@ export function ReviewQueue({
                       {...REMOVES_ITS_ROW}
                       type="button"
                       className="fchip-x"
-                      aria-label={`Remove the ${d.label} filter`}
+                      aria-label={t("reviewQueue.removeFilterAria", { label: d.label })}
                       onClick={() => {
                         // Offset by the search chip, which shares this row and is drawn first.
                         chips.removing(chipIndex + (search ? 1 : 0));
@@ -2708,7 +2762,7 @@ export function ReviewQueue({
               );
             })}
             <button type="button" className="link-btn" onClick={clearFilters}>
-              Clear all
+              {t("reviewQueue.clearAll")}
             </button>
           </div>
         )}
@@ -2717,18 +2771,16 @@ export function ReviewQueue({
             a fully drawn queue: it broke rule 21 on its own, and it said the read had failed
             directly above the rows it had read (#190). Which one shows turns on whether anything
             ever landed -- `data` is undefined only then. */}
-        {error && !data && <p className="error">Couldn't load your review queue.</p>}
-        {error && data && <StaleReadNotice what="the queue" />}
-        {isPending && <p className="muted">Loading…</p>}
+        {error && !data && <p className="error">{t("reviewQueue.loadQueueError")}</p>}
+        {error && data && <StaleReadNotice what={t("reviewQueue.staleQueueWhat")} />}
+        {isPending && <p className="muted">{t("reviewQueue.loading")}</p>}
 
         {data && data.length === 0 && !filtering && (
-          <p className="empty">
-            {activeCollection ? "Nothing in this collection was in the last scan." : tab.empty}
-          </p>
+          <p className="empty">{activeCollection ? t("reviewQueue.emptyCollection") : tab.empty}</p>
         )}
         {data && data.length === 0 && filtering && (
           <div className="empty-filtered">
-            <p className="empty-headline">Nothing here matches your filters.</p>
+            <p className="empty-headline">{t("reviewQueue.emptyFilteredHeadline")}</p>
             {/* The "N hidden" line names a LANE ("condemned item", "in Limbo"), which has no
               meaning on a screen mixing all three, so it is left out there rather than guessing
               a lane the operator never chose. */}
@@ -2739,7 +2791,7 @@ export function ReviewQueue({
               </p>
             )}
             <button type="button" className="sm ghost" onClick={clearFilters}>
-              Clear filters
+              {t("reviewQueue.clearFilters")}
             </button>
           </div>
         )}
@@ -2750,20 +2802,21 @@ export function ReviewQueue({
               items are precisely the ones that would not be freed, so folding them into
               the same phrase says the opposite of what is true. */}
             <p className="queue-total">
-              <strong>{count(totalItems)}</strong> {totalItems === 1 ? "item" : "items"}
-              {", "}
-              <strong>{bytes(totalSize)}</strong>
               {/* Off in collection mode even on a Condemned-tab return trip: this list mixes
                 every fate (queryVerdict is "any"), so most of it would not be freed. */}
-              {!activeCollection && verdict === "condemn" && " would be freed"}
-              {totalUnknownSize > 0 && (
-                <>
-                  {", "}
-                  <strong>
-                    {count(totalUnknownSize)} {totalUnknownSize === 1 ? "size" : "sizes"} unknown
-                  </strong>
-                </>
-              )}
+              <Trans
+                i18nKey="reviewQueue.queueTotal"
+                values={{
+                  itemsCount: count(totalItems),
+                  n: totalItems,
+                  sizeText: bytes(totalSize),
+                  freed: !activeCollection && verdict === "condemn" ? "yes" : "no",
+                  hasUnknown: totalUnknownSize > 0 ? "yes" : "no",
+                  unknownCount: count(totalUnknownSize),
+                  u: totalUnknownSize,
+                }}
+                components={{ itemsNum: <strong />, sizeNum: <strong />, unknownNum: <strong /> }}
+              />
             </p>
             <div className={`card-list ${selectMode ? "card-list-selecting has-bulk-bar" : ""}`}>
               {shownGroups.map((group, i) => (
@@ -2773,7 +2826,9 @@ export function ReviewQueue({
                     that cannot also be sorted, so the server hands back the rank and this is the
                     labeled seam between block 1 (titles) and block 2 (collection names only). */}
                   {i === collectionBlockAt && (
-                    <p className="search-divider">Collections named &ldquo;{search}&rdquo;</p>
+                    <p className="search-divider">
+                      {t("reviewQueue.collectionsNamed", { search })}
+                    </p>
                   )}
                   {group.isShow ? (
                     <ShowCard
@@ -2821,8 +2876,11 @@ export function ReviewQueue({
             {(visible < groups.length || hasNextPage) && (
               <div ref={sentinel} className="load-more muted">
                 {isFetchingNextPage
-                  ? "Loading more…"
-                  : `Showing ${count(shownItems)} of ${count(totalItems)}`}
+                  ? t("reviewQueue.loadingMore")
+                  : t("reviewQueue.showingOfTotal", {
+                      shown: count(shownItems),
+                      total: count(totalItems),
+                    })}
               </div>
             )}
           </>
@@ -2833,19 +2891,27 @@ export function ReviewQueue({
           chip's own click can land `activeCollection` and a stale `selectMode` in the same
           render (the effect that clears it runs a commit later). */}
         {!activeCollection && selectMode && (
-          <div className="bulk-bar" role="region" aria-label="Bulk actions">
+          <div className="bulk-bar" role="region" aria-label={t("reviewQueue.bulkActionsAria")}>
             <span className="bulk-count">
               {selected.size === 0 ? (
-                "Tap or drag to pick"
+                t("reviewQueue.tapOrDragToPick")
               ) : selectedItems != null && selectedItems !== selected.size ? (
-                <>
-                  <strong>{selected.size}</strong> {selected.size === 1 ? "card" : "cards"},{" "}
-                  <strong>{count(selectedItems)}</strong> {selectedItems === 1 ? "item" : "items"}
-                </>
+                <Trans
+                  i18nKey="reviewQueue.bulkCountCardsItems"
+                  values={{
+                    cards: selected.size,
+                    c: selected.size,
+                    items: count(selectedItems),
+                    i: selectedItems,
+                  }}
+                  components={{ cardsNum: <strong />, itemsNum: <strong /> }}
+                />
               ) : (
-                <>
-                  <strong>{selected.size}</strong> selected
-                </>
+                <Trans
+                  i18nKey="reviewQueue.bulkCountSelected"
+                  values={{ n: selected.size }}
+                  components={{ num: <strong /> }}
+                />
               )}
             </span>
             <div className="bulk-actions">
@@ -2866,11 +2932,13 @@ export function ReviewQueue({
                 }
                 title={
                   holdsUndrawn
-                    ? "Clear the whole selection, including the cards not drawn yet"
-                    : "Select (or clear) every card drawn so far"
+                    ? t("reviewQueue.clearWholeSelectionTitle")
+                    : t("reviewQueue.selectDrawnTitle")
                 }
               >
-                {holdsUndrawn || allShownSelected ? "Deselect all" : "Select all"}
+                {holdsUndrawn || allShownSelected
+                  ? t("reviewQueue.deselectAll")
+                  : t("reviewQueue.selectAll")}
               </button>
               {/* Reach past the drawn cards to the whole filtered list, so a bulk action never
                 depends on scrolling a few thousand cards into existence first. */}
@@ -2880,13 +2948,15 @@ export function ReviewQueue({
                   className="sm ghost"
                   disabled={selectEverything.isPending}
                   onClick={() => selectEverything.mutate()}
-                  title="Load the rest of this list and select all of it"
+                  title={t("reviewQueue.loadRestTitle")}
                 >
                   {selectEverything.isPending
-                    ? "Selecting…"
+                    ? t("reviewQueue.selectingEllipsis")
                     : matchingCards === null
-                      ? "Select everything matching"
-                      : `Select everything matching (${count(matchingCards)})`}
+                      ? t("reviewQueue.selectEverythingMatching")
+                      : t("reviewQueue.selectEverythingMatchingCount", {
+                          count: count(matchingCards),
+                        })}
                 </button>
               )}
               <button
@@ -2902,11 +2972,11 @@ export function ReviewQueue({
                 }
                 title={
                   defaultSpareDays > 0
-                    ? `Spare the selected items for ${defaultSpareDays} days`
-                    : "Spare the selected items forever"
+                    ? t("reviewQueue.spareSelectedForDays", { n: defaultSpareDays })
+                    : t("reviewQueue.spareSelectedForever")
                 }
               >
-                <SpareGlyph days={defaultSpareDays} /> Spare
+                <SpareGlyph days={defaultSpareDays} /> {t("reviewQueue.overrideControls.spare")}
               </button>
               {/* On Condemned the items are already on the block, so a bulk Reap override does
                 nothing: drop it there, exactly as the per-card and panel buttons do. The real
@@ -2918,7 +2988,7 @@ export function ReviewQueue({
                   disabled={pending || selected.size === 0}
                   onClick={() => bulk.mutate({ keys: [...selected], decision: "reap" })}
                 >
-                  <ScytheIcon /> Reap
+                  <ScytheIcon /> {t("reviewQueue.overrideControls.reap")}
                 </button>
               )}
               <button
@@ -2926,9 +2996,9 @@ export function ReviewQueue({
                 className="sm ghost"
                 disabled={pending || selected.size === 0}
                 onClick={() => bulk.mutate({ keys: [...selected], decision: null })}
-                title="Remove any override and let Reaper judge these again"
+                title={t("reviewQueue.clearOverrideTitle")}
               >
-                Clear override
+                {t("reviewQueue.clearOverrideButton")}
               </button>
               {verdict === "condemn" && (
                 <button
@@ -2936,13 +3006,15 @@ export function ReviewQueue({
                   className="sm danger"
                   disabled={pending || selected.size === 0}
                   onClick={() => reapNow.mutate([...selected])}
-                  title="Delete the selected items now (opens a confirmation)"
+                  title={t("reviewQueue.reapNowTitle")}
                 >
-                  {reapNow.isPending ? "Planning…" : "Reap now…"}
+                  {reapNow.isPending
+                    ? t("reviewQueue.planningEllipsis")
+                    : t("reviewQueue.reapNowButton")}
                 </button>
               )}
               <button type="button" className="sm select-done" onClick={toggleSelectMode}>
-                Done
+                {t("reviewQueue.done")}
               </button>
             </div>
           </div>
@@ -2952,20 +3024,14 @@ export function ReviewQueue({
           failures -- otherwise the button reads as a click the app ignored. Same wording as
           the why-panel's, since it is the same action. */}
         {(setOverride.isError || clearOverride.isError) && (
-          <p className="error bulk-error">Couldn't save that. Try again.</p>
+          <p className="error bulk-error">{t("reviewQueue.saveError")}</p>
         )}
         {selectEverything.isError && (
-          <p className="error bulk-error">
-            Couldn't load the rest of the list, so nothing was selected. Your picks are as they
-            were. Try again.
-          </p>
+          <p className="error bulk-error">{t("reviewQueue.selectEverythingError")}</p>
         )}
         {bulkFailures > 0 && (
           <p className="error bulk-error">
-            {bulkFailures === 1
-              ? "1 item could not be updated; it is still selected so you can try again."
-              : `${count(bulkFailures)} items could not be updated; they are still selected so ` +
-                "you can try again."}
+            {t("reviewQueue.bulkFailuresMessage", { n: bulkFailures })}
           </p>
         )}
         {reapNow.error && <p className="error bulk-error">{reapNow.error.message}</p>}

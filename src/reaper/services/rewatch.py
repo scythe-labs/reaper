@@ -409,7 +409,7 @@ def cohort_block(
 #: ``rewatch_odds`` context block (``snapshot._rewatch_odds_context``), read by its typed
 #: ``state``, never by this reason text. See tests/test_review_chips.py's
 #: ``_NO_PANEL_ROUTE``, which checks that claim rather than trusting it.
-NO_REWATCH_ESTIMATE_REASON = "no rewatch estimate for this dormancy"
+NO_REWATCH_ESTIMATE_REASON = "no_rewatch_estimate"
 
 
 @dataclass(frozen=True, slots=True)

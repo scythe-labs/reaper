@@ -19,6 +19,13 @@ coverage
 # side's spacing ever moves, the formatter must not be the one that wins.
 src/brand/icons.generated.json
 
+# Weblate writes every catalog under src/locales/ but the English one, in its own JSON shape,
+# and opens the pull request itself (CONTRIBUTING, "Translate it"). Listing them keeps that
+# pull request from going red on a style nobody here chose. The English catalog is hand-edited
+# and stays prettier's.
+src/locales/*
+!src/locales/en
+
 # npm owns the lockfile's layout. Listing it keeps `npm ci` and `format:check` from ever
 # having a disagreement that one of them has to lose on a dependency bump.
 package-lock.json

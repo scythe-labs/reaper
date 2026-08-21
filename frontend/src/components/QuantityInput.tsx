@@ -10,6 +10,8 @@
 //     renders as a quiet suffix inside the same box instead of a dropdown.
 
 import { useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { useTranslation } from "react-i18next";
+import i18next from "../i18n";
 
 export interface Unit {
   label: string;
@@ -22,16 +24,32 @@ export interface Unit {
 // Decimal, matching every other place a rule says GB (presets, coercion, rule
 // descriptions all use 1e9). Mixing conventions showed the same cap as two numbers.
 export const SIZE_UNITS: Unit[] = [
-  { label: "MB", factor: 1e6 },
-  { label: "GB", factor: 1e9 },
-  { label: "TB", factor: 1e12 },
+  { label: i18next.t("shell.quantityInput.units.mb"), factor: 1e6 },
+  { label: i18next.t("shell.quantityInput.units.gb"), factor: 1e9 },
+  { label: i18next.t("shell.quantityInput.units.tb"), factor: 1e12 },
 ];
 
 export const TIME_UNITS: Unit[] = [
-  { label: "days", factor: 1, singular: "day" },
-  { label: "weeks", factor: 7, singular: "week" },
-  { label: "months", factor: 30, singular: "month" },
-  { label: "years", factor: 365, singular: "year" },
+  {
+    label: i18next.t("shell.quantityInput.units.days"),
+    factor: 1,
+    singular: i18next.t("shell.quantityInput.units.day"),
+  },
+  {
+    label: i18next.t("shell.quantityInput.units.weeks"),
+    factor: 7,
+    singular: i18next.t("shell.quantityInput.units.week"),
+  },
+  {
+    label: i18next.t("shell.quantityInput.units.months"),
+    factor: 30,
+    singular: i18next.t("shell.quantityInput.units.month"),
+  },
+  {
+    label: i18next.t("shell.quantityInput.units.years"),
+    factor: 365,
+    singular: i18next.t("shell.quantityInput.units.year"),
+  },
 ];
 
 /** How a unit is WORDED beside a given quantity, as against `label`, which is its name and
@@ -207,6 +225,7 @@ export function QuantityInput({
    *  it. `FixedQuantity` has no such prop for exactly that reason (rule 72). */
   invalid?: boolean | undefined;
 }) {
+  const { t } = useTranslation();
   const [unit, setUnit] = useState<Unit>(() => bestUnit(value, units));
 
   // The unit follows a value replaced from outside -- Discard, a preset, a media-type
@@ -281,7 +300,11 @@ export function QuantityInput({
       />
       <select
         value={unit.label}
-        aria-label={ariaLabel ? `${ariaLabel} unit` : "Unit"}
+        aria-label={
+          ariaLabel
+            ? t("shell.quantityInput.unitLabelWithName", { ariaLabel })
+            : t("shell.quantityInput.unitLabel")
+        }
         onChange={(e) => {
           const next = units.find((u) => u.label === e.target.value)!;
           setUnit(next); // keep the same real value, just show it in the new unit

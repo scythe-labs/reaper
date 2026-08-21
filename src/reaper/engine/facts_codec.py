@@ -26,6 +26,7 @@ from typing import Any
 
 from reaper.engine.gates import Facts, GateId, GateResult, thaw_defers_to_owner
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.reason import from_wire, to_wire
 from reaper.ratings import Rating, RatingSource
 
 #: The two ``Facts`` fields that are not observations, each serialized by hand above.
@@ -83,13 +84,60 @@ def _obs_to_dict(obs: Observation[Any]) -> dict[str, Any]:
     return {"k": "unknown", "r": obs.reason, "s": obs.source}
 
 
+#: Stored prose reasons mapped to the stable ids that replaced them (docs/history/I18N_PLAN.md §5).
+#: ``Unknown.reason`` values were operator-facing sentences until the i18n conversion made
+#: them catalog ids; snapshots frozen before that carry the sentences, and this thaw is the
+#: one place they are translated forward, so a replay composes the same "could not check"
+#: rows a fresh scan would. A reason in neither column passes through verbatim: the panel
+#: renders an unrecognized cause raw rather than dropping the row (rule 96's direction).
+LEGACY_REASON_IDS: dict[str, str] = {
+    "the IMDb ratings data could not be read": "imdb_unreadable",
+    "no IMDb id to look up": "no_imdb_id",
+    "this scan did not record it": "not_recorded",
+    "Reaper has not seen this title in your library before": "no_return_record",
+    "not part of this preview": "not_probed",
+    "no TMDb id to match a request": "no_tmdb_request_id",
+    "no TVDb id to match a request": "no_tvdb_request_id",
+    "requests not loaded": "requests_not_loaded",
+    "could not reach the requests app": "requests_unreachable",
+    "no rewatch estimate for this dormancy": "no_rewatch_estimate",
+    "your watch history is too short to tell who is part-way through": "progress_history_short",
+    "some plays are no longer readable, so who is part-way through is unknown": (
+        "progress_plays_unreadable"
+    ),
+    "a season of this show is not matched in Plex, so who is part-way through is unknown": (
+        "progress_season_unmatched"
+    ),
+    "this show is not matched in Plex, so who is part-way through is unknown": (
+        "progress_show_unmatched"
+    ),
+    "no added-at date for this season": "no_season_added_at",
+    "the season's size was not reported": "no_season_size",
+    "Sonarr did not report series status": "no_series_status",
+    "no added-at date": "no_added_at",
+    "the file's size was not reported": "no_file_size",
+    "plays recorded on an earlier scan are no longer readable": "plays_unreadable",
+    "could not read active sessions": "sessions_unreadable",
+    "Plex has not matched this item": "plex_unmatched",
+    "more than one Plex item matches this title": "plex_ambiguous",
+    "Plex and Radarr describe this file differently": "radarr_plex_disagree",
+    "Plex has not matched this season": "plex_season_unmatched",
+    "more than one Plex item matches this show": "plex_show_ambiguous",
+    "Plex and Sonarr describe this show differently": "sonarr_plex_disagree",
+    # Dead before the conversion: season_scan records a rankless season as Absent now, so
+    # only a frozen snapshot can carry it (the entry #282 kept, moved here with the rest).
+    "season has no rank": "no_season_rank",
+}
+
+
 def _obs_from_dict(d: dict[str, Any]) -> Observation[Any]:
     kind = d["k"]
     if kind == "known":
         return Known(value=d["v"], source=d["s"])
     if kind == "absent":
         return Absent(source=d["s"])
-    return Unknown(reason=d["r"], source=d["s"])
+    reason = d["r"]
+    return Unknown(reason=LEGACY_REASON_IDS.get(reason, reason), source=d["s"])
 
 
 def _rating_to_dict(r: Rating) -> dict[str, Any]:
@@ -114,7 +162,7 @@ def _result_to_dict(r: GateResult) -> dict[str, Any]:
     return {
         "gate": r.gate.value,
         "outcome": r.outcome,
-        "detail": r.detail,
+        "detail": to_wire(r.detail),
         "blocked": r.blocked,
         "defers_to_owner": r.defers_to_owner,
         "unestablishable": r.unestablishable,
@@ -125,7 +173,9 @@ def _result_from_dict(d: dict[str, Any]) -> GateResult:
     return GateResult(
         gate=GateId(d["gate"]),
         outcome=d["outcome"],
-        detail=d["detail"],
+        # A str here is a detail frozen before reasons were typed; it thaws as a legacy
+        # reason and renders raw, exactly as it did before (docs/history/I18N_PLAN.md §5).
+        detail=from_wire(d["detail"]),
         blocked=d["blocked"],
         # The thaw, stated rather than left to a ``KeyError`` (rule 104): a row frozen before
         # the flag existed carries nothing that distinguishes a comparison that was made from
@@ -182,7 +232,7 @@ def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -
 #: exemption is a line in ``test_review_chips.py`` rather than a silence. If a route ever
 #: renders a thawed Facts, it wants a ``CAUSE_COPY`` entry and this comment is the wrong
 #: answer.
-NOT_RECORDED_REASON = "this scan did not record it"
+NOT_RECORDED_REASON = "not_recorded"
 
 
 def facts_from_dict(d: dict[str, Any]) -> tuple[Facts, tuple[GateResult, ...]]:

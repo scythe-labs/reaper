@@ -25,6 +25,7 @@ from reaper.engine.fields import (
 )
 from reaper.engine.gates import ABSTAIN, PROTECT, Facts, evaluate_all
 from reaper.engine.observation import Absent, Known, Unknown
+from tests._reasons import text
 
 
 def _facts(**overrides: object) -> Facts:
@@ -179,12 +180,12 @@ class TestUnitsAreRendered:
 
     def test_a_rating_is_shown_in_tenths_as_a_decimal(self) -> None:
         result = evaluate(Condition(field="imdb_rating", op=Op.GTE, value=75), _facts())
-        assert "7.3" in result.detail
-        assert "7.5" in result.detail
+        assert "7.3" in text(result.detail)
+        assert "7.5" in text(result.detail)
 
     def test_bytes_are_shown_as_gigabytes(self) -> None:
         result = evaluate(Condition(field="size_bytes", op=Op.GTE, value=1_000_000_000), _facts())
-        assert "8.0 GB" in result.detail
+        assert "8.0 GB" in text(result.detail)
 
     def test_every_field_carries_its_unit_and_help(self) -> None:
         for spec in BY_KEY.values():
@@ -201,7 +202,7 @@ class TestCustomProtectGate:
         gate = CustomProtectGate(Condition(field="imdb_votes", op=Op.GTE, value=500_000))
         result = gate.evaluate(_facts())
         assert result.outcome == PROTECT
-        assert "your rule" in result.detail
+        assert "your rule" in text(result.detail)
 
     def test_an_unmatched_condition_abstains_and_is_checked(self) -> None:
         gate = CustomProtectGate(Condition(field="imdb_votes", op=Op.GTE, value=5_000_000))
@@ -320,10 +321,10 @@ class TestAnExplanationSaysWhatItFound:
         going = _facts(show_ended=Known(value=False, source="sonarr"))
         cond = Condition(field="show_ended", op=Op.EQ, value=True)
 
-        assert evaluate(cond, ended).detail == "The show has ended"
+        assert text(evaluate(cond, ended).detail) == "The show has ended"
         # The miss must not read as though the show HAD ended. It says the opposite,
         # which is what we actually know.
-        assert evaluate(cond, going).detail == "The show is still going"
+        assert text(evaluate(cond, going).detail) == "The show is still going"
 
     def test_a_boolean_reads_the_same_from_either_direction(self) -> None:
         """``eq false`` that matched and ``eq true`` that missed are the same world."""
@@ -333,19 +334,21 @@ class TestAnExplanationSaysWhatItFound:
 
         assert asked_true.matched is False
         assert asked_false.matched is True
-        assert asked_true.detail == asked_false.detail == "The show is still going"
+        assert text(asked_true.detail) == text(asked_false.detail) == "The show is still going"
 
     def test_a_boolean_uses_the_words_the_owner_uses(self) -> None:
         cond = Condition(field="whitelisted", op=Op.EQ, value=True)
-        assert evaluate(cond, _facts()).detail == "Not on any list you curate yourself"
+        assert text(evaluate(cond, _facts()).detail) == "Not on any list you curate yourself"
         kept = _facts(is_whitelisted=Known(value=True, source="plex"))
-        assert evaluate(cond, kept).detail == "On a list you curate yourself"
+        assert text(evaluate(cond, kept).detail) == "On a list you curate yourself"
 
     def test_a_days_field_is_spelled_the_way_the_signals_spell_it(self) -> None:
         """One panel showing "900 days" beside "2 years, 5 months" reads as two
         different measurements of two different things."""
         facts = _facts(days_observed_unwatched=Known(value=900.0, source="tautulli"))
-        detail = evaluate(Condition(field="days_unwatched", op=Op.GTE, value=730), facts).detail
+        detail = text(
+            evaluate(Condition(field="days_unwatched", op=Op.GTE, value=730), facts).detail
+        )
 
         assert detail == "Not watched in 2 years, 5 months, past your 730 days"
         assert "900" not in detail
@@ -354,13 +357,15 @@ class TestAnExplanationSaysWhatItFound:
         """The measured span is humanized; the rule's own number is not. Rounding both
         sides makes a marginal title read as sitting under a number equal to itself."""
         facts = _facts(days_observed_unwatched=Known(value=396.0, source="tautulli"))
-        detail = evaluate(Condition(field="days_unwatched", op=Op.GTE, value=400), facts).detail
+        detail = text(
+            evaluate(Condition(field="days_unwatched", op=Op.GTE, value=400), facts).detail
+        )
 
         assert detail == "Not watched in 1 year, 1 month, within your 400 days"
 
     def test_a_release_age_rule_echoes_the_number_the_owner_typed(self) -> None:
         facts = _facts(release_age_days=Known(value=396.0, source="radarr"))
-        detail = evaluate(Condition(field="release_age", op=Op.GTE, value=400), facts).detail
+        detail = text(evaluate(Condition(field="release_age", op=Op.GTE, value=400), facts).detail)
 
         assert detail == "Released 1 year, 1 month ago, within your 400 days"
 
@@ -376,7 +381,9 @@ class TestAnExplanationSaysWhatItFound:
                         days_observed_unwatched=Known(value=days, source="tautulli"),
                         release_age_days=Known(value=days, source="radarr"),
                     )
-                    detail = evaluate(Condition(field=field, op=Op.GTE, value=bar), facts).detail
+                    detail = text(
+                        evaluate(Condition(field=field, op=Op.GTE, value=bar), facts).detail
+                    )
                     value_phrase, _, bar_phrase = detail.rpartition(", ")
                     assert bar_phrase.endswith(f"your {bar:,.0f} days")
                     assert humanize_days(days) not in bar_phrase
@@ -384,29 +391,31 @@ class TestAnExplanationSaysWhatItFound:
 
     def test_a_one_day_bar_is_not_pluralised(self) -> None:
         facts = _facts(days_observed_unwatched=Known(value=5.0, source="tautulli"))
-        detail = evaluate(Condition(field="days_unwatched", op=Op.GTE, value=1), facts).detail
+        detail = text(evaluate(Condition(field="days_unwatched", op=Op.GTE, value=1), facts).detail)
 
         assert detail == "Not watched in 5 days, past your 1 day"
 
     def test_a_size_leads_with_the_size(self) -> None:
         cond = Condition(field="size_bytes", op=Op.GTE, value=1_000_000_000)
-        assert evaluate(cond, _facts()).detail == "8.0 GB on disk, over your 1.0 GB"
+        assert text(evaluate(cond, _facts()).detail) == "8.0 GB on disk, over your 1.0 GB"
 
     def test_a_rating_below_its_bar_says_so_plainly(self) -> None:
         cond = Condition(field="imdb_rating", op=Op.GTE, value=75)
-        assert evaluate(cond, _facts()).detail == "IMDb 7.3, under your 7.5"
+        assert text(evaluate(cond, _facts()).detail) == "IMDb 7.3, under your 7.5"
 
     def test_large_counts_carry_thousands_separators(self) -> None:
         facts = _facts(imdb_votes=Known(value=2366, source="imdb"))
-        detail = evaluate(Condition(field="imdb_votes", op=Op.GTE, value=5000), facts).detail
+        detail = text(evaluate(Condition(field="imdb_votes", op=Op.GTE, value=5000), facts).detail)
 
         assert detail == "2,366 votes on IMDb, under your 5,000"
 
     def test_a_count_of_one_is_not_pluralised(self) -> None:
         facts = _facts(distinct_watchers=Known(value=1, source="tautulli"))
-        detail = evaluate(
-            Condition(field="recent_watchers", op=Op.GTE, value=3), facts, window_days=365
-        ).detail
+        detail = text(
+            evaluate(
+                Condition(field="recent_watchers", op=Op.GTE, value=3), facts, window_days=365
+            ).detail
+        )
 
         assert detail == "1 person watched it recently, under your 3"
 
@@ -414,7 +423,9 @@ class TestAnExplanationSaysWhatItFound:
         """A size or a rating never sits exactly on its number; a watcher count does it
         constantly, and "over your 2" with exactly 2 watchers is simply false."""
         facts = _facts(distinct_watchers=Known(value=2, source="tautulli"))
-        detail = evaluate(Condition(field="recent_watchers", op=Op.GTE, value=2), facts).detail
+        detail = text(
+            evaluate(Condition(field="recent_watchers", op=Op.GTE, value=2), facts).detail
+        )
 
         assert detail == "2 people watched it recently, at or over your 2"
 
@@ -422,21 +433,23 @@ class TestAnExplanationSaysWhatItFound:
         """Rank 1 is the most recent season with files. The explanation may not call it
         an old season while the rule uses it to remove the season."""
         facts = _facts(season_rank=Known(value=1, source="sonarr"))
-        detail = evaluate(Condition(field="season_rank", op=Op.LTE, value=2), facts).detail
+        detail = text(evaluate(Condition(field="season_rank", op=Op.LTE, value=2), facts).detail)
 
         assert detail == "The newest season, within the 2 you keep"
 
     def test_a_deeper_season_counts_back_in_order(self) -> None:
         for rank, expected in ((2, "second-newest"), (3, "third-newest"), (7, "7th-newest")):
             facts = _facts(season_rank=Known(value=rank, source="sonarr"))
-            detail = evaluate(Condition(field="season_rank", op=Op.LTE, value=2), facts).detail
+            detail = text(
+                evaluate(Condition(field="season_rank", op=Op.LTE, value=2), facts).detail
+            )
             assert detail.startswith(f"The {expected} season, ")
 
     def test_a_gte_season_rule_does_not_claim_the_number_is_what_you_keep(self) -> None:
         """ "Remove rank 3 and older" keeps two seasons, not three. Phrasing the bar as
         "the 3 you keep" would misstate the owner's own rule by one season."""
         facts = _facts(season_rank=Known(value=5, source="sonarr"))
-        detail = evaluate(Condition(field="season_rank", op=Op.GTE, value=3), facts).detail
+        detail = text(evaluate(Condition(field="season_rank", op=Op.GTE, value=3), facts).detail)
 
         assert detail == "The 5th-newest season, at or past the 3 you set"
         assert "you keep" not in detail
@@ -449,9 +462,9 @@ class TestAnExplanationSaysWhatItFound:
         matched_eq = evaluate(Condition(field="genre", op=Op.EQ, value="Reality"), facts)
         matched_in = evaluate(Condition(field="genre", op=Op.IN, value="anime, comedy"), facts)
 
-        assert matched_eq.detail == "Genre includes Reality"
+        assert text(matched_eq.detail) == "Genre includes Reality"
         # Spelled the way the library spells it, not the way the comparison folded it.
-        assert matched_in.detail == "Genre includes Comedy"
+        assert text(matched_in.detail) == "Genre includes Comedy"
 
     def test_a_list_valued_miss_names_what_the_rule_wanted(self) -> None:
         facts = _facts(genres=Known(value="Reality, Comedy", source="sonarr"))
@@ -459,26 +472,26 @@ class TestAnExplanationSaysWhatItFound:
         missed_eq = evaluate(Condition(field="genre", op=Op.EQ, value="Anime"), facts)
         missed_in = evaluate(Condition(field="genre", op=Op.IN, value="Anime, Documentary"), facts)
 
-        assert missed_eq.detail == "Genre does not include Anime"
-        assert missed_in.detail == "Genre is none of Anime, Documentary"
+        assert text(missed_eq.detail) == "Genre does not include Anime"
+        assert text(missed_in.detail) == "Genre is none of Anime, Documentary"
 
     def test_a_single_valued_text_field_says_what_it_is(self) -> None:
         facts = _facts(quality=Known(value="Bluray-1080p", source="radarr"))
 
         assert (
-            evaluate(Condition(field="quality", op=Op.CONTAINS, value="2160p"), facts).detail
+            text(evaluate(Condition(field="quality", op=Op.CONTAINS, value="2160p"), facts).detail)
             == "File quality does not contain 2160p"
         )
         assert (
-            evaluate(Condition(field="quality", op=Op.CONTAINS, value="1080p"), facts).detail
+            text(evaluate(Condition(field="quality", op=Op.CONTAINS, value="1080p"), facts).detail)
             == "File quality contains 1080p"
         )
         assert (
-            evaluate(Condition(field="quality", op=Op.EQ, value="SDTV"), facts).detail
+            text(evaluate(Condition(field="quality", op=Op.EQ, value="SDTV"), facts).detail)
             == "File quality is Bluray-1080p, not SDTV"
         )
         assert (
-            evaluate(Condition(field="quality", op=Op.IN, value="SDTV, HDTV"), facts).detail
+            text(evaluate(Condition(field="quality", op=Op.IN, value="SDTV, HDTV"), facts).detail)
             == "File quality is Bluray-1080p, not one of SDTV, HDTV"
         )
 
@@ -515,7 +528,7 @@ class TestAnExplanationSaysWhatItFound:
                     facts,
                     window_days=365,
                 )
-                detail = result.detail
+                detail = text(result.detail)
                 seen += 1
 
                 assert detail, f"{spec.key}/{op} explained nothing"
@@ -629,7 +642,7 @@ class TestABadStoredValueDegradesInsteadOfCrashing:
 
         assert result.blocked is True
         assert result.matched is False
-        assert "could not check" in result.detail
+        assert "could not check" in text(result.detail)
 
     def test_a_blocked_bad_value_cannot_protect_or_condemn(self) -> None:
         """Through the gate wrapper: the worst a corrupt stored rule can do is abstain

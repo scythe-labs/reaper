@@ -35,6 +35,7 @@ from reaper.services.snapshot import (
     _reported_size,
     build_facts,
 )
+from tests._reasons import text
 
 _EMPTY_INDEX = lists.MembershipIndex({}, {}, {}, {})
 
@@ -120,7 +121,7 @@ class TestNobodyIsWatchingIsNotSaidOfAnItemNobodyChecked:
 
         streaming = facts.is_streaming_now
         assert isinstance(streaming, Unknown)
-        assert "more than one Plex item" in streaming.reason
+        assert streaming.reason == "plex_ambiguous"
 
     def test_a_matched_movie_nobody_is_streaming_is_still_a_definite_no(self) -> None:
         """The control. A genuine "we looked and nobody is watching" must stay ``Known``, or
@@ -349,7 +350,7 @@ class TestTheScanRecordsHowFarBackItsHistoryReaches:
         result = gate.evaluate(facts)
 
         assert result.blocked is True
-        assert result.detail.startswith("could not check")
+        assert text(result.detail).startswith("could not check")
         assert (
             decide_verdict(
                 protected=False,

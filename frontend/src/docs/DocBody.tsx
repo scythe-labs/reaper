@@ -5,6 +5,7 @@
 // part of Reaper. Add a block variant in blocks.ts, then a case here; nowhere else.
 
 import { createContext, Fragment, type ReactNode, useContext } from "react";
+import { useTranslation } from "react-i18next";
 import type { Block, CalloutTone, DiagramBlock, DiagramNode } from "./blocks";
 
 const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]\n]+\]\([a-z0-9-]+(?:#[a-z0-9-]+)?\))/g;
@@ -105,6 +106,7 @@ function DiagramNodeBox({ node }: { node: DiagramNode }) {
  *  labeled connectors, each decision able to shed a side branch. Every node is real, readable
  *  text; the container scrolls sideways on a narrow pane rather than clipping. */
 function DocDiagram({ block }: { block: DiagramBlock }) {
+  const { t } = useTranslation();
   return (
     // Named but unreachable was the worse half of this: the group advertised itself in the
     // accessibility tree as somewhere to go, and the Tab order never went there, so the
@@ -114,7 +116,11 @@ function DocDiagram({ block }: { block: DiagramBlock }) {
       className="doc-diagram"
       tabIndex={0}
       role="group"
-      aria-label={block.title ? `Flowchart: ${block.title}` : "Flowchart"}
+      aria-label={
+        block.title
+          ? t("shell.docBody.flowchartWithTitle", { title: block.title })
+          : t("shell.docBody.flowchart")
+      }
     >
       {block.title && <p className="doc-diagram-cap">{block.title}</p>}
       {block.legend && block.legend.length > 0 && (

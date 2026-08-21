@@ -7,11 +7,16 @@
 //
 // PolicyEditor.tsx decides which of the two renders, and its header says why that decision
 // is the most important behavior on the page.
+//
+// The copy lives in `locales/en/ui.json` under `policySim.*`, one message per rendered
+// sentence.
 
 import type { RefObject } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import type { ProfileSettings, SimStale, Simulation } from "../api";
 import { useSuccessorFocus } from "../focus";
 import { bytes, count, totalBytes } from "../format";
+import i18next from "../i18n";
 import { GATE_META, UNNAMED_GATE_LABEL } from "./policyMeta";
 import { Notice } from "./Notice";
 import { ProgressBar } from "./ProgressBar";
@@ -22,6 +27,7 @@ import { ProgressBar } from "./ProgressBar";
  *  the actual shape of the library, and you can see how many items sit just the wrong
  *  side of it. */
 function Histogram({ buckets, threshold }: { buckets: number[]; threshold: number }) {
+  const { t } = useTranslation();
   const peak = Math.max(...buckets, 1);
 
   return (
@@ -30,7 +36,11 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
         const low = i * 10;
         const condemned = low + 10 > threshold;
         return (
-          <div className="hist-col" key={low} title={`${low}–${low + 9}: ${count(n)} items`}>
+          <div
+            className="hist-col"
+            key={low}
+            title={t("policySim.histogram.bucketTooltip", { low, high: low + 9, n: count(n) })}
+          >
             <div
               className={condemned ? "hist-bar hist-condemn" : "hist-bar"}
               style={{ height: `${(n / peak) * 100}%` }}
@@ -48,8 +58,13 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
 
 /** The heading this panel shows while a rescan runs, and the sentence the app says when one
  *  starts. One string, because a reader lands on that heading in the next breath and two
- *  copies of one fact drift (rule 144); `PolicyEditor` announces it from here. */
-export const RESCAN_HEADING = "Rescanning to apply your changes";
+ *  copies of one fact drift (rule 144); `PolicyEditor` announces it from here.
+ *
+ *  Resolved from the catalog at module load, which is safe because `../i18n` inits
+ *  synchronously with inline resources -- the `CHOOSE_SERVER_SAID` pattern
+ *  (`PlexPin.tsx`), so `ListsPanel.tsx` and `PolicyEditor.tsx` keep importing this
+ *  constant unchanged. */
+export const RESCAN_HEADING = i18next.t("policySim.rescanHeading");
 
 /** Said and shown instead when the rescan cannot carry the changes yet.
  *
@@ -57,8 +72,7 @@ export const RESCAN_HEADING = "Rescanning to apply your changes";
  *  belongs to a scan that started BEFORE they saved, so it is scoring the old policy. Saying
  *  `RESCAN_HEADING` here would be a sentence that is wrong about the very thing it describes,
  *  which is why the announcement branches rather than settling for one string. */
-export const RESCAN_QUEUED_LEAD =
-  "A scan was already running, so your changes go into a second scan that starts right after it.";
+export const RESCAN_QUEUED_LEAD = i18next.t("policySim.rescanQueuedLead");
 
 /** What saving does, and the one thing the counts beside it cannot show: they describe a
  *  draft, and nothing on the server moves until a scan re-scores the library under it.
@@ -70,25 +84,7 @@ export const RESCAN_QUEUED_LEAD =
  *  watching this panel's numbers move had nowhere on it to learn that the list they review
  *  had not moved with them. The refusal notice below carries the same news for the edits
  *  that cannot preview; this is the sentence for the ones that can. */
-export const APPLIES_ON_NEXT_SCAN =
-  "Policy changes apply on the next scan, which starts by itself after saving.";
-
-/** The heading for each refusal, keyed by what the server said the refusal was.
- *
- *  A heading only. The paragraph under it is the server's own `stale_reason`, so the
- *  sentence the operator reads and the sentence a reviewer reads are one string
- *  (`api/simulate.py`'s `_refused`, rule 144) -- they used to be two, and the frontend's copy
- *  was the only one anybody ever saw. An id this build does not know keeps the general
- *  heading and still renders that sentence, which is rule 66's "fallback handles unknown
- *  ids only": the server is always able to say what happened, even to an older browser. */
-const STALE_HEADINGS: Record<SimStale, string> = {
-  gathers_differently: "Needs a fresh scan",
-  seasons_not_recorded: "Your season rules need a fresh scan",
-  // Names the control, never the cause: the episode map is also missing after a scan that
-  // ran WITH the hold on and got no answer from Sonarr, and "turning that on" told that
-  // operator they had done something they had not.
-  in_progress_not_read: "Your partway-through rule needs a fresh scan",
-};
+export const APPLIES_ON_NEXT_SCAN = i18next.t("policySim.appliesOnNextScan");
 
 /** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
  *  the numbers just can't be re-derived from the old scan. So it's neutral, short, and gives
@@ -121,6 +117,25 @@ export function StaleNotice({
   /** The server's sentence for that refusal. The only copy of it. */
   staleReason: string | null;
 }) {
+  const { t } = useTranslation();
+
+  /** The heading for each refusal, keyed by what the server said the refusal was.
+   *
+   *  A heading only. The paragraph under it is the server's own `stale_reason`, so the
+   *  sentence the operator reads and the sentence a reviewer reads are one string
+   *  (`api/simulate.py`'s `_refused`, rule 144) -- they used to be two, and the frontend's copy
+   *  was the only one anybody ever saw. An id this build does not know keeps the general
+   *  heading and still renders that sentence, which is rule 66's "fallback handles unknown
+   *  ids only": the server is always able to say what happened, even to an older browser. */
+  const STALE_HEADINGS: Record<SimStale, string> = {
+    gathers_differently: t("policySim.staleHeadings.gathersDifferently"),
+    seasons_not_recorded: t("policySim.staleHeadings.seasonsNotRecorded"),
+    // Names the control, never the cause: the episode map is also missing after a scan that
+    // ran WITH the hold on and got no answer from Sonarr, and "turning that on" told that
+    // operator they had done something they had not.
+    in_progress_not_read: t("policySim.staleHeadings.inProgressNotRead"),
+  };
+
   // "Scan now" replaces its own branch with the progress bar, and it is `disabled` from the press,
   // so focus is at `<body>` before the swap. Nothing focusable mounts in its place in ANY state of
   // this notice, so the target is the heading -- which is the same DOM node either side of the
@@ -138,11 +153,14 @@ export function StaleNotice({
         <>
           <p>
             {followupQueued
-              ? `${RESCAN_QUEUED_LEAD} You can leave this page; the numbers here refresh when everything finishes.`
-              : "Scoring your library under the new policy. You can leave this page; it keeps running, and the numbers here refresh when it finishes."}
+              ? `${RESCAN_QUEUED_LEAD} ${t("policySim.queuedRescanTail")}`
+              : t("policySim.scoringLibrary")}
           </p>
           <p className="muted">
-            {detail || "Working"}, {percent}%
+            {t("policySim.progressStatus", {
+              detail: detail || t("policySim.workingFallback"),
+              percent,
+            })}
           </p>
           <ProgressBar label={RESCAN_HEADING} percent={percent} />
         </>
@@ -163,7 +181,7 @@ export function StaleNotice({
               gathers_differently also fires with no policy edit at all, when the operator
               changes a protection list: the numbers then predate the lists, which is why the
               sentence states the mismatch and never names an edit (#512). */}
-          <p>{staleReason ?? "This policy doesn't match the last scan. Scan to apply it."}</p>
+          <p>{staleReason ?? t("policySim.staleReasonFallback")}</p>
           <button
             className="primary sm"
             onClick={() => {
@@ -172,11 +190,13 @@ export function StaleNotice({
             }}
             disabled={starting}
           >
-            {starting ? "Starting…" : "Scan now"}
+            {starting ? t("policySim.startingLabel") : t("policySim.scanNowLabel")}
           </button>
         </>
       )}
-      {startError && <Notice tone="error">The scan didn't start: {startError}</Notice>}
+      {startError && (
+        <Notice tone="error">{t("policySim.scanStartFailed", { error: startError })}</Notice>
+      )}
     </div>
   );
 }
@@ -200,6 +220,7 @@ export function Outcome({
    *  enough that the mismatch reads as a finding rather than as a stale number (rule 85). */
   edited: boolean;
 }) {
+  const { t } = useTranslation();
   const moreExamples = simulation.newly_condemned - simulation.examples_newly_condemned.length;
 
   return (
@@ -207,13 +228,13 @@ export function Outcome({
       <div className="sim-headline">
         <div>
           <span className="sim-number">{count(simulation.condemned)}</span>
-          <span className="sim-unit">items would be removed</span>
+          <span className="sim-unit">{t("policySim.itemsWouldBeRemoved")}</span>
         </div>
         <div>
           <span className="sim-number">
             {totalBytes(simulation.reclaimable_bytes, simulation.unknown_size_items)}
           </span>
-          <span className="sim-unit">reclaimed</span>
+          <span className="sim-unit">{t("policySim.reclaimed")}</span>
         </div>
       </div>
 
@@ -226,11 +247,17 @@ export function Outcome({
       {edited && (
         <>
           {simulation.changed_titles === 0 ? (
-            <p className="sim-compare sim-inert">Your changes leave every title as it is.</p>
+            <p className="sim-compare sim-inert">{t("policySim.noChangeNotice")}</p>
           ) : (
             <p className="sim-compare">
-              Your last scan flags <strong>{count(simulation.condemned_before)}</strong>. This draft
-              flags <strong>{count(simulation.condemned)}</strong>.
+              <Trans
+                i18nKey="policySim.comparisonLine"
+                values={{
+                  beforeCount: count(simulation.condemned_before),
+                  afterCount: count(simulation.condemned),
+                }}
+                components={{ beforeNum: <strong />, afterNum: <strong /> }}
+              />
             </p>
           )}
           {/* Under the same `edited` gate as the line above, and for the same reason: with
@@ -243,13 +270,11 @@ export function Outcome({
       )}
 
       <Histogram buckets={simulation.histogram} threshold={threshold} />
-      <p className="help">
-        Every title's score, 0 to 100. The line is your threshold. Red bars are past it.
-      </p>
+      <p className="help">{t("policySim.histogramHelp")}</p>
 
       {simulation.examples_newly_condemned.length > 0 && (
         <>
-          <h3>New on the list</h3>
+          <h3>{t("policySim.newOnTheList")}</h3>
           <ul className="sim-examples">
             {simulation.examples_newly_condemned.map((e) => (
               <li key={`${e.title}-${e.year ?? ""}`}>
@@ -261,9 +286,7 @@ export function Outcome({
               </li>
             ))}
             {moreExamples > 0 && (
-              <li className="muted">
-                …and {count(moreExamples)} more that your last scan left alone
-              </li>
+              <li className="muted">{t("policySim.moreLeftAlone", { n: count(moreExamples) })}</li>
             )}
           </ul>
         </>
@@ -271,7 +294,7 @@ export function Outcome({
 
       {simulation.protected_by.length > 0 && (
         <>
-          <h3>Why titles were spared</h3>
+          <h3>{t("policySim.whyTitlesWereSpared")}</h3>
           <dl className="sim-delta">
             {/* Every id the server can send is named in `GATE_META`, which `satisfies` keeps
                 complete over `GateId`. The fallback is rule 66's, for an id from a server
@@ -295,25 +318,25 @@ export function Outcome({
             moved a sixth of the spared set into "not judged" left every number on this panel
             holding still (#488). */}
         <div className="sim-changed">
-          <dt>Titles that change</dt>
+          <dt>{t("policySim.summary.titlesThatChange")}</dt>
           <dd>{count(simulation.changed_titles)}</dd>
         </div>
         <div>
-          <dt>Newly condemned</dt>
+          <dt>{t("policySim.summary.newlyCondemned")}</dt>
           <dd className={simulation.newly_condemned > 0 ? "danger" : ""}>
             +{count(simulation.newly_condemned)}
           </dd>
         </div>
         <div>
-          <dt>No longer condemned</dt>
+          <dt>{t("policySim.summary.noLongerCondemned")}</dt>
           <dd>−{count(simulation.no_longer_condemned)}</dd>
         </div>
         <div>
-          <dt>Spared by a protection</dt>
+          <dt>{t("policySim.summary.sparedByAProtection")}</dt>
           <dd>{count(simulation.protected)}</dd>
         </div>
         <div>
-          <dt>Not judged</dt>
+          <dt>{t("policySim.summary.notJudged")}</dt>
           <dd>{count(simulation.abstained)}</dd>
         </div>
       </dl>
@@ -327,27 +350,19 @@ export function Outcome({
             show a title as leaving for N days; what keeps it is a spare, a play, or the
             fact that a person starts every run.
           */}
-          {pace.caps_enabled ? (
-            <>
-              Your pace: at most {count(pace.max_items_per_run)} titles /{" "}
-              {bytes(pace.max_bytes_per_run)} per run, and a flagged title shows as leaving for{" "}
-              {pace.grace_days} days.
-            </>
-          ) : (
-            // Caps off: the executor skips the per-run and rolling checks, so there is no
-            // size limit to promise here (B-2). The countdown is unaffected by the switch.
-            <>
-              Your pace: no per-run limit until you turn limits back on. A flagged title shows as
-              leaving for {pace.grace_days} days.
-            </>
-          )}
+          {pace.caps_enabled
+            ? t("policySim.pace.withCaps", {
+                items: count(pace.max_items_per_run),
+                bytes: bytes(pace.max_bytes_per_run),
+                days: pace.grace_days,
+              })
+            : // Caps off: the executor skips the per-run and rolling checks, so there is no
+              // size limit to promise here (B-2). The countdown is unaffected by the switch.
+              t("policySim.pace.noCaps", { days: pace.grace_days })}
         </p>
       )}
 
-      <p className="blurb">
-        The delta is the number that matters before saving: not the total, but what changes relative
-        to the list you have already reviewed.
-      </p>
+      <p className="blurb">{t("policySim.deltaBlurb")}</p>
     </div>
   );
 }

@@ -251,12 +251,12 @@ async def build_map(
 #: there prints raw, and ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one.
 #: Named here rather than typed at each of the six sites below, so that test can see them
 #: (rule 144).
-NO_TMDB_REQUEST_REASON = "no TMDb id to match a request"
-NO_TVDB_REQUEST_REASON = "no TVDb id to match a request"
-REQUESTS_UNREACHABLE_REASON = "could not reach the requests app"
+NO_TMDB_REQUEST_REASON = "no_tmdb_request_id"
+NO_TVDB_REQUEST_REASON = "no_tvdb_request_id"
+REQUESTS_UNREACHABLE_REASON = "requests_unreachable"
 #: The requests app was never read for this scan at all, which is not the same as reading it
 #: and failing: both lanes fall back to this when no index was built.
-REQUESTS_NOT_LOADED_REASON = "requests not loaded"
+REQUESTS_NOT_LOADED_REASON = "requests_not_loaded"
 
 
 @dataclass(frozen=True)

@@ -1132,8 +1132,7 @@ class TestSequentialGuardPermutations:
                         assert expected <= protected
                     else:
                         assert not any(
-                            p.reason == "a viewer is part-way through the show"
-                            for p in plan.protected
+                            p.reason.id == "season_keep.midbinge" for p in plan.protected
                         )
 
     def test_an_unknown_final_episode_fails_closed_to_both_seasons(self) -> None:

@@ -42,6 +42,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
+from reaper.engine.reason import Reason, legacy
 from reaper.engine.signals import (
     MAX_SCORE,
     REWATCH_KEEP,
@@ -56,9 +57,11 @@ from reaper.engine.signals import (
     score,
 )
 from reaper.engine.verdict import STRUCTURAL_GATES
-from reaper.ratings import Rating, RatingSource, from_plex
+from reaper.ratings import Rating, RatingSource, from_plex, is_percentage_source
 from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.snapshot import _explain, _verdict
+
+from ._reasons import catalog, catalog_entry, flat
 
 _IMDB_BAR = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
 
@@ -219,9 +222,11 @@ class TestOnlyTwoGatesMayEverRefuseAHandReap:
         one above."""
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
         for gate in (GateId.STREAMING_NOW, GateId.UNMANAGED):
-            fired = Evaluation(results=[GateResult(gate, PROTECT, detail="the stop fired")])
+            fired = Evaluation(results=[GateResult(gate, PROTECT, detail=legacy("the stop fired"))])
             unreadable = Evaluation(
-                results=[GateResult(gate, ABSTAIN, detail="could not check it", blocked=True)]
+                results=[
+                    GateResult(gate, ABSTAIN, detail=legacy("could not check it"), blocked=True)
+                ]
             )
 
             assert _hand_reap(fired, 100, policy) == "protect", gate
@@ -245,7 +250,7 @@ class TestUnknownNeverCondemns:
         for result in evaluation.results:
             if result.blocked:
                 assert result.outcome == ABSTAIN
-                assert "could not check" in result.detail
+                assert result.detail.id == "blocked"
 
     @given(item=facts())
     @settings(max_examples=300, deadline=None)
@@ -382,9 +387,9 @@ class TestEveryFailClosedGuardKeepsTheFile:
     def test_an_unreadable_fact_blocks_the_gate(self, gate: Gate, field: str) -> None:
         """An Unknown input abstains *and* raises the blocked flag, naming its own cause.
 
-        The "could not check" prefix is load-bearing beyond this assertion: `api.review._chip`
-        routes a detail starting with it to "Some checks couldn't run" rather than "left for
-        you to decide", and `WhyPanel` splits it into check and cause.
+        The ``blocked`` reason id is load-bearing beyond this assertion: `api.review._chip`
+        routes it to "Some checks couldn't run" rather than "left for you to decide", and
+        `WhyPanel` reads its check and cause slots.
         """
         outage = Unknown(reason="the source is down", source="t")
         unreadable = replace(_ALL_READABLE, **{field: outage})  # type: ignore[arg-type]
@@ -393,8 +398,8 @@ class TestEveryFailClosedGuardKeepsTheFile:
 
         assert result.blocked is True
         assert result.outcome == ABSTAIN
-        assert result.detail.startswith("could not check")
-        assert "the source is down" in result.detail
+        assert result.detail.id == "blocked"
+        assert "cause.the source is down" in flat(result.detail)
 
     @pytest.mark.parametrize(("gate", "field"), FAIL_CLOSED_GUARDS, ids=_GUARD_IDS)
     def test_a_readable_fact_does_not_block_the_gate(self, gate: Gate, field: str) -> None:
@@ -445,7 +450,9 @@ class TestAnOnListRuleHoldsWhatIsOnTheList:
 
         assert result.outcome == PROTECT
         assert result.blocked is False
-        assert result.detail == "your rule: List membership includes awards shortlist"
+        assert flat(result.detail) == (
+            "custom_fired[cond=cond_text.includes[field=on_list wanted=awards shortlist]]"
+        )
 
     def test_a_title_on_other_lists_only_is_a_checked_miss(self) -> None:
         """eq on a multi-valued fact is per element, never a whole-string comparison --
@@ -471,7 +478,7 @@ class TestAnOnListRuleHoldsWhatIsOnTheList:
 
         assert result.outcome == ABSTAIN
         assert result.blocked is False
-        assert result.detail == "checked your rule: On one of your lists: none recorded"
+        assert flat(result.detail) == "custom_checked[cond=none_recorded[field=on_list]]"
 
     def test_an_unreadable_membership_blocks_the_rule(self) -> None:
         """Rule 93: a membership that could not be read is ``Unknown``, and the rule
@@ -486,8 +493,8 @@ class TestAnOnListRuleHoldsWhatIsOnTheList:
 
         assert result.outcome == ABSTAIN
         assert result.blocked is True
-        assert result.detail.startswith("could not check")
-        assert "the list sync failed" in result.detail
+        assert result.detail.id == "blocked"
+        assert "cause.the list sync failed" in flat(result.detail)
 
 
 class TestScoreBounds:
@@ -599,42 +606,6 @@ def _rating_facts(ratings: tuple[Rating, ...]) -> Facts:
 #: the whole enum, so a source added to `RatingSource` fails here until someone decides which
 #: word order it takes -- the population, not just the two members that motivated the table
 #: (rule 145).
-_BAR_TEXT: dict[RatingSource, str] = {
-    RatingSource.IMDB: "7.5 on IMDb from 1,000+ votes",
-    RatingSource.TMDB: "7.5 on TMDb from 1,000+ votes",
-    RatingSource.ROTTEN_TOMATOES_CRITIC: "Rotten Tomatoes critics 75%",
-    RatingSource.ROTTEN_TOMATOES_AUDIENCE: "Rotten Tomatoes audience 75%",
-    RatingSource.METACRITIC: "Metacritic 75%",
-    RatingSource.TRAKT: "7.5 on Trakt from 1,000+ votes",
-    RatingSource.TVDB: "7.5 on TVDB from 1,000+ votes",
-    RatingSource.UNKNOWN: "7.5 on an unknown source from 1,000+ votes",
-}
-
-#: How "we found no rating at all from this source" reads for every source, written from
-#: the spec the same way. Keyed on the whole enum for the same reason (rule 145), and
-#: pinning the same position contract: the label follows a preposition, never an article
-#: or a bare "no", which is what rendered "no an unknown source rating" (#338).
-_MISS_TEXT: dict[RatingSource, str] = {
-    source: f"no rating on {label} (you keep {bar})"
-    for source, label, bar in (
-        (RatingSource.IMDB, "IMDb", "7.5 on IMDb from 1,000+ votes"),
-        (RatingSource.TMDB, "TMDb", "7.5 on TMDb from 1,000+ votes"),
-        (
-            RatingSource.ROTTEN_TOMATOES_CRITIC,
-            "Rotten Tomatoes critics",
-            "Rotten Tomatoes critics 75%",
-        ),
-        (
-            RatingSource.ROTTEN_TOMATOES_AUDIENCE,
-            "Rotten Tomatoes audience",
-            "Rotten Tomatoes audience 75%",
-        ),
-        (RatingSource.METACRITIC, "Metacritic", "Metacritic 75%"),
-        (RatingSource.TRAKT, "Trakt", "7.5 on Trakt from 1,000+ votes"),
-        (RatingSource.TVDB, "TVDB", "7.5 on TVDB from 1,000+ votes"),
-        (RatingSource.UNKNOWN, "an unknown source", "7.5 on an unknown source from 1,000+ votes"),
-    )
-}
 
 
 class TestRatingGate:
@@ -663,92 +634,109 @@ class TestRatingGate:
         assert (result.outcome == PROTECT) is protects
 
     @pytest.mark.parametrize(
-        ("min_votes", "clause"),
-        [(0, ""), (1, " from 1+ votes"), (2, " from 2+ votes"), (1000, " from 1,000+ votes")],
+        "min_votes",
+        [0, 1, 2, 1000],
         ids=["no-vote-floor", "one-vote", "two-votes", "a-thousand"],
     )
-    def test_the_bar_names_its_vote_floor_as_a_floor(self, min_votes: int, clause: str) -> None:
+    def test_the_bar_names_its_vote_floor_as_a_floor(self, min_votes: int) -> None:
         """The clause says the number is a bar to clear, not a count the title has.
 
         The why-panel prints both, one line apart: the bar under "you keep", the item's own
-        count under "too few to trust". They shared ``ratings.describe_votes`` and came out
-        word for word the same, so "from 1,000 votes" was a floor in one sentence and a
-        measurement in the next, with nothing saying which (#623).
-
-        The "+" is also why this clause cannot be that helper plus an append: at a floor of 1
-        it has to read "from 1+ votes", where the helper correctly renders a real count of 1
-        as "from 1 vote". Presence is pinned in both directions as well, since with no floor
-        there is nothing honest to print and "from 0+ votes" would name a bar that is not
-        there.
+        count under "too few to trust". They shared one vote clause and came out word for
+        word the same, so "from 1,000 votes" was a floor in one sentence and a measurement
+        in the next, with nothing saying which (#623). The bar and the value therefore carry
+        DIFFERENT reason ids, and the bar's catalog entry spells the floor with a "+" --
+        pinned below, because the sentence lives in the catalog now and `describeBar` in
+        frontend/src/components/PolicyEditor.tsx renders the same clause for the same rule
+        (rule 144). With no floor there is nothing honest to print, so the floorless bar
+        takes the entry with no vote clause at all.
         """
         bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=min_votes)
 
-        assert bar.describe_bar() == f"7.5 on IMDb{clause}", (
-            "The vote clause moved. `describeBar` in frontend/src/components/PolicyEditor.tsx "
-            "renders the same clause for the same rule, and one operator reads both, so it "
-            "changes in the same commit (rule 144)."
-        )
+        if min_votes == 0:
+            assert bar.describe_bar() == Reason("rating_bar", {"source": "imdb", "floor": 7.5})
+        else:
+            assert bar.describe_bar() == Reason(
+                "rating_bar_votes", {"source": "imdb", "floor": 7.5, "votes": min_votes}
+            )
+        assert "}+ votes" in catalog_entry("rating_bar_votes")
+        assert "+ votes" not in catalog_entry("rating_bar")
 
-    @pytest.mark.parametrize("source", list(_BAR_TEXT), ids=[s.value for s in _BAR_TEXT])
+    @pytest.mark.parametrize("source", list(RatingSource), ids=[s.value for s in RatingSource])
     def test_each_source_states_its_bar_in_its_own_word_order(self, source: RatingSource) -> None:
         """A percentage bar reads "Rotten Tomatoes critics 75%", never "75% on Rotten
         Tomatoes critics".
 
-        The case above sweeps the vote clause but only ever on IMDb, so the percentage arm
-        had nothing pinning either spelling and could be deleted without a word: the bar
-        would render in the 0-10 sources' word order, with a stray vote clause behind it on
-        sources that count no votes. The operator reads this string in the why-panel and
-        beside the bar in the policy editor, and both are supposed to echo what they typed.
+        A percentage source takes the percentage entry, which leads with the label; a 0-10
+        source takes the scored entry, which leads with the number -- and the word order is
+        the catalog's, pinned on the templates so the percentage arm cannot be deleted
+        without a word. `describeBar` in frontend/src/components/PolicyEditor.tsx states
+        the same bar in the same word order (rule 144).
         """
         bar = RatingRule(source=source, floor=75, min_votes=1000)
 
-        assert bar.describe_bar() == _BAR_TEXT[source], (
-            "`describeBar` in frontend/src/components/PolicyEditor.tsx states the same bar "
-            "in the same word order, for the same rule (rule 144)."
-        )
+        if is_percentage_source(source):
+            assert bar.describe_bar() == Reason(
+                "rating_bar_pct", {"source": source.value, "pct": 75}
+            )
+        else:
+            assert bar.describe_bar() == Reason(
+                "rating_bar_votes", {"source": source.value, "floor": 7.5, "votes": 1000}
+            )
+        assert catalog_entry("rating_bar_pct").startswith("{source_label} ")
+        assert catalog_entry("rating_bar_votes").startswith("{floor_fixed1} on ")
 
-    def test_the_table_of_word_orders_covers_every_source(self) -> None:
+    def test_the_catalog_labels_every_source(self) -> None:
         """Set equality both ways, so the sweep above is over the sources that exist rather
-        than the sources it was written against."""
-        assert set(_BAR_TEXT) == set(RatingSource)
+        than the sources it was written against: every ``RatingSource`` member has a label
+        in the catalog (``why.source.*``), and no label outlives its member."""
+        assert set(catalog()["source"]) == {s.value for s in RatingSource}
 
-    @pytest.mark.parametrize("source", list(_MISS_TEXT), ids=[s.value for s in _MISS_TEXT])
+    @pytest.mark.parametrize("source", list(RatingSource), ids=[s.value for s in RatingSource])
     def test_each_source_reads_as_english_where_the_item_has_no_rating_at_all(
         self, source: RatingSource
     ) -> None:
         """The miss phrase places a label too, and placed it after "no" until #338.
 
         "no IMDb rating" reads fine, which is how this survived; "no an unknown source
-        rating" does not, and the operator meets it in the why-panel under the checks that
-        did not fire -- beside a file they are deciding whether to delete. The label now
-        follows a preposition here as it does in ``describe_bar`` above, so the sentence
-        holds for whatever a label turns out to be.
+        rating" does not. The catalog entry now holds the sentence, with the label after
+        the preposition, so it reads for whatever a label turns out to be; the reason
+        carries the source id and the bar for its two slots.
         """
         bar = RatingRule(source=source, floor=75, min_votes=1000)
 
-        assert RatingFloorGate(rules=(bar,))._miss_phrase(bar, None) == _MISS_TEXT[source]
-
-    def test_the_table_of_miss_phrases_covers_every_source(self) -> None:
-        """Same set equality as the word orders above: a source added to the enum owes a
-        decision about how it reads with no rating, not a default that happens to parse."""
-        assert set(_MISS_TEXT) == set(RatingSource)
+        assert RatingFloorGate(rules=(bar,))._miss_reason(bar, None) == Reason(
+            "rating_miss_none", {"source": source.value, "bar": bar.describe_bar()}
+        )
+        assert catalog_entry("rating_miss_none").startswith("no rating on {source_label}")
 
     @pytest.mark.parametrize(
-        ("min_votes", "rating", "clears_the_vote_floor", "phrase"),
+        ("min_votes", "rating", "clears_the_vote_floor", "expected"),
         [
-            (0, _plex_imdb(7.4), True, "7.4 on IMDb, below the 7.5 you keep"),
-            (1, _plex_imdb(7.4), False, "7.4 on IMDb, too few to trust (you need 1)"),
+            (
+                0,
+                _plex_imdb(7.4),
+                True,
+                "rating_miss_below[value=rating_value[source=imdb value=7.4] floor=7.5]",
+            ),
+            (
+                1,
+                _plex_imdb(7.4),
+                False,
+                "rating_miss_votes[value=rating_value[source=imdb value=7.4] need=1]",
+            ),
             (
                 1000,
                 Rating(source=RatingSource.IMDB, value=7.4, votes=1000, provider="imdb-dataset"),
                 True,
-                "7.4 on IMDb from 1,000 votes, below the 7.5 you keep",
+                "rating_miss_below[value=rating_value_votes[source=imdb value=7.4 votes=1000]"
+                " floor=7.5]",
             ),
         ],
         ids=["no-vote-floor", "a-floor-of-one", "a-count-exactly-at-the-floor"],
     )
     def test_the_vote_clause_fires_on_the_floor_the_decision_itself_uses(
-        self, min_votes: int, rating: Rating, clears_the_vote_floor: bool, phrase: str
+        self, min_votes: int, rating: Rating, clears_the_vote_floor: bool, expected: str
     ) -> None:
         """The three inclusive edges of the vote floor, each of which a mutant survived on.
 
@@ -770,7 +758,7 @@ class TestRatingGate:
         """
         bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=min_votes)
 
-        assert RatingFloorGate(rules=(bar,))._miss_phrase(bar, rating) == phrase
+        assert flat(RatingFloorGate(rules=(bar,))._miss_reason(bar, rating)) == expected
         assert rating.meets(0.0, min_votes=min_votes) is clears_the_vote_floor
 
     def test_a_policy_with_no_bars_set_says_nothing_is_configured(self) -> None:
@@ -790,7 +778,8 @@ class TestRatingGate:
 
         assert result.outcome == ABSTAIN
         assert result.blocked is False
-        assert result.detail == "No rating is set that would keep a title."
+        assert result.detail == Reason("rating_none_set")
+        assert catalog_entry("rating_none_set") == "No rating is set that would keep a title."
 
     def test_the_vote_floor_rejects_noise(self) -> None:
         """8.3 from a few hundred votes is noise, not quality, and a bare rating
@@ -799,8 +788,8 @@ class TestRatingGate:
         result = gate.evaluate(_rating_facts(_imdb(8.3, votes=388)))
 
         assert result.outcome == ABSTAIN
-        assert "388 votes" in result.detail  # too few to trust the 8.3
-        assert "1,000" in result.detail  # ...against the vote floor
+        assert "votes=388" in flat(result.detail)  # too few to trust the 8.3
+        assert "need=1000" in flat(result.detail)  # ...against the vote floor
 
     def test_a_missing_rating_never_protects_and_never_blocks(self) -> None:
         """A title with no rating for the bar's source is simply not kept on that bar --
@@ -812,13 +801,13 @@ class TestRatingGate:
 
         assert result.outcome == ABSTAIN
         assert result.blocked is False
-        assert "no rating on IMDb" in result.detail
+        assert "rating_miss_none[source=imdb" in flat(result.detail)
 
     @pytest.mark.parametrize(
         ("unreadable", "check"),
         [
-            ("imdb_rating_tenths", "could not check the IMDb rating"),
-            ("imdb_votes", "could not check the IMDb vote count"),
+            ("imdb_rating_tenths", "check.imdb_rating"),
+            ("imdb_votes", "check.imdb_votes"),
         ],
         ids=["the-rating", "the-vote-count"],
     )
@@ -852,7 +841,7 @@ class TestRatingGate:
 
         assert result.blocked is True
         assert result.outcome == ABSTAIN
-        assert check in result.detail
+        assert check in flat(result.detail)
 
     def test_a_second_source_can_keep_a_title_imdb_would_not(self) -> None:
         """The point of multi-source: a film below the IMDb bar but above the Rotten
@@ -868,7 +857,7 @@ class TestRatingGate:
         result = gate.evaluate(_rating_facts(ratings))
 
         assert result.outcome == PROTECT
-        assert "Rotten Tomatoes critics 84%" in result.detail
+        assert "rating_value_pct[source=rotten_tomatoes_critic pct=84]" in flat(result.detail)
 
     def test_all_of_matching_needs_every_bar(self) -> None:
         """Under ALL matching, clearing one bar is not enough: a source we cannot read
@@ -904,9 +893,11 @@ class TestRatingGate:
         result = gate.evaluate(_rating_facts(ratings))
 
         assert result.outcome == ABSTAIN
-        assert result.detail == (
-            "cleared 8.2 on IMDb from 200,000 votes, but not every bar you asked for: "
-            "Rotten Tomatoes critics 40%, below the 75% you keep."
+        assert flat(result.detail) == (
+            "rating_cleared_some["
+            "cleared=(rating_value_votes[source=imdb value=8.2 votes=200000]) "
+            "missed=(rating_miss_below_pct[value=rating_value_pct[source=rotten_tomatoes_critic"
+            " pct=40] floor_pct=75])]"
         )
 
 
@@ -970,9 +961,9 @@ class TestThePopularityWindowCannotOutrunTheHistory:
 
         assert result.outcome == ABSTAIN
         assert result.blocked is True
-        assert "Nobody here watched it" not in result.detail
-        assert "could not check who watched it in the last year" in result.detail
-        assert "only goes back 3 months" in result.detail
+        assert result.detail.id == "blocked"
+        assert "check.recent_watchers_window[window_days=365]" in flat(result.detail)
+        assert "cause.history_reach_short[reach_days=90.0]" in flat(result.detail)
 
     @pytest.mark.parametrize(
         "count", [3, 4, 10, 500], ids=["at-the-floor", "one-over", "ten", "many"]
@@ -993,32 +984,31 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         assert result.blocked is False
 
     @pytest.mark.parametrize(
-        ("floor", "count", "phrase"),
+        ("floor", "count", "reason_id"),
         [
-            (1, 1, "1 person"),
-            (1, 2, "2 people"),
-            (3, 1, "Only 1 person"),
-            (3, 2, "Only 2 people"),
+            (1, 1, "popularity_watched"),
+            (1, 2, "popularity_watched"),
+            (3, 1, "popularity_few"),
+            (3, 2, "popularity_few"),
         ],
         ids=["one-watcher-protects", "two-watchers-protect", "one-watcher-short", "two-short"],
     )
-    def test_one_watcher_is_a_person_on_both_the_kept_and_the_not_kept_line(
-        self, floor: int, count: int, phrase: str
+    def test_one_watcher_rides_as_a_count_on_both_the_kept_and_the_not_kept_line(
+        self, floor: int, count: int, reason_id: str
     ) -> None:
-        """Both arms pluralize, and both were unpinned at a count of one.
+        """Both arms carry the count raw, and each names its own catalog entry.
 
-        The gate says "1 person watched it" when the protection fires and "Only 1 person
-        watched it" when it does not, and the two are separate expressions on separate
-        lines. Every case here drove a count of 0, 2 or 3, so nothing distinguished the
-        singular from the plural on either -- and deleting the not-kept line's assignment
-        outright raises, which no test noticed either. Rule 21: an operator reading
-        "1 people watched it" is reading a bug, in the panel whose job is to be believed.
+        The pluralization ("1 person" against "2 people") is the catalog's ICU plural now,
+        proven where the sentences are composed (``frontend/src/why.test.ts``); what the
+        engine owes is the right id and the exact count, on the fired and the not-fired
+        line alike (rule 21 still governs the words -- they just live in the catalog).
         """
         gate = ServerPopularityGate(GateConfig(threshold=floor, window_days=365))
 
         result = gate.evaluate(_popularity_facts(count, Known(value=400.0, source="t")))
 
-        assert phrase in result.detail
+        assert result.detail.id == reason_id
+        assert result.detail.params["count"] == count
 
     def test_a_genuinely_absent_watcher_count_is_nobody_and_not_somebody(self) -> None:
         """``Absent`` means the mirror was read and holds no play for this title (rule 93),
@@ -1043,7 +1033,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         result = self.gate.evaluate(_popularity_facts(2, Known(value=90.0, source="t")))
 
         assert result.blocked is True
-        assert "Only 2 people" not in result.detail
+        assert result.detail.id != "popularity_few"
 
     def test_the_block_stops_every_automatic_path_but_not_the_owners_own_hand(self) -> None:
         """What the block is for, and what it is not for -- the two asserted together,
@@ -1082,7 +1072,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
 
         assert result.outcome == PROTECT
         assert result.blocked is False
-        assert result.detail == "watched here: 3 people in the last year"
+        assert result.detail == Reason("popularity_watched", {"count": 3, "window_days": 365})
 
     def test_a_history_covering_the_window_answers_as_it_always_did(self) -> None:
         """The reach check changes nothing once the evidence is there. Two years of
@@ -1092,7 +1082,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
 
         assert result.outcome == ABSTAIN
         assert result.blocked is False
-        assert result.detail == "Nobody here watched it in the last year."
+        assert result.detail == Reason("popularity_nobody", {"window_days": 365})
 
     @pytest.mark.parametrize(
         "reach",
@@ -1111,7 +1101,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         result = self.gate.evaluate(_popularity_facts(0, reach))
 
         assert result.blocked is True
-        assert result.detail.startswith("could not check")
+        assert result.detail.id == "blocked"
 
     def test_a_reach_just_under_the_window_never_reads_as_longer_than_it(self) -> None:
         """``humanize_days`` counts a month as 30 days and a year as 365, so 364 days
@@ -1123,15 +1113,15 @@ class TestThePopularityWindowCannotOutrunTheHistory:
             result = self.gate.evaluate(_popularity_facts(0, Known(value=reach, source="t")))
 
             assert result.blocked is True
-            assert result.detail == (
-                "could not check who watched it in the last year: "
-                "your watch history does not go back that far"
+            assert flat(result.detail) == (
+                "blocked[check=check.recent_watchers_window[window_days=365] "
+                "cause=cause.history_not_that_far]"
             ), f"reach {reach}"
 
         # A month or more short still names the number, which is the useful case: the
         # comparison alone would not tell them how much history they actually have.
         named = self.gate.evaluate(_popularity_facts(0, Known(value=335.0, source="t")))
-        assert "only goes back 11 months, 5 days" in named.detail
+        assert "cause.history_reach_short[reach_days=335.0]" in flat(named.detail)
 
     def test_a_shorter_window_the_history_does_cover_is_answerable(self) -> None:
         """The operator's remedy, and proof the check is against the *configured* window
@@ -1141,7 +1131,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         result = gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
 
         assert result.blocked is False
-        assert result.detail == "Nobody here watched it in the last 3 months."
+        assert result.detail == Reason("popularity_nobody", {"window_days": 90})
 
 
 class TestEveryReaderOfTheSameCountHonorsTheReach:
@@ -1176,9 +1166,8 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
 
         assert result.outcome == ABSTAIN
         assert result.blocked is True  # amber, not green
-        assert "checked your rule" not in result.detail
-        assert result.detail.startswith("could not check")
-        assert "only goes back 3 months" in result.detail
+        assert result.detail.id == "blocked"
+        assert "cause.history_reach_short[reach_days=90.0]" in flat(result.detail)
 
     def test_the_built_in_gate_and_an_operator_rule_agree_on_identical_facts(self) -> None:
         """Side by side, which is how the split was found: the built-in gate returned
@@ -1215,7 +1204,7 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
 
             assert result.outcome == ABSTAIN, field
             assert result.blocked is False, field
-            assert result.detail.startswith("checked your rule"), field
+            assert result.detail.id == "custom_checked", field
 
     def test_the_all_time_bound_is_the_items_own_age_not_the_window(self) -> None:
         """A year of history answers a year-long window, and still cannot say who has
@@ -1288,7 +1277,7 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
 
         assert short.discount == 30.0
         assert short.evaluated is False
-        assert "could not check" in short.detail
+        assert short.detail.id == "keep_unchecked_cause"
         # ...and a mirror that does cover it reports the real, zero, discount.
         assert covered.discount == 0.0
         assert covered.evaluated is True
@@ -1324,7 +1313,7 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         # The weight stays in the denominator, so the hole is visible to the coverage
         # floor instead of hidden behind a coverage of 1.0 (rule 31).
         assert short.coverage == pytest.approx(0.8)
-        assert "could not tell who watched it" in few.detail
+        assert few.detail.id == "signal_watchers_unchecked"
 
     def test_a_count_we_could_not_read_names_its_own_cause_not_the_mirror_s_depth(
         self,
@@ -1352,8 +1341,7 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         assert result.pressure == 0.0
         assert result.evaluated is False
         assert result.state is SignalState.UNREADABLE
-        assert result.detail == "could not tell who watched it"
-        assert "watch history only goes back" not in result.detail
+        assert result.detail == Reason("signal_watchers_unreadable")
 
     def test_a_genuine_absence_is_still_bounded_by_the_mirror_that_observed_it(self) -> None:
         """The exemption above is for ``Unknown`` ONLY, and this is why.
@@ -1376,7 +1364,7 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
 
         assert short.state is SignalState.UNREADABLE
         assert short.evaluated is False
-        assert "watch history only goes back" in short.detail
+        assert "cause.history_reach_short" in flat(short.detail)
 
         # ...and once the mirror does span the window, the same absence is real evidence:
         # evaluated, weight retained, coverage intact, no pressure (rule 93).
@@ -1467,9 +1455,9 @@ class TestExplainability:
         assert evaluation.protected is False
         assert len(evaluation.checked_and_did_not_fire) == len(ALL_GATES)
 
-        details = " | ".join(r.detail for r in evaluation.checked_and_did_not_fire)
-        assert "Nobody here watched it" in details  # server-popularity, 0 watchers
-        assert "below the 7.5 you keep" in details  # rating floor
+        details = " | ".join(flat(r.detail) for r in evaluation.checked_and_did_not_fire)
+        assert "popularity_nobody" in details  # server-popularity, 0 watchers
+        assert "rating_miss_below[" in details  # rating floor
 
 
 # --- the scoring-model invariants -------------------------------------------
