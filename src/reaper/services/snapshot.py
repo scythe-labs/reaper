@@ -1772,7 +1772,7 @@ class Display:
 _NO_DISPLAY = Display()
 
 #: What a hand spare reads as in the why-panel's "Protections that fired" list. A hand spare
-#: wears the whitelist gate id, so the review chip (``api.review._kept_phrase``) and the
+#: wears the whitelist gate id, so the review chip (``api.review._kept_reason``) and the
 #: simulator tally tell it apart from a real keep-list entry by this reason id. Every
 #: producer and reader imports the constant; never re-type the literal.
 HAND_SPARE_REASON = Reason("hand_spare")

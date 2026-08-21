@@ -942,6 +942,22 @@ class TestTheTwoCopiesAgreeOnTypes:
         )
 
 
+#: A name-level drift the guard tolerates for exactly one phase boundary, each entry with the
+#: PR that opens the gap and the one that is expected to close it right behind. Unlike
+#: NARROWED/WIDENED above -- a permanent, deliberate shape the app keeps -- an entry here is a
+#: defect with a landing fix, so ``test_no_paired_type_has_lost_or_gained_a_field`` also fails
+#: the moment the pair stops disagreeing, so nobody forgets to delete it once the follow-up
+#: lands.
+_PHASE_BOUNDARY_FIELD_DRIFT: dict[str, str] = {
+    "Chip <-> ChipOut": (
+        "#868 phase 2a: ChipOut sends a typed `reason` (id + raw params, rule 92) instead of "
+        "pre-worded text. frontend/src/api.ts's Chip and its one reader, "
+        "components/StatusChip.tsx, keep reading text/why until phase 2b composes the "
+        "sentence from `reason` through why.ts, which lands immediately behind this PR."
+    ),
+}
+
+
 class TestTheTwoCopiesAgree:
     def test_no_paired_type_has_lost_or_gained_a_field(
         self,
@@ -952,6 +968,7 @@ class TestTheTwoCopiesAgree:
         asking the next author to remember does nothing."""
         wire, inner = server_tables
         drifted: list[str] = []
+        deferred_seen: set[str] = set()
         for name in sorted(browser_types):
             counterpart = _pair(name, wire, inner)
             if counterpart is None:
@@ -960,8 +977,12 @@ class TestTheTwoCopiesAgree:
             server_only = sorted(fields - browser_types[name])
             browser_only = sorted(browser_types[name] - fields)
             if server_only or browser_only:
+                pair = f"{name} <-> {counterpart}"
+                if pair in _PHASE_BOUNDARY_FIELD_DRIFT:
+                    deferred_seen.add(pair)
+                    continue
                 drifted.append(
-                    f"{name} <-> {counterpart}:"
+                    f"{pair}:"
                     + (
                         f" the server sends {server_only} and the browser has no field for it;"
                         if server_only
@@ -980,6 +1001,11 @@ class TestTheTwoCopiesAgree:
             "(#260 lost merged_rating_keys this way, which the executor re-reads to protect "
             "every listing of a merged bind). Edit frontend/src/api.ts to match, or record a "
             "deliberate difference in this file:\n  " + "\n  ".join(drifted)
+        )
+        assert deferred_seen == set(_PHASE_BOUNDARY_FIELD_DRIFT), (
+            "a pair in _PHASE_BOUNDARY_FIELD_DRIFT no longer disagrees, so its follow-up has "
+            "landed and the deferral is stale. Delete the entry:\n  "
+            + "\n  ".join(sorted(set(_PHASE_BOUNDARY_FIELD_DRIFT) - deferred_seen))
         )
 
 
@@ -1173,7 +1199,7 @@ class TestEveryGateIdHasOperatorCopy:
     rule 118's shape: without them the guard could be deleted and its proof stay green.
 
     **The one sibling copy, named here rather than guarded** (rule 144): ``api/review.py``'s
-    ``_kept_phrase`` turns the same ids into the review queue's chip. It is deliberately not
+    ``_kept_reason`` turns the same ids into the review queue's chip. It is deliberately not
     covered, because its own fallback is already a sentence -- "a protection applies" -- so a
     gate arriving without a branch there reads vaguely, never as a slug. Reword that fallback
     into anything id-shaped and it needs a guard of its own.
