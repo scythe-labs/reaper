@@ -18,6 +18,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api } from "../api";
 import { Notice } from "./Notice";
@@ -36,6 +37,7 @@ export function SetupPasswordStep({
    *  without asking again. */
   onDone: (password: string) => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [pw, setPw] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -50,7 +52,7 @@ export function SetupPasswordStep({
       // bounce the operator straight back here.
       await queryClient.invalidateQueries({ queryKey: ["setup"] });
       await queryClient.invalidateQueries({ queryKey: ["safety"] });
-      announce("Password saved.");
+      announce(t("setup.password.announceSaved"));
       onDone(pw);
     },
     // No onError: the failure renders from `save.error` below. "Saved" and "that didn't work"
@@ -65,13 +67,15 @@ export function SetupPasswordStep({
   // same region. Validation wins over a stale submit error, so the operator sees the thing
   // they can fix right now rather than the thing that went wrong a moment ago.
   const error: ReactNode = tooShort ? (
-    <>
-      Use at least {MIN_ADMIN_PASSWORD} characters. <b>{pw.length} so far.</b>
-    </>
+    <Trans
+      i18nKey="setup.password.tooShortError"
+      values={{ min: MIN_ADMIN_PASSWORD, count: pw.length }}
+      components={{ b: <b /> }}
+    />
   ) : mismatch ? (
-    "The two passwords don't match."
+    t("setup.password.mismatchError")
   ) : save.error ? (
-    `That didn't save: ${save.error.message}`
+    t("setup.password.saveFailedError", { message: save.error.message })
   ) : null;
 
   // Only the box the live complaint is about points at the region; a submit failure is about
@@ -79,11 +83,8 @@ export function SetupPasswordStep({
   const owner = tooShort ? "pw" : mismatch ? "confirm" : null;
 
   return (
-    <StepCard step="password" title="Set your password">
-      <p className="blurb">
-        It signs you in when Plex can't be reached, and it confirms every deletion. Reaper needs it
-        before it goes any further.
-      </p>
+    <StepCard step="password" title={t("setup.password.title")}>
+      <p className="blurb">{t("setup.password.blurb")}</p>
 
       <form
         onSubmit={(e) => {
@@ -92,7 +93,7 @@ export function SetupPasswordStep({
         }}
       >
         <label className="field-sm">
-          <span className="field-label">Password</span>
+          <span className="field-label">{t("setup.password.passwordLabel")}</span>
           <input
             type="password"
             autoComplete="new-password"
@@ -105,11 +106,11 @@ export function SetupPasswordStep({
             aria-invalid={tooShort ? true : undefined}
             aria-describedby={owner === "pw" ? ERROR_ID : undefined}
           />
-          <span className="help">At least {MIN_ADMIN_PASSWORD} characters.</span>
+          <span className="help">{t("setup.password.minHelp", { min: MIN_ADMIN_PASSWORD })}</span>
         </label>
 
         <label className="field-sm">
-          <span className="field-label">Confirm password</span>
+          <span className="field-label">{t("setup.password.confirmLabel")}</span>
           <input
             type="password"
             autoComplete="new-password"
@@ -136,21 +137,19 @@ export function SetupPasswordStep({
         )}
 
         <p className="help">
-          Your local account will be called <code>admin</code>. You can rename it later in Settings.
+          <Trans i18nKey="setup.password.adminNote" components={{ code: <code /> }} />
         </p>
 
         {/* No Skip and no Back: see the note at the top of this file. */}
         <div className="step-actions">
           <span className="spacer" />
           <button type="submit" className="primary btn-lg" disabled={!valid || save.isPending}>
-            {save.isPending ? "Saving…" : "Set password and continue"}
+            {save.isPending ? t("setup.password.saving") : t("setup.password.submit")}
           </button>
         </div>
       </form>
 
-      <div className="step-foot">
-        Restoring a backup? Set a password first. It's what confirms the restore.
-      </div>
+      <div className="step-foot">{t("setup.password.restoreFootNote")}</div>
     </StepCard>
   );
 }

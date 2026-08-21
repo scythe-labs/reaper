@@ -9,8 +9,10 @@
 // its real card in Review, exactly like the old reclaimable chips did.
 
 import { useId, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { PersonDetail, PersonTitle, QuotaLine, Verdict } from "../api";
 import { bytes, carriesYear, count, date, itemBytes, titleWithYear } from "../format";
+import i18next from "../i18n";
 import { BalanceBar } from "./BalanceBar";
 import { PosterFallback } from "./PosterFallback";
 import { ExternalMark } from "./queueIcons";
@@ -46,24 +48,28 @@ function Poster({ url }: { url: string | null }) {
 /** A media type's request limit, in plain words: "1 per 14 days", "unlimited", and an amber
  *  "at limit" flag when they are capped there right now. */
 function limitText(line: QuotaLine): string {
-  if (line.limit === null) return "unlimited";
+  if (line.limit === null) return i18next.t("scales.personPanel.limits.unlimited");
   // A daily quota read "1 per 1 days" while this same file and Fairness already say
   // "person"/"people" and "title"/"titles" (U-19).
-  const per = line.days ? (line.days === 1 ? " per day" : ` per ${count(line.days)} days`) : "";
-  return `${count(line.limit)}${per}`;
+  return i18next.t("scales.personPanel.limits.text", {
+    limit: count(line.limit),
+    hasDays: line.days ? "yes" : "no",
+    days: line.days ?? 0,
+  });
 }
 
 function LimitChip({ label, line }: { label: string; line: QuotaLine }) {
+  const { t } = useTranslation();
   return (
     <span className={`scales-limit${line.at_limit ? " at" : ""}`}>
       <span className="scales-limit-k">{label}</span>
       <span className="scales-limit-v">
         {line.limit === null ? (
-          <span className="scales-limit-sub">unlimited</span>
+          <span className="scales-limit-sub">{t("scales.personPanel.limits.unlimited")}</span>
         ) : (
           limitText(line)
         )}
-        {line.at_limit && ", at limit"}
+        {line.at_limit && t("scales.personPanel.limits.atLimit")}
       </span>
     </span>
   );
@@ -74,6 +80,7 @@ function LimitChip({ label, line }: { label: string; line: QuotaLine }) {
  *  the app's title-link idiom: text at rest, an accent underline on hover, a small outbound
  *  arrow so the link is discoverable. */
 function ProfileName({ id, name, href }: { id: string; name: string; href: string | null }) {
+  const { t } = useTranslation();
   if (!href) return <h2 id={id}>{name}</h2>;
   return (
     <a
@@ -81,7 +88,7 @@ function ProfileName({ id, name, href }: { id: string; name: string; href: strin
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      title="Open this person in the request portal"
+      title={t("scales.personPanel.openInPortal")}
     >
       <h2 id={id}>{name}</h2>
       <ExternalMark className="scales-ext" />
@@ -92,10 +99,19 @@ function ProfileName({ id, name, href }: { id: string; name: string; href: strin
 /** The fate marker: the loud, actionable states wear a colored chip; "kept" is the quiet,
  *  expected state, so it reads as a plain gray label rather than a green pill on every row. */
 function Fate({ verdict }: { verdict: string }) {
+  const { t } = useTranslation();
   if (verdict === "condemn")
-    return <span className="status-chip status-pressure">Reclaimable</span>;
-  if (verdict === "abstain") return <span className="status-chip status-look">Left to decide</span>;
-  if (verdict === "protect") return <span className="scales-kept">Kept</span>;
+    return (
+      <span className="status-chip status-pressure">
+        {t("scales.personPanel.fate.reclaimable")}
+      </span>
+    );
+  if (verdict === "abstain")
+    return (
+      <span className="status-chip status-look">{t("scales.personPanel.fate.leftToDecide")}</span>
+    );
+  if (verdict === "protect")
+    return <span className="scales-kept">{t("scales.personPanel.fate.kept")}</span>;
   return <span className="scales-kept">{verdict}</span>;
 }
 
@@ -110,18 +126,18 @@ function Fate({ verdict }: { verdict: string }) {
  *  counts from, and where nothing is readable at all (`reachIsMeasured`, covering both an
  *  unlinked request account and an empty mirror) it says so instead of naming a number. */
 function watchedLabel(t: PersonTitle, reach: WatchReach): string {
-  if (!reachIsMeasured(reach)) return "can't see their history";
-  if (t.watched_by_them <= 0) return `none since ${date(reach.since)}`;
+  if (!reachIsMeasured(reach)) return i18next.t("scales.personPanel.watched.noHistory");
+  if (t.watched_by_them <= 0)
+    return i18next.t("scales.personPanel.watched.noneSince", { date: date(reach.since) });
   // "times", not a multiplication sign. The glyph carries the meaning here rather than
   // decorating it, and a reader at its default symbol level drops it -- leaving "watched 3" on
   // the screen where the operator decides whose files to delete. It is inside a composed string,
   // so there is no element to hang `aria-hidden` on even if hiding it were right: the word is
   // the fix, exactly as the middots in composed strings became commas (#299, rule 21).
   if (t.media_type === "movie") {
-    return `watched ${count(t.watched_by_them)} ${t.watched_by_them === 1 ? "time" : "times"}`;
+    return i18next.t("scales.personPanel.watched.movieTimes", { n: t.watched_by_them });
   }
-  const n = count(t.watched_by_them);
-  return `${n} ${t.watched_by_them === 1 ? "episode" : "episodes"} watched`;
+  return i18next.t("scales.personPanel.watched.episodes", { n: t.watched_by_them });
 }
 
 /** One requested title: what it is, when it arrived, whether they watched it, its fate, and
@@ -136,7 +152,11 @@ function TitleRow({
   onOpen: (() => void) | null;
   reach: WatchReach;
 }) {
-  const kind = t.media_type === "movie" ? "Movie" : "Series";
+  // Aliased: the prop above is already named `t` (the title), so the translate function takes
+  // the alias `tr` rather than shadowing it.
+  const { t: tr } = useTranslation();
+  const kind =
+    t.media_type === "movie" ? tr("scales.mediaKind.movie") : tr("scales.mediaKind.series");
   // Some stored titles already carry their year (e.g. "Some Show (2019)"); don't print it
   // twice. Only append the year when the title does not already end with it. The search term
   // the jump below carries asks the same question through the same helper, so a title that
@@ -144,9 +164,10 @@ function TitleRow({
   const showYear = t.year != null && !carriesYear(t.title, t.year);
 
   const meta: string[] = [kind];
-  if (t.requested_at) meta.push(`asked ${date(t.requested_at)}`);
-  if (t.available_at) meta.push(`arrived ${date(t.available_at)}`);
-  if (t.co_requesters.length > 0) meta.push(`also asked by ${t.co_requesters.join(", ")}`);
+  if (t.requested_at) meta.push(tr("scales.meta.asked", { date: date(t.requested_at) }));
+  if (t.available_at) meta.push(tr("scales.meta.arrived", { date: date(t.available_at) }));
+  if (t.co_requesters.length > 0)
+    meta.push(tr("scales.meta.alsoAskedBy", { list: t.co_requesters.join(", ") }));
 
   const body = (
     <>
@@ -155,7 +176,7 @@ function TitleRow({
         <span className="scales-title-name">
           {t.title}
           {showYear && <span className="scales-title-yr"> ({t.year})</span>}
-          {t.is_4k && <span className="scales-4k">4K</span>}
+          {t.is_4k && <span className="scales-4k">{tr("scales.mediaKind.tag4k")}</span>}
         </span>
         <span className="scales-title-meta">
           {meta.map((m, i) => (
@@ -187,7 +208,12 @@ function TitleRow({
 
   if (!onOpen) return <div className="scales-title static">{body}</div>;
   return (
-    <button type="button" className="scales-title" title="Open this in Review" onClick={onOpen}>
+    <button
+      type="button"
+      className="scales-title"
+      title={tr("scales.personPanel.openInReview")}
+      onClick={onOpen}
+    >
       {body}
     </button>
   );
@@ -207,6 +233,7 @@ export function ScalesPanel({
   onOpenItem: (candidateId: number, lane: Verdict, search: string) => void;
   onOpenGroup: (key: string, lane: Verdict, search: string) => void;
 }) {
+  const { t } = useTranslation();
   const headingId = useId();
   const granted = detail.gb_granted_bytes;
   const reclaim = detail.reclaimable_bytes;
@@ -255,31 +282,34 @@ export function ScalesPanel({
           <div>
             <ProfileName id={headingId} name={detail.name} href={detail.profile_url} />
             <p className="why-sub muted">
-              {count(detail.requests_in_scan)} requests in the last scan
-              {detail.not_in_scan > 0 && `, ${count(detail.not_in_scan)} not in it`}
+              {t("scales.personPanel.requestsSummary", {
+                n: count(detail.requests_in_scan),
+                hasMore: detail.not_in_scan > 0 ? "yes" : "other",
+                m: count(detail.not_in_scan),
+              })}
             </p>
           </div>
         </div>
       </div>
 
       <section className="block">
-        <h3>The balance</h3>
+        <h3>{t("scales.personPanel.balanceHeading")}</h3>
         <BalanceBar granted={granted} reclaim={reclaim} hasReclaim={hasReclaim} />
         <div className="scales-tiles">
           <div className="fair-stat">
             <span className="fair-stat-num">{bytes(granted)}</span>
-            <span className="fair-stat-lbl">Granted</span>
-            <span className="fair-stat-sub">disk they asked for</span>
+            <span className="fair-stat-lbl">{t("scales.personPanel.grantedLabel")}</span>
+            <span className="fair-stat-sub">{t("scales.personPanel.grantedSub")}</span>
           </div>
           <div className="fair-stat">
             {watched === null ? (
               <>
-                <span className="fair-stat-num muted">Unknown</span>
-                <span className="fair-stat-lbl">They watched</span>
+                <span className="fair-stat-num muted">{t("scales.personPanel.unknown")}</span>
+                <span className="fair-stat-lbl">{t("scales.personPanel.theyWatchedLabel")}</span>
                 <span className="fair-stat-sub">
                   {reach.kind === "no_account"
-                    ? "no Plex account, so no history to read"
-                    : "no watch history to read yet"}
+                    ? t("scales.personPanel.noAccountSub")
+                    : t("scales.personPanel.noHistorySub")}
                 </span>
               </>
             ) : (
@@ -287,31 +317,30 @@ export function ScalesPanel({
                 <span className={`fair-stat-num ${watched >= 50 ? "green" : "red"}`}>
                   {watched}%
                 </span>
-                <span className="fair-stat-lbl">They watched</span>
-                <span className="fair-stat-sub">of what they asked for</span>
+                <span className="fair-stat-lbl">{t("scales.personPanel.theyWatchedLabel")}</span>
+                <span className="fair-stat-sub">{t("scales.personPanel.ofWhatTheyAskedFor")}</span>
               </>
             )}
           </div>
           <div className="fair-stat">
             <span className="fair-stat-num">{count(detail.requests_in_scan)}</span>
-            <span className="fair-stat-lbl">Requests</span>
-            <span className="fair-stat-sub">still in the scan</span>
+            <span className="fair-stat-lbl">{t("scales.personPanel.requestsLabel")}</span>
+            <span className="fair-stat-sub">{t("scales.personPanel.stillInScan")}</span>
           </div>
           <div className="fair-stat">
             {hasReclaim ? (
               <>
                 <span className="fair-stat-num red">{bytes(reclaim)}</span>
-                <span className="fair-stat-lbl">Reclaimable</span>
+                <span className="fair-stat-lbl">{t("scales.personPanel.reclaimableLabel")}</span>
                 <span className="fair-stat-sub red">
-                  {count(detail.reclaimable_items)}{" "}
-                  {detail.reclaimable_items === 1 ? "title" : "titles"}
+                  {t("scales.personPanel.reclaimableCount", { n: detail.reclaimable_items })}
                 </span>
               </>
             ) : (
               <>
-                <span className="fair-stat-num green">None</span>
-                <span className="fair-stat-lbl">Reclaimable</span>
-                <span className="fair-stat-sub">all still earning their keep</span>
+                <span className="fair-stat-num green">{t("scales.personPanel.none")}</span>
+                <span className="fair-stat-lbl">{t("scales.personPanel.reclaimableLabel")}</span>
+                <span className="fair-stat-sub">{t("scales.personPanel.allEarningKeep")}</span>
               </>
             )}
           </div>
@@ -324,14 +353,30 @@ export function ScalesPanel({
 
       {showLimits && (
         <section className="block">
-          <h3>Request limits</h3>
+          <h3>{t("scales.personPanel.limitsHeading")}</h3>
           <div className="scales-limits">
-            {detail.quota && <LimitChip label="Movies" line={detail.quota.movie} />}
-            {detail.quota && <LimitChip label="Series" line={detail.quota.tv} />}
+            {detail.quota && (
+              <LimitChip
+                label={t("scales.personPanel.limits.moviesLabel")}
+                line={detail.quota.movie}
+              />
+            )}
+            {detail.quota && (
+              <LimitChip
+                label={t("scales.personPanel.limits.seriesLabel")}
+                line={detail.quota.tv}
+              />
+            )}
             {detail.seerr_total !== null && (
               <span className="scales-limit">
-                <span className="scales-limit-k">Lifetime</span>
-                <span className="scales-limit-v">{count(detail.seerr_total)} requests</span>
+                <span className="scales-limit-k">
+                  {t("scales.personPanel.limits.lifetimeLabel")}
+                </span>
+                <span className="scales-limit-v">
+                  {t("scales.personPanel.limits.lifetimeRequests", {
+                    n: count(detail.seerr_total),
+                  })}
+                </span>
               </span>
             )}
           </div>
@@ -340,16 +385,17 @@ export function ScalesPanel({
 
       <section className="block">
         <div className="scales-h3row">
-          <h3>Everything they asked for</h3>
+          <h3>{t("scales.personPanel.allRequestsHeading")}</h3>
           <span className="scales-count">
-            {count(detail.titles.length)} {detail.titles.length === 1 ? "title" : "titles"}
-            {detail.not_in_scan > 0 && `, ${count(detail.not_in_scan)} not in the scan`}
+            {t("scales.personPanel.titlesCount", {
+              n: detail.titles.length,
+              hasMore: detail.not_in_scan > 0 ? "yes" : "other",
+              m: count(detail.not_in_scan),
+            })}
           </span>
         </div>
         {detail.titles.length === 0 ? (
-          <p className="scales-foot">
-            None of their requests are in the last scan yet, so there is nothing to list.
-          </p>
+          <p className="scales-foot">{t("scales.personPanel.noTitles")}</p>
         ) : (
           <div className="scales-titles">
             {detail.titles.map((t, i) => (
@@ -367,9 +413,9 @@ export function ScalesPanel({
       {detail.unmatched.length > 0 && (
         <section className="block">
           <div className="scales-h3row">
-            <h3>Not in the last scan</h3>
+            <h3>{t("scales.personPanel.notInScanHeading")}</h3>
             <span className="scales-count">
-              {count(detail.not_in_scan)} {detail.not_in_scan === 1 ? "request" : "requests"}
+              {t("scales.personPanel.notInScanCount", { n: detail.not_in_scan })}
             </span>
           </div>
           <UnmatchedList items={detail.unmatched} excludeName={detail.name} />
@@ -383,13 +429,14 @@ export function ScalesPanel({
  *  loaded. `PanelFallback` in `WhyShell.tsx` is the whole of it, `WhyPanelFallback` its twin,
  *  and these three strings all that differ. */
 export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
   return (
     <PanelFallback
       error={error}
       onClose={onClose}
-      waiting="Still gathering this person's requests."
-      loading="Gathering their requests…"
-      failure="Couldn't load this person's requests. Close this panel and click the card to try again."
+      waiting={t("scales.personPanel.fallback.waiting")}
+      loading={t("scales.personPanel.fallback.loading")}
+      failure={t("scales.personPanel.fallback.failure")}
     />
   );
 }

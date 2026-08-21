@@ -24,6 +24,7 @@
 
 import { useId, useRef, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { useDialogFocus } from "../focus";
 import { trapTab } from "./ModalShell";
 import { useFixedMenu, type MenuPos } from "./popoverFit";
@@ -54,6 +55,7 @@ export function CollectionChip({
    *  and by every row of its picker. */
   onOpen: (name: string) => void;
 }) {
+  const { t } = useTranslation();
   const popId = useId();
   const caretRef = useRef<HTMLButtonElement>(null);
   // Fixed, clamped to the viewport (rule 138, #816 phase 4 fence): `.card` sets `overflow:
@@ -79,7 +81,7 @@ export function CollectionChip({
       <button
         type="button"
         className={`coll-chip-main ${rest === 0 ? "coll-chip-only" : ""}`}
-        title={`In the collection "${name}"`}
+        title={t("scales.collectionChip.inCollection", { name })}
         onClick={(e) => {
           e.stopPropagation();
           // Non-null: the guard above already refused an empty array, so element 0 exists --
@@ -97,7 +99,7 @@ export function CollectionChip({
           className="coll-chip-caret"
           aria-expanded={popAt !== null}
           aria-controls={popAt !== null ? popId : undefined}
-          aria-label={`Show the other ${rest} collection${rest === 1 ? "" : "s"}`}
+          aria-label={t("scales.collectionChip.showOthers", { rest })}
           onClick={toggleOpen}
         >
           <CaretDownGlyph />
@@ -150,6 +152,7 @@ function CollectionPicker({
   onOpen: (name: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const firstItem = useRef<HTMLButtonElement>(null);
   useDialogFocus(menuRef, true, firstItem);
 
@@ -158,7 +161,7 @@ function CollectionPicker({
       ref={menuRef}
       id={popId}
       className="coll-pop"
-      aria-label="Collections"
+      aria-label={t("scales.collectionChip.pickerLabel")}
       tabIndex={-1}
       onKeyDown={(e) => trapTab(e, menuRef.current)}
       style={{

@@ -10,14 +10,16 @@
 // derived from it: adding a step cannot leave a stale total behind.
 
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import i18next from "../i18n";
 
-/** The flow, in order. The `key` is what the wizard routes on; the `label` is what the
- *  operator reads in the progress row. */
+/** The flow, in order. The `key` is what the wizard routes on; the progress row's word for
+ *  each step is `stepLabel` below, read from the catalog rather than carried here (rule 144). */
 export const SETUP_STEPS = [
-  { key: "password", label: "Password" },
-  { key: "plex", label: "Plex" },
-  { key: "connect", label: "Connect" },
-  { key: "scan", label: "Scan" },
+  { key: "password" },
+  { key: "plex" },
+  { key: "connect" },
+  { key: "scan" },
 ] as const;
 
 export type SetupStepKey = (typeof SETUP_STEPS)[number]["key"];
@@ -27,6 +29,21 @@ export function stepNumber(key: SetupStepKey): number {
   return SETUP_STEPS.findIndex((s) => s.key === key) + 1;
 }
 
+/** The progress row's per-step word. One literal `t()` call per step, since a computed key
+ *  is unreadable to the missing-key gate -- the same shape `jobMeta` in JobsPanel.tsx uses. */
+function stepLabel(key: SetupStepKey): string {
+  switch (key) {
+    case "password":
+      return i18next.t("setup.steps.password");
+    case "plex":
+      return i18next.t("setup.steps.plex");
+    case "connect":
+      return i18next.t("setup.steps.connect");
+    case "scan":
+      return i18next.t("setup.steps.scan");
+  }
+}
+
 /** The progress row.
  *
  *  Each dot says its state in words as well as in color and shape. A tick that differs from
@@ -34,11 +51,12 @@ export function stepNumber(key: SetupStepKey): number {
  *  operator cannot skip past -- the same reasoning the old checklist's tick carried, kept
  *  when the checklist became this. */
 function Stepper({ current }: { current: SetupStepKey }) {
+  const { t } = useTranslation();
   const at = stepNumber(current);
   return (
     // Named, so it is one identifiable thing rather than a bare list of four items -- and so
     // the setup gate's tests have a marker that is on every step and on nothing else.
-    <ol className="stepper" aria-label="Setup progress">
+    <ol className="stepper" aria-label={t("setup.stepper.ariaLabel")}>
       {SETUP_STEPS.map((step, i) => {
         const n = i + 1;
         const state = n < at ? "done" : n === at ? "now" : "";
@@ -47,13 +65,19 @@ function Stepper({ current }: { current: SetupStepKey }) {
             <span
               className="step-dot"
               role="img"
-              aria-label={n < at ? "Done" : n === at ? "Current step" : "Not done yet"}
+              aria-label={
+                n < at
+                  ? t("setup.stepper.doneAria")
+                  : n === at
+                    ? t("setup.stepper.currentAria")
+                    : t("setup.stepper.notDoneAria")
+              }
             >
               {n < at ? "✓" : n === at ? n : "○"}
             </span>
             {/* Dropped on a narrow screen for every step but the current one, so four labels
                 do not fight for one phone-width line (see 26-setup.css). */}
-            <span className="step-label">{step.label}</span>
+            <span className="step-label">{stepLabel(step.key)}</span>
             {n < SETUP_STEPS.length && <span className="step-rule" aria-hidden="true" />}
           </li>
         );
@@ -90,9 +114,12 @@ export function StepCard({
   children,
 }: {
   step: SetupStepKey;
+  /** Already resolved by the caller (`t("setup.<step>.title")`); this component only lays it
+   *  out. */
   title: string;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   // Each step is a separate element, so moving between them unmounts one card and mounts the
   // next: the button that was pressed goes with it, and focus falls to <body>. Landing focus
   // on the new heading names the step for a screen reader and puts the keyboard back in the
@@ -115,7 +142,7 @@ export function StepCard({
           {title}
         </h2>
         <span className="step-of">
-          Step {stepNumber(step)} of {SETUP_STEPS.length}
+          {t("setup.stepper.progress", { n: stepNumber(step), total: SETUP_STEPS.length })}
         </span>
       </div>
       {children}

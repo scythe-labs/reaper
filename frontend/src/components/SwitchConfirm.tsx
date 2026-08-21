@@ -21,6 +21,7 @@
 // refused press, so no caller has to know that.
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Notice } from "./Notice";
 
 export function SwitchConfirm({
@@ -36,6 +37,7 @@ export function SwitchConfirm({
   onDiscard: () => void;
   onKeep: () => void;
 }) {
+  const { t } = useTranslation();
   const ref = useRef<HTMLElement>(null);
 
   // Declared BEFORE the focus move below, because effects run in declaration order and this one
@@ -62,10 +64,10 @@ export function SwitchConfirm({
     <Notice tone="warn" as="div" ref={ref} tabIndex={-1}>
       {message}{" "}
       <button type="button" className="danger" onClick={onDiscard}>
-        Discard and switch
+        {t("shell.switchConfirm.discardAndSwitch")}
       </button>{" "}
       <button type="button" className="ghost" onClick={onKeep}>
-        Keep editing
+        {t("shell.switchConfirm.keepEditing")}
       </button>
     </Notice>
   );

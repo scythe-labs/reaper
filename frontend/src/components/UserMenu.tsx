@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { api, type AuthUser } from "../api";
 import { useBackGuard } from "../backnav";
@@ -14,6 +15,7 @@ import { Notice } from "./Notice";
  *  implemented, on a panel whose first child is a heading rather than an item. The honest
  *  simpler role is the one whose keyboard contract this actually keeps. */
 export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -89,7 +91,11 @@ export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: (
         ref={triggerRef}
         onClick={toggle}
         aria-expanded={open}
-        aria-label={updateAvailable ? `${user.username}, update available` : undefined}
+        aria-label={
+          updateAvailable
+            ? t("shell.userMenu.updateAvailableLabel", { username: user.username })
+            : undefined
+        }
       >
         {user.thumb_url ? (
           <img src={user.thumb_url} alt="" className="user-avatar" />
@@ -107,7 +113,9 @@ export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: (
           <div className="user-dropdown-head">
             <div className="user-name">{user.username}</div>
             <div className="muted user-provider">
-              {user.provider === "plex" ? "Plex account" : "Local account"}
+              {user.provider === "plex"
+                ? t("shell.userMenu.plexAccount")
+                : t("shell.userMenu.localAccount")}
             </div>
           </div>
           {updateAvailable && (
@@ -118,7 +126,7 @@ export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: (
                 onGoToAbout();
               }}
             >
-              Update available
+              {t("shell.userMenu.updateAvailable")}
               <span className="update-light" aria-hidden="true" />
             </button>
           )}
@@ -127,11 +135,11 @@ export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: (
             onClick={() => signOut.mutate()}
             disabled={signOut.isPending}
           >
-            {signOut.isPending ? "Signing out…" : "Sign out"}
+            {signOut.isPending ? t("shell.userMenu.signingOut") : t("shell.userMenu.signOut")}
           </button>
           {signOut.isError && (
             <Notice tone="error" inline>
-              Couldn't sign you out. Try again.
+              {t("shell.userMenu.signOutFailed")}
             </Notice>
           )}
         </div>

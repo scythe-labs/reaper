@@ -10,6 +10,7 @@
 // list, not about the chips.
 
 import { useRef, useState, type RefObject } from "react";
+import { useTranslation } from "react-i18next";
 
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 
@@ -17,7 +18,7 @@ export function TagsEditor({
   tags,
   onTags,
   /** The accessible name of the add box. */
-  addLabel = "Add a tag",
+  addLabel,
   /** The id of a sentence saying why the form will not submit. It lands on the add box,
    *  because the disabled submit that sentence is about is out of the Tab order. */
   describedBy,
@@ -27,14 +28,15 @@ export function TagsEditor({
   addLabel?: string;
   describedBy?: string | undefined;
 }) {
+  const { t } = useTranslation();
   const [input, setInput] = useState("");
   const add = () => {
-    const t = input.trim();
+    const tag = input.trim();
     // Case-folded, because Sonarr and Radarr lower-case every label: "Keep" and "keep" are
     // one tag there, and adding both here left the list reporting a count of zero against
     // whichever spelling lost (#509). The server folds the same way on save.
-    const already = tags.some((x) => x.toLowerCase() === t.toLowerCase());
-    if (t && !already) onTags([...tags, t]);
+    const already = tags.some((x) => x.toLowerCase() === tag.toLowerCase());
+    if (tag && !already) onTags([...tags, tag]);
     setInput("");
   };
   // Removing a chip destroys the button holding focus, so without this the operator lands on
@@ -45,9 +47,9 @@ export function TagsEditor({
   return (
     <div className="tag-editor">
       <div className="tag-chips" ref={chips.ref as RefObject<HTMLDivElement>}>
-        {tags.map((t, i) => (
-          <span key={t} className="tag-chip">
-            {t}
+        {tags.map((tag, i) => (
+          <span key={tag} className="tag-chip">
+            {tag}
             <button
               {...REMOVES_ITS_ROW}
               // Inside the list modal's <form>, where a bare <button> is type="submit" and a
@@ -55,9 +57,9 @@ export function TagsEditor({
               type="button"
               onClick={() => {
                 chips.removing(i);
-                onTags(tags.filter((x) => x !== t));
+                onTags(tags.filter((x) => x !== tag));
               }}
-              aria-label={`Remove ${t}`}
+              aria-label={t("shell.tagsEditor.removeTag", { tag })}
             >
               ✕
             </button>
@@ -68,7 +70,7 @@ export function TagsEditor({
           // A placeholder is a name of last resort, so this box was announcing itself as the
           // example text inside it and lost even that the moment anything was typed. Same
           // defect #136 fixed on the Plex panel's address pair.
-          aria-label={addLabel}
+          aria-label={addLabel ?? t("shell.tagsEditor.addLabel")}
           aria-describedby={describedBy}
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -79,7 +81,7 @@ export function TagsEditor({
             }
           }}
           onBlur={add}
-          placeholder="add a tag…"
+          placeholder={t("shell.tagsEditor.placeholder")}
         />
       </div>
     </div>

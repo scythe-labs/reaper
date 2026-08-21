@@ -1,16 +1,9 @@
 import type { ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PolicyIcon, ReapIcon, ReviewIcon, ScalesIcon, SettingsIcon } from "./navIcons";
 import type { View } from "../navIntent";
 import { useSafety } from "../useSafety";
-
-const NAV: { id: View; label: string; Icon: () => ReactElement }[] = [
-  { id: "review", label: "Review", Icon: ReviewIcon },
-  { id: "policy", label: "Policy", Icon: PolicyIcon },
-  { id: "reap", label: "Reap", Icon: ReapIcon },
-  { id: "fairness", label: "Scales", Icon: ScalesIcon },
-  { id: "settings", label: "Settings", Icon: SettingsIcon },
-];
 
 /** The section nav. One element in two shapes: a rail sitting on the masthead's own bottom
  *  border on a wide screen, and the phone's bottom bar under 900px, where the labels give way
@@ -22,6 +15,14 @@ const NAV: { id: View; label: string; Icon: () => ReactElement }[] = [
  *  directly below, and the banner renders on every view, which is why the dot is `aria-hidden`:
  *  the sentence is already in the tree, and the decoration would only say it twice. */
 export function SectionNav({ view, onChange }: { view: View; onChange: (next: View) => void }) {
+  const { t } = useTranslation();
+  const NAV: { id: View; label: string; Icon: () => ReactElement }[] = [
+    { id: "review", label: t("shell.sectionNav.review"), Icon: ReviewIcon },
+    { id: "policy", label: t("shell.sectionNav.policy"), Icon: PolicyIcon },
+    { id: "reap", label: t("shell.sectionNav.reap"), Icon: ReapIcon },
+    { id: "fairness", label: t("shell.sectionNav.scales"), Icon: ScalesIcon },
+    { id: "settings", label: t("shell.sectionNav.settings"), Icon: SettingsIcon },
+  ];
   const { data, isLoading, isError } = useSafety();
   // No dot means "not armed", so a failed read must never fall through to no dot (rule 17/36):
   // it wears the amber "we could not look" mark instead, the tone the banner uses for the same
@@ -35,7 +36,7 @@ export function SectionNav({ view, onChange }: { view: View; onChange: (next: Vi
         : null;
 
   return (
-    <nav className="views" aria-label="Sections">
+    <nav className="views" aria-label={t("shell.sectionNav.sectionsLabel")}>
       {NAV.map((n) => (
         <button
           key={n.id}

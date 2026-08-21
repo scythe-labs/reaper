@@ -3105,8 +3105,10 @@ TAGLINE = "Grave decisions, clearly explained"
 #: tagline in the one place it does not belong.
 TAGLINE_SITES = (
     "README.md",
-    "frontend/src/App.tsx",
-    "frontend/src/components/Login.tsx",
+    # The masthead (App.tsx) and the sign-in card (Login.tsx) both read the catalog's one
+    # `shell.app.brandTagline` key since Stage 4, so the catalog is their site; the
+    # frontend's key gate holds each component to that key.
+    "frontend/src/locales/en/ui.json",
     "website/docusaurus.config.ts",
     "manual/index.mdx",
     "src/reaper/main.py",
@@ -4126,16 +4128,14 @@ def test_every_query_failure_branch_is_counted() -> None:
 # construction. Its line now points at the close the modal already has, and ``App.tsx`` is gone
 # from this dict.
 _RELOAD_ADVICE = {
-    "frontend/src/components/Fairness.tsx": 1,
-    "frontend/src/components/NotInScanPanel.tsx": 1,
-    "frontend/src/components/PolicyEditor.tsx": 1,
     # The word survives inside the backup.restore.reloadButton key literals; the advice
-    # itself lives in the catalog rows below.
+    # itself lives in the catalog row below.
     "frontend/src/components/RestoreCard.tsx": 2,
-    # Every converted surface's advice, one count per catalog message carrying the word:
-    # About, General, Plex, Jobs' two, and group 2's Backup, Security, and the three reap
-    # sentences, plus the catalog's own reloadButton label.
-    "frontend/src/locales/en/ui.json": 12,
+    # Every converted surface's advice, one count per catalog message carrying the
+    # word, plus the catalog's own reloadButton label. Stage 4 converted every
+    # component that gave it, so this is the whole population but for RestoreCard's
+    # key literals above.
+    "frontend/src/locales/en/ui.json": 15,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -4207,30 +4207,52 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # keys differing by exactly that clause are both correct, and a sixth site dropping the advice
 # earns its own key here with the same reasoning written down.
 _NEVER_LOADED_COPY = {
-    "Couldn't load Scales.": ["frontend/src/components/Fairness.tsx"],
-    "Couldn't load new lines, and updates are paused.": ["frontend/src/locales/en/ui.json"],
-    "Couldn't load new lines. Reaper is trying again.": ["frontend/src/locales/en/ui.json"],
-    "Couldn't load the Leaving Soon settings.": ["frontend/src/locales/en/ui.json"],
-    "Couldn't load the library list.": [
-        "frontend/src/components/SetupPlexStep.tsx",
+    "Couldn't load Scales.": [
         "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load the library list. Try again.": ["frontend/src/components/SetupPlexStep.tsx"],
-    "Couldn't load the log.": ["frontend/src/locales/en/ui.json"],
+    "Couldn't load new lines, and updates are paused.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load new lines. Reaper is trying again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the Leaving Soon settings.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the library list.": [
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the library list. Try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the log.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load the reasons for this item. Close this panel and click the item to try again.": [
-        "frontend/src/components/WhyPanelFallback.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the rest of the list, so nothing was selected. Your picks are as they"
-    " were. Try again.": ["frontend/src/components/ReviewQueue.tsx"],
-    "Couldn't load the seasons. Collapse and expand to try again.": [
-        "frontend/src/components/ReviewQueue.tsx"
+    " were. Try again.": [
+        "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load the shelf status. Reload to try again.": ["frontend/src/locales/en/ui.json"],
-    "Couldn't load the upkeep jobs. Reload to try again.": ["frontend/src/locales/en/ui.json"],
-    "Couldn't load the watch history record.": ["frontend/src/locales/en/ui.json"],
-    "Couldn't load these settings.": ["frontend/src/components/PolicyEditor.tsx"],
+    "Couldn't load the seasons. Collapse and expand to try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the shelf status. Reload to try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the upkeep jobs. Reload to try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load the watch history record.": [
+        "frontend/src/locales/en/ui.json",
+    ],
+    "Couldn't load these settings.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load these settings. Reload to try again.": [
-        "frontend/src/components/PolicyEditor.tsx",
+        "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
@@ -4240,30 +4262,35 @@ _NEVER_LOADED_COPY = {
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this person's requests. Close this panel and click the card to try again.": [
-        "frontend/src/components/ScalesPanel.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load what a reap would remove. Reaper just can't show it right now. Reload"
-    " to try again.": ["frontend/src/locales/en/ui.json"],
+    " to try again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Couldn't load your connections.": [
-        "frontend/src/components/SetupConnectStep.tsx",
+        "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your lists, so there is no way to tell here whether they are working.": [
         "frontend/src/locales/en/ui.json",
         "frontend/src/locales/en/ui.json",
     ],
-    "Couldn't load your review queue.": ["frontend/src/components/ReviewQueue.tsx"],
+    "Couldn't load your review queue.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Reaper couldn't load the things a rule can look at, so there's nothing to pick from"
     " right now. The rules you've already added are still here.": [
-        "frontend/src/components/PolicyRuleEditors.tsx",
-        "frontend/src/components/PolicyRuleEditors.tsx",
+        "frontend/src/locales/en/ui.json",
     ],
     "Reaper couldn't load this plan. Reload the page to try again.": [
-        "frontend/src/locales/en/ui.json"
+        "frontend/src/locales/en/ui.json",
     ],
-    "Reaper couldn't load this reap. Close this and try View again.": ["frontend/src/App.tsx"],
+    "Reaper couldn't load this reap. Close this and try View again.": [
+        "frontend/src/locales/en/ui.json",
+    ],
     "Reaper couldn't load your lists, so there's nothing to pick from right now.": [
-        "frontend/src/components/PolicyRuleEditors.tsx"
+        "frontend/src/locales/en/ui.json",
     ],
 }
 

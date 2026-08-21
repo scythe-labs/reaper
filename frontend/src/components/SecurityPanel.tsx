@@ -117,6 +117,7 @@ function AdminPasswordForm({
     <Trans
       i18nKey="security.form.tooShortError"
       values={{ min: MIN_ADMIN_PASSWORD, count: pw.length }}
+      components={{ b: <b /> }}
     />
   ) : mismatch ? (
     t("security.form.mismatchError")

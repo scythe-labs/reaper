@@ -36,7 +36,7 @@ export function AboutPanel() {
           reaction to anything pressed. */}
       {update.data?.channel === "dev" && (
         <Notice tone="warn" standing>
-          <Trans i18nKey="about.devBuildWarning" />
+          <Trans i18nKey="about.devBuildWarning" components={{ code: <code /> }} />
         </Notice>
       )}
       {isPending && <p className="muted">{t("about.loading")}</p>}

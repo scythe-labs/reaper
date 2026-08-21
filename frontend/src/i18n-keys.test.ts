@@ -41,7 +41,16 @@ const T_CALLEES = new Set(["t", "i18next.t", "i18n.t"]);
 const scriptKind = (fileName: string) =>
   fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
 
-type Ref = { file: string; line: number; key: string };
+type Ref = {
+  file: string;
+  line: number;
+  key: string;
+  /** How the message will render: t() interpolates text only, Trans can map tags. */
+  via: "t" | "trans";
+  /** Trans only: the tag names its `components` prop maps; null when the prop is
+   *  absent; "opaque" when it is an expression this file-local reader cannot resolve. */
+  components: string[] | "opaque" | null;
+};
 type Refs = { literal: Ref[]; dynamic: Ref[] };
 
 export function catalogRefs(fileName: string, text: string): Refs {
@@ -53,13 +62,86 @@ export function catalogRefs(fileName: string, text: string): Refs {
     scriptKind(fileName),
   );
   const refs: Refs = { literal: [], dynamic: [] };
-  const record = (node: ts.Node, key: string | null) => {
+
+  // A component whose own data is named `t` destructures the translator under another
+  // name (`const { t: tr } = useTranslation()`), so the callee set is per-file: the three
+  // canonical spellings plus every alias this file binds that way (rule 147).
+  const callees = new Set(T_CALLEES);
+  const collectAliases = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      node.initializer.expression.getText(sf) === "useTranslation" &&
+      ts.isObjectBindingPattern(node.name)
+    ) {
+      for (const el of node.name.elements) {
+        const prop = el.propertyName?.getText(sf) ?? el.name.getText(sf);
+        if (prop === "t") callees.add(el.name.getText(sf));
+      }
+    }
+    node.forEachChild(collectAliases);
+  };
+  collectAliases(sf);
+
+  const record = (
+    node: ts.Node,
+    key: string | null,
+    via: "t" | "trans" = "t",
+    components: string[] | "opaque" | null = null,
+  ) => {
     const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
-    if (key === null) refs.dynamic.push({ file: fileName, line: line + 1, key: "<computed>" });
-    else refs.literal.push({ file: fileName, line: line + 1, key });
+    const at = { file: fileName, line: line + 1, via, components };
+    if (key === null) refs.dynamic.push({ ...at, key: "<computed>" });
+    else refs.literal.push({ ...at, key });
+  };
+
+  // Object-literal bindings in this file (`const shared = { exact: <span/> }`), so a
+  // `components={shared}` spelling resolves instead of hiding the map (rule 147).
+  const objectBindings = new Map<string, string[]>();
+  const collectBindings = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isObjectLiteralExpression(node.initializer)
+    ) {
+      const names: string[] = [];
+      for (const prop of node.initializer.properties) {
+        if (prop.name) names.push(prop.name.getText(sf).replace(/^["']|["']$/g, ""));
+      }
+      objectBindings.set(node.name.getText(sf), names);
+    }
+    node.forEachChild(collectBindings);
+  };
+  collectBindings(sf);
+
+  // The tag names a Trans element's `components` prop maps: read off an inline object
+  // literal, resolved through a same-file binding, or "opaque" when neither reading
+  // applies -- an opaque map cannot be verified, only a missing or readable one can.
+  const componentsOf = (attr: ts.JsxAttribute): string[] | "opaque" | null => {
+    const siblings = attr.parent.properties;
+    for (const p of siblings) {
+      if (ts.isJsxAttribute(p) && p.name.getText(sf) === "components" && p.initializer) {
+        let expr: ts.Expression | undefined;
+        if (ts.isJsxExpression(p.initializer)) expr = p.initializer.expression;
+        if (expr && ts.isObjectLiteralExpression(expr)) {
+          const names: string[] = [];
+          for (const prop of expr.properties) {
+            if (prop.name) names.push(prop.name.getText(sf).replace(/^["']|["']$/g, ""));
+          }
+          return names;
+        }
+        if (expr && ts.isIdentifier(expr)) {
+          return objectBindings.get(expr.getText(sf)) ?? "opaque";
+        }
+        return "opaque";
+      }
+    }
+    return null;
   };
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && T_CALLEES.has(node.expression.getText(sf))) {
+    if (ts.isCallExpression(node) && callees.has(node.expression.getText(sf))) {
       const key = node.arguments[0];
       if (key === undefined) {
         // no key at all: let it fall through as computed, someone is doing something odd
@@ -70,8 +152,9 @@ export function catalogRefs(fileName: string, text: string): Refs {
         record(key, null);
       }
     } else if (ts.isJsxAttribute(node) && node.name.getText(sf) === "i18nKey" && node.initializer) {
-      if (ts.isStringLiteral(node.initializer)) record(node.initializer, node.initializer.text);
-      else record(node.initializer, null);
+      if (ts.isStringLiteral(node.initializer))
+        record(node.initializer, node.initializer.text, "trans", componentsOf(node));
+      else record(node.initializer, null, "trans", componentsOf(node));
     }
     node.forEachChild(visit);
   };
@@ -134,6 +217,51 @@ describe("the i18n key gate", () => {
     ).toEqual([]);
   });
 
+  it("every tag a message uses is one its render site can draw (#852)", () => {
+    // Trans auto-renders only br/strong/i/p (react-i18next's transKeepBasicHtmlNodesFor
+    // default); any other tag needs the `components` prop, or the operator reads the tag
+    // itself: "Use at least 12 characters. <b>7 so far.</b>". And a t() call renders text
+    // only, so a tagged message behind t() is always wrong.
+    const AUTO = new Set(["br", "strong", "i", "p"]);
+    const tagsIn = (message: string): Set<string> => {
+      const tags = new Set<string>();
+      for (const m of message.matchAll(/<\/?([A-Za-z]\w*)\s*\/?>/g)) tags.add(m[1]!);
+      return tags;
+    };
+    const broken: string[] = [];
+    for (const r of allRefs().literal) {
+      const message = CATALOG[r.key];
+      if (message === undefined) continue; // direction 1 reports it
+      const tags = tagsIn(message);
+      if (tags.size === 0) continue;
+      if (r.via === "t") {
+        broken.push(
+          `${r.file}:${r.line}: t("${r.key}") renders tags as text: <${[...tags].join(">, <")}>`,
+        );
+        continue;
+      }
+      if (r.components === "opaque") continue; // an unreadable map is not a missing one
+      const drawn = new Set([...AUTO, ...(r.components ?? [])]);
+      const missing = [...tags].filter((tag) => !drawn.has(tag));
+      if (missing.length > 0) {
+        broken.push(
+          `${r.file}:${r.line}: <Trans i18nKey="${r.key}"> has no components entry for ` +
+            `<${missing.join(">, <")}>, so the tag prints literally`,
+        );
+      }
+    }
+    expect(
+      broken,
+      `messages whose tags the render site cannot draw:\n${broken.join("\n")}`,
+    ).toEqual([]);
+
+    // The matcher's own spellings (rule 147): flagged and clean forms of both render paths.
+    expect(tagsIn("Keep <btn>going</btn> to <strong>win</strong>")).toEqual(
+      new Set(["btn", "strong"]),
+    );
+    expect(tagsIn("a < b and {n} of {m}")).toEqual(new Set());
+  });
+
   it("every catalog message parses as ICU", () => {
     // The parser must be able to fail, or the loop below proves nothing (rule 145).
     expect(() => new IntlMessageFormat("{n, plural", "en-US")).toThrow();
@@ -160,6 +288,17 @@ describe("the i18n key gate", () => {
     );
     expect(refs.literal.map((r) => r.key)).toEqual(["a.literal", "b.literal", "c.literal"]);
     expect(refs.dynamic.map((r) => r.line)).toEqual([4, 5, 6]);
+
+    // The alias spelling: a component whose data is named `t` binds the translator as
+    // `tr`, and the gate reads it exactly like `t`.
+    const aliased = catalogRefs(
+      "probe.tsx",
+      `const { t: tr } = useTranslation();
+       const a = tr("aliased.literal");
+       const b = tr(key);`,
+    );
+    expect(aliased.literal.map((r) => r.key)).toEqual(["aliased.literal"]);
+    expect(aliased.dynamic).toHaveLength(1);
 
     // A .ts module: a generic call cannot swallow the t() beside it as phantom JSX.
     const tsRefs = catalogRefs(

@@ -20,6 +20,7 @@
 // restore either.
 
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { api } from "../api";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
@@ -34,6 +35,7 @@ export function SetupRestoreModal({
   password: string | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   // `armed` is server state, so it has to be read rather than assumed: a restore staged from
   // another tab, or before this browser was opened, must show as staged here too.
   const { data, isPending, isError } = useQuery({
@@ -42,20 +44,16 @@ export function SetupRestoreModal({
   });
 
   return (
-    <ModalShell title="Restore from a backup" onClose={onClose}>
+    <ModalShell title={t("setup.restore.title")} onClose={onClose}>
       {/* Three states, none of them silence (rule 17/36). A failed read must not fall through
           to the idle card: that card would invite an upload whose confirm is about to be
           refused, and it would hide an armed restore that is already staged. */}
-      {isPending && <p className="muted">Loading…</p>}
+      {isPending && <p className="muted">{t("setup.restore.loading")}</p>}
       {/* Close and reopen, never "reload the page". A reload is the app-wide advice and it is
           wrong from inside the wizard: the password from step one lives in React state, so a
           reload would drop it and this door would go back to asking for it. Reopening the
           modal refetches, which is the whole of what a reload would have achieved. */}
-      {isError && !data && (
-        <Notice tone="error">
-          Reaper couldn't check whether a restore is already waiting. Close this and open it again.
-        </Notice>
-      )}
+      {isError && !data && <Notice tone="error">{t("setup.restore.checkFailedError")}</Notice>}
       {data && <RestoreFlow armed={data.restore_armed} heldPassword={password} />}
     </ModalShell>
   );

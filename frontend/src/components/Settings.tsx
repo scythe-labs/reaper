@@ -11,6 +11,8 @@
 // Security panel only manages the admin password that confirms it.
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import i18next from "../i18n";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { AboutPanel } from "./AboutPanel";
 import { BackupPanel } from "./BackupPanel";
@@ -50,18 +52,18 @@ export type Panel =
  *  table this must agree with (SettingsNav.test.tsx), so a section added here fails there naming
  *  what to do rather than as an unexplained label mismatch (rules 103, 144). */
 export const PANELS: { id: Panel; label: string }[] = [
-  { id: "general", label: "General" },
-  { id: "services", label: "Services" },
-  { id: "plex", label: "Plex" },
-  { id: "lists", label: "Lists" },
-  { id: "jobs", label: "Jobs" },
-  { id: "notifications", label: "Notifications" },
-  { id: "security", label: "Security" },
+  { id: "general", label: i18next.t("shell.settings.panels.general") },
+  { id: "services", label: i18next.t("shell.settings.panels.services") },
+  { id: "plex", label: i18next.t("shell.settings.panels.plex") },
+  { id: "lists", label: i18next.t("shell.settings.panels.lists") },
+  { id: "jobs", label: i18next.t("shell.settings.panels.jobs") },
+  { id: "notifications", label: i18next.t("shell.settings.panels.notifications") },
+  { id: "security", label: i18next.t("shell.settings.panels.security") },
   // Named for both halves, matching the panel's own heading: restoring is the half an operator
   // comes looking for under pressure, and a tab reading "Backup" alone hides it.
-  { id: "backup", label: "Backup & Restore" },
-  { id: "logs", label: "Logs" },
-  { id: "about", label: "About" },
+  { id: "backup", label: i18next.t("shell.settings.panels.backup") },
+  { id: "logs", label: i18next.t("shell.settings.panels.logs") },
+  { id: "about", label: i18next.t("shell.settings.panels.about") },
 ];
 
 export function Settings({
@@ -84,6 +86,7 @@ export function Settings({
    *  Optional the way `SafetyBanner`'s jump is: tests mount Settings without a navigator. */
   onGoToPolicy?: (() => void) | undefined;
 }) {
+  const { t } = useTranslation();
   // General's save bar can hold six unsaved fields at once, and switching section unmounts the
   // panel holding them. So the switch waits for a yes, the same two-step confirm the policy
   // editor's Movies/TV switch uses and in the same place: directly under the control that was
@@ -174,10 +177,10 @@ export function Settings({
   return (
     <div className="settings">
       {narrow ? (
-        <nav className="settings-picker" aria-label="Settings sections">
+        <nav className="settings-picker" aria-label={t("shell.settings.sectionsLabel")}>
           <select
             value={panel}
-            aria-label="Settings section"
+            aria-label={t("shell.settings.sectionLabel")}
             onChange={(e) => confirmSwitch.request(e.target.value as Panel)}
           >
             {PANELS.map((p) => (
@@ -188,7 +191,7 @@ export function Settings({
           </select>
         </nav>
       ) : (
-        <nav className="settings-nav" aria-label="Settings sections">
+        <nav className="settings-nav" aria-label={t("shell.settings.sectionsLabel")}>
           {PANELS.map((p) => (
             <button
               key={p.id}
@@ -218,8 +221,8 @@ export function Settings({
           nonce={confirmSwitch.nonce}
           message={
             panel === "backup"
-              ? `The backup file you chose isn't restored yet. Switching to ${pendingLabel} drops it.`
-              : `You have unsaved ${leavingLabel} settings. Switching to ${pendingLabel} discards them.`
+              ? t("shell.settings.switchConfirmBackup", { pendingLabel })
+              : t("shell.settings.switchConfirmGeneric", { leavingLabel, pendingLabel })
           }
           onDiscard={confirmSwitch.discard}
           onKeep={confirmSwitch.keep}

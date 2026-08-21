@@ -10,35 +10,51 @@
 // reusing the requested-title row chrome. Titles are looked up server-side; when one is
 // missing the row falls back to its type and date, never an id (rule 21).
 
+import { useTranslation } from "react-i18next";
 import type { UnmatchedRequest } from "../api";
-import { count, date } from "../format";
+import { date } from "../format";
+import i18next from "../i18n";
 import { PosterFallback } from "./PosterFallback";
 
 /** The reason groups, in reading order: the benign-and-expected first (a rescan fixes it),
  *  then the ones worth a look. Each names itself and carries one bound line explaining what
- *  it means for their files (rule 45). A colored left stripe encodes the reason at a glance. */
-const REASONS: { key: string; heading: string; cls: string; why: string }[] = [
-  {
-    key: "after_scan",
-    heading: "Added since the last scan",
-    cls: "nis-group--new",
-    why: "These arrived or were requested after your last scan ran. Your next scan will include them.",
-  },
-  {
-    key: "set_aside",
-    heading: "Skipped by the last scan",
-    cls: "nis-group--aside",
-    why: "The last scan didn't weigh these. Usually nothing is downloaded to disk yet, what's on your server is a different edition than the one requested, or the server holding it was offline during the scan.",
-  },
-  {
-    key: "no_id",
-    heading: "Couldn't be matched",
-    cls: "nis-group--nomatch",
-    why: "Seerr sent no movie or show id for these, so they can't be lined up with anything on your server.",
-  },
+ *  it means for their files (rule 45). A colored left stripe encodes the reason at a glance.
+ *  Heading and why text live in the catalog, keyed by `reasonHeading`/`reasonWhy` below --
+ *  a plain data array can't hold translated strings, since a language change wouldn't be
+ *  picked up on re-render (same reason `reasonLabel` in ReapBreakdown.tsx is a function). */
+const REASONS: { key: string; cls: string }[] = [
+  { key: "after_scan", cls: "nis-group--new" },
+  { key: "set_aside", cls: "nis-group--aside" },
+  { key: "no_id", cls: "nis-group--nomatch" },
 ];
 
 const KNOWN = new Set(REASONS.map((r) => r.key));
+
+function reasonHeading(key: string): string {
+  switch (key) {
+    case "after_scan":
+      return i18next.t("scales.unmatchedList.reasons.afterScan.heading");
+    case "set_aside":
+      return i18next.t("scales.unmatchedList.reasons.setAside.heading");
+    case "no_id":
+      return i18next.t("scales.unmatchedList.reasons.noId.heading");
+    default:
+      return key;
+  }
+}
+
+function reasonWhy(key: string): string {
+  switch (key) {
+    case "after_scan":
+      return i18next.t("scales.unmatchedList.reasons.afterScan.why");
+    case "set_aside":
+      return i18next.t("scales.unmatchedList.reasons.setAside.why");
+    case "no_id":
+      return i18next.t("scales.unmatchedList.reasons.noId.why");
+    default:
+      return "";
+  }
+}
 
 /** Who asked, in plain words. On the board it names the requesters ("by A, B"); inside one
  *  person's drawer their own name is dropped and it reads "also asked by X" -- matching the
@@ -49,21 +65,24 @@ function requesterLabel(names: string[], excludeName?: string): string | null {
   if (others.length === 0) return null;
   const shown = others.slice(0, 2).join(", ");
   const extra = others.length - 2;
-  const list =
-    extra > 0 ? `${shown} and ${count(extra)} ${extra === 1 ? "other" : "others"}` : shown;
-  return excludeName ? `also asked by ${list}` : `by ${list}`;
+  const list = extra > 0 ? i18next.t("scales.meta.andOthers", { shown, n: extra }) : shown;
+  return excludeName
+    ? i18next.t("scales.meta.alsoAskedBy", { list })
+    : i18next.t("scales.meta.askedBy", { list });
 }
 
 /** One unmatched request: what it is (or a graceful fallback when unnamed), its type, when it
  *  was asked for or arrived, and who asked. Static -- there is nothing to open. */
 function Row({ u, excludeName }: { u: UnmatchedRequest; excludeName?: string | undefined }) {
-  const kind = u.media_type === "movie" ? "Movie" : "Series";
+  const { t } = useTranslation();
+  const kind =
+    u.media_type === "movie" ? t("scales.mediaKind.movie") : t("scales.mediaKind.series");
   // Some stored titles already end in their year; don't print it twice.
   const showYear = u.title != null && u.year != null && !u.title.trim().endsWith(`(${u.year})`);
 
   const meta: string[] = [kind];
-  if (u.available_at) meta.push(`arrived ${date(u.available_at)}`);
-  else if (u.requested_at) meta.push(`asked ${date(u.requested_at)}`);
+  if (u.available_at) meta.push(t("scales.meta.arrived", { date: date(u.available_at) }));
+  else if (u.requested_at) meta.push(t("scales.meta.asked", { date: date(u.requested_at) }));
   const who = requesterLabel(u.requested_by, excludeName);
   if (who) meta.push(who);
 
@@ -74,9 +93,9 @@ function Row({ u, excludeName }: { u: UnmatchedRequest; excludeName?: string | u
       </span>
       <span className="scales-title-main">
         <span className={`scales-title-name${u.title ? "" : " nis-noname"}`}>
-          {u.title ?? "Name unavailable"}
+          {u.title ?? t("scales.unmatchedList.nameUnavailable")}
           {showYear && <span className="scales-title-yr"> ({u.year})</span>}
-          {u.is_4k && <span className="scales-4k">4K</span>}
+          {u.is_4k && <span className="scales-4k">{t("scales.mediaKind.tag4k")}</span>}
         </span>
         <span className="scales-title-meta">
           {meta.map((m, i) => (
@@ -111,12 +130,13 @@ function Group({
   items: UnmatchedRequest[];
   excludeName?: string | undefined;
 }) {
+  const { t } = useTranslation();
   return (
     <section className={`nis-group ${cls}`}>
       <div className="nis-group-head">
         <h3>{heading}</h3>
         <span className="nis-count">
-          {count(items.length)} {items.length === 1 ? "title" : "titles"}
+          {t("scales.unmatchedList.titleCount", { n: items.length })}
         </span>
       </div>
       <p className="nis-why">{why}</p>
@@ -138,21 +158,22 @@ export function UnmatchedList({
   items: UnmatchedRequest[];
   excludeName?: string | undefined;
 }) {
+  const { t } = useTranslation();
   // Any reason the frontend doesn't recognize (a future backend code) still lists under a
   // catch-all, so a request is never silently dropped from the count the card promised.
   const other = items.filter((u) => !KNOWN.has(u.reason));
 
   return (
     <>
-      {REASONS.map(({ key, heading, cls, why }) => {
+      {REASONS.map(({ key, cls }) => {
         const group = items.filter((u) => u.reason === key);
         if (group.length === 0) return null;
         return (
           <Group
             key={key}
-            heading={heading}
+            heading={reasonHeading(key)}
             cls={cls}
-            why={why}
+            why={reasonWhy(key)}
             items={group}
             excludeName={excludeName}
           />
@@ -160,9 +181,9 @@ export function UnmatchedList({
       })}
       {other.length > 0 && (
         <Group
-          heading="Not in the last scan"
+          heading={t("scales.unmatchedList.otherHeading")}
           cls="nis-group--nomatch"
-          why="These requests aren't in the last scan. Run a new scan to sort them out."
+          why={t("scales.unmatchedList.otherWhy")}
           items={other}
           excludeName={excludeName}
         />

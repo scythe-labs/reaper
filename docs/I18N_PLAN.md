@@ -29,11 +29,12 @@ undercount a tree a third larger.
 
 | Surface | Count |
 | --- | --- |
-| Frontend source files (non-test) | 123 files, 36,287 lines |
-| `aria-label=` / `title=` / `placeholder=` literals | 122 / 70 / 29 |
-| JSX text nodes † | ~322 |
+| Frontend source files (non-test) | 125 files, 37,128 lines (re-measured after Stage 4) |
+| `aria-label=` / `title=` / `placeholder=` literals | 0 in the 74 converted files (Stage 4; was 122 / 70 / 29) |
+| JSX text nodes † | 0 in the 74 converted files (Stage 4; was ~322) |
 | Multi-word quoted string literals † | ~446 |
-| `announce()` call sites (live-region copy) | 56 |
+| `announce()` call sites (live-region copy) | every one reads the catalog (Stage 4; was 56 English) |
+| Catalog keys in `locales/en/ui.json` (Stage 4) | 2,091 |
 | In-app manual (`frontend/src/docs/content/*.ts`) | 6,509 words |
 | **Frontend test queries bound to English copy (`getBy*`/`findBy*`/`queryBy*` by Text/Role/Label)** | **2,434** |
 | Backend prose-bearing kwargs (`detail=`, `why=`, `text=`) | 39 (was 61; Stage 3 converted the gate, signal and keep details to ids) |
@@ -315,12 +316,22 @@ opens in the why-panel.
 
 ### Stage 4 — extract the UI catalog
 
-**Status:** in execution. The gates and the workflow landed first (2026-08-20, PR #848):
-`i18n-extraction.test.ts` fails on any user-visible literal left in a file its CONVERTED
-list declares extracted, `i18n-keys.test.ts` fails on a referenced key missing from the
-catalog, an orphaned catalog key, and a message ICU cannot parse, and
-`.claude/workflows/i18n-stage4-extract.js` is the committed per-surface harness. Surfaces
-follow, each group its own PR, with only the merge step editing `en.json` and CONVERTED.
+**Status:** done (2026-08-20, PRs #848, #849, #850, #856). The gates and the workflow landed
+first (#848): `i18n-extraction.test.ts` fails on any user-visible literal left in a file its
+CONVERTED list declares extracted, `i18n-keys.test.ts` fails on a referenced key missing from
+the catalog, an orphaned key, a message ICU cannot parse, and a `Trans` tag its site cannot
+draw (#852), and `.claude/workflows/i18n-stage4-extract.js` is the committed per-surface
+harness. Three extraction PRs then moved every UI surface: the settings panels (#849), the
+reap, security, backup and deletion surfaces (#850), and the rest in one run (#856). CONVERTED
+holds 74 files and the catalog 2,091 keys, extracted verbatim, so the suite's copy-bound
+queries pass unchanged. Findings: the gate's first live run needed value-position scanning
+(a `title` component prop, `===` operands, ICU discriminant params are data, not copy);
+ten cross-language guards that pin English sentences followed them into the catalog; a
+missing ICU param fails silently at format time and only a copy-pinned test catches it; the
+product's name stays a source literal, exempt from the gate, because the README-banner
+generator parses it. Still English by design: the frozen legacy why-maps serving
+pre-Stage 3 rows, `humanDays`/`humanWindow` span builders, and `api.ts`'s error sentences,
+each to be localized when a first non-English locale lands.
 
 The mechanical bulk: ~1,200 strings, `Settings.tsx` and the seven panels split out of it (142
 between them, measured before the split) and `WhyPanel.tsx` (70) heaviest. The shell kept a share
