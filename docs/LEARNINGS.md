@@ -4276,6 +4276,10 @@ and collects all 4721 tests (2.8s).
 - Hypothesis's `facts()` is draw-count-bound: 7-8ms of each 9-11ms example is generation, and
   replacing its free-text Unknown reasons with a three-word vocabulary moved it only
   10.0 -> 8.1 ms/example. Not worth giving up shrinking over real text.
+- Building the schema once per worker and copying it per test (#855) was estimated from the
+  83ms `create_all` above at ~20s of CI and measured at four workers as setup CPU 230s -> 207s,
+  wall 178s -> 172.5s. A 3% cut. The copy, the `Settings` construction and the per-test
+  directory are most of what the fixture still does, and the lifespan boot is untouched.
 
 **vitest: 1503 tests in 90 files, 71s wall.** A file runs serially, so one file sets the floor:
 `PolicyEditor.test.tsx` alone is 54s (137 tests, ~370ms each). Per jsdom file the fixed cost is
@@ -4287,6 +4291,9 @@ and collects all 4721 tests (2.8s).
   retried the first alternative at every position inside a block body, backtracking across the
   run each time: 394ms per walk over the 355KB stylesheet, about 20 walks per test.
   `([^{}]*)([{}])` matches the same 1332 rules at the same offsets in 3.3ms.
+- Splitting the warning-anchor walk out of `PolicyEditor.test.tsx` (#854) moved the floor: the
+  walk was 35s of the file's 54s, the pair now runs in 36s, and the full suite went 71s -> 41s
+  on the default pool.
 
 ⇒ The backend's wall clock is scheduling plus per-test boot, and the frontend's is one file.
 Neither is per-test work worth optimizing test by test.
