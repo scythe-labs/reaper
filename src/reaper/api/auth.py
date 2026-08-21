@@ -34,7 +34,7 @@ from reaper.api.deps import (
     session_factory,
     throttled,
 )
-from reaper.api.errors import refuse
+from reaper.api.errors import refuse, refuse_from
 from reaper.api.schemas import NO_PLEX_FORWARD, OkOut, PlexServerChoiceOut, PlexStartIn
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
@@ -60,6 +60,8 @@ from reaper.auth.sessions import (
 )
 from reaper.config import RuntimeSafety
 from reaper.db.models import AppUser, AuthProvider, PlexServer
+from reaper.engine.explanation import ReasonKey
+from reaper.engine.reason import Reason, to_wire
 from reaper.services.login import (
     LoginError,
     UserView,
@@ -145,9 +147,11 @@ class PlexPollOut(BaseModel):
     setup: bool = False
     # Present only with status "choose_server": the owned servers to pick from.
     servers: list[PlexServerChoiceOut] | None = None
-    # Present only with status "retrying": why this poll could not finish yet, in the
-    # operator's words. The sign-in is still good and the browser keeps polling.
-    reason: str | None = None
+    # Present only with status "retrying": why this poll could not finish yet -- the typed
+    # id plus raw params (docs/history/I18N_PLAN.md §5): the frontend composes it, the same
+    # posture every other reason field on the wire takes (rule 92). The sign-in is still good
+    # and the browser keeps polling.
+    reason: ReasonKey | None = None
 
 
 class LocalLoginIn(BaseModel):
@@ -264,9 +268,12 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
         # answering with an error would strand a sign-in that is still good -- the browser
         # aborts its poll loop on any thrown status (B2-14). A non-final status instead,
         # so the loop keeps polling until the server is back or the deadline passes.
-        return PlexPollOut(status="retrying", reason=str(exc))
+        return PlexPollOut(
+            status="retrying",
+            reason=ReasonKey.model_validate(to_wire(Reason(exc.code, dict(exc.params)))),
+        )
     except LoginError as exc:
-        refuse(401, "error.auth.login_failed", error=str(exc))
+        refuse_from(exc)
 
     if result is None:
         return PlexPollOut(status="pending")
@@ -315,7 +322,7 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
             log.warning(
                 "auth.local_locked_out", ip=ip, username=payload.username[:64], retry_after=locked
             )
-        refuse(401, "error.auth.login_failed", error=str(exc))
+        refuse_from(exc)
     finally:
         argon2_gate.release()
 

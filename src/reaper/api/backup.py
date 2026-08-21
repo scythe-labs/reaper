@@ -40,7 +40,7 @@ from reaper.api.deps import (
     runtime_settings,
     session_factory,
 )
-from reaper.api.errors import refuse
+from reaper.api.errors import refuse, refuse_from
 from reaper.api.runs import reap_in_flight
 from reaper.api.schemas import OkOut, RestoreCancelOut
 from reaper.buildinfo import build_version
@@ -215,7 +215,7 @@ async def restore_prepare(request: Request) -> RestoreSummaryOut:
     try:
         summary = await asyncio.to_thread(restore.stage_upload, settings, archive_path)
     except restore.RestoreError as exc:
-        refuse(exc.status, "error.backup.restore_refused", error=str(exc))
+        refuse_from(exc)
     finally:
         archive_path.unlink(missing_ok=True)
     # Field for field off the staging summary, less `revision`: an Alembic id is not
@@ -253,7 +253,7 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> OkOut:
     try:
         await asyncio.to_thread(restore.arm, settings, payload.token)
     except restore.RestoreError as exc:
-        refuse(exc.status, "error.backup.restore_refused", error=str(exc))
+        refuse_from(exc)
     log.warning("restore.confirmed")
     return OkOut(ok=True)
 

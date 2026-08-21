@@ -46,7 +46,7 @@ from reaper.api.deps import (
     secret_box,
     session_factory,
 )
-from reaper.api.errors import refuse
+from reaper.api.errors import refuse, refuse_from
 from reaper.api.schemas import JobRunOut, OkOut, RemovedOut
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate
@@ -466,7 +466,7 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
                 service_instance_map=payload.service_instance_map,
             )
         except instances.InstanceError as exc:
-            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
+            refuse_from(exc)
         await session.commit()
         return InstanceOut.of(view)
 
@@ -494,7 +494,7 @@ async def update_instance(
                 service_instance_map=payload.service_instance_map,
             )
         except instances.InstanceError as exc:
-            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
+            refuse_from(exc)
         await session.commit()
         return InstanceOut.of(view)
 
@@ -612,7 +612,7 @@ async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
         try:
             result = await instances.test_saved_instance(session, secret_box(request), instance_id)
         except instances.InstanceError as exc:
-            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
+            refuse_from(exc)
         await session.commit()
     return TestOut(ok=result.ok, detail=result.detail, version=result.version)
 
@@ -636,7 +636,7 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
                 session, secret_box(request), instance_id, section_paths=section_paths
             )
         except instances.InstanceError as exc:
-            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
+            refuse_from(exc)
         except IntegrationError as exc:
             refuse(502, "error.settings.folder_list_unreachable", error=str(exc))
     return [RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in folders]
@@ -655,7 +655,7 @@ async def instance_seerr_services(request: Request, instance_id: int) -> list[Se
         try:
             services = await instances.seerr_services(session, secret_box(request), instance_id)
         except instances.InstanceError as exc:
-            refuse(exc.status, "error.settings.instance_rejected", error=str(exc))
+            refuse_from(exc)
         except IntegrationError as exc:
             refuse(502, "error.settings.service_list_unreachable", error=str(exc))
     return [SeerrServiceOut.model_validate(s, from_attributes=True) for s in services]
@@ -964,7 +964,7 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
                 session, payload.password, keep_session_token=keep
             )
         except admin_password.PasswordError as exc:
-            refuse(422, "error.settings.password_change_rejected", error=str(exc))
+            refuse_from(exc)
         finally:
             argon2_gate.release()
         # After set_password, so a refused password (too short) leaves the mark intact and

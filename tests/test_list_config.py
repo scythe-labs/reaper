@@ -573,8 +573,11 @@ class TestTheRoutes:
 
         assert r.status_code == 400
         body = r.json()
-        assert body["code"] == "error.lists.config_rejected"
-        assert body["params"]["error"] == "Say which collection in that library to read."
+        # ListConfigError is now a Refusal subclass of its own (phase 8a's second wave): the
+        # code names the condition, with no params, rather than wrapping the service's
+        # English in a generic pass-through.
+        assert body["code"] == "error.lists.collection_required"
+        assert body["params"] == {}
         assert body["detail"] == "Say which collection in that library to read."
 
     def test_editing_the_config_leaves_the_name_alone(self, client: TestClient) -> None:
@@ -603,7 +606,7 @@ class TestTheRoutes:
 
         assert r.status_code == 400
         body = r.json()
-        assert body["code"] == "error.lists.config_rejected"
+        assert body["code"] == "error.lists.not_found"
         assert "no longer exists" in body["detail"]
 
 
@@ -802,7 +805,7 @@ class TestCheckingTheListsNow:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def refuses(factory: object, settings: object, box: object, **kw: object) -> Any:
-            raise scan_runner.ScanConfigError("Add a Radarr before checking.")
+            raise scan_runner.ScanConfigError("error.scan.missing_sources")
 
         monkeypatch.setattr(scan_runner, "build_sources", refuses)
         seen = self._syncs(monkeypatch, {})
@@ -811,9 +814,15 @@ class TestCheckingTheListsNow:
 
         assert response.status_code == 400, response.text
         body = response.json()
-        assert body["code"] == "error.lists.sync_sources_failed"
-        assert body["params"]["error"] == "Add a Radarr before checking."
-        assert body["detail"] == "Add a Radarr before checking."
+        # ScanConfigError is now a Refusal subclass of its own (phase 8a's second wave): the
+        # route answers through refuse_from(exc) rather than wrapping its English in a
+        # generic pass-through code.
+        assert body["code"] == "error.scan.missing_sources"
+        assert body["params"] == {}
+        assert body["detail"] == (
+            "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
+            "Add them in Settings first."
+        )
         assert not seen
 
     def test_it_counts_the_checks_that_landed_apart_from_the_ones_that_failed(
@@ -949,5 +958,5 @@ class TestARowStaysOnScreenSoTheOperatorCanFixIt:
 
         assert response.status_code == 400, response.text
         body = response.json()
-        assert body["code"] == "error.lists.config_rejected"
+        assert body["code"] == "error.lists.not_found"
         assert "no longer exists" in body["detail"]

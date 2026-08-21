@@ -1688,8 +1688,11 @@ class TestPlexLinkChoice:
         )
         assert blip.status_code == 200, blip.text
         assert blip.json()["status"] == "retrying"
-        # And it says why, so a longer wait reads as a wait rather than a hang.
-        assert "could not reach it" in blip.json()["reason"]
+        # And it carries why, as a typed reason (phase 8a's second wave), so a longer wait
+        # reads as a wait rather than a hang once the frontend composes it (phase 8b).
+        reason = blip.json()["reason"]
+        assert reason["k"] == "error.plex.link_unreachable"
+        assert reason["p"] == {"name": "Attic", "count": 1}
         assert client.get("/api/settings/plex").json()["linked"] is False
 
         # The SAME sign-in finishes once the server answers. Nothing was burned.
@@ -1714,7 +1717,7 @@ class TestPlexLinkChoice:
         )
         assert bad.status_code == 400
         bad_body = bad.json()
-        assert bad_body["code"] == "error.plex.link_rejected"
+        assert bad_body["code"] == "error.plex.link_choice_not_found"
         assert "No server this account owns" in bad_body["detail"]
 
         # The refusal consumed the PIN, so the obtained token cannot be replayed.

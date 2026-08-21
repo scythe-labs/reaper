@@ -622,10 +622,11 @@ class TestArmingIsRequiredForARealRun:
         snapshot_id = await _snapshot_with(session, [("radarr:1:1", 1 * GB)])
         run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
-        with pytest.raises(ExecutionError, match="Refusing to execute for real"):
+        with pytest.raises(ExecutionError, match="Deletion is turned off") as excinfo:
             await Executor(
                 session, safety=_read_only(), settings=ProfileSettings(), dry_run=False
             ).execute(run.id)
+        assert excinfo.value.code == "error.safety.deletion_off"
 
     async def test_a_real_run_without_clients_is_refused(self, session: AsyncSession) -> None:
         """Armed is not enough: a real run needs the clients to delete through AND to run

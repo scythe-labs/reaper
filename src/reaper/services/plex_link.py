@@ -45,6 +45,7 @@ from reaper.clock import expiry, utcnow
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import AppSetting, PendingPlexLogin, PlexServer
+from reaper.refusal import Refusal
 from reaper.services import app_settings
 
 log = structlog.get_logger(__name__)
@@ -69,8 +70,18 @@ PIN_TTL = timedelta(minutes=10)
 PinPurpose = Literal["login", "link"]
 
 
-class PlexLinkError(RuntimeError):
-    """The link could not be completed."""
+class PlexLinkError(Refusal):
+    """The link could not be completed. A catalog code plus raw params.
+
+    Defaults to 400 rather than ``Refusal``'s own 422: every call site here answers a
+    request that was well-formed but describes a Plex account or server Reaper cannot
+    link, which every route above answers with 400 rather than 422's "content refused."
+    """
+
+    def __init__(
+        self, code: str, /, *, status: int = 400, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 class PlexLinkRetryableError(PlexLinkError):
@@ -82,7 +93,14 @@ class PlexLinkRetryableError(PlexLinkError):
     in-app poll does not burn the pending PIN over it and force the owner through a fresh
     OAuth round-trip despite having already authenticated. A subclass of ``PlexLinkError``
     so existing ``except PlexLinkError`` callers (the CLI flow) still catch it.
+
+    Defaults to 502 (an upstream, Plex-side unreachability) where its parent defaults to 400.
     """
+
+    def __init__(
+        self, code: str, /, *, status: int = 502, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 @dataclass(frozen=True)
@@ -243,9 +261,7 @@ async def reachable_connection(
     # now may simply be restarting. The caller (poll_link) must not consume the PIN over
     # this, so the browser can re-poll the still-valid PIN once the server is back.
     raise PlexLinkRetryableError(
-        f'Found your server ("{resource.name}") but could not reach it on any of its '
-        f"{len(resource.connections)} advertised addresses. Reaper has to talk to the "
-        "server directly; check that it is running and reachable from this host."
+        "error.plex.link_unreachable", name=resource.name, count=len(resource.connections)
     )
 
 
@@ -288,7 +304,7 @@ async def link(
 
         token = await plextv.wait_for_pin(pin.pin_id)
         if not token:
-            raise PlexLinkError("Sign-in was not completed in time. Nothing was saved.")
+            raise PlexLinkError("error.plex.link_timed_out")
 
         account = await plextv.account(token)
         owned = await plextv.owned_servers(token)
@@ -314,16 +330,10 @@ def _select_owned(owned: list[PlexResource], choice: str) -> PlexResource:
     by_name = [r for r in owned if r.name == choice]
     if len(by_name) > 1:
         ids = ", ".join(r.client_identifier for r in by_name)
-        raise PlexLinkError(
-            f'This account owns more than one server named "{choice}". Pick by machine '
-            f"identifier instead: {ids}."
-        )
+        raise PlexLinkError("error.plex.link_ambiguous_name", choice=choice, ids=ids)
     if not by_name:
         names = ", ".join(f'"{r.name}"' for r in owned)
-        raise PlexLinkError(
-            f'No server this account owns matches "{choice}". It owns: {names}. '
-            "Start the sign-in again and pick one of those."
-        )
+        raise PlexLinkError("error.plex.link_choice_not_found", choice=choice, names=names)
     return by_name[0]
 
 
@@ -352,11 +362,7 @@ async def complete_link(
     arbitrarily is how you point a deletion tool at the wrong library.
     """
     if not owned:
-        raise PlexLinkError(
-            f'Signed in as "{account.username}", but that account does not own a Plex '
-            "server. Reaper must be linked by the server owner: it is going to be "
-            "given permission to delete media."
-        )
+        raise PlexLinkError("error.plex.link_not_owner", username=account.username)
     if choice is not None:
         resource = _select_owned(owned, choice)
     elif len(owned) > 1:
@@ -448,7 +454,7 @@ async def switch_server(
     async with session_factory() as session:
         row = (await session.execute(select(PlexServer))).scalars().first()
         if row is None:
-            raise PlexLinkError("No Plex server is linked yet. Link one first.")
+            raise PlexLinkError("error.plex.not_linked")
         token = box.decrypt(row.token_enc)
         cid = await client_identifier(session)
         resolved_verify_tls = row.verify_tls if verify_tls is None else verify_tls
@@ -460,7 +466,7 @@ async def switch_server(
             owned = await plextv.owned_servers(token)
         except IntegrationError as exc:
             raise PlexLinkRetryableError(
-                f"Could not ask plex.tv which servers this account owns: {exc}"
+                "error.plex.switch_owned_servers_failed", error=str(exc)
             ) from exc
 
     return await complete_link(
@@ -507,7 +513,7 @@ async def poll_link(
             )
         )
         if pending is None:
-            raise PlexLinkError("This link request is no longer valid. Please start again.")
+            raise PlexLinkError("error.plex.link_request_invalid")
         expired = pending.expires_at <= utcnow()
         cid = await client_identifier(session)
         if expired:
@@ -515,7 +521,7 @@ async def poll_link(
         await session.commit()
 
     if expired:
-        raise PlexLinkError("This link request timed out. Please start again.")
+        raise PlexLinkError("error.plex.link_request_timed_out")
 
     async with PlexTvClient(cid, safety=safety) as plextv:
         try:
@@ -523,7 +529,7 @@ async def poll_link(
         except IntegrationError as exc:
             if exc.status == 429:
                 return None  # we polled too eagerly; tell the browser to retry
-            raise PlexLinkError("Could not reach Plex to check the link.") from exc
+            raise PlexLinkError("error.plex.link_check_failed") from exc
 
         if not token:
             return None  # not approved yet
@@ -532,7 +538,7 @@ async def poll_link(
             account = await plextv.account(token)
             owned = await plextv.owned_servers(token)
         except IntegrationError as exc:
-            raise PlexLinkError("Signed in to Plex, but could not read the account.") from exc
+            raise PlexLinkError("error.plex.link_account_unreadable") from exc
 
     # Consume the pending PIN only on a *final* outcome: success, or a permanent refusal
     # (owns no server / a choice matching nothing). Two intermediate outcomes leave it

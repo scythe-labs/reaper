@@ -48,6 +48,7 @@ from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import AppUser, AuthProvider, PendingPlexLogin, PlexServer
+from reaper.refusal import Refusal
 from reaper.services.plex_link import (
     PlexLinkError,
     PlexLinkRetryableError,
@@ -65,8 +66,18 @@ log = structlog.get_logger(__name__)
 _DUMMY_HASH = hash_password(generate_password())
 
 
-class LoginError(RuntimeError):
-    """Sign-in did not succeed. The message is safe to show the user."""
+class LoginError(Refusal):
+    """Sign-in did not succeed. A catalog code plus raw params (``reaper.refusal``).
+
+    Defaults to 401 rather than ``Refusal``'s own 422: every route answering one of these
+    (``api.auth``'s Plex and local sign-in) has always answered 401, a credential refusal,
+    never 422's "well-formed but refused content."
+    """
+
+    def __init__(
+        self, code: str, /, *, status: int = 401, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 @dataclass(frozen=True)
@@ -136,7 +147,7 @@ async def poll_plex_login(
             )
         )
         if pending is None:
-            raise LoginError("This sign-in is no longer valid. Please start again.")
+            raise LoginError("error.auth.login_request_invalid")
         expired = pending.expires_at <= utcnow()
         cid = await client_identifier(session)
         if expired:
@@ -144,7 +155,7 @@ async def poll_plex_login(
         await session.commit()
 
     if expired:
-        raise LoginError("This sign-in timed out. Please start again.")
+        raise LoginError("error.auth.login_request_timed_out")
 
     async with PlexTvClient(cid, safety=safety) as plextv:
         try:
@@ -154,7 +165,7 @@ async def poll_plex_login(
                 # We polled plex.tv too eagerly. Not a failure -- tell the browser
                 # to try again shortly.
                 return None
-            raise LoginError("Could not reach Plex to check the sign-in.") from exc
+            raise LoginError("error.auth.login_check_failed") from exc
 
         if not token:
             return None  # not approved yet
@@ -163,7 +174,7 @@ async def poll_plex_login(
             account = await plextv.account(token)
             owned = await plextv.owned_servers(token)
         except IntegrationError as exc:
-            raise LoginError("Signed in to Plex, but could not read the account.") from exc
+            raise LoginError("error.auth.login_account_unreadable") from exc
 
     async with session_factory() as session:
         server = (await session.execute(select(PlexServer).limit(1))).scalar_one_or_none()
@@ -173,10 +184,7 @@ async def poll_plex_login(
         if not any(r.client_identifier == server.machine_identifier for r in owned):
             await _consume_pending(session_factory, pin_id)
             log.warning("login.plex_not_owner", account=account.account_id)
-            raise LoginError(
-                "That Plex account does not own this server, so it cannot administer "
-                "Reaper. Sign in as the server owner, or use a local account."
-            )
+            raise LoginError("error.auth.plex_not_owner")
     else:
         # SETUP: the first owner claims the server. complete_link refuses a non-owner,
         # asks for a choice on a multi-server account, and persists the link.
@@ -200,14 +208,17 @@ async def poll_plex_login(
             raise
         except PlexLinkError as exc:
             await _consume_pending(session_factory, pin_id)
-            raise LoginError(str(exc)) from exc
+            # Carries the link failure's own code and params forward rather than flattening
+            # it to a string: this arm is one more raiser of whichever plex.* condition
+            # `complete_link` hit, not a distinct login-time refusal (rule 144).
+            raise LoginError(exc.code, status=exc.status, **exc.params) from exc
 
     async with session_factory() as session:
         user = await _upsert_plex_user(session, account)
         if not user.is_active:
             await _delete_pending(session, pin_id)
             await session.commit()
-            raise LoginError("This account has been deactivated.")
+            raise LoginError("error.auth.account_deactivated")
 
         await _delete_pending(session, pin_id)
         token_str = await open_session(session, user, user_agent=user_agent)
@@ -298,7 +309,7 @@ async def login_local(
 
         if not usable or not ok or user is None:
             log.info("login.local_rejected", username=username[:64])
-            raise LoginError("Wrong username or password.")
+            raise LoginError("error.auth.wrong_credentials")
 
         if new_hash is not None:
             # Argon2 parameters were raised since this hash was written; rewrite it.

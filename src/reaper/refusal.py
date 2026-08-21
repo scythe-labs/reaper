@@ -164,7 +164,6 @@ MESSAGES: dict[str, str] = {
         "Sign in with Plex to claim the server, or on Docker and snap run: "
         "reaper-admin create-admin --username admin"
     ),
-    "error.auth.login_failed": "{error}",
     "error.auth.too_many_attempts": "Too many attempts. Please wait and try again.",
     "error.auth.password_hashing_busy": (
         "The server is busy checking passwords. Please try again shortly."
@@ -196,6 +195,37 @@ MESSAGES: dict[str, str] = {
         "This needs the web app, signed in. An API key writes only these: {permissions}."
     ),
     # -----------------------------------------------------------------------------
+    # Auth: signing in (services.login.LoginError, all raise sites -- 7 codes; a wrapped
+    # PlexLinkError forwards that error's own plex.* code rather than a new one, so it is
+    # not a new entry here).
+    # -----------------------------------------------------------------------------
+    "error.auth.login_request_invalid": "This sign-in is no longer valid. Please start again.",
+    "error.auth.login_request_timed_out": "This sign-in timed out. Please start again.",
+    "error.auth.login_check_failed": "Could not reach Plex to check the sign-in.",
+    "error.auth.login_account_unreadable": ("Signed in to Plex, but could not read the account."),
+    "error.auth.plex_not_owner": (
+        "That Plex account does not own this server, so it cannot administer Reaper. "
+        "Sign in as the server owner, or use a local account."
+    ),
+    "error.auth.account_deactivated": "This account has been deactivated.",
+    "error.auth.wrong_credentials": "Wrong username or password.",
+    # -----------------------------------------------------------------------------
+    # The admin password (services.admin_password.PasswordError).
+    # -----------------------------------------------------------------------------
+    "error.password.too_short": "Use at least {min_length} characters.",
+    # -----------------------------------------------------------------------------
+    # Deletion-safety state, shared by the executor's own check and the execute route's
+    # earlier one (services.executor, api.runs) -- one fact, one pair of codes (rule 144).
+    # -----------------------------------------------------------------------------
+    "error.safety.recovery_mode_active": (
+        "Recovery mode is on, so Reaper can look but can't remove anything. "
+        "Turn it off and restart."
+    ),
+    "error.safety.deletion_off": (
+        "Deletion is turned off, so Reaper can look but can't remove anything. "
+        "Turn it on in Policy -> Deletion when you're ready."
+    ),
+    # -----------------------------------------------------------------------------
     # Plex: linking, connection, libraries, watch evidence.
     # -----------------------------------------------------------------------------
     "error.plex.not_linked": "No Plex server is linked yet. Link one first.",
@@ -208,8 +238,37 @@ MESSAGES: dict[str, str] = {
     "error.plex.connection_address_invalid": (
         "The server address must be a full web address, like https://192.0.2.10:32400."
     ),
-    "error.plex.link_rejected": "{error}",
-    "error.plex.switch_unreachable": "{error}",
+    # services.plex_link.PlexLinkError and PlexLinkRetryableError, all raise sites -- 10
+    # codes (a 11th site reuses error.plex.not_linked above; switch_server links no new
+    # server, it repoints an existing link, so the same "no server" sentence fits).
+    "error.plex.link_unreachable": (
+        'Found your server ("{name}") but could not reach it on any of its {count} '
+        "advertised addresses. Reaper has to talk to the server directly; check that "
+        "it is running and reachable from this host."
+    ),
+    "error.plex.link_timed_out": "Sign-in was not completed in time. Nothing was saved.",
+    "error.plex.link_ambiguous_name": (
+        'This account owns more than one server named "{choice}". Pick by machine '
+        "identifier instead: {ids}."
+    ),
+    "error.plex.link_choice_not_found": (
+        'No server this account owns matches "{choice}". It owns: {names}. Start the '
+        "sign-in again and pick one of those."
+    ),
+    "error.plex.link_not_owner": (
+        'Signed in as "{username}", but that account does not own a Plex server. '
+        "Reaper must be linked by the server owner: it is going to be given permission "
+        "to delete media."
+    ),
+    "error.plex.switch_owned_servers_failed": (
+        "Could not ask plex.tv which servers this account owns: {error}"
+    ),
+    "error.plex.link_request_invalid": (
+        "This link request is no longer valid. Please start again."
+    ),
+    "error.plex.link_request_timed_out": "This link request timed out. Please start again.",
+    "error.plex.link_check_failed": "Could not reach Plex to check the link.",
+    "error.plex.link_account_unreadable": ("Signed in to Plex, but could not read the account."),
     "error.plex.connection_probe_failed": (
         "Couldn't reach a Plex server at that address, so nothing was changed. "
         "Check the address and port, and whether the certificate check should be off."
@@ -263,21 +322,76 @@ MESSAGES: dict[str, str] = {
     # -----------------------------------------------------------------------------
     "error.backup.upload_too_large": "That file is too large to be a Reaper backup.",
     "error.backup.no_file_uploaded": "No file was uploaded.",
-    "error.backup.restore_refused": "{error}",
     "error.backup.no_password_set": "Set an admin password first. It's what confirms a restore.",
     "error.backup.restore_not_waiting": "There's no restore waiting, so nothing was stopped.",
     "error.backup.reap_in_progress": (
         "A reap is running. Let it finish or stop it, then restart Reaper."
     ),
+    # services.restore.RestoreError, all raise sites -- 15 codes across 19 sites (two
+    # messages, "malformed" and "prepare_failed", each cover more than one site: rule 144's
+    # own shape, since every one of those sites means the same thing to the operator).
+    "error.restore.schema_unverifiable": (
+        "Reaper couldn't check this backup against its own version. Try again, or update Reaper."
+    ),
+    "error.restore.newer_than_build": (
+        "This backup was made by a newer version of Reaper than the one running. "
+        "Update Reaper to that version or later, then restore."
+    ),
+    "error.restore.archive_too_large": "This backup is larger than Reaper can restore.",
+    "error.restore.malformed": "This backup file is malformed.",
+    "error.restore.unreadable_archive": "This isn't a readable Reaper backup file.",
+    "error.restore.missing_contents": (
+        "This isn't a Reaper backup: some of its contents are missing."
+    ),
+    "error.restore.manifest_unreadable": "This backup's description couldn't be read.",
+    "error.restore.not_a_backup": "This isn't a Reaper backup file.",
+    "error.restore.database_unreadable": "The database inside this backup isn't readable.",
+    "error.restore.database_unverifiable": (
+        "The database in this backup couldn't be verified. It may be damaged, or not "
+        "a Reaper backup."
+    ),
+    "error.restore.manifest_mismatch": (
+        "This backup's description doesn't match the database inside it. It may be "
+        "damaged or altered."
+    ),
+    "error.restore.missing_key": (
+        "This backup is missing its encryption key and can't be restored."
+    ),
+    "error.restore.prepare_failed": "Reaper couldn't prepare this backup. Nothing was restored.",
+    "error.restore.nothing_staged": "There's no backup ready to restore. Choose a file first.",
+    "error.restore.staged_changed": (
+        "The staged backup changed since you reviewed it. Check it again before restoring."
+    ),
     # -----------------------------------------------------------------------------
     # Protection lists.
     # -----------------------------------------------------------------------------
-    "error.lists.config_rejected": "{error}",
-    "error.lists.sync_sources_failed": "{error}",
     "error.lists.registry_unreadable": (
         "One of your lists is saved in a form Reaper can't read, so it didn't check "
         "any of them. Open that list, set it up again, and save it."
     ),
+    # services.list_config.ListConfigError, all raise sites -- 11 codes across 13 sites
+    # ("name_exists" covers three).
+    "error.lists.not_found": "That list no longer exists. Reload the page.",
+    "error.lists.name_required": (
+        "Give the list a name, so you can pick it out on the Policy screen."
+    ),
+    "error.lists.name_too_long": "That name is too long. Keep it under 100 characters.",
+    "error.lists.name_has_comma": (
+        "A list name can't have a comma in it. Reaper separates names with one."
+    ),
+    "error.lists.name_exists": "You already have a list with that name. Pick another.",
+    "error.lists.library_required": "Say which Plex library to look in.",
+    "error.lists.collection_required": "Say which collection in that library to read.",
+    "error.lists.tags_required": (
+        "Add at least one tag, spelled as it appears in Sonarr or Radarr."
+    ),
+    "error.lists.imdb_choice_required": (
+        "Pick one of the IMDb presets, or paste a list id instead."
+    ),
+    "error.lists.imdb_id_invalid": (
+        "Paste the list's id or URL. An IMDb list id looks like ls000000000."
+    ),
+    "error.lists.source_required": "Pick where the list comes from.",
     # -----------------------------------------------------------------------------
     # Scales (fairness).
     # -----------------------------------------------------------------------------
@@ -299,13 +413,10 @@ MESSAGES: dict[str, str] = {
         "go to Pace and limits, and save your limits again."
     ),
     "error.runs.no_scan_to_plan": "No scan has run yet, so there is nothing to plan.",
-    "error.runs.plan_refused": "{error}",
     "error.runs.not_found": "No such run.",
-    "error.runs.dry_run_refused": "{error}",
     "error.runs.already_running": (
         "A reap is already running. Wait for it to finish, or stop it, first."
     ),
-    "error.runs.deletion_disabled": "{reason}",
     "error.runs.confirmation_mismatch": (
         "That confirmation does not match this plan. Expected: {expected}. The plan "
         "may have changed since the page loaded. Reload, review, and confirm again."
@@ -332,7 +443,6 @@ MESSAGES: dict[str, str] = {
     "error.settings.unknown_service_kind": (
         '"{value}" is not a service Reaper knows. Use sonarr, radarr, tautulli or seerr.'
     ),
-    "error.settings.instance_rejected": "{error}",
     "error.settings.folder_list_unreachable": "Could not read the folder list: {error}",
     "error.settings.service_list_unreachable": "Could not read the service list: {error}",
     "error.settings.external_url_invalid": (
@@ -359,7 +469,6 @@ MESSAGES: dict[str, str] = {
     "error.settings.no_password_set_for_arming": (
         "Set an admin password first. It's what confirms turning deletion on."
     ),
-    "error.settings.password_change_rejected": "{error}",
     "error.settings.timezone_unknown": "That is not a known time zone. Pick one from the list.",
     "error.settings.accent_color_invalid": "The accent color must be a hex code like #25c3ff.",
     "error.settings.trusted_proxy_invalid": (
@@ -371,6 +480,191 @@ MESSAGES: dict[str, str] = {
         "Reaper couldn't save this to launcher.conf in its data folder."
     ),
     "error.settings.no_api_key": "No API key exists yet. Generate one first.",
+    # -----------------------------------------------------------------------------
+    # Services (services.instances.InstanceError and its two status-typed subclasses),
+    # all raise sites -- 6 codes across 7 sites ("name_exists" covers two).
+    # -----------------------------------------------------------------------------
+    "error.instances.not_found": "No such instance.",
+    "error.instances.required_fields": "A name, a URL and an API key are all required.",
+    "error.instances.singleton_exists": (
+        "Reaper uses one {kind}. It reads a single Plex server's watch history, and "
+        "Reaper connects to one Plex. Edit the one you have, or remove it and add a "
+        "different one."
+    ),
+    "error.instances.name_exists": 'A {kind} connection named "{name}" already exists.',
+    "error.instances.wrong_kind_for_root_folders": (
+        "Only Sonarr and Radarr have root folders to map to a Plex library."
+    ),
+    "error.instances.wrong_kind_for_seerr_services": (
+        "Only Seerr portals have request services to map to an instance."
+    ),
+    # -----------------------------------------------------------------------------
+    # Planning a run (services.planner.PlanError), all raise sites -- 15 codes.
+    # -----------------------------------------------------------------------------
+    "error.plan.media_key_unroutable": 'Cannot route media_key "{media_key}" to an instance.',
+    "error.plan.media_key_malformed": 'Malformed media_key "{media_key}": {error}',
+    "error.plan.season_media_key_not_sonarr": (
+        'A season media_key must be sonarr, got "{media_key}".'
+    ),
+    "error.plan.unmeasured_sort_key": "{media_key} has no measured size to order by.",
+    "error.plan.no_canary": (
+        "Reaper couldn't measure any of these items, so it has nothing safe to test "
+        "the run on. The first thing a run deletes has to be something whose size it "
+        "knows. Check these in Sonarr or Radarr, then run a new scan."
+    ),
+    "error.plan.no_snapshot": "No snapshot {snapshot_id}.",
+    "error.plan.snapshot_degraded": (
+        "That scan came back incomplete, so Reaper won't act on it. Fix the source and "
+        "scan again. {reason}"
+    ),
+    "error.plan.selection_empty": "No items were selected to reap.",
+    "error.plan.unmeasured_seasons": (
+        "Reaper couldn't measure any of the seasons it would remove from {keys}, so "
+        "there is nothing here it can reap. Check them in Sonarr, then run a new scan."
+    ),
+    "error.plan.items_not_condemned": (
+        "These items are not condemned in this snapshot, so they cannot be reaped: {keys}."
+    ),
+    "error.plan.items_unmeasured": (
+        "Reaper couldn't measure the size of these items, so it won't reap them: "
+        "{keys}. Check them in Sonarr or Radarr, then run a new scan."
+    ),
+    "error.plan.items_spared": (
+        "These items are spared, so they will not be reaped: {keys}. Remove the spare "
+        "first if you really mean to delete them."
+    ),
+    "error.plan.unmeasured_over_limit": (
+        "This plan holds {count} items Reaper couldn't measure, over your limit of "
+        "{limit} per run. The plan is refused rather than trimmed: which of them gets "
+        "deleted must not come down to the order they were listed in. Raise the "
+        "limit, or reap fewer items at once."
+    ),
+    "error.plan.nothing_condemned": (
+        "Nothing is condemned in this snapshot; there is no plan to build."
+    ),
+    "error.plan.instance_orphaned": (
+        "Some of these items were found by a Radarr that is no longer connected, so "
+        "Reaper cannot remove them. Reconnect it, or run a new scan to drop them from "
+        "the list."
+    ),
+    # -----------------------------------------------------------------------------
+    # Executing a run (services.executor.ExecutionError), all raise sites -- 21 codes
+    # across 27 sites ("journal_halt" covers two; two more reuse error.runs.preflight_no_plex
+    # and error.runs.preflight_no_tautulli below, and two reuse error.safety.* above --
+    # the executor's own backstop checks the same conditions the route already named).
+    # -----------------------------------------------------------------------------
+    "error.reap.radarr_instance_missing": (
+        "No Radarr instance {instance_id} is configured, but the plan targets it. "
+        "Refusing to guess which server to delete from."
+    ),
+    "error.reap.sonarr_instance_missing": (
+        "No Sonarr instance {instance_id} is configured, but the plan targets it. "
+        "Refusing to guess which server to delete from."
+    ),
+    "error.reap.no_run": "No run {run_id}.",
+    "error.reap.unmeasured_for_caps": (
+        "Reaper couldn't measure the size of these items, so it can't check the run "
+        "against your limits: {keys}. The run is aborted."
+    ),
+    "error.reap.unmeasured_over_limit": (
+        "This run would delete {unmeasured} items Reaper couldn't measure, over your "
+        "limit of {limit} per run. It stops rather than deleting just part. Raise the "
+        "unknown-size allowance in Policy, under Pace and limits."
+    ),
+    "error.reap.items_over_run_cap": (
+        "This plan would remove {items} titles, over your per-run cap of {cap}. It "
+        "stops rather than deleting just part, because which titles go must never "
+        "come down to sort order. Raise the cap or turn limits off in Policy, under "
+        "Pace and limits."
+    ),
+    "error.reap.bytes_over_run_cap": (
+        "This plan would remove {gb} GB, over your per-run cap of {cap_gb} GB. It "
+        "stops rather than deleting just part. Raise the cap or turn limits off in "
+        "Policy, under Pace and limits."
+    ),
+    "error.reap.not_runnable": "Run {run_id} is {state}, not runnable. A run executes once.",
+    "error.reap.no_clients_configured": (
+        "Refusing a real run with no clients configured: there is nothing to issue "
+        "the delete through, and no way to check who is watching."
+    ),
+    "error.reap.no_arm_check": (
+        "Refusing a real run without a live arm check: turning deletion off could not "
+        "stop a run already in progress."
+    ),
+    "error.reap.manifest_changed": (
+        "The condemned set changed since this plan was approved: an item was added, "
+        "removed, or resized. The approval was for a different plan and is void. "
+        "Re-scan, re-review, and approve the new plan."
+    ),
+    "error.reap.policy_changed": (
+        "Your policy changed after this plan was approved, so the plan is out of "
+        "date and nothing was deleted. Run a new scan, then review and plan again."
+    ),
+    "error.reap.lists_changed": (
+        "Your protection lists changed after this plan was approved, so the plan is "
+        "out of date and nothing was deleted. Run a new scan, then review and plan again."
+    ),
+    "error.reap.already_claimed": (
+        "Run {run_id} was already claimed by another request. A run executes once."
+    ),
+    "error.reap.items_over_rolling_cap": (
+        "This run would delete {items} items on top of the {past_items} already "
+        "deleted in the last 30 days, over the rolling cap of {cap}. It stops rather "
+        "than deleting just part. Wait for the window to pass, raise the cap, or "
+        "turn limits off in Policy, under Pace and limits."
+    ),
+    "error.reap.bytes_over_rolling_cap": (
+        "This run would delete {gb} GB on top of the {past_gb} GB already deleted in "
+        "the last 30 days, over the rolling cap of {cap_gb} GB. It stops rather than "
+        "deleting just part. Wait for the window to pass, raise the cap, or turn "
+        "limits off in Policy, under Pace and limits."
+    ),
+    "error.reap.deletion_disabled_mid_run": (
+        "Deletion was turned off while this run was in progress, so the run stopped "
+        "here. Anything already deleted stays deleted; nothing further was sent."
+    ),
+    "error.reap.stopped_by_operator": (
+        "You stopped this run, so it halted here. Anything already removed stays "
+        "removed; nothing further was sent."
+    ),
+    "error.reap.journal_halt": (
+        "Reaper could not save its record of what it just did, so it stopped before "
+        "touching anything else. Anything already removed stays removed. Check the "
+        "free space and permissions on Reaper's data folder."
+    ),
+    "error.reap.canary_failed": (
+        'The first item, the test item ("{title}"), did not finish the way Reaper '
+        "expected: {detail}. Stopping now, before anything else is touched."
+    ),
+    "error.reap.item_failed_unexplained": (
+        'The run stopped at "{title}". Reaper could not tell what went wrong there, '
+        "so it did not touch anything after it. Anything already removed stays "
+        "removed. The details are in the run's own list and in the log."
+    ),
+    "error.reap.overrides_unreadable": (
+        "Reaper could not re-check your keep and remove decisions, so the run "
+        "stopped here rather than risk deleting something you just kept. Anything "
+        "already deleted stays deleted; nothing further was sent."
+    ),
+    # -----------------------------------------------------------------------------
+    # Scanning (services.scan_runner.ScanConfigError), all raise sites -- 3 codes
+    # across 4 sites ("missing_sources" covers two).
+    # -----------------------------------------------------------------------------
+    "error.scan.list_gate_missing_list": (
+        "A protection you set up is pointing at a list that is no longer there, so "
+        "the scan stopped instead of leaving titles unprotected. Add the list back "
+        "on Settings, Lists, then open Policy and save. Turning that protection off "
+        "instead drops it for good."
+    ),
+    "error.scan.gate_unimplemented": (
+        'Policy enables the "{gate}" protection, but Reaper has no implementation '
+        "for it. Refusing to scan rather than silently skipping a protection you "
+        "asked for."
+    ),
+    "error.scan.missing_sources": (
+        "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. Add "
+        "them in Settings first."
+    ),
 }
 
 

@@ -42,7 +42,7 @@ from reaper.api.deps import (
     secret_box,
     session_factory,
 )
-from reaper.api.errors import refuse
+from reaper.api.errors import refuse, refuse_from
 from reaper.api.schemas import (
     NO_PLEX_FORWARD,
     PlexServerChoiceOut,
@@ -58,6 +58,8 @@ from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.plextv import PlexConnection, PlexTvClient, connection_identity
 from reaper.clock import utcnow
 from reaper.db.models import PlexServer, Snapshot, WatchHighWater
+from reaper.engine.explanation import ReasonKey
+from reaper.engine.reason import Reason, to_wire
 from reaper.services import admin_password, app_settings, leaving_soon, watch_evidence
 from reaper.services.plex_link import (
     PlexLinkError,
@@ -133,9 +135,10 @@ class PlexLinkPollOut(BaseModel):
     server: PlexStatusOut | None = None
     # Present only with status "choose_server": the owned servers to pick from.
     servers: list[PlexServerChoiceOut] | None = None
-    # Present only with status "retrying": why this poll could not finish yet, in the
-    # operator's words. The sign-in is still good and the browser keeps polling.
-    reason: str | None = None
+    # Present only with status "retrying": why this poll could not finish yet -- the typed
+    # id plus raw params (rule 92), same posture as every other reason field on the wire.
+    # The sign-in is still good and the browser keeps polling.
+    reason: ReasonKey | None = None
 
 
 class PlexResourceConnectionOut(BaseModel):
@@ -331,9 +334,12 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
         # send the operator back through the whole approval round trip (B2-14). Answered
         # as a non-final status instead, so the loop keeps polling until it works or the
         # deadline passes.
-        return PlexLinkPollOut(status="retrying", reason=str(exc))
+        return PlexLinkPollOut(
+            status="retrying",
+            reason=ReasonKey.model_validate(to_wire(Reason(exc.code, dict(exc.params)))),
+        )
     except PlexLinkError as exc:
-        refuse(400, "error.plex.link_rejected", error=str(exc))
+        refuse_from(exc)
 
     if linked is None:
         return PlexLinkPollOut(status="pending")
@@ -455,9 +461,9 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
             verify_tls=payload.verify_tls,
         )
     except PlexLinkRetryableError as exc:
-        refuse(502, "error.plex.switch_unreachable", error=str(exc))
+        refuse_from(exc)
     except PlexLinkError as exc:
-        refuse(400, "error.plex.link_rejected", error=str(exc))
+        refuse_from(exc)
 
     # Switching cleared the library choices, which were keyed to the old server. Refill them
     # from the new one here, for the same reason the link path does (rule 72): the stored list

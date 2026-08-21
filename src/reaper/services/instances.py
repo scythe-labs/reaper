@@ -23,7 +23,6 @@ import json
 import ssl
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import ClassVar
 from urllib.parse import urlsplit
 
 import httpx2
@@ -40,6 +39,7 @@ from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
 from reaper.engine import identity
+from reaper.refusal import Refusal
 
 log = structlog.get_logger(__name__)
 
@@ -64,37 +64,42 @@ _KIND_LABEL: dict[InstanceKind, str] = {
 SINGLETON_KINDS: frozenset[InstanceKind] = frozenset({InstanceKind.TAUTULLI})
 
 
-class InstanceError(RuntimeError):
-    """A configuration change could not be applied (e.g. a duplicate name).
+class InstanceError(Refusal):
+    """A configuration change could not be applied (e.g. a duplicate name). A catalog code
+    plus raw params.
 
     **The status is declared here, not at the ``except``.** Each subclass below already
-    described the status it means in prose, and ``api/settings.py`` then hand-wrote that
-    number at five sites -- so the number and the sentence explaining it lived in different
-    files and only agreed by inspection (rule 144). ``restore.RestoreError`` already carried
-    its own; this is the same shape, per subclass rather than per raise, because here the
-    class *is* the discriminator and a raise site cannot then pass the wrong one.
+    described the status it means, and ``api/settings.py`` used to hand-write that number at
+    five sites -- so the number and the raise that meant it lived in different files and only
+    agreed by inspection (rule 144). ``restore.RestoreError`` already carried its own; this is
+    the same shape, per subclass rather than per raise, because here the class *is* the
+    discriminator and a raise site cannot then pass the wrong one.
 
-    422 is the base: the request was well-formed but the service refused its content, which
-    is what a blank required field is. A subclass meaning something else says so by
-    overriding, and a subclass that says nothing inherits the answer that blames the payload
-    rather than one that invents a resource state nobody checked.
+    422 is the base (``Refusal``'s own default): the request was well-formed but the service
+    refused its content, which is what a blank required field is. A subclass meaning something
+    else overrides its own ``__init__`` to default ``status`` differently, and a subclass that
+    says nothing inherits the answer that blames the payload rather than one that invents a
+    resource state nobody checked.
     """
-
-    #: The HTTP status the API answers with. Read by every ``except InstanceError`` arm.
-    status: ClassVar[int] = 422
 
 
 class InstanceNotFoundError(InstanceError):
     """The referenced instance does not exist -- the caller should see a 404."""
 
-    status: ClassVar[int] = 404
+    def __init__(
+        self, code: str, /, *, status: int = 404, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 class InstanceConflictError(InstanceError):
     """The change collides with an existing instance (a duplicate name) -- a 409, not a
     404: the request was well-formed and the target exists, it just cannot be applied."""
 
-    status: ClassVar[int] = 409
+    def __init__(
+        self, code: str, /, *, status: int = 409, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 @dataclass(frozen=True)
@@ -285,7 +290,7 @@ async def list_instances(session: AsyncSession) -> list[InstanceView]:
 async def _get(session: AsyncSession, instance_id: int) -> Instance:
     row = await session.get(Instance, instance_id)
     if row is None:
-        raise InstanceNotFoundError("No such instance.")
+        raise InstanceNotFoundError("error.instances.not_found")
     return row
 
 
@@ -315,15 +320,13 @@ async def create_instance(
     # base_url so the two round-trip the same way when links are built.
     external = (external_url or "").strip().rstrip("/") or None
     if not name or not base_url or not api_key:
-        raise InstanceError("A name, a URL and an API key are all required.")
+        raise InstanceError("error.instances.required_fields")
 
     if kind in SINGLETON_KINDS:
         existing = await session.scalar(select(Instance).where(Instance.kind == kind))
         if existing is not None:
             raise InstanceConflictError(
-                f"Reaper uses one {_KIND_LABEL.get(kind, 'service')}. It reads a single "
-                "Plex server's watch history, and Reaper connects to one Plex. Edit the "
-                "one you have, or remove it and add a different one."
+                "error.instances.singleton_exists", kind=_KIND_LABEL.get(kind, "service")
             )
 
     clash = await session.scalar(
@@ -331,7 +334,7 @@ async def create_instance(
     )
     if clash is not None:
         raise InstanceConflictError(
-            f'A {_KIND_LABEL.get(kind, "service")} connection named "{name}" already exists.'
+            "error.instances.name_exists", kind=_KIND_LABEL.get(kind, "service"), name=name
         )
 
     row = Instance(
@@ -402,8 +405,9 @@ async def update_instance(
             )
             if clash is not None:
                 raise InstanceConflictError(
-                    f"A {_KIND_LABEL.get(row.kind, 'service')} connection named "
-                    f'"{new_name}" already exists.'
+                    "error.instances.name_exists",
+                    kind=_KIND_LABEL.get(row.kind, "service"),
+                    name=new_name,
                 )
         row.name = new_name
     if base_url is not None and base_url.strip():
@@ -747,7 +751,7 @@ async def probe_root_folders(
     wrong kind, and lets the arr client's error surface for a connection failure.
     """
     if kind not in (InstanceKind.SONARR, InstanceKind.RADARR):
-        raise InstanceError("Only Sonarr and Radarr have root folders to map to a Plex library.")
+        raise InstanceError("error.instances.wrong_kind_for_root_folders")
     client = _client(kind, base_url, api_key, verify=verify, api_path_prefix=api_path_prefix)
     async with client:
         payload = await client.root_folders()  # type: ignore[attr-defined]
@@ -879,7 +883,7 @@ async def seerr_services(
     """
     row = await _get(session, instance_id)
     if row.kind is not InstanceKind.SEERR:
-        raise InstanceError("Only Seerr portals have request services to map to an instance.")
+        raise InstanceError("error.instances.wrong_kind_for_seerr_services")
     return await probe_seerr_services(
         row.base_url,
         box.decrypt(row.api_key_enc),

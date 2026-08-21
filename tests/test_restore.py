@@ -43,6 +43,7 @@ from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import AUTH_BEARING_TABLES
 from reaper.main import create_app
+from reaper.refusal import MESSAGES
 from reaper.services import app_settings, restore
 from reaper.services.restore import RestoreError
 from tests._auth import TEST_PASSWORD, clear_admin_password
@@ -482,7 +483,7 @@ class TestAPrepareStepThatFails:
 
     Nothing drove any of these three arms before this class. ``_force_destructive_off``,
     ``_force_recovery_off`` and ``_purge_auth_state`` each raise
-    :data:`~reaper.services.restore._PREPARE_FAILED`. Each test asserts against that
+    ``RestoreError("error.restore.prepare_failed")``. Each test asserts against the catalog
     declaration rather than a copy of its text, so this file cannot become a fifth spelling
     of the sentence (rule 144).
 
@@ -505,7 +506,8 @@ class TestAPrepareStepThatFails:
 
         with pytest.raises(RestoreError) as excinfo:
             restore.arm(settings, summary.token)
-        assert str(excinfo.value) == restore._PREPARE_FAILED
+        assert excinfo.value.code == "error.restore.prepare_failed"
+        assert str(excinfo.value) == MESSAGES["error.restore.prepare_failed"]
         assert restore.is_armed(settings) is False
 
     def test_a_staged_launcher_conf_that_cannot_be_rewritten_refuses_the_arm(
@@ -532,7 +534,8 @@ class TestAPrepareStepThatFails:
 
         with pytest.raises(RestoreError) as excinfo:
             restore.arm(settings, summary.token)
-        assert str(excinfo.value) == restore._PREPARE_FAILED
+        assert excinfo.value.code == "error.restore.prepare_failed"
+        assert str(excinfo.value) == MESSAGES["error.restore.prepare_failed"]
         assert restore.is_armed(settings) is False
 
     def test_a_staged_database_whose_auth_purge_fails_refuses_the_arm(self, tmp_path: Path) -> None:
@@ -561,7 +564,8 @@ class TestAPrepareStepThatFails:
 
         with pytest.raises(RestoreError) as excinfo:
             restore.arm(settings, summary.token)
-        assert str(excinfo.value) == restore._PREPARE_FAILED
+        assert excinfo.value.code == "error.restore.prepare_failed"
+        assert str(excinfo.value) == MESSAGES["error.restore.prepare_failed"]
         assert restore.is_armed(settings) is False
         # Every row still there, including the two whose DELETE ran before the raise: the
         # purge is one transaction, so a failure rolls the whole sweep back.
@@ -596,7 +600,8 @@ class TestAPrepareStepThatFails:
 
         with pytest.raises(RestoreError) as excinfo:
             restore.arm(settings, summary.token)
-        assert str(excinfo.value) == restore._PREPARE_FAILED
+        assert excinfo.value.code == "error.restore.prepare_failed"
+        assert str(excinfo.value) == MESSAGES["error.restore.prepare_failed"]
         assert restore.is_armed(settings) is False
         assert restore.apply_pending_restore(settings) is False
 

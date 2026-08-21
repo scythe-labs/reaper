@@ -6224,41 +6224,40 @@ def _names_an_instance_error(node: ast.expr | None) -> bool:
     return isinstance(node, ast.Name) and node.id in _INSTANCE_ERROR_NAMES
 
 
-def _http_status_args(handler: ast.ExceptHandler) -> list[tuple[int, ast.expr]]:
-    """The status argument of every ``HTTPException(...)``/``refuse(...)`` call inside ``handler``.
+def _http_status_sites(handler: ast.ExceptHandler) -> list[tuple[int, str, ast.expr | None]]:
+    """Every call inside ``handler`` that turns the caught error into an HTTP response: its
+    line, its callee name, and the status argument it hand-writes (``None`` for
+    ``refuse_from``, which takes no status argument at all).
 
-    Collected from the whole handler body rather than from its first statement, so an arm that
-    branches before raising is read too, and returned in source order -- ``ast.walk`` is
-    breadth-first, so a raise nested inside an ``if`` comes back after one written below it.
+    ``ast.walk`` visits the ``ast.Call`` node itself whether it sits under an ``ast.Raise``
+    (``raise HTTPException(...)``) or a bare ``ast.Expr`` (``refuse(...)``, ``refuse`` being
+    typed ``NoReturn`` and raising internally), so neither wrapper needs its own branch.
 
-    **Three spellings, because the tree spells it three ways**: ``raise HTTPException(status,
-    ...)`` positionally, which is what every arm here used to; ``status_code=``, which
-    ``api/lists.py`` uses twice; and ``refuse(status, code, ...)`` (phase 8a), a bare call
-    rather than a ``raise`` at all -- ``refuse`` is typed ``NoReturn`` and raises internally,
-    so the five instance-error arms this walk exists for hold no ``ast.Raise`` node any more. A
-    reader missing any one spelling does not report that arm as a violation -- it drops the arm
-    out of the population entirely, so the count below fails saying an arm stopped answering
-    when the truth is that it answered in a spelling nobody could read (rule 147).
+    **Four spellings, because the tree spells it four ways**: ``raise HTTPException(status,
+    ...)`` positionally; ``status_code=``, which ``api/lists.py`` uses twice; ``refuse(status,
+    code, ...)`` (phase 8a), hand-writing a status the same way; and ``refuse_from(exc)``
+    (phase 8a's second wave) -- the one spelling that carries no status argument at all,
+    because ``api.errors.refuse_from`` always reads ``exc.status`` internally, which is what
+    makes the five instance-error arms this walk exists for structurally unable to hand-write
+    one any more. A reader missing any one spelling does not report that arm as a violation --
+    it drops the arm out of the population entirely, so the count below fails saying an arm
+    stopped answering when the truth is that it answered in a spelling nobody could read
+    (rule 147).
     """
-    out: list[tuple[int, ast.expr]] = []
+    out: list[tuple[int, str, ast.expr | None]] = []
     for node in ast.walk(handler):
-        call: ast.Call | None = None
-        lineno = 0
-        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
-            call, lineno = node.exc, node.lineno
-        elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
-            call, lineno = node.value, node.lineno
-        if call is None:
+        if not isinstance(node, ast.Call):
             continue
-        callee = call.func
+        callee = node.func
         name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-        if name not in ("HTTPException", "refuse"):
-            continue
-        keyword = next((kw.value for kw in call.keywords if kw.arg == "status_code"), None)
-        status = call.args[0] if call.args else keyword
-        if status is not None:
-            out.append((lineno, status))
-    return sorted(out, key=lambda pair: pair[0])
+        if name == "refuse_from":
+            out.append((node.lineno, name, None))
+        elif name in ("HTTPException", "refuse"):
+            keyword = next((kw.value for kw in node.keywords if kw.arg == "status_code"), None)
+            status = node.args[0] if node.args else keyword
+            if status is not None:
+                out.append((node.lineno, name, status))
+    return sorted(out, key=lambda site: site[0])
 
 
 def _instance_error_handlers() -> list[tuple[str, int, ast.ExceptHandler]]:
@@ -6281,8 +6280,12 @@ def test_no_route_hand_writes_the_status_an_instance_error_already_declares() ->
     base class: correct only because those callees can raise nothing but ``InstanceNotFound``
     today, so a service that grew a blank-field guard the way ``create_instance`` has would
     have told the operator the instance did not exist. Reading the declaration is what makes
-    that unable to happen again, and this is what keeps a sixth arm from reintroducing it
-    (rule 144).
+    that unable to happen again.
+
+    Phase 8a's second wave moved all five to ``refuse_from(exc)``, which reads ``exc.status``
+    internally and takes no status argument to hand-write in the first place -- so what this
+    now guards is that a sixth arm (or an edit to one of the five) does not slip back to a
+    bare ``refuse``/``HTTPException`` call that types the number in again (rule 144).
     """
     handlers = _instance_error_handlers()
     assert len(handlers) == _EXPECTED_INSTANCE_ERROR_HANDLERS, (
@@ -6293,14 +6296,14 @@ def test_no_route_hand_writes_the_status_an_instance_error_already_declares() ->
 
     answered = 0
     for path, _, handler in handlers:
-        for lineno, arg in _http_status_args(handler):
+        for lineno, name, status in _http_status_sites(handler):
             answered += 1
-            assert isinstance(arg, ast.Attribute) and arg.attr == "status", (
-                f"{path}:{lineno} raises HTTPException with a hand-written status. "
-                f"Use `exc.status`, which services/instances.py declares per subclass."
+            assert name == "refuse_from" and status is None, (
+                f"{path}:{lineno} answers with `{name}`, hand-writing a status. Use "
+                "`refuse_from(exc)`, which always reads `exc.status`."
             )
     assert answered == _EXPECTED_INSTANCE_ERROR_RESPONSES, (
-        f"{answered} of those arms answer with an HTTPException, expected "
+        f"{answered} of those arms answer with an HTTP response, expected "
         f"{_EXPECTED_INSTANCE_ERROR_RESPONSES}"
     )
 
@@ -6338,14 +6341,15 @@ def test_the_instance_error_matcher_reads_every_form_the_clause_can_take() -> No
 
 
 def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
-    """``_http_status_args`` reads the raise, not the handler's first line.
+    """``_http_status_sites`` reads the whole handler body, not its first line.
 
     An arm that logs first, or branches before raising, still raises a status -- and a reader
     that only inspected ``handler.body[0]`` would call both of those clean. Driven against a
     nested raise, since that is the shape a future arm most plausibly takes, and against
     ``status_code=``, which is a live spelling in ``api/lists.py`` and reaches the ban only
-    because the reader takes it, and against ``refuse(...)`` (phase 8a), a bare call rather
-    than a ``raise`` at all (rule 147).
+    because the reader takes it, and against both ``refuse(...)`` (phase 8a) and
+    ``refuse_from(...)`` (phase 8a's second wave), bare calls rather than a ``raise`` at all
+    (rule 147).
     """
     nested = ast.parse(
         "try:\n"
@@ -6357,9 +6361,9 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
         "    raise HTTPException(status_code=409, detail=str(exc)) from exc\n"
     )
     handler = next(n for n in ast.walk(nested) if isinstance(n, ast.ExceptHandler))
-    args = _http_status_args(handler)
-    assert len(args) == 2, f"both raises should be read, got {len(args)}"
-    (_, positional), (_, keyword) = args
+    sites = _http_status_sites(handler)
+    assert len(sites) == 2, f"both raises should be read, got {len(sites)}"
+    (_, _, positional), (_, _, keyword) = sites
     assert isinstance(positional, ast.Constant) and positional.value == 404
     assert isinstance(keyword, ast.Constant) and keyword.value == 409
 
@@ -6371,7 +6375,8 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
         "    raise HTTPException(exc.status, str(exc)) from exc\n"
     )
     handler = next(n for n in ast.walk(clean) if isinstance(n, ast.ExceptHandler))
-    ((_, arg),) = _http_status_args(handler)
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "HTTPException"
     assert isinstance(arg, ast.Attribute) and arg.attr == "status"
 
     # The refuse() spelling: a bare call, never a `raise`, and still readable.
@@ -6379,27 +6384,38 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
         "try:\n"
         "    pass\n"
         "except InstanceError as exc:\n"
-        '    refuse(exc.status, "error.settings.instance_rejected", error=str(exc))\n'
+        '    refuse(exc.status, "error.instances.not_found", error=str(exc))\n'
     )
     handler = next(n for n in ast.walk(refuses_clean) if isinstance(n, ast.ExceptHandler))
-    ((_, arg),) = _http_status_args(handler)
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "refuse"
     assert isinstance(arg, ast.Attribute) and arg.attr == "status"
 
     refuses_dirty = ast.parse(
         "try:\n"
         "    pass\n"
         "except InstanceError as exc:\n"
-        '    refuse(404, "error.settings.instance_rejected", error=str(exc))\n'
+        '    refuse(404, "error.instances.not_found", error=str(exc))\n'
     )
     handler = next(n for n in ast.walk(refuses_dirty) if isinstance(n, ast.ExceptHandler))
-    ((_, arg),) = _http_status_args(handler)
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "refuse"
     assert isinstance(arg, ast.Constant) and arg.value == 404
+
+    # The refuse_from() spelling: no status argument at all, since it always reads exc.status.
+    refuse_from_clean = ast.parse(
+        "try:\n    pass\nexcept InstanceError as exc:\n    refuse_from(exc)\n"
+    )
+    handler = next(n for n in ast.walk(refuse_from_clean) if isinstance(n, ast.ExceptHandler))
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "refuse_from"
+    assert arg is None
 
     # A raise that is not an HTTPException contributes nothing, so a `raise` re-raising the
     # original cannot be read as an arm that stopped answering.
     bare = ast.parse("try:\n    pass\nexcept InstanceError:\n    raise\n")
     handler = next(n for n in ast.walk(bare) if isinstance(n, ast.ExceptHandler))
-    assert _http_status_args(handler) == []
+    assert _http_status_sites(handler) == []
 
 
 # --- the bold-when-active strut, and the sentence enumerating it (rule 144) -----------
@@ -8080,8 +8096,13 @@ def test_the_revision_walk_still_sees_every_revision() -> None:
 #: `Reason(code, ...)` (`services.leaving_soon`'s stored skip reasons, which ride the engine's
 #: typed-reason container rather than an HTTP-shaped exception), and a `super().__init__(code,
 #: ...)` inside a `Refusal` subclass's own `__init__` (the three `LeavingSoon*Error` classes,
-#: which take no constructor argument at their call site). Two shapes hold no call argument at
-#: all and are read separately below: a `code=` keyword on any call
+#: which take no constructor argument at their call site). Phase 8a's second wave turned every
+#: remaining service exception that used to compose its own English (`LoginError`,
+#: `PasswordError`, `PlexLinkError` and its retryable sibling, `RestoreError`, the `Instance*`
+#: family, `ListConfigError`, `PlanError`, `ExecutionError`, `ScanConfigError`) into a `Refusal`
+#: subclass too, each keeping `code` as its own raise-site argument exactly like `Refusal`
+#: itself -- so they read the same way and need no separate shape here. Two shapes hold no call
+#: argument at all and are read separately below: a `code=` keyword on any call
 #: (`require_admin_password(..., code=...)`), and a bare `return code` / `return code, params`
 #: (`api.middleware.api_key_refusal`, whose two codes never reach a call argument). Every site
 #: is filtered to a string constant starting with `"error."`, which is the whole catalog's
@@ -8093,6 +8114,22 @@ _CODE_CALL_INDEX: dict[str, int] = {
     "RefusalHTTPException": 1,
     "_reject": 2,
     "Reason": 0,
+    # Phase 8a's second wave: every service exception that used to compose its own English
+    # is now a `Refusal` subclass, and each keeps `code` as its own first positional arg
+    # (some through a thin per-subclass `__init__` that only fixes the default `status`),
+    # so every one of these reads exactly like `Refusal` itself at its raise site.
+    "LoginError": 0,
+    "PasswordError": 0,
+    "PlexLinkError": 0,
+    "PlexLinkRetryableError": 0,
+    "RestoreError": 0,
+    "InstanceError": 0,
+    "InstanceNotFoundError": 0,
+    "InstanceConflictError": 0,
+    "ListConfigError": 0,
+    "PlanError": 0,
+    "ExecutionError": 0,
+    "ScanConfigError": 0,
 }
 
 
@@ -8153,8 +8190,8 @@ def _refusal_code_sites() -> dict[str, list[str]]:
     return sites
 
 
-_EXPECTED_REFUSAL_CODES = 128
-_EXPECTED_REFUSAL_SITES = 147
+_EXPECTED_REFUSAL_CODES = 209
+_EXPECTED_REFUSAL_SITES = 235
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:

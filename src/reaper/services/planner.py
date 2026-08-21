@@ -53,14 +53,16 @@ from reaper.db.models import (
     Snapshot,
     StepState,
 )
+from reaper.refusal import Refusal
 from reaper.services import whitelist
 from reaper.services.condemned import effective_condemned
 
 log = structlog.get_logger(__name__)
 
 
-class PlanError(RuntimeError):
-    """A plan could not be built -- e.g. a candidate whose media_key we cannot route."""
+class PlanError(Refusal):
+    """A plan could not be built -- e.g. a candidate whose media_key we cannot route. A
+    catalog code plus raw params."""
 
 
 @dataclass(frozen=True)
@@ -87,17 +89,19 @@ class MediaRef:
         """
         parts = media_key.split(":")
         if len(parts) not in (3, 4) or parts[0] not in ("radarr", "sonarr"):
-            raise PlanError(f'Cannot route media_key "{media_key}" to an instance.')
+            raise PlanError("error.plan.media_key_unroutable", media_key=media_key)
         try:
             season = int(parts[3]) if len(parts) == 4 else None
             ref = cls(kind=parts[0], instance_id=int(parts[1]), arr_id=int(parts[2]), season=season)
         except ValueError as exc:
-            raise PlanError(f'Malformed media_key "{media_key}": {exc}') from exc
+            raise PlanError(
+                "error.plan.media_key_malformed", media_key=media_key, error=str(exc)
+            ) from exc
 
         if ref.season is not None and ref.kind != "sonarr":
             # Only TV has seasons; a four-part radarr key is a mis-built id, and routing
             # it anywhere is worse than refusing it.
-            raise PlanError(f'A season media_key must be sonarr, got "{media_key}".')
+            raise PlanError("error.plan.season_media_key_not_sonarr", media_key=media_key)
         return ref
 
 
@@ -289,7 +293,7 @@ def _plannable_size(candidate: Candidate) -> int:
     which is the exact defect the partition exists to remove.
     """
     if candidate.size_bytes is None:
-        raise PlanError(f"{candidate.media_key} has no measured size to order by.")
+        raise PlanError("error.plan.unmeasured_sort_key", media_key=candidate.media_key)
     return candidate.size_bytes
 
 
@@ -311,11 +315,7 @@ def _refuse_without_a_canary(plannable: list[Candidate], max_unmeasured: int) ->
         return
     if any(c.size_bytes is not None for c in plannable):
         return
-    raise PlanError(
-        "Reaper couldn't measure any of these items, so it has nothing safe to test "
-        "the run on. The first thing a run deletes has to be something whose size it "
-        "knows. Check these in Sonarr or Radarr, then run a new scan."
-    )
+    raise PlanError("error.plan.no_canary")
 
 
 async def build_plan(
@@ -347,7 +347,7 @@ async def build_plan(
     """
     snapshot = await session.get(Snapshot, snapshot_id)
     if snapshot is None:
-        raise PlanError(f"No snapshot {snapshot_id}.")
+        raise PlanError("error.plan.no_snapshot", snapshot_id=snapshot_id)
     if snapshot.degraded:
         # A degraded snapshot missed a source or saw the history regress. Planning a
         # deletion from it means acting on a candidate list we already know is wrong.
@@ -359,10 +359,7 @@ async def build_plan(
         # reason it writes, but this reads a stored column, and a row written by anything else
         # is not covered by that -- put prose after it and an unterminated one fuses into the
         # sentence following, which is #514 all over again.
-        raise PlanError(
-            "That scan came back incomplete, so Reaper won't act on it. Fix the source and "
-            f"scan again. {snapshot.degraded_reason}"
-        )
+        raise PlanError("error.plan.snapshot_degraded", reason=snapshot.degraded_reason or "")
 
     all_condemned = list(
         (
@@ -438,7 +435,7 @@ async def build_plan(
             # empty list (this), so an empty set reaching here is a real, deliberate
             # "nothing selected" -- fail closed with a clear message rather than falling
             # through to plan the entire condemned set.
-            raise PlanError("No items were selected to reap.")
+            raise PlanError("error.plan.selection_empty")
 
         condemned_keys = {c.media_key for c in all_condemned}
         # Two sets, and the difference decides which refusal the owner reads. ``actable``
@@ -492,34 +489,20 @@ async def build_plan(
 
         all_unmeasured = requested & set(unmeasured_groups)
         if all_unmeasured:
-            raise PlanError(
-                "Reaper couldn't measure any of the seasons it would remove from "
-                f"{sorted(all_unmeasured)}, so there is nothing here it can reap. Check "
-                "them in Sonarr, then run a new scan."
-            )
+            raise PlanError("error.plan.unmeasured_seasons", keys=", ".join(sorted(all_unmeasured)))
 
         unknown = requested - (condemned_keys | actable_keys)
         if unknown:
-            raise PlanError(
-                "These items are not condemned in this snapshot, so they cannot be reaped: "
-                f"{sorted(unknown)}."
-            )
+            raise PlanError("error.plan.items_not_condemned", keys=", ".join(sorted(unknown)))
         # Named directly, so it is refused out loud rather than dropped. A key the owner
         # typed must never vanish from a plan in silence, even when the reason is safety.
         # With the allowance open these items are plannable, so there is nothing to refuse.
         named_held_back = requested & held_back_keys if max_unmeasured == 0 else set()
         if named_held_back:
-            raise PlanError(
-                "Reaper couldn't measure the size of these items, so it won't reap them: "
-                f"{sorted(named_held_back)}. Check them in Sonarr or Radarr, then run a "
-                "new scan."
-            )
+            raise PlanError("error.plan.items_unmeasured", keys=", ".join(sorted(named_held_back)))
         spared = requested - actable_keys
         if spared:
-            raise PlanError(
-                f"These items are spared, so they will not be reaped: {sorted(spared)}. "
-                "Remove the spare first if you really mean to delete them."
-            )
+            raise PlanError("error.plan.items_spared", keys=", ".join(sorted(spared)))
         plannable = [c for c in plannable if c.media_key in requested]
         selected = requested
 
@@ -548,10 +531,7 @@ async def build_plan(
     # the same abort-not-truncate discipline the byte caps already keep.
     if len(admitted) > max_unmeasured:
         raise PlanError(
-            f"This plan holds {len(admitted)} items Reaper couldn't measure, over your "
-            f"limit of {max_unmeasured} per run. The plan is refused rather than trimmed: "
-            "which of them gets deleted must not come down to the order they were listed "
-            "in. Raise the limit, or reap fewer items at once."
+            "error.plan.unmeasured_over_limit", count=len(admitted), limit=max_unmeasured
         )
 
     if admitted:
@@ -565,7 +545,7 @@ async def build_plan(
         )
 
     if not plannable:
-        raise PlanError("Nothing is condemned in this snapshot; there is no plan to build.")
+        raise PlanError("error.plan.nothing_condemned")
 
     # Read every instance's row once: the KEYS are the ids configured right now (the
     # existence check the guard below runs), and the VALUES are each Radarr's own
@@ -596,11 +576,7 @@ async def build_plan(
         }
     )
     if orphaned:
-        raise PlanError(
-            "Some of these items were found by a Radarr that is no longer connected, so "
-            "Reaper cannot remove them. Reconnect it, or run a new scan to drop them from "
-            "the list."
-        )
+        raise PlanError("error.plan.instance_orphaned")
 
     now = utcnow()
     run = ReapRun(

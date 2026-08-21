@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from reaper.aio import report_background_failure
 from reaper.api import tags as api_tags
 from reaper.api.deps import newest_snapshot, session_factory, state_singleton
-from reaper.api.errors import refuse, validation_error_items
+from reaper.api.errors import refuse, refuse_from, validation_error_items
 from reaper.api.scan import launch_scan
 from reaper.api.schemas import (
     ActionStepOut,
@@ -296,7 +296,7 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
                 max_unmeasured=(await _saved_limits_or_refuse(session)).max_unmeasured_per_run,
             )
         except PlanError as exc:
-            refuse(422, "error.runs.plan_refused", error=str(exc))
+            refuse_from(exc)
 
         out = await _run_out(session, run)
         await session.commit()
@@ -424,7 +424,7 @@ async def dry_run(request: Request, run_id: int) -> RunReportOut:
         except ExecutionError as exc:
             # A voided run (changed manifest, already executed) is a 409: the plan is no
             # longer valid, and the owner needs to re-plan rather than retry.
-            refuse(409, "error.runs.dry_run_refused", error=str(exc))
+            refuse_from(exc)
         await session.commit()
 
     return _report_out(report)
@@ -549,11 +549,12 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
         async with factory() as session:
             safety = await app_settings.runtime_safety(session, settings)
             if not safety.destructive_allowed:
-                refuse(
-                    403,
-                    "error.runs.deletion_disabled",
-                    reason=safety.why_blocked() or "Deletion is turned off.",
-                )
+                # Same two conditions and the same two codes as the executor's own backstop
+                # check (services.executor.Executor.execute), so the two cannot drift apart
+                # (rule 144).
+                if safety.recovery_mode:
+                    refuse(403, "error.safety.recovery_mode_active")
+                refuse(403, "error.safety.deletion_off")
 
             run = await session.get(ReapRun, run_id)
             if run is None:

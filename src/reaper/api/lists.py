@@ -30,7 +30,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from reaper.api import tags as api_tags
-from reaper.api.errors import RefusalHTTPException, refuse
+from reaper.api.errors import refuse, refuse_from
 from reaper.api.schemas import (
     ListConfigIn,
     ListConfigOut,
@@ -102,12 +102,6 @@ async def get_lists(request: Request) -> list[ProtectionListOut]:
             )
         )
     return out
-
-
-def _refused(exc: list_config.ListConfigError) -> RefusalHTTPException:
-    """The service's own words, at 400. It writes for the operator, so nothing is reworded
-    here -- a second phrasing of one refusal is the copy that drifts (rule 144)."""
-    return RefusalHTTPException(400, "error.lists.config_rejected", {"error": str(exc)})
 
 
 async def _authorable_media(
@@ -213,7 +207,7 @@ async def add_list(request: Request, body: ListConfigIn) -> ListConfigOut:
                 session, name=body.name, source=body.source, config=body.config
             )
         except list_config.ListConfigError as exc:
-            raise _refused(exc) from None
+            refuse_from(exc)
         # A list the operator adds here writes no keep rule on its own. Settings owns what a
         # list IS; Policy owns what it does, and the operator chooses whether and how strongly
         # it protects. The row renders "Not used by your policy yet" until they do, so adding a
@@ -236,7 +230,7 @@ async def edit_list(request: Request, list_id: int, body: ListConfigPatch) -> Li
             before = (await list_config.get(session, list_id)).name
             row = await list_config.update(session, list_id, name=body.name, config=body.config)
         except list_config.ListConfigError as exc:
-            raise _refused(exc) from None
+            refuse_from(exc)
         # A renamed list's rules follow it, or every one of them would go on naming a list
         # that no longer exists while rendering as a live protection.
         await list_rules.rename_list(session, before, row.name)
@@ -289,7 +283,7 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
                 require_scan_sources=False,
             )
         except scan_runner.ScanConfigError as exc:
-            refuse(400, "error.lists.sync_sources_failed", error=str(exc))
+            refuse_from(exc)
 
         # Plex is optional and fails CLOSED, exactly as it does in a scan: with no live
         # server no collection provider is built, so nothing is synced for one and nothing
@@ -343,7 +337,7 @@ async def remove_list(request: Request, list_id: int) -> None:
             name = (await list_config.get(session, list_id)).name
             await list_config.delete(session, list_id)
         except list_config.ListConfigError as exc:
-            raise _refused(exc) from None
+            refuse_from(exc)
         # The rules naming it leave with it, so none goes on rendering as a live
         # protection covering nothing (rule 25).
         await list_rules.detach_list(session, name)

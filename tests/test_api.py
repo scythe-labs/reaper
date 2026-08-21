@@ -534,7 +534,7 @@ class TestTheRunsApi:
             json={"confirmation_phrase": run["confirmation_phrase"]},
         )
         assert resp.status_code == 403
-        assert resp.json()["code"] == "error.runs.deletion_disabled"
+        assert resp.json()["code"] == "error.safety.deletion_off"
 
 
 @pytest.fixture
@@ -640,10 +640,11 @@ class TestTheRunSelectionIsExplicit:
 
         assert refused.status_code == 422
         body = refused.json()
-        assert body["code"] == "error.runs.plan_refused"
-        # PlanError's own words ride in `params["error"]` raw, so the specific sentence is
-        # planner.py's to own, not the catalog's; the code above is what phase 8a covers.
-        assert "no items were selected" in body["params"]["error"].lower()
+        # PlanError is now a Refusal subclass of its own (phase 8a's second wave): the code
+        # names the condition directly, with no params, rather than wrapping planner.py's
+        # English in a generic pass-through.
+        assert body["code"] == "error.plan.selection_empty"
+        assert "no items were selected" in body["detail"].lower()
         # And nothing was journalled: a refused selection leaves no plan behind at all.
         assert selection_client.get("/api/runs").json() == []
 
