@@ -353,7 +353,22 @@ they are what makes §10's fan-out safe to delegate.
 
 ### Stage 5 — the in-app manual
 
-**Status:** not started.
+**Status:** done (2026-08-20, PR #859). The English blocks stayed in `content/*.ts`, statically
+imported, as the fallback and the site generator's source. A translated manual is
+`content/<tag>/index.ts` exporting `DOCS`. `docs/localized.ts` finds every one with
+`import.meta.glob`, so each ships as its own chunk, and the modal reads it through React's
+`use()` behind the Suspense boundary `DocsContext` already had. The lookup goes by
+`i18n.language`, the exact tag and then its language, so the manual and the UI catalog fall
+back to English independently, each entire. Group names became catalog keys
+(`shell.docsModal.group.*`) over a closed `DocGroup` union, so the index headings follow the
+UI language and a fifth group fails to compile. The pane and the index entries carry `lang`
+with the manual's tag. The gate is `manual.locales.test.ts`: every shipped manual has the
+English skeleton (doc ids, groups, section ids, block kinds, table and diagram shapes), its tag
+is one `Intl` accepts, the lazy and eager globs agree, and the locale count is pinned at one.
+`manual.links.test.ts` reads every manual's cross-references. Findings: a suspended `use()`
+never resumes under a bare testing-library `render()` in this suite, so the translated path
+renders inside an async `act()`. Axe's valid-lang rule is what made the tag check a gate. Ran
+without subagents, since nothing moved that was mechanical enough to delegate.
 
 6,509 words in `frontend/src/docs/content/*.ts`, typed blocks already: the app renders them
 through `DocBody`, and `toMdx.ts` generates the manual site's pages from the same blocks
