@@ -2058,7 +2058,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
             )
 
         async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
-            return SimpleNamespace(rows=0)
+            return SimpleNamespace(rows=0, unservable=0)
 
         async def fake_policies(session: Any) -> Any:
             return (
@@ -2380,7 +2380,7 @@ class TestOneScanAtATime:
             return profiles.ActiveProfile(ProfileSettings())
 
         async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
-            return SimpleNamespace(rows=0)
+            return SimpleNamespace(rows=0, unservable=0)
 
         async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
             return {}
@@ -2749,7 +2749,7 @@ class TestKeepHistoryCoverage:
             return ([], [], _OffTautulli(), [], None)
 
         async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
-            return SimpleNamespace(rows=0)
+            return SimpleNamespace(rows=0, unservable=0)
 
         async def fake_policies(session: Any) -> Any:
             return (
@@ -3813,7 +3813,7 @@ class TestTheScanRecordsTheListsItGatheredUnder:
             return profiles.ActiveProfile(ProfileSettings())
 
         async def ok_sync(engine: Any, tautulli: Any) -> Any:
-            return SimpleNamespace(rows=0)
+            return SimpleNamespace(rows=0, unservable=0)
 
         async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
             return {}
