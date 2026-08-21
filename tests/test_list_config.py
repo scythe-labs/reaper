@@ -307,9 +307,9 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
         this binds backend sentence to catalog message; the frontend's own gates
         (``i18n-keys.test.ts``) bind the catalog to the keys ``ListModal.tsx`` renders.
         """
-        modal = (
-            Path(__file__).resolve().parents[1] / "frontend/src/locales/en/ui.json"
-        ).read_text(encoding="utf-8")
+        modal = (Path(__file__).resolve().parents[1] / "frontend/src/locales/en/ui.json").read_text(
+            encoding="utf-8"
+        )
         for sentence in (
             "Give the list a name, so you can pick it out on the Policy screen.",
             "Say which Plex library to look in.",
