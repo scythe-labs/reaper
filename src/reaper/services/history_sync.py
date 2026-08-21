@@ -56,7 +56,7 @@ is what makes the guard real.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 import structlog
@@ -135,6 +135,17 @@ MIN_PAGE_SIZE = 1_000
 #: at the floor and 125M at PAGE_SIZE, and still stops a source that is not advancing.
 MAX_HISTORY_PAGES = 5_000
 
+#: How many rows the walk may step over because Tautulli answered HTTP 500 for each one alone.
+#: ``get_history`` renders its rows in Python after the query, and a row it cannot render
+#: fails every page that holds it, at any page size and on every sweep. Verified live: two
+#: undated rows, which sort last and so sat on the final page of three sweeps in a row (the
+#: ``after`` filter of an incremental sync excludes an undated row, so only the sweep met
+#: them). The walk halves the page until the row stands alone, skips it, and counts it: the
+#: scan degrades on the count and the sweep records it, so a skip is never quiet. Past this
+#: many the source is broken rather than holding a bad row or two, and the walk raises.
+#: Isolating one row costs about thirty requests, so this also bounds the runtime.
+MAX_UNSERVABLE_ROWS = 20
+
 
 class HistoryRegressionError(RuntimeError):
     """Tautulli's reported history total shrank sharply between syncs.
@@ -155,6 +166,11 @@ class HistoryState:
     #: which is "we were never told" and not zero (rule 93). Carried here so the scan can ask
     #: whether the mirror is COMPLETE in the same read that asks whether it is empty or stale.
     source_total: int | None = None
+    #: Rows the walk that produced this state stepped over because the source answered
+    #: HTTP 500 for each one alone (``MAX_UNSERVABLE_ROWS``). A play the mirror was refused is
+    #: missing evidence in the condemn direction, so the scan degrades on a nonzero count.
+    #: Zero on a state read without a walk.
+    unservable: int = 0
 
     @property
     def horizon(self) -> datetime | None:
@@ -471,25 +487,51 @@ async def _sync(
     skipped_malformed = 0
 
     pages = 0
-    length = PAGE_SIZE
+    # `ceiling` is the page size for the rest of the walk, and a read timeout lowers it.
+    # `length` drops below it only while a 500 is being isolated, and climbs back after.
+    ceiling = PAGE_SIZE
+    length = ceiling
+    skipped_unservable = 0
     while True:
         try:
             page = await client.history(
                 length=length, start=start, after=after, read_timeout=PAGE_READ_TIMEOUT
             )
         except IntegrationError as exc:
-            # A read timeout says the source took the request and could not finish the body
-            # in time, which is a fact about how much was asked for. Halve and keep paging.
-            # `transient_retry` has already re-sent this identical page twice against the
-            # same budget by the time we get here, so a fourth attempt at the same size is
-            # not the move -- and aborting means no sweep at all until the next cron slot,
-            # while every backfilled row stays missing and its title reads never watched
-            # (#780). At the floor the source is not merely slow: raise, and let the
-            # scheduler record the failure.
-            if not exc.read_timed_out or length <= MIN_PAGE_SIZE:
+            if exc.read_timed_out:
+                # A read timeout says the source took the request and could not finish the
+                # body in time, which is a fact about how much was asked for. Halve and keep
+                # paging. `transient_retry` has already re-sent this identical page twice
+                # against the same budget by the time we get here, so a fourth attempt at the
+                # same size is not the move -- and aborting means no sweep at all until the
+                # next cron slot, while every backfilled row stays missing and its title reads
+                # never watched (#780). At the floor the source is not merely slow: raise, and
+                # let the scheduler record the failure.
+                if ceiling <= MIN_PAGE_SIZE:
+                    raise
+                ceiling = length = max(MIN_PAGE_SIZE, ceiling // 2)
+                log.warning("history.page_shrunk", length=length, fetched=start)
+                continue
+            if exc.status != 500:
                 raise
-            length = max(MIN_PAGE_SIZE, length // 2)
-            log.warning("history.page_shrunk", length=length, fetched=start)
+            # A 500 is Tautulli's own answer for a page it could not render, and one row it
+            # cannot render fails every page that holds it, at any size
+            # (MAX_UNSERVABLE_ROWS). Halve until the row stands alone, then step over it: the
+            # rows on either side land, where raising lost the whole tail of every sweep. A
+            # 502 or 503 is a proxy saying the source is away, which no smaller page fixes,
+            # so it raises above. The floor does not apply: it bounds a timeout, and the
+            # question here is which row rather than how many.
+            if length > 1:
+                length //= 2
+                continue
+            skipped_unservable += 1
+            if skipped_unservable > MAX_UNSERVABLE_ROWS:
+                raise IntegrationError(
+                    client.service,
+                    f"could not return {skipped_unservable} rows of history (HTTP 500)",
+                ) from exc
+            log.warning("history.row_unservable", offset=start, error=str(exc))
+            start += 1
             continue
         pages += 1
         rows = page.get("data") or []
@@ -558,6 +600,10 @@ async def _sync(
         # largest mass-deletion vector this codebase has (rule 56). This is also what makes
         # a shrunk page correct: `length` falls mid-walk, and `start` follows the rows.
         start += len(rows)
+        if length < ceiling:
+            # Climb back after a 500 was isolated, one doubling per page that lands: a second
+            # bad row nearby then costs a few small pages rather than a descent from the top.
+            length = min(ceiling, length * 2)
         log.info("history.page", fetched=start, of=total, inserted=inserted)
         # `total` is trusted only when it is actually there. `int(... or 0)` makes a
         # Tautulli that omits recordsFiltered indistinguishable from one reporting an
@@ -572,11 +618,12 @@ async def _sync(
             log.warning("history.page_cap_reached", pages=pages, fetched=start)
             break
 
-    after_state = await _state(engine)
+    after_state = replace(await _state(engine), unservable=skipped_unservable)
     log.info(
         "history.synced",
         rows=after_state.rows,
         inserted=inserted,
+        unservable=skipped_unservable,
         incremental=after is not None,
         horizon=after_state.earliest.date().isoformat() if after_state.earliest else None,
     )

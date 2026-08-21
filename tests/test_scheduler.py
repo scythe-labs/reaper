@@ -881,6 +881,62 @@ class TestUpkeepJobsRecordTheirLastRun:
         assert last["ok"] is False
         assert last["result"] == "Couldn't update history"
 
+    @pytest.mark.parametrize(
+        ("unservable", "ok", "result"),
+        [
+            (0, True, "History updated"),
+            (2, False, "History updated, but Tautulli couldn't return 2 plays"),
+        ],
+    )
+    async def test_a_sweep_that_stepped_over_rows_records_a_partial_run(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+        unservable: int,
+        ok: bool,
+        result: str,
+    ) -> None:
+        """A row Tautulli could not return is stepped over rather than fatal
+        (``history_sync.MAX_UNSERVABLE_ROWS``), and the Jobs page says so with the count, not
+        ok, the way the lists job records a partial refresh. A clean sweep still reads as one.
+        """
+        from reaper.services import history_sync
+
+        class _PlainBox:
+            def decrypt(self, value: str) -> str:
+                return value
+
+        async def fake_sync(
+            engine: object, client: object, *, full: bool
+        ) -> history_sync.HistoryState:
+            assert full
+            return history_sync.HistoryState(
+                rows=10, earliest=None, latest=None, unservable=unservable
+            )
+
+        monkeypatch.setattr(history_sync, "sync", fake_sync)
+        async with main_factory() as session:
+            session.add(
+                Instance(
+                    kind=InstanceKind.TAUTULLI,
+                    name="t",
+                    enabled=True,
+                    base_url="http://tautulli.example",
+                    api_key_enc="plain",
+                    verify_tls=True,
+                    created_at=utcnow(),
+                )
+            )
+            await session.commit()
+
+        await scheduler.full_history_sweep(main_factory, cache_engine, _PlainBox())  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "full_history_sweep")
+        assert last is not None
+        assert last["ok"] is ok
+        assert last["result"] == result
+
 
 class TestTheUpdateCheckJob:
     """The check runs on a schedule now, which is the whole point of the job: before it,

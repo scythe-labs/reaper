@@ -777,6 +777,15 @@ async def _run_scan_locked(
             hist = await history_sync.sync(cache_engine, tautulli)
             history_ms = round((time.monotonic() - history_started) * 1000)
             log.info("scan.history_synced", rows=hist.rows, duration_ms=history_ms)
+            if hist.unservable:
+                # A play the source refused to return is missing evidence, in the condemn
+                # direction, so it degrades exactly as a sync that raised does (rule 28).
+                # The walk stepped over the row rather than raising so the rows after it
+                # still landed (`history_sync.MAX_UNSERVABLE_ROWS`).
+                pre_scan_degradations.append(
+                    f"Tautulli couldn't return {hist.unservable} of your plays, so they "
+                    "don't count and nothing may be deleted from this scan."
+                )
         except IntegrationError as exc:
             history_ms = round((time.monotonic() - history_started) * 1000)
             # The mirror is the primary condemning evidence: dormancy and watcher counts
