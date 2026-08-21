@@ -54,10 +54,17 @@ rule narrating the gate that enforces it pays twice for one constraint.
 
 ## Golden rules
 
-- **Nothing identifying, anywhere** — code, docs, tests, and commit messages alike. Reaper
-  ships to operators whose servers we will never see: never commit a real title, host, path,
-  username, or stat. Live-testing findings are recorded as ratios and shapes, never
-  fingerprints.
+- **Nothing identifying in the tree** — code, docs, tests, and commit messages alike. Reaper
+  ships to operators whose servers we will never see: never write a real title, host, path,
+  username, or stat into any of them. Live-testing findings are recorded as ratios and shapes,
+  never fingerprints.
+  **Screenshots are the one exception, and only of the maintainer's own instance.** The README
+  and scythelabs.dev show the running app against a real library, because a picture of invented
+  titles sells nothing and that server is theirs to publish. **Other people are never in the
+  exception**: Scales lists the names of everyone who requested something, so a shot of it is
+  cropped above that list rather than retouched, since a crop cannot miss one and painting over
+  twelve rows can. `scripts/gen_screenshot_mockup.py` still builds the invented version under
+  `docs/media/review-queue-mockup.png`, kept so reversing this call is a one-line README edit.
 - **American English everywhere**, including identifiers and commit messages
   (`normalize_label`, `SeasonJudgment`). The only exceptions are names owned by someone else
   and spelled British at the source: `asyncio.CancelledError`, `aria-labelledby`.

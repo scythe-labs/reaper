@@ -24,7 +24,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "gen_screenshot_mockup.py"
-SHOT = ROOT / "docs" / "media" / "review-queue.png"
+SHOT = ROOT / "docs" / "media" / "review-queue-mockup.png"
 
 
 def _generator() -> ModuleType:
