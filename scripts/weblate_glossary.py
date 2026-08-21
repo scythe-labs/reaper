@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Create Reaper's Weblate glossary component, and keep its product-name terms read-only.
+"""Create Reaper's Weblate glossary component, and seed its terms into every language.
 
 Standalone by design (stdlib only, rule 15), and run by hand rather than by CI: creating a
-component is a one-time, human-approved step. `frontend/src/locales/glossary/en.tbx` is the
-glossary itself; this script only makes sure Weblate has a component pointed at it, and that
-"Sanctuary" and "Limbo" -- Reaper's own product names -- carry Weblate's `read-only` flag, so a
-translator sees them without a target box inviting a translation that would never be used.
+component is a one-time, human-approved step, and seeding follows a language being added,
+which a person does on Weblate. `frontend/src/locales/glossary/en.tbx` is the glossary
+itself. TBX is a bilingual format on Weblate, so a term lives inside each target language's
+file and the English file is never read by Weblate: this script reads it instead, and posts
+every term it holds into each target language's glossary translation, with the TBX
+``descrip`` as the term's explanation. "Sanctuary" and "Limbo", Reaper's own product names,
+carry Weblate's `read-only` flag, so a translator sees them without a target box inviting a
+translation that would never be used.
 
-    python3 scripts/weblate_glossary.py            # creates the component if missing
+    python3 scripts/weblate_glossary.py            # creates the component if missing, seeds
     python3 scripts/weblate_glossary.py --dry-run   # prints what it would do, changes nothing
 
-Idempotent either way: a component that already exists is left alone, and a term already
-flagged read-only is not re-flagged. The API key is read from `WEBLATE_API_KEY`, or from the
-file `--key-file` names (default `/opt/reaper_1/.weblate_api`). Never printed, never logged.
+Idempotent either way: a component that already exists is left alone, a term a language
+already holds is not posted again, and a term already flagged read-only is not re-flagged.
+With no target language yet, seeding has nowhere to go and says so (#878). The API key is
+read from `WEBLATE_API_KEY`, or from the file `--key-file` names (default
+`/opt/reaper_1/.weblate_api`). Never printed, never logged.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -33,10 +40,11 @@ API_ROOT = "https://hosted.weblate.org/api"
 PROJECT = "reaper"
 UI_COMPONENT_URL = f"{API_ROOT}/components/{PROJECT}/ui/"
 GLOSSARY_COMPONENT_URL = f"{API_ROOT}/components/{PROJECT}/glossary/"
+GLOSSARY_TRANSLATIONS_URL = f"{GLOSSARY_COMPONENT_URL}translations/?page_size=100"
 CREATE_COMPONENT_URL = f"{API_ROOT}/projects/{PROJECT}/components/"
-GLOSSARY_UNITS_URL = f"{API_ROOT}/translations/{PROJECT}/glossary/en/units/?page_size=100"
 DEFAULT_KEY_FILE = Path("/opt/reaper_1/.weblate_api")
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 GLOSSARY_DIR = "frontend/src/locales/glossary"
 GLOSSARY_FILE = f"{GLOSSARY_DIR}/en.tbx"
 
@@ -130,33 +138,106 @@ def _ensure_component(key: str, *, dry_run: bool) -> bool:
     return True
 
 
-def _sync_read_only_flags(key: str, *, dry_run: bool) -> None:
-    """Add Weblate's `read-only` flag to every term in READ_ONLY_TERMS, leaving any flag
-    already set on a unit in place."""
-    remaining = dict.fromkeys(READ_ONLY_TERMS, True)
-    url: str | None = GLOSSARY_UNITS_URL
+def _terms_from_tbx(path: Path) -> list[tuple[str, str]]:
+    """Every ``(term, explanation)`` in the English TBX, in file order.
+
+    One ``termEntry`` holds one ``term`` and at most one ``descrip``, which CONTRIBUTING's
+    "Translate it" describes as the one-line explanation a translator sees beside the term.
+    """
+    root = ET.parse(path).getroot()  # noqa: S314 (a committed file of our own, not input)
+    namespace = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") else ""
+    prefix = f"{{{namespace}}}" if namespace else ""
+    terms: list[tuple[str, str]] = []
+    for entry in root.iter(f"{prefix}termEntry"):
+        term = next(entry.iter(f"{prefix}term"), None)
+        descrip = next(entry.iter(f"{prefix}descrip"), None)
+        if term is None or not (term.text or "").strip():
+            continue
+        terms.append(
+            (
+                (term.text or "").strip(),
+                " ".join((descrip.text or "").split()) if descrip is not None else "",
+            )
+        )
+    return terms
+
+
+def _target_translations(key: str) -> list[tuple[str, str]]:
+    """``(language code, units URL)`` for every glossary language except the source."""
+    component = _request(GLOSSARY_COMPONENT_URL, key=key)
+    source_code = component["source_language"]["code"]
+    targets: list[tuple[str, str]] = []
+    url: str | None = GLOSSARY_TRANSLATIONS_URL
+    while url is not None:
+        page = _request(url, key=key)
+        for translation in page["results"]:
+            code = translation["language_code"]
+            if code == source_code:
+                continue
+            targets.append((code, f"{translation['url']}units/?page_size=100"))
+        url = page.get("next")
+    return targets
+
+
+def _units_by_source(units_url: str, key: str) -> dict[str, dict[str, Any]]:
+    found: dict[str, dict[str, Any]] = {}
+    url: str | None = units_url
     while url is not None:
         page = _request(url, key=key)
         for unit in page["results"]:
             source = (unit.get("source") or [""])[0]
-            if source not in remaining:
-                continue
-            remaining.pop(source)
-            flags = [f for f in (unit.get("flags") or "").split(",") if f]
-            if "read-only" in flags:
-                print(f"already read-only: {source}")
-                continue
-            if dry_run:
-                print(f"would mark read-only: {source}")
-                continue
-            flags.append("read-only")
-            body = json.dumps({"flags": ",".join(flags)}).encode("utf-8")
-            _request(unit["url"], method="PATCH", key=key, body=body)
-            print(f"marked read-only: {source}")
+            found.setdefault(source, unit)
         url = page.get("next")
+    return found
 
-    for term in remaining:
-        print(f"term not found in the glossary yet: {term}")
+
+def _seed_language(
+    code: str, units_url: str, terms: list[tuple[str, str]], key: str, *, dry_run: bool
+) -> None:
+    """Post every term the language does not hold yet, then make sure the product names
+    carry `read-only`. A read-only term's target is the term itself, translated, which is
+    how Weblate's own "untranslatable" checkbox stores one. Every other term is seeded the
+    way Weblate's "copy source" does it: the English term in the target, marked "needs
+    editing" (state 10), because the API refuses a blank target."""
+    present = _units_by_source(units_url, key)
+    posted = 0
+    for term, explanation in terms:
+        if term in present:
+            continue
+        read_only = term in READ_ONLY_TERMS
+        body = {
+            "source": [term],
+            "target": [term],
+            "explanation": explanation,
+            "extra_flags": "read-only" if read_only else "",
+            "state": 20 if read_only else 10,
+        }
+        if dry_run:
+            print(f"  {code}: would add {term!r}" + (" (read-only)" if read_only else ""))
+            continue
+        _request(units_url.split("?", 1)[0], method="POST", key=key, body=json.dumps(body).encode())
+        posted += 1
+    if not dry_run:
+        print(f"  {code}: added {posted}, already present {len(present)}")
+
+    for term in READ_ONLY_TERMS:
+        unit = present.get(term)
+        if unit is None:
+            continue
+        flags = [f for f in (unit.get("flags") or "").split(",") if f]
+        if "read-only" in flags:
+            continue
+        if dry_run:
+            print(f"  {code}: would mark read-only: {term}")
+            continue
+        flags.append("read-only")
+        _request(
+            unit["url"],
+            method="PATCH",
+            key=key,
+            body=json.dumps({"flags": ",".join(flags)}).encode(),
+        )
+        print(f"  {code}: marked read-only: {term}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -168,9 +249,17 @@ def main(argv: list[str] | None = None) -> int:
     key = _api_key(args.key_file)
     component_exists = _ensure_component(key, dry_run=args.dry_run)
     if not component_exists:
-        print("component not created yet (dry run), skipping the read-only flag pass")
+        print("component not created yet (dry run), skipping the seeding pass")
         return 0
-    _sync_read_only_flags(key, dry_run=args.dry_run)
+
+    terms = _terms_from_tbx(REPO_ROOT / GLOSSARY_FILE)
+    targets = _target_translations(key)
+    if not targets:
+        print(f"{len(terms)} terms in {GLOSSARY_FILE}, no target language on Weblate yet to seed")
+        return 0
+    print(f"{len(terms)} terms in {GLOSSARY_FILE}, {len(targets)} target language(s)")
+    for code, units_url in targets:
+        _seed_language(code, units_url, terms, key, dry_run=args.dry_run)
     return 0
 
 
