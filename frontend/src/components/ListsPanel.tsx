@@ -25,10 +25,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type ReactNode } from "react";
+import { Trans, useTranslation } from "react-i18next";
 
 import { announce } from "../announce";
 import { api, type ListConfig, type ProtectionList } from "../api";
 import { useBackGuard } from "../backnav";
+import i18next from "../i18n";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
 import { RESCAN_HEADING, RESCAN_QUEUED_LEAD } from "./PolicySimulator";
@@ -37,31 +39,28 @@ import { RESCAN_HEADING, RESCAN_QUEUED_LEAD } from "./PolicySimulator";
  *  which has a whole sentence to say about a list that has never checked in. */
 function ago(iso: string): string {
   const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  if (minutes < 1) return i18next.t("lists.ago.justNow");
+  if (minutes < 60) return i18next.t("lists.ago.minutes", { n: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  if (hours < 24) return i18next.t("lists.ago.hours", { n: hours });
   const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
+  return i18next.t("lists.ago.days", { n: days });
 }
 
 function titles(n: number): string {
-  return `${n.toLocaleString()} ${n === 1 ? "title" : "titles"}`;
+  return i18next.t("lists.titleCount", { n });
 }
 
 type MediaType = "movie" | "tv";
 
-/** The operator's word for each media type. Never "movie"/"tv": they see their libraries,
- *  not the rating-key spaces underneath (rule 21). */
-const MEDIA_WORD: Record<MediaType, string> = { movie: "movies", tv: "shows" };
-
 /** The words for a set of media types, movies before shows so the sentence reads the same
- *  order every time: "movies", "shows", or "movies and shows". */
+ *  order every time: "movies", "shows", or "movies and shows". Never "movie"/"tv": the
+ *  operator sees their libraries, not the rating-key spaces underneath (rule 21). */
 function mediaWords(types: MediaType[]): string {
-  const words = (["movie", "tv"] as MediaType[])
-    .filter((t) => types.includes(t))
-    .map((t) => MEDIA_WORD[t]);
-  return words.length === 2 ? `${words[0]} and ${words[1]}` : (words[0] ?? "");
+  const hasMovie = types.includes("movie");
+  const hasTv = types.includes("tv");
+  const which = hasMovie && hasTv ? "both" : hasMovie ? "movie" : hasTv ? "tv" : "none";
+  return i18next.t("lists.mediaWords", { which });
 }
 
 /** What a list protects, and what is still exposed on it -- the two sets a mixed list is
@@ -90,9 +89,12 @@ function coverageOf(
  *  deletable. `protectedTypes` is empty when a rule names a side the list does not hold, so
  *  the sentence leads straight with the exposed side. */
 function partialDetail({ protectedTypes, exposed }: Coverage): string {
-  const kept = protectedTypes.length ? `Keeps your ${mediaWords(protectedTypes)}. ` : "";
+  const kept = protectedTypes.length
+    ? i18next.t("lists.partial.kept", { words: mediaWords(protectedTypes) })
+    : "";
   const still = mediaWords(exposed);
-  return `${kept}${still.charAt(0).toUpperCase()}${still.slice(1)} on it can still be deleted.`;
+  const capitalized = still.charAt(0).toUpperCase() + still.slice(1);
+  return i18next.t("lists.partial.detail", { kept, still: capitalized });
 }
 
 /** The chip's hover title: what the list is protecting right now. Undefined when a rule names
@@ -100,9 +102,10 @@ function partialDetail({ protectedTypes, exposed }: Coverage): string {
  *  cannot stand behind. */
 function protectingTitle({ protectedTypes, exposed }: Coverage): string | undefined {
   if (!protectedTypes.length) return undefined;
-  return exposed.length
-    ? `Protecting ${mediaWords(protectedTypes)} only`
-    : `Protecting ${mediaWords(protectedTypes)}`;
+  return i18next.t("lists.protectingTitle", {
+    only: exposed.length ? "true" : "false",
+    words: mediaWords(protectedTypes),
+  });
 }
 
 type Tone = "ok" | "warn" | "bad" | "idle";
@@ -142,8 +145,8 @@ function describe(
   used: boolean = true,
   coverage?: Coverage,
 ): { label: string; tone: Tone; detail: string } {
-  const onIt = `${titles(items)} on it.`;
-  const cached = `${titles(items)} cached.`;
+  const onIt = i18next.t("lists.describe.onIt", { titles: titles(items) });
+  const cached = i18next.t("lists.describe.cached", { titles: titles(items) });
 
   // A list no keep rule names protects nothing, whatever its sync says, so the chip -- the
   // screen's answer to "is this keeping my titles" -- reads "Not in use", never the green "In
@@ -151,13 +154,21 @@ function describe(
   // checked, and keeping nothing. Orphan rows pass no `used` and default to true -- they carry no
   // definition to hold a rule, and may still protect through a legacy one.
   if (!used) {
-    return { label: "Not in use", tone: "idle", detail: items > 0 ? onIt : "Nothing on it." };
+    return {
+      label: i18next.t("lists.describe.notInUseLabel"),
+      tone: "idle",
+      detail: items > 0 ? onIt : i18next.t("lists.describe.nothingOnItDetail"),
+    };
   }
   // Empty and checked is never green. A "Never Reap" collection sitting green at 0 titles told an
   // operator covered by nothing that they were covered, indistinguishable from Reaper reading the
   // wrong library (#483) or a list whose entries it cannot identify (#474).
   if (items === 0 && (state === "working" || state === "stale")) {
-    return { label: "Nothing on it", tone: "idle", detail: "Check it's the one you meant." };
+    return {
+      label: i18next.t("lists.describe.nothingOnItLabel"),
+      tone: "idle",
+      detail: i18next.t("lists.describe.checkTheOneYouMeant"),
+    };
   }
   switch (state) {
     case "working":
@@ -168,21 +179,25 @@ function describe(
       // so that lane still has an at-a-glance warning.
       if (coverage && coverage.exposed.length > 0) {
         return {
-          label: "In use",
+          label: i18next.t("lists.describe.inUseLabel"),
           tone: coverage.hasSplitPill ? "ok" : "warn",
           detail: partialDetail(coverage),
         };
       }
-      return { label: "In use", tone: "ok", detail: onIt };
+      return { label: i18next.t("lists.describe.inUseLabel"), tone: "ok", detail: onIt };
     case "stale":
-      return { label: "Out of date", tone: "warn", detail: cached };
+      return { label: i18next.t("lists.describe.outOfDateLabel"), tone: "warn", detail: cached };
     case "failing":
-      return { label: "Not working", tone: "bad", detail: items > 0 ? cached : "Nothing cached." };
+      return {
+        label: i18next.t("lists.describe.notWorkingLabel"),
+        tone: "bad",
+        detail: items > 0 ? cached : i18next.t("lists.describe.nothingCached"),
+      };
     case "never_checked":
       return {
-        label: "Not checked yet",
+        label: i18next.t("lists.describe.notCheckedLabel"),
         tone: "idle",
-        detail: items > 0 ? cached : "Runs with your next scan.",
+        detail: items > 0 ? cached : i18next.t("lists.describe.runsNextScan"),
       };
   }
 }
@@ -213,19 +228,24 @@ function kindBadge(source: ListConfig["source"], coverage?: Coverage): ReactNode
     return (
       <span className="kind-badge kind-arr">
         <span aria-hidden="true" className={bright("tv") ? undefined : "dim"}>
-          Sonarr
+          {i18next.t("lists.brand.sonarr")}
         </span>
         <span aria-hidden="true" className={bright("movie") ? undefined : "dim"}>
-          Radarr
+          {i18next.t("lists.brand.radarr")}
         </span>
         <span className="sr-only">
-          Sonarr and Radarr{partial ? `, ${mediaWords(coverage.exposed)} not kept` : ""}
+          {i18next.t("lists.kindBadge.srOnly", {
+            partial: partial ? "true" : "false",
+            exposedWords: partial ? mediaWords(coverage.exposed) : "",
+          })}
         </span>
       </span>
     );
   }
-  if (source === "imdb") return <span className="kind-badge kind-imdb">IMDb</span>;
-  return <span className="kind-badge kind-plex">Plex</span>;
+  if (source === "imdb") {
+    return <span className="kind-badge kind-imdb">{i18next.t("lists.brand.imdb")}</span>;
+  }
+  return <span className="kind-badge kind-plex">{i18next.t("lists.brand.plex")}</span>;
 }
 
 /** One rendered row: the Jobs tab's shape, with the state chip on the title line and real
@@ -266,6 +286,8 @@ function ListRow({
   /** The row's own extras: tag pills, the per-server fold-out, the Configure in Policy action. */
   children?: ReactNode;
 }) {
+  const { t } = useTranslation();
+  const checkingState = checking ? "true" : "false";
   return (
     <div className="jobrow">
       <div className="jobrow-main">
@@ -286,15 +308,19 @@ function ListRow({
         {error != null && <div className="jobrow-desc list-error">{error}</div>}
         {checkError != null && (
           <Notice tone="error" inline>
-            The check didn't run: {checkError}
+            {t("lists.checkFailed", { error: checkError })}
           </Notice>
         )}
       </div>
       <div className="jobrow-actions">
         <span className="slot-edit">
           {onEdit && (
-            <button className="ghost" aria-label={`Edit ${title}`} onClick={onEdit}>
-              Edit
+            <button
+              className="ghost"
+              aria-label={t("lists.row.editAriaLabel", { title })}
+              onClick={onEdit}
+            >
+              {t("lists.row.edit")}
             </button>
           )}
         </span>
@@ -303,11 +329,11 @@ function ListRow({
             className="primary"
             // The state is in the accessible name and the visible words lead, so voice
             // control still reaches the button while it is working (the shape JobRow uses).
-            aria-label={checking ? `Checking…, ${title}` : `Check now, ${title}`}
+            aria-label={t("lists.row.checkAriaLabel", { checking: checkingState, title })}
             onClick={onCheck}
             disabled={checking}
           >
-            {checking ? "Checking…" : "Check now"}
+            {t("lists.row.checkButton", { checking: checkingState })}
           </button>
         </span>
       </div>
@@ -319,6 +345,7 @@ function ListRow({
  *  the family's rows -- one per *arr instance -- and a tag no row has counted yet renders as
  *  the bare pill, never as zero (the counts are unknown, not empty). */
 function TagCounts({ definition, mine }: { definition: ListConfig; mine: ProtectionList[] }) {
+  const { t } = useTranslation();
   const tags = definition.config.tags ?? [];
   if (tags.length === 0) return null;
   const counted = mine.filter(
@@ -360,7 +387,7 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
       </div>
       {perServer.length > 0 && (
         <details className="per-server">
-          <summary>Counts by server</summary>
+          <summary>{t("lists.tagCounts.countsByServer")}</summary>
           {/* Tags down the side, servers across the top, counts at the intersections: a tag
               reads across its row and a server down its column, and the figures line up. The old
               one-comma-joined-line-per-server turned to mush as tags and servers multiplied. The
@@ -377,7 +404,7 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
               <thead>
                 <tr>
                   <th scope="col" className="corner">
-                    Tag
+                    {t("lists.tagCounts.tagColumn")}
                   </th>
                   {perServer.map((r) => (
                     <th scope="col" key={r.slug}>
@@ -385,7 +412,7 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
                     </th>
                   ))}
                   <th scope="col" className="tot">
-                    Total
+                    {t("lists.tagCounts.total")}
                   </th>
                 </tr>
               </thead>
@@ -411,7 +438,7 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
               </tbody>
               <tfoot>
                 <tr>
-                  <th scope="row">Total</th>
+                  <th scope="row">{t("lists.tagCounts.total")}</th>
                   {/* Plain cells: the footer's own top border sets the Total ROW off, so a
                       per-server total needs no border of its own. Only the grand total carries
                       `.tot`, which continues the Total COLUMN's single divider into the footer
@@ -446,6 +473,7 @@ export function ListsPanel({
    *  not. */
   onGoToPolicy?: (() => void) | undefined;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const health = useQuery({ queryKey: ["lists"], queryFn: api.lists });
   const definitions = useQuery({ queryKey: ["lists-configured"], queryFn: api.listConfigs });
@@ -512,33 +540,38 @@ export function ListsPanel({
   if (health.isPending || definitions.isPending) {
     return (
       <div className="panel">
-        <h2>Lists</h2>
-        <p className="muted">Loading your lists…</p>
+        <h2>{t("lists.heading")}</h2>
+        <p className="muted">{t("lists.loading")}</p>
       </div>
     );
   }
   if (health.isError || definitions.isError) {
+    const fetching = health.isFetching || definitions.isFetching;
+    const retry = (
+      <button
+        className="ghost sm"
+        disabled={fetching}
+        onClick={() => {
+          void health.refetch();
+          void definitions.refetch();
+        }}
+      />
+    );
     return (
       <div className="panel">
-        <h2>Lists</h2>
+        <h2>{t("lists.heading")}</h2>
         {/* An alert, not `standing`: these are fetched when the tab is opened rather than
             polled, so it mounts once with something the operator has not been told yet. */}
         <Notice tone="error">
-          Couldn't load your lists, so there is no way to tell here whether they are working.{" "}
           {/* Says it is retrying while it is. The query's status stays `error` across a
               refetch -- only `isFetching` moves -- so the press changed nothing on screen
               until it settled, which reads as a dead button (rule 85's shape: the control
               reports the state it is in, as the check buttons on the rows do). */}
-          <button
-            className="ghost sm"
-            disabled={health.isFetching || definitions.isFetching}
-            onClick={() => {
-              void health.refetch();
-              void definitions.refetch();
-            }}
-          >
-            {health.isFetching || definitions.isFetching ? "Trying…" : "Try again"}
-          </button>
+          {fetching ? (
+            <Trans i18nKey="lists.loadErrorRetrying" components={{ btn: retry }} />
+          ) : (
+            <Trans i18nKey="lists.loadError" components={{ btn: retry }} />
+          )}
         </Notice>
       </div>
     );
@@ -557,11 +590,8 @@ export function ListsPanel({
 
   return (
     <div className="panel">
-      <h2>Lists</h2>
-      <p className="blurb">
-        The lists that keep titles safe, and whether each one is still working. What a list does is
-        set with a keep rule on Policy.
-      </p>
+      <h2>{t("lists.heading")}</h2>
+      <p className="blurb">{t("lists.blurb")}</p>
 
       <div className="set-rows">
         {definitions.data.map((definition) => {
@@ -594,7 +624,7 @@ export function ListsPanel({
           // what is happening instead. Every other state describes the LAST check and stays
           // true while the next one runs.
           const count =
-            busy(definition.id) && mine.length === 0 ? "Checking it now." : shown.detail;
+            busy(definition.id) && mine.length === 0 ? t("lists.checkingItNow") : shown.detail;
           // An in-use list links to its rule to adjust it; a not-in-use one offers the setup
           // action below. Both go to Policy -- you change the policy there, never "on" it from
           // here.
@@ -603,7 +633,7 @@ export function ListsPanel({
               <>
                 {count}{" "}
                 <button className="link policy-change" onClick={onGoToPolicy}>
-                  Change policy
+                  {t("lists.changePolicy")}
                 </button>
               </>
             ) : (
@@ -620,7 +650,7 @@ export function ListsPanel({
           const errors = [...new Set(mine.map((r) => r.error).filter(Boolean))];
           const across =
             definition.source === "arr_tag" && mine.length > 1
-              ? `Across ${mine.length} servers. `
+              ? t("lists.meta.across", { n: mine.length })
               : "";
           return (
             <ListRow
@@ -632,7 +662,7 @@ export function ListsPanel({
               tone={shown.tone}
               chipTitle={chipTitle}
               meta={
-                (checked.length ? `Last checked ${ago(checked[0]!)}. ` : "") +
+                (checked.length ? t("lists.meta.lastChecked", { when: ago(checked[0]!) }) : "") +
                 across +
                 sourceHint(definition)
               }
@@ -645,7 +675,7 @@ export function ListsPanel({
               {definition.source === "arr_tag" && <TagCounts definition={definition} mine={mine} />}
               {!used && onGoToPolicy && (
                 <button className="link policy-configure" onClick={onGoToPolicy}>
-                  Configure in Policy
+                  {t("lists.configureInPolicy")}
                 </button>
               )}
             </ListRow>
@@ -662,9 +692,9 @@ export function ListsPanel({
               label={shown.label}
               tone={shown.tone}
               meta={
-                (row.last_checked_at ? `Last checked ${ago(row.last_checked_at)}. ` : "") +
-                "Set up before this screen existed. Your next check moves it onto a list you " +
-                "can edit."
+                (row.last_checked_at
+                  ? t("lists.meta.lastChecked", { when: ago(row.last_checked_at) })
+                  : "") + t("lists.orphanNote")
               }
               error={row.error}
               checking={busy("all")}
@@ -681,7 +711,9 @@ export function ListsPanel({
           back to rest, every row kept its stale chip, and nothing said the check had not run
           (rules 17/36, 42). */}
       {failedTarget === "all" && (
-        <Notice tone="error">The check didn't run: {check.error?.message}</Notice>
+        <Notice tone="error">
+          {t("lists.checkFailed", { error: check.error?.message ?? "" })}
+        </Notice>
       )}
 
       {/* Only while the check it came from is the last thing that happened. `check.data` holds
@@ -701,7 +733,7 @@ export function ListsPanel({
       <div className="list-foot">
         <span className="flex-spacer" />
         <button className="primary" onClick={() => setModal({ list: null })}>
-          Add a list
+          {t("lists.addList")}
         </button>
       </div>
 
@@ -732,18 +764,18 @@ function sourceHint(definition: ListConfig): string {
   if (definition.source === "plex_collection") {
     const { library, collection } = definition.config;
     return library && collection
-      ? `The "${collection}" collection in ${library}.`
-      : "A Plex collection.";
+      ? i18next.t("lists.sourceHint.plexCollectionNamed", { collection, library })
+      : i18next.t("lists.sourceHint.plexCollectionGeneric");
   }
   if (definition.source === "plex_watchlist") {
-    return "The watchlist of the Plex account Reaper is signed in with.";
+    return i18next.t("lists.plexWatchlistDescription");
   }
   if (definition.source === "arr_tag") {
     // The "Counts by server" fold-out already names which Sonarrs and Radarrs were read, so the
     // meta line only carries what that does not: whether a title needs every tag or any one.
-    return definition.config.match === "all" ? "Titles need every tag." : "";
+    return definition.config.match === "all" ? i18next.t("lists.sourceHint.tagsNeedAll") : "";
   }
   return definition.config.preset
-    ? "Keeps itself up to date."
-    : `IMDb list ${definition.config.list_id ?? ""}.`;
+    ? i18next.t("lists.sourceHint.selfUpdating")
+    : i18next.t("lists.sourceHint.imdbList", { id: definition.config.list_id ?? "" });
 }

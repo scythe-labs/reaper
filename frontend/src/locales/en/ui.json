@@ -27,6 +27,123 @@
       "everyNDaysAt": "Every {n} days at {at}",
       "weeklyAt": "Every {day} at {at}",
       "monthlyAt": "Monthly on the {n, selectordinal, one {#st} two {#nd} few {#rd} other {#th}} at {at}"
+    },
+    "leavingSoon": {
+      "counts": "<movieNum>{movieCount}</movieNum> {movies, plural, one {movie} other {movies}} and <seasonNum>{seasonCount}</seasonNum> {seasons, plural, one {season} other {seasons}} on the shelves",
+      "countsAtLastUpdate": "<movieNum>{movieCount}</movieNum> {movies, plural, one {movie} other {movies}} and <seasonNum>{seasonCount}</seasonNum> {seasons, plural, one {season} other {seasons}} were on the shelves at the last update",
+      "desc": "Pushes the current countdown set to the Plex \"Leaving Soon\" shelf, so people get a heads-up before anything goes.",
+      "didNotUpdate": "It didn't update",
+      "loadFailed": "Couldn't load the shelf status. Reload to try again.",
+      "loading": "Loading…",
+      "manageLink": "Manage in Plex → Leaving Soon",
+      "offNotice": "Off. <btn>Turn it on in Plex → Leaving Soon</btn>",
+      "runsAfterScan": "Runs after every scan",
+      "shelfName": "Leaving Soon shelf",
+      "title": "Update {shelf}",
+      "updateFailed": "The shelves didn't update: {message}",
+      "updateNow": "Update now",
+      "updateNowAria": "Update now, {shelf}",
+      "updating": "Updating…",
+      "updatingAria": "Updating…, {shelf}"
+    },
+    "maintenance": {
+      "off": "Off. Run it by hand.",
+      "scheduleText": "{cron}, next {when}"
+    },
+    "meta": {
+      "checkForUpdates": {
+        "desc": "Asks GitHub whether a newer Reaper is available.",
+        "offWarning": "With this off, Reaper only checks when you open it.",
+        "title": "Check for updates"
+      },
+      "fullHistorySweep": {
+        "desc": "Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught.",
+        "offWarning": "With this off, Reaper stops re-reading your full history. Imported or backdated plays won't be counted, and a wiped history won't be caught.",
+        "title": "Full watch-history update"
+      },
+      "refreshCuratedLists": {
+        "desc": "Re-checks every list on Settings, Lists, so a tag or a collection you edited starts protecting without waiting for a scan.",
+        "offWarning": "This only affects the standalone daily refresh. Every scan already re-checks your lists, and you can check one on Settings, Lists.",
+        "title": "Refresh your lists"
+      },
+      "refreshRatings": {
+        "desc": "Downloads the latest IMDb ratings so scores use current numbers.",
+        "offWarning": "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old.",
+        "title": "Refresh IMDb ratings"
+      },
+      "scan": {
+        "desc": "Checks what changed since the last scan and re-scores it against your policy. A quick pass, not a full re-read.",
+        "modalDesc": "Reaper can scan on its own to keep the queue fresh.",
+        "title": "Update library and apply policy"
+      }
+    },
+    "panel": {
+      "blurb": "Everything Reaper runs on a timer lives here, and you can run any of it now without waiting. None of these can delete a thing. A scan just refreshes the review queue; the rest is upkeep.",
+      "heading": "Jobs",
+      "loadFailed": "Couldn't load the upkeep jobs. Reload to try again.",
+      "loadingJobs": "Loading the upkeep jobs…"
+    },
+    "presets": {
+      "every12Hours": "Every 12 hours",
+      "every6Hours": "Every 6 hours",
+      "everyHour": "Every hour",
+      "maintenanceOff": "Off (don't run)",
+      "scanMonthly": "First of the month, 3 AM",
+      "scanNightly": "Every night at 2 AM",
+      "scanOff": "Off (scan by hand)",
+      "scanWeekly": "Every Sunday at 3 AM"
+    },
+    "row": {
+      "edit": "Edit",
+      "editAria": "Edit {title}",
+      "runNow": "Run now",
+      "runNowAria": "Run now, {title}",
+      "running": "Running…",
+      "runningAria": "Running…, {title}",
+      "runningLabel": "Running now…",
+      "startFailed": "The job didn't start: {message}"
+    },
+    "scan": {
+      "scheduleChecking": "Automatic scan: checking…",
+      "scheduleOff": "Automatic scan is off. It runs when you ask.",
+      "scheduleText": "Automatic scan: {cron}, next {when}",
+      "scheduleUnknown": "Couldn't check the schedule."
+    },
+    "schedule": {
+      "cancel": "Cancel",
+      "customHelp": "A cron line, for when none of the presets fit. 30 4 * * * runs at 4:30 AM every day.",
+      "customLabel": "Your own schedule",
+      "customOption": "Your own schedule…",
+      "defaultHelp": "Default: {cron}. You can Run now anytime.",
+      "howOftenLabel": "How often",
+      "save": "Save",
+      "savedAnnounce": "Schedule saved.",
+      "saving": "Saving…",
+      "zoneHelp": "Times use your server time zone: {zone}. Change it in Settings, General.",
+      "zoneHelpUnknown": "Times use your server time zone. Change it in Settings, General."
+    },
+    "staleRead": {
+      "jobsNoun": "these jobs",
+      "shelfNoun": "the shelf status"
+    },
+    "status": {
+      "failed": "Failed",
+      "finished": "Finished",
+      "flashSentence": "{lead}: {text}",
+      "lastRunFailed": "Last run failed {since}<exact>, {date}, {time}</exact>",
+      "lastRunFailedReason": "Last run failed {since}<exact>, {date}, {time}, {reason}</exact>",
+      "lastRunOk": "Last run {since}<exact>, {date}, {time}</exact>",
+      "neverRun": "Hasn't run yet"
+    },
+    "time": {
+      "am": "AM",
+      "pm": "PM"
+    },
+    "when": {
+      "anyMoment": "any moment",
+      "inHours": "in {hours} hr",
+      "inMinutes": "in {mins} min",
+      "unscheduled": "not scheduled"
     }
   },
   "signals": {
@@ -287,6 +404,711 @@
       "trakt": "Trakt",
       "tvdb": "TVDB",
       "unknown": "an unknown source"
+    }
+  },
+  "plex": {
+    "blurb": "Linking Plex lets Reaper warn your library with a \"Leaving Soon\" shelf and read your \"Never Reap\" collection. It's optional. Scanning works without it.",
+    "cancel": "Cancel",
+    "chooseServer": {
+      "help": "This account owns more than one Plex server. Reaper will only ever scan and prune the one you pick.",
+      "label": "Which server should Reaper manage?"
+    },
+    "connection": {
+      "manualAddressOption": "Manual address…",
+      "manualOption": "Manual, {uri}"
+    },
+    "connectionField": {
+      "help": "How Reaper reaches the server. A local address is usually faster; remote works from anywhere. Pick \"Manual address\" to type your own.",
+      "label": "Connection"
+    },
+    "connectionGroup": {
+      "heading": "Connection"
+    },
+    "connectionKind": {
+      "local": "Local",
+      "relay": "Relay",
+      "remote": "Remote"
+    },
+    "connectionLabel": {
+      "plain": "{kind}, {host}",
+      "secure": "{kind}, {host}, secure"
+    },
+    "connectionSaved": "Connection saved.",
+    "heading": "Plex",
+    "leavingSoon": {
+      "allowUnarmedHelp": "Until deletion is on, Reaper writes nothing to Plex, including this shelf. Turn this on to let the warning appear while Reaper is still read-only. It can only manage the collection and label. It can never remove files.",
+      "allowUnarmedLabel": "Update while read-only",
+      "enableHelp": "Reaper keeps a Leaving Soon collection in each library you turned on above, and puts the matching label on everything in it. Items appear when they start counting down and drop off when they're spared or removed. Updates after every scan, or from the Jobs page.",
+      "enableLabel": "Show \"Leaving Soon\" in Plex",
+      "loadError": "Couldn't load the Leaving Soon settings.",
+      "status": {
+        "held": "on the shelves",
+        "heldSkipped": "were on the shelves at the last update",
+        "laterScanSkipped": "A later scan didn't update the shelves. The Jobs page says why.",
+        "line": "Last updated {since}, {movies} and {seasons} {held}, next update after the next scan.",
+        "moviesCount": "{count} {n, plural, one {movie} other {movies}}",
+        "neverRan": "Not updated yet. It runs after every scan, or from the Jobs page.",
+        "neverRanSkipped": "The last scan didn't update the shelves. The Jobs page says why.",
+        "seasonsCount": "{count} {n, plural, one {season} other {seasons}}"
+      }
+    },
+    "leavingSoonGroup": {
+      "blurb": "While an item counts down its grace period, Reaper can put it on a \"Leaving Soon\" shelf in Plex, so people get a heads-up before it goes: movies in your movie libraries, seasons in your TV libraries.",
+      "heading": "Leaving Soon"
+    },
+    "libraries": {
+      "foundCount": "{n, plural, one {# library found} other {# libraries found}}",
+      "kindMovie": "movies",
+      "kindTv": "tv",
+      "loadError": "Couldn't load the library list.",
+      "loading": "Loading libraries…",
+      "refreshButton": "Refresh libraries",
+      "toggleLabel": "Let Reaper touch {title}"
+    },
+    "librariesGroup": {
+      "blurb": "The libraries Reaper may touch in Plex. Leaving Soon shelves are managed only in libraries you turn on. This doesn't change what gets scanned: scanning reads from Radarr and Sonarr.",
+      "heading": "Libraries"
+    },
+    "linkButton": "Link with Plex",
+    "linkPrompt": "Link Plex to pick libraries and turn on the \"Leaving Soon\" shelf.",
+    "linked": {
+      "defaultServerName": "your server",
+      "said": "Linked to {server}."
+    },
+    "linkedAccount": {
+      "help": "Signed in with Plex. {uri}"
+    },
+    "loadError": "Couldn't load these settings. Reload to try again.",
+    "loading": "Loading…",
+    "manualAddress": {
+      "checking": "Checking…",
+      "help": "Hostname or IP, port, and whether to use SSL.",
+      "hostAriaLabel": "Manual address host or IP",
+      "hostPlaceholder": "plex.example.net",
+      "label": "Manual address",
+      "portAriaLabel": "Manual address port",
+      "sslShort": "SSL",
+      "useSslLabel": "Use SSL"
+    },
+    "noServer": {
+      "help": "Sign in with Plex and Reaper discovers your servers. It never asks for a token by hand.",
+      "label": "No Plex server linked"
+    },
+    "pin": {
+      "signInFailedFallback": "Plex sign-in failed.",
+      "chooseServerSaid": "Signed in with Plex. Choose which server Reaper should manage."
+    },
+    "save": "Save",
+    "server": {
+      "fallbackOptionLabel": "The linked server",
+      "help": "Plex servers this account can manage. Reaper works with one at a time.",
+      "helpStoredNote": "Showing what was remembered at link time; plex.tv didn't answer.",
+      "listError": "Couldn't list this account's servers.",
+      "looking": "Looking for servers…",
+      "missingNamed": "Plex's list came back without the server Reaper uses, {name}. Nothing has changed. Refresh to look again; the server and connection stay as they are until it is back.",
+      "missingUnnamed": "Plex's list came back without the server Reaper uses. Nothing has changed. Refresh to look again; the server and connection stay as they are until it is back.",
+      "refreshButton": "Refresh",
+      "refreshTitle": "Look for servers again",
+      "refreshing": "Refreshing…",
+      "retry": "Retry"
+    },
+    "serverField": {
+      "label": "Server"
+    },
+    "serverSwitched": {
+      "generic": "Server changed.",
+      "named": "Now using {name}."
+    },
+    "signInTimedOut": "Plex sign-in timed out. Try again.",
+    "stale": {
+      "connection": "these settings",
+      "leavingSoon": "the Leaving Soon settings",
+      "libraries": "the library list",
+      "panel": "the Plex settings",
+      "watchHistory": "the watch history record"
+    },
+    "trashNotice": {
+      "ackLabel": "I understand, continue anyway",
+      "autoEmpties": "Plex also empties its own trash after every scan, so Reaper's refresh clears it even when Reaper's own checks would have left it alone.",
+      "knownReadable": "<strong>Plex may also remove records for items Reaper didn't delete.</strong> Its trash already holds {n, plural, one {# item} other {# items}}. Emptying it removes their watch history, ratings, and collections. No files are deleted.",
+      "knownUnreadable": "<strong>Plex may also remove records for items Reaper didn't delete.</strong> Its trash already holds at least {n, plural, one {# item} other {# items}}, and some libraries couldn't be read. Emptying it removes their watch history, ratings, and collections. No files are deleted.",
+      "unknown": "<strong>Reaper couldn't read Plex's trash.</strong> It can't say what's in there, and emptying it removes the watch history, ratings, and collections of everything that is. No files are deleted."
+    },
+    "unlinkButton": "Unlink",
+    "verifyCert": {
+      "help": "Turn this off only for a server you run yourself, like one with a self-signed certificate.",
+      "label": "Check the server's certificate",
+      "warning": "Reaper will accept this server's certificate without checking who issued it."
+    },
+    "waiting": {
+      "approveNoLink": "Approve the sign-in in the Plex window.",
+      "approveWithLink": "Approve the sign-in in the Plex window. <btn>Didn’t open?</btn>"
+    },
+    "waitingForPlex": "Waiting for Plex…",
+    "watchEvidence": {
+      "forgetFailedFallback": "Couldn't forget the record. Nothing changed. Try again.",
+      "forgotten": "Forgotten for {n, plural, one {# title} other {# titles}}. The next scan uses what Plex holds now.",
+      "holding": "Holding a record for {n, plural, one {# title} other {# titles}}.",
+      "holdingClean": "Holding a record for {n, plural, one {# title} other {# titles}}. The last scan found no unreadable plays.",
+      "holdingUnreadable": "Holding a record for {n, plural, one {# title} other {# titles}}. The last scan couldn't read the plays for {items, plural, one {# item} other {# items}}."
+    },
+    "watchHistory": {
+      "confirmButton": "Confirm forget",
+      "forgetButton": "Forget…",
+      "forgetTitle": "Reaper starts from what Plex holds now",
+      "help": "Reaper holds back a title whose plays stop being readable. After a library rebuild that can be every title at once, and this clears them all. For one title, use the button on its reasons panel instead.",
+      "label": "Recorded watch history",
+      "loadError": "Couldn't load the watch history record.",
+      "noPassword": "Set an admin password first, in Settings → Security.",
+      "passwordAriaLabel": "Admin password",
+      "passwordPlaceholder": "admin password",
+      "safetyChecking": "Checking…",
+      "safetyUnknown": "Reaper couldn't check whether an admin password is set.",
+      "tautulliHint": "Tautulli only moves old plays to the new number when you use its Fix Metadata screen.",
+      "tautulliWarning": "A title that really was watched will score as never watched until you repair its history in Tautulli."
+    },
+    "watchHistoryGroup": {
+      "blurb": "Plex gives every item a number, and issues a new one when a file leaves a library and comes back. Plays recorded before that stay under the old number.",
+      "heading": "Watch history"
+    },
+    "webAddress": {
+      "help": "Where links to your library open. Keep the default unless you host your own Plex Web. Clear it and save to go back to the default.",
+      "label": "Plex web address",
+      "placeholder": "https://app.plex.tv",
+      "saved": "Plex web address saved.",
+      "saving": "Saving…"
+    }
+  },
+  "general": {
+    "accent": {
+      "error": "Enter a hex code like #25c3ff.",
+      "help": "The color Reaper uses for buttons, links, and highlights. Everyone who opens this install sees it. Pick from the wheel or type a hex code.",
+      "hexFieldAriaLabel": "Accent color hex code",
+      "label": "Accent color",
+      "previewLabel": "Preview",
+      "previewPolicyLink": "Policy → Deletion",
+      "previewScanButton": "Scan library",
+      "quickColorsGroup": "Quick colors",
+      "resetToDefault": "Reset to default"
+    },
+    "accentPresets": {
+      "amber": "Amber",
+      "indigo": "Indigo",
+      "pink": "Pink",
+      "reaperBlue": "Reaper blue",
+      "sky": "Sky",
+      "teal": "Teal",
+      "violet": "Violet"
+    },
+    "apiKey": {
+      "alreadyExists": "A key already exists. Use Replace to make a new one.",
+      "cancel": "Cancel",
+      "checkFailed": "Couldn't check for an existing key. Confirming replaces one if it's there.",
+      "checking": "Checking…",
+      "confirmGenerate": "Confirm generate",
+      "confirmRemove": "Confirm remove",
+      "confirmReplace": "Confirm replace",
+      "copied": "Copied",
+      "copy": "Copy",
+      "copyNeedsHttps": "Copying needs a secure (https) page. Press Show, then select the key by hand.",
+      "fieldAriaLabel": "API key",
+      "generate": "Generate API key",
+      "generating": "Generating…",
+      "help": "Send it as the X-Api-Key header so scripts and other apps can use Reaper without signing in. A key reads nearly everything, your settings included, and can start scans, build plans, and change your policy, run limits, and grace. Nothing else: it cannot turn deletion on, run a reap, read your logs, see who watched what, or change any other setting.",
+      "hide": "Hide",
+      "label": "API key",
+      "remove": "Remove…",
+      "removeTitle": "Anything using this key stops working immediately",
+      "replace": "Replace…",
+      "replaceTitle": "The old key stops working immediately",
+      "show": "Show"
+    },
+    "apiReference": {
+      "help": "Every endpoint, documented from the running app. The try-it-out button sends real requests as you, so it can change settings and start work, not just read. Only visible while signed in.",
+      "label": "API reference",
+      "link": "Open the API reference"
+    },
+    "desktop": {
+      "blurb": "These settings apply the next time Reaper opens.",
+      "dockIconHelp": "Reaper lives in the menu bar. Turn this on to show a Dock icon too.",
+      "dockIconLabel": "Show the Dock icon",
+      "trayHelp": "{platform, select, macos {Open and quit Reaper from the menu bar. With this off, Reaper runs with nothing on screen, and quitting takes Activity Monitor.} other {Open and quit Reaper from the tray, next to the clock. With this off, Reaper runs with nothing on screen, and quitting takes Task Manager.}}",
+      "trayLabel": "{platform, select, macos {Menu bar icon} other {Tray icon}}"
+    },
+    "expandSeasons": {
+      "help": "TV shows in the review queue open with every season showing. Mobile means a narrow screen, like a phone.",
+      "label": "Expand seasons by default",
+      "optionBoth": "Desktop & mobile",
+      "optionDesktop": "Desktop",
+      "optionMobile": "Mobile",
+      "optionOff": "Off"
+    },
+    "fields": {
+      "applicationName": {
+        "help": "Shown in Discord messages and the browser tab, so you can tell two installs apart.",
+        "label": "Application name"
+      },
+      "applicationUrl": {
+        "help": "Where people reach Reaper, for example https://reaper.example.com. Notifications use it to link back here. Leave empty and notifications simply skip the link.",
+        "label": "Application URL",
+        "placeholder": "https://reaper.example.com"
+      },
+      "timezone": {
+        "help": "The server's time zone.",
+        "label": "Time zone"
+      }
+    },
+    "heading": "General",
+    "loadError": "Couldn't load these settings. Reload to try again.",
+    "loading": "Loading…",
+    "notices": {
+      "apiKeyCopied": "API key copied.",
+      "apiKeyGenerated": "New API key generated. The old one no longer works.",
+      "apiKeyRemoved": "API key removed. Scripts and other apps can no longer use Reaper without signing in.",
+      "apiKeyShown": "API key shown.",
+      "settingsSaved": "Settings saved."
+    },
+    "proxy": {
+      "addressesHelp": "Only requests arriving from these addresses may claim to be forwarded. Comma separated, single addresses or ranges like 172.16.0.0/12.",
+      "addressesLabel": "Trusted proxy addresses",
+      "addressesPlaceholder": "172.16.0.1, 10.0.0.0/8",
+      "enabledHelp": "Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper will then trust the proxy to say which address each visitor really came from, which keeps sign-in rate limits accurate per visitor instead of lumping everyone together. It is also how Reaper learns that visitors arrive over HTTPS, so it can mark the sign-in cookie HTTPS-only.",
+      "enabledLabel": "Behind a reverse proxy",
+      "hint": "Off by default, and forwarded headers from anywhere else are always ignored: a stranger can't fake their address to dodge the login lockout."
+    },
+    "savebar": {
+      "accentBlocked": "Enter a hex code like #25c3ff to save.",
+      "discard": "Discard",
+      "saveChanges": "Save changes",
+      "saving": "Saving…",
+      "unsavedChanges": "Unsaved changes:"
+    },
+    "sections": {
+      "apiAccess": "API access",
+      "appearance": "Appearance",
+      "application": "Application",
+      "desktopApp": "Desktop app",
+      "reverseProxy": "Reverse proxy",
+      "reviewQueue": "Review queue"
+    },
+    "spareLength": {
+      "daysAriaLabel": "Default spare length in days",
+      "daysSuffix": "days",
+      "help": "How long a plain Spare keeps a title before Reaper judges it again. Set a different length for any single title from its Spare menu.",
+      "label": "Default spare length",
+      "optionDays": "Days",
+      "optionForever": "Forever"
+    },
+    "subheading": "How this Reaper presents itself, and how other tools may talk to it.",
+    "theme": {
+      "help": "Light or dark. \"Match my device\" follows your system setting. Applies to this browser only.",
+      "label": "Theme",
+      "optionDark": "Dark",
+      "optionLight": "Light",
+      "optionSystem": "Match my device"
+    }
+  },
+  "logs": {
+    "consoleLabel": "Application log",
+    "description": "What Reaper is doing right now, and the trail of what it did. Every removal decision is answerable from here. The newest {limit, number} lines are kept.",
+    "downloadButton": "Download logs",
+    "downloadError": "The download didn't start: {message}",
+    "downloadHelpBase": "Save the whole log to your computer, handy for a bug report.",
+    "downloadLabel": "Log files",
+    "downloadPreparing": "Preparing…",
+    "downloadRetentionKnown": "Reaper keeps the newest {n, number} files on the server, a fuller trail than the window above.",
+    "downloadRetentionUnknown": "Reaper keeps a fuller trail on the server than the window above.",
+    "emptyNoLines": "Nothing yet. New lines appear here as Reaper works.",
+    "emptyNoMatch": "Nothing matches your search.",
+    "followLabel": "Follow new lines",
+    "levelDebug": "Debug",
+    "levelError": "Error",
+    "levelFilterAll": "All levels",
+    "levelFilterError": "Errors only",
+    "levelFilterInfo": "Info and up",
+    "levelFilterLabel": "Only show this level and up",
+    "levelFilterWarning": "Warnings and up",
+    "levelHelp": "How much Reaper writes, both here and in the container output. Info is the everyday setting. Debug is chatty and best while chasing a problem. Takes effect immediately, no restart.",
+    "levelInfo": "Info",
+    "levelLabel": "Logging level",
+    "levelWarning": "Warning",
+    "lineCount": "{n, plural, one {# line} other {# lines}}",
+    "lineCountOfTotal": "{visible, number} of {total, number} lines",
+    "loadError": "Couldn't load the log.",
+    "loading": "Loading the log…",
+    "loadingWait": "Still loading the log.",
+    "pausedError": "Couldn't load new lines, and updates are paused.",
+    "retryButton": "Try again",
+    "retryFailure": "The log still didn't load.",
+    "retrySuccess": "The log is up to date.",
+    "retryingError": "Couldn't load new lines. Reaper is trying again.",
+    "searchLabel": "Search the log",
+    "searchPlaceholder": "Search the log…",
+    "settingsHeading": "Logging",
+    "title": "Logs",
+    "wrapLabel": "Wrap long lines"
+  },
+  "about": {
+    "blurb": "What's running, and where its data lives.",
+    "changesModal": {
+      "noNotesForRelease": "This release shipped without notes.",
+      "noNotesNoLink": "No release notes to show. The releases page on GitHub has the full story.",
+      "noNotesWithLink": "No release notes to show. <link>The release page on GitHub</link> has the full story.",
+      "title": "What changed",
+      "viewOnGithub": "View on GitHub"
+    },
+    "devBuildWarning": "You are running a <code>dev</code> build of Reaper. It changes daily and can break; use a release unless you are helping test.",
+    "labels": {
+      "dataFolder": "Data folder",
+      "license": "License",
+      "reaperData": "Reaper's own data",
+      "rebuildableCache": "Rebuildable cache",
+      "update": "Update",
+      "version": "Version"
+    },
+    "loadError": "Couldn't load this page. Reload to try again.",
+    "loading": "Loading…",
+    "reaperDataDetail": "{size}, decisions, audit trail, credentials",
+    "reaperVersion": "Reaper {version}",
+    "rebuildableCacheDetail": "{size}, watch history, ratings, lists",
+    "staleReadWhat": "these details",
+    "title": "About",
+    "update": {
+      "checking": "Checking for updates…",
+      "devCurrent": "This build matches the dev branch.",
+      "devMoved": "The dev branch has moved since this build.",
+      "devSteadier": "Dev builds change often. Releases are the steadier channel.",
+      "disabled": "Update checks are off, so Reaper never asks GitHub for versions. Remove REAPER_UPDATE_CHECK from launcher.conf in Reaper's data folder, or from your environment, to turn them back on.",
+      "newRelease": "Reaper {version} is out.",
+      "noAnswer": "Couldn't check for updates. Reaper will try again later.",
+      "releaseCurrent": "You are on the newest release.",
+      "schedule": "Reaper checks on a schedule you can change in Jobs, and never sends anything about your library.",
+      "seeChanges": "See what changed"
+    },
+    "updatePill": {
+      "newerDevBuild": "Newer dev build",
+      "updateAvailable": "Update available"
+    }
+  },
+  "lists": {
+    "addList": "Add a list",
+    "addTagLabel": "Add a tag",
+    "ago": {
+      "days": "{n, plural, one {# day ago} other {# days ago}}",
+      "hours": "{n, plural, one {# hour ago} other {# hours ago}}",
+      "justNow": "just now",
+      "minutes": "{n, plural, one {# minute ago} other {# minutes ago}}"
+    },
+    "blocked": {
+      "collection": "Say which collection in that library to read.",
+      "imdb": "Paste the list's id or URL. An IMDb list id looks like ls000000000.",
+      "library": "Say which Plex library to look in.",
+      "name": "Give the list a name, so you can pick it out on the Policy screen.",
+      "tags": "Add at least one tag, spelled as it appears in Sonarr or Radarr."
+    },
+    "blurb": "The lists that keep titles safe, and whether each one is still working. What a list does is set with a keep rule on Policy.",
+    "brand": {
+      "imdb": "IMDb",
+      "plex": "Plex",
+      "radarr": "Radarr",
+      "sonarr": "Sonarr",
+      "sonarrAndRadarr": "Sonarr and Radarr"
+    },
+    "cancel": "Cancel",
+    "changePolicy": "Change policy",
+    "checkFailed": "The check didn't run: {error}",
+    "checkingItNow": "Checking it now.",
+    "configureInPolicy": "Configure in Policy",
+    "describe": {
+      "cached": "{titles} cached.",
+      "checkTheOneYouMeant": "Check it's the one you meant.",
+      "inUseLabel": "In use",
+      "notCheckedLabel": "Not checked yet",
+      "notInUseLabel": "Not in use",
+      "notWorkingLabel": "Not working",
+      "nothingCached": "Nothing cached.",
+      "nothingOnItDetail": "Nothing on it.",
+      "nothingOnItLabel": "Nothing on it",
+      "onIt": "{titles} on it.",
+      "outOfDateLabel": "Out of date",
+      "runsNextScan": "Runs with your next scan."
+    },
+    "exampleNeverReap": "Never Reap",
+    "field": {
+      "collection": "Collection",
+      "imdbIdOrUrl": "List id or URL",
+      "name": "Name",
+      "plexLibrary": "Plex library",
+      "tags": "Tags"
+    },
+    "heading": "Lists",
+    "help": {
+      "cantReadLibraries": "Reaper couldn't read your Plex libraries, so type the name exactly as it appears in Plex. A name that doesn't match means this list protects nothing.",
+      "collectionName": "The collection's name in Plex. Add a title to it from the Plex app and it is kept from the next scan on.",
+      "presetDescription": "The {label} preset. Refreshed on its own, no sign-in needed.",
+      "readingLibraries": "Reading your Plex libraries…",
+      "sourceLocked": "Where it comes from: {sourceName}. To point a list somewhere else, remove it and add the one you want.",
+      "tagsFormat": "Type each tag exactly as it appears in Sonarr or Radarr. Every connected server is read.",
+      "watchlistSetup": "Reaper reads the watchlist of the Plex account it is signed in with. Nothing else to set up."
+    },
+    "kindBadge": {
+      "srOnly": "{partial, select, true {Sonarr and Radarr, {exposedWords} not kept} other {Sonarr and Radarr}}"
+    },
+    "loadError": "Couldn't load your lists, so there is no way to tell here whether they are working. <btn>Try again</btn>",
+    "loadErrorRetrying": "Couldn't load your lists, so there is no way to tell here whether they are working. <btn>Trying…</btn>",
+    "loading": "Loading your lists…",
+    "matchAll": "All of these",
+    "matchAny": "Any of these",
+    "matchLabel": "How many of these tags a title needs",
+    "mediaWords": "{which, select, movie {movies} tv {shows} both {movies and shows} other {}}",
+    "meta": {
+      "across": "Across {n} servers. ",
+      "lastChecked": "Last checked {when}. "
+    },
+    "modal": {
+      "addTypedTitle": "Add a list: {sourceName}",
+      "editTitle": "Edit {name}",
+      "removeTitle": "Remove {name}?"
+    },
+    "orphanNote": "Set up before this screen existed. Your next check moves it onto a list you can edit.",
+    "partial": {
+      "detail": "{kept}{still} on it can still be deleted.",
+      "kept": "Keeps your {words}. "
+    },
+    "pickLibraryOption": "Pick a library…",
+    "picker": {
+      "add": "Add",
+      "addPlexCollectionAria": "Add a Plex collection",
+      "addPlexWatchlistAria": "Add a Plex watchlist",
+      "addTagListAria": "Add a tag list",
+      "collectionBlurb": "A collection you curate in the Plex app. Add a title from your phone and it's covered.",
+      "collectionName": "Collection",
+      "custom": "Custom",
+      "imdbBlurb": "A public IMDb list or chart, refreshed on its own.",
+      "imdbListName": "IMDb list",
+      "presetsLabel": "Presets",
+      "tagsBlurb": "Titles carrying tags you pick, read from every connected server.",
+      "tagsName": "Tags",
+      "watchlistName": "Watchlist"
+    },
+    "placeholder": {
+      "imdbId": "ls000000000, or paste the list's URL",
+      "movies": "Movies"
+    },
+    "plexWatchlistDescription": "The watchlist of the Plex account Reaper is signed in with.",
+    "presetLabel": "{key, select, top250 {IMDb Top 250} popular {IMDb Popular Movies} other {{key}}}",
+    "protectingTitle": "{only, select, true {Protecting {words} only} other {Protecting {words}}}",
+    "removeButton": "{removing, select, true {Removing…} other {Remove list}}",
+    "removeError": "The list wasn't removed: {error}",
+    "removeListEllipsis": "Remove list…",
+    "removeWarning": "Anything this list was keeping can be deleted by the next scan. Its keep rules on Policy go with it. Reaper does not delete the collection or the tags themselves, only its own record of them.",
+    "row": {
+      "checkAriaLabel": "{checking, select, true {Checking…, {title}} other {Check now, {title}}}",
+      "checkButton": "{checking, select, true {Checking…} other {Check now}}",
+      "edit": "Edit",
+      "editAriaLabel": "Edit {title}"
+    },
+    "saveError": "The list wasn't saved: {error}",
+    "sourceHint": {
+      "imdbList": "IMDb list {id}.",
+      "plexCollectionGeneric": "A Plex collection.",
+      "plexCollectionNamed": "The \"{collection}\" collection in {library}.",
+      "selfUpdating": "Keeps itself up to date.",
+      "tagsNeedAll": "Titles need every tag."
+    },
+    "sourceName": "{source, select, plex_collection {Plex collection} plex_watchlist {Plex watchlist} arr_tag {Sonarr and Radarr tags} imdb {IMDb list} other {}}",
+    "submitButton": "{state, select, saving {Saving…} save {Save} other {Add list}}",
+    "tagCounts": {
+      "countsByServer": "Counts by server",
+      "tagColumn": "Tag",
+      "total": "Total"
+    },
+    "titleCount": "{n, plural, one {# title} other {# titles}}",
+    "watchlistDefaultName": "My watchlist"
+  },
+  "services": {
+    "common": {
+      "cancel": "Cancel",
+      "remove": "Remove",
+      "removing": "Removing…",
+      "save": "Save",
+      "saving": "Saving…",
+      "testing": "Testing…"
+    },
+    "discord": {
+      "badFormat": "That doesn't look like a Discord webhook address. It should start with https://discord.com/api/webhooks/",
+      "badge": "Discord",
+      "blurb": "Reaper posts a heads-up here while a title is in its grace period, so someone can watch it or spare it before it goes.",
+      "field": {
+        "help": "In Discord: Server Settings, Integrations, Webhooks. Copy the webhook URL.",
+        "placeholderAdd": "from Discord",
+        "placeholderEdit": "leave blank to keep the current one",
+        "webhookUrl": "Webhook URL"
+      },
+      "removedAnnouncement": "Discord webhook removed. Leaving-soon warnings won't be sent.",
+      "saveError": "That didn't work: {error}",
+      "savedAnnouncement": "Discord webhook saved.",
+      "sendTestButton": "Send test",
+      "sendTestPending": "Sending…",
+      "titleAdd": "Add Discord",
+      "titleEdit": "Edit Discord"
+    },
+    "kinds": {
+      "radarr": {
+        "hint": "Your movies. At least one is required.",
+        "label": "Radarr"
+      },
+      "seerr": {
+        "hint": "Requests. Lets Reaper show who asked for what.",
+        "label": "Seerr"
+      },
+      "sonarr": {
+        "hint": "Your TV shows. Needed for season pruning.",
+        "label": "Sonarr"
+      },
+      "tautulli": {
+        "hint": "Watch history. Required. It's how Reaper knows what's watched.",
+        "label": "Tautulli"
+      }
+    },
+    "modal": {
+      "addService": "Add service",
+      "addedAnnouncement": "{name} added.",
+      "adding": "Adding…",
+      "certificateWarning": "Reaper will accept this server's certificate without checking who issued it. Only use this for a server you run yourself, like one with a self-signed certificate.",
+      "exclusion": {
+        "offHelp": "A deleted movie can be added back by a list and re-downloaded. Reaper won't add or check the exclusion when it removes one.",
+        "onHelp": "When Reaper removes a movie, it adds a Radarr list exclusion so an import list can't add it back and re-download it.",
+        "sonarrHelp": "This only applies when Reaper removes a whole show. Today it removes seasons, not whole shows, so your choice is saved but not used yet."
+      },
+      "externalUrlError": "The external URL must be a full web address, like https://192.0.2.10:8989.",
+      "externalUrlHelp": "Where links to {kind} open. Leave blank to use the address above.",
+      "field": {
+        "addExclusion": "Block re-download after delete",
+        "apiKeyAdd": "API key",
+        "apiKeyEdit": "New API key",
+        "apiKeyPlaceholderAdd": "from the service's settings",
+        "apiKeyPlaceholderEdit": "leave blank to keep the current key",
+        "enabled": "Enabled",
+        "externalUrl": "External URL",
+        "externalUrlPlaceholder": "https://{kind}.example.com",
+        "host": "Hostname or IP",
+        "name": "Name",
+        "namePlaceholderHd": "HD",
+        "namePlaceholderMain": "Main",
+        "plexLibraries": "Plex libraries",
+        "port": "Port",
+        "requesterInstances": "Requested-by instances",
+        "schemeHttp": "http://",
+        "schemeHttps": "https://",
+        "urlBase": "URL base",
+        "urlBasePlaceholder": "only if it lives under a path, like /sonarr",
+        "useSsl": "Use SSL",
+        "verifyCert": "Check the server's certificate"
+      },
+      "folders": {
+        "beforeTest": "Your folders appear here once Reaper reaches this service, each with a suggested library.",
+        "help": "Which Plex library each folder lands in. This tells an HD copy from a 4K one when the same title is in two libraries. Matches are suggested from your folders. Map at least one. Leave the rest on \"Not set\" to keep both copies when they can't be told apart.",
+        "librariesLoading": "Looking for your Plex libraries…",
+        "librariesReadFailed": "Reaper couldn't read your Plex libraries. Try again.",
+        "librariesStaleWhat": "your Plex libraries",
+        "none": "This instance reports no root folders to map.",
+        "noneToMap": "No {libKind, select, movie {movie} other {TV}} libraries in Plex yet, so there is nothing to map to. You can save this and map later.",
+        "pickerAriaLabel": "Plex library for {path}",
+        "readFailed": "Reaper couldn't read this instance's folders. Check the address and key above, then test again to map them.",
+        "reading": "Reading this instance's folders…",
+        "staleWhat": "this instance's folders"
+      },
+      "mapWarning": "Map a folder above, or Cancel to close without saving.",
+      "missing": {
+        "host": "Enter a hostname or IP address {willDo}.",
+        "key": "Enter an API key {willDo}.",
+        "keyForTest": "Enter the API key so Reaper can try this new address.",
+        "map": "Pick a Plex library for at least one folder to save.",
+        "name": "Enter a name {willDo}.",
+        "test": "Reaper has to reach this service before you can save."
+      },
+      "notSetOption": "Not set",
+      "requesters": {
+        "beforeTest": "This portal's services appear here once Reaper reaches it, each with a suggested connection.",
+        "help": "Which Sonarr or Radarr connection each of this portal's services adds to. This names the exact copy a person asked for when a title is in more than one library. Matches are suggested from the addresses. Leave a service on \"Not set\" to name everyone who asked for the title instead.",
+        "instancesReadFailed": "Reaper couldn't read your Sonarr and Radarr connections. Try again.",
+        "instancesStaleWhat": "your Sonarr and Radarr connections",
+        "noInstances": "No Sonarr or Radarr connections yet. Add them first, then map each service.",
+        "none": "This portal reports no Sonarr or Radarr services to map.",
+        "pickerAriaLabel": "Connection for {name}{is4k, select, yes { 4K} other {}}, {serviceKind}",
+        "readFailed": "Reaper couldn't read this portal's services. Check the address and key above (it needs an admin key), then test again to map them.",
+        "reading": "Reading this portal's services…",
+        "staleWhat": "this portal's services",
+        "tag4k": "4K"
+      },
+      "savedAnnouncement": "{name} saved.",
+      "suggestedTag": "suggested",
+      "testButton": {
+        "again": "Test again",
+        "initial": "Test connection"
+      },
+      "titleAdd": "Add a {kind}",
+      "titleEdit": "Edit {name}",
+      "willDo": {
+        "add": "to add this service",
+        "save": "to save"
+      }
+    },
+    "notifications": {
+      "badFormat": "That doesn't look like a Discord webhook URL. Paste the full https://discord.com/api/webhooks/… URL from the channel's integration settings.",
+      "blurb": "A Discord webhook is how Reaper warns your users before anything is deleted: while a title is in its grace period it posts a \"leaving soon\" heads-up here, so someone can watch it or spare it in time. It's optional, but it's the one warning that reaches people who don't watch the Plex \"Leaving Soon\" shelf.",
+      "checkError": "Couldn't check whether Discord is connected.",
+      "checking": "Checking whether Discord is connected…",
+      "connected": "Discord connected. Leaving-soon warnings post to your channel.",
+      "field": {
+        "help": "In Discord: Channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL. It's a secret. Once saved it's encrypted and never shown again.",
+        "label": "Discord webhook URL",
+        "placeholderAdd": "https://discord.com/api/webhooks/…",
+        "placeholderEdit": "leave blank to keep the current webhook"
+      },
+      "heading": "Notifications",
+      "notConnected": "No Discord webhook set, so leaving-soon warnings won't be sent.",
+      "sendTestButton": "Send test message",
+      "staleWhat": "whether Discord is connected"
+    },
+    "panel": {
+      "addKindButton": "Add a {label}",
+      "blurb": "The apps Reaper reads from. Scanning only reads. Nothing here can delete a file.",
+      "card": {
+        "cancelRemoveAria": "Cancel, keep {name}",
+        "certCheckOffChip": "certificate check off",
+        "confirmRemoveAria": "Confirm remove {name}",
+        "confirmRemoveButton": "Confirm remove",
+        "confirmRemoveTitle": "Only forgets it in Reaper. Nothing is changed in the service itself.",
+        "disabledChip": "disabled",
+        "editAria": "Edit {name}",
+        "editButton": "Edit",
+        "notTestedYet": "Not tested yet",
+        "reachedDetail": "Reached",
+        "removeAria": "Remove {name}",
+        "removeFailed": "This service wasn't removed: {message}",
+        "removedAnnouncement": "{name} removed.",
+        "testAriaIdle": "Test, {name}",
+        "testAriaPending": "Testing…, {name}",
+        "testButton": "Test",
+        "testFailed": "The test didn't run: {message}"
+      },
+      "heading": "Services",
+      "loadError": "Couldn't load your connections.",
+      "loading": "Loading…",
+      "staleWhat": "your connections"
+    },
+    "serviceKind": {
+      "movies": "Movies",
+      "tv": "TV"
+    },
+    "test": {
+      "badgeVersion": " (v{version})",
+      "failed": "Failed",
+      "passed": "Passed",
+      "sentence": "{lead}: {detail}{version}",
+      "version": " (version {version})"
     }
   }
 }
