@@ -4252,6 +4252,52 @@ was pinned at three.
 before writing a `CASE` over it, and where a dump is available, count the values. A prior fix
 that names the other values is not the same as one that covers them.
 
+## Where the two test suites spend their time (2026-08-20)
+
+Measured on an idle 20-core box, each full-suite comparison run twice. A first pass ran beside
+another session's `pytest -n auto` from a sibling worktree and read 2x slower across the board,
+so check for a neighbor before timing anything here.
+
+**pytest: 4720 tests, 53s wall, 562s CPU.** 231s of the CPU (41%) is fixture setup: about a
+thousand tests boot the app through `client`, and one boot is ~0.2s (`create_all` 83ms, the
+lifespan ~70ms, the login ~30ms). Each `-n auto` run also pays ~11s of wall and 90s of CPU before
+the first test: every one of 20 workers imports the app (2.0s, of which 0.35s is the two
+production-cost Argon2 hashes at import in `services/login.py` and `services/admin_password.py`)
+and collects all 4721 tests (2.8s).
+
+- `--dist worksteal`: 53.4s and 53.0s under the default `load`, 43.3s and 46.4s under
+  `worksteal`, same CPU. `load` hands out tests in chunks and never reclaims one, so the worker
+  holding the 5-7s property tests finishes alone.
+- Coverage is the CI multiplier. At CI's four workers the suite is 176s bare and 390s with
+  `--cov` (9 -> 22 CPU-minutes). The `sysmon` core cannot take it: branch coverage under sysmon
+  needs Python 3.14 where CI pins 3.13, and sysmon rejects `concurrency = greenlet`.
+- The longest single test is 10.3s: the preflight held-open test waits out two real 5s
+  `busy_timeout`s, and the hygiene suite pins that literal.
+- Hypothesis's `facts()` is draw-count-bound: 7-8ms of each 9-11ms example is generation, and
+  replacing its free-text Unknown reasons with a three-word vocabulary moved it only
+  10.0 -> 8.1 ms/example. Not worth giving up shrinking over real text.
+- Building the schema once per worker and copying it per test (#855) was estimated from the
+  83ms `create_all` above at ~20s of CI and measured at four workers as setup CPU 230s -> 207s,
+  wall 178s -> 172.5s. A 3% cut. The copy, the `Settings` construction and the per-test
+  directory are most of what the fixture still does, and the lifespan boot is untouched.
+
+**vitest: 1503 tests in 90 files, 71s wall.** A file runs serially, so one file sets the floor:
+`PolicyEditor.test.tsx` alone is 54s (137 tests, ~370ms each). Per jsdom file the fixed cost is
+~1.1s of environment, ~0.5s of setup and ~1s of imports.
+
+- `pool: "threads"`: 70.9s -> 57.4s at full width, 96.0s -> 85.5s at four workers, all 1503
+  passing under both. `isolate: false` fails 687 tests and is not an option.
+- `styles-hand-fate.test.ts` spent 20s on six tests. Its `offsetsOf` regex `([^{}]*)\{|\}`
+  retried the first alternative at every position inside a block body, backtracking across the
+  run each time: 394ms per walk over the 355KB stylesheet, about 20 walks per test.
+  `([^{}]*)([{}])` matches the same 1332 rules at the same offsets in 3.3ms.
+- Splitting the warning-anchor walk out of `PolicyEditor.test.tsx` (#854) moved the floor: the
+  walk was 35s of the file's 54s, the pair now runs in 36s, and the full suite went 71s -> 41s
+  on the default pool.
+
+⇒ The backend's wall clock is scheduling plus per-test boot, and the frontend's is one file.
+Neither is per-test work worth optimizing test by test.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

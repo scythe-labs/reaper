@@ -4837,6 +4837,9 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "AppUrl.test.tsx": (
         "which section a URL lands on; its Settings rail is audited in SettingsNav.test.tsx"
     ),
+    "components/PolicyEditor.warnings.test.tsx": (
+        "the same policy page PolicyEditor.test.tsx mounts and audits; this file walks its warnings"
+    ),
 }
 
 # The population the walk itself collects: every `*.test.tsx` under frontend/src that mounts
@@ -4865,7 +4868,10 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # +1 for `docs/DocsModal.locale.test.tsx`, which mounts the docs modal over a translated manual,
 # the state `docs.test.tsx` cannot reach with the real loader. It audits that state, where the
 # pane and the index carry a `lang` the dialog around them does not.
-_EXPECTED_RENDERING_TEST_FILES = 61
+# +1 for `PolicyEditor.warnings.test.tsx`, the warning-anchor walk split out of
+# `PolicyEditor.test.tsx` so the two run on different workers. It mounts the same page, which the
+# file it left audits, so it is named in the map rather than audited twice.
+_EXPECTED_RENDERING_TEST_FILES = 62
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5936,7 +5942,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 235
+_EXPECTED_FRONTEND_MODULES = 237
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")

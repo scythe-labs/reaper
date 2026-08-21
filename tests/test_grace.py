@@ -30,11 +30,22 @@ from reaper.services import grace, whitelist
 GB = 1024**3
 NOW = utcnow()
 
+
 #: The most bound variables SQLite will accept in one statement, read off the driver this
 #: suite runs against rather than remembered. It is version-dependent -- 999 on builds older
 #: than 3.32, 32,766 on newer ones -- so a hard-coded number would size the chunking test
-#: against a ceiling that is not the one the code will hit (rule 144).
-VARIABLE_CEILING = sqlite3.connect(":memory:").getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+#: against a ceiling that is not the one the code will hit (rule 144). The handle is closed
+#: rather than left to the garbage collector, which reports an unclosed database during
+#: whichever test it happens to run in (rule 133).
+def _variable_ceiling() -> int:
+    con = sqlite3.connect(":memory:")
+    try:
+        return con.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+    finally:
+        con.close()
+
+
+VARIABLE_CEILING = _variable_ceiling()
 
 
 @pytest.fixture

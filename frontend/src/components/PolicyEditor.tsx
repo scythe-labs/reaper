@@ -1147,7 +1147,7 @@ function sectionLabel(id: SectionId): string {
 
 /** A mount condition one of the anchors below sits under. An anchor claims its fields only
  *  while its guard holds, so on the other branch they fall to the catch-all stack instead of
- *  off the page. Adding a value here does not compile in `PolicyEditor.test.tsx` until the
+ *  off the page. Adding a value here does not compile in `PolicyEditor.warnings.test.tsx` until the
  *  two page states that hold it and drop it are written there. */
 export type WarningGuard = "pace" | "tv" | "ratingGate";
 
@@ -1163,7 +1163,7 @@ export type WarningAnchor = {
    *  member of the family, since a probe has to be a field the server could actually send.
    *
    *  The family is open, so it is the one shape whose fields cannot all be listed here, and
-   *  `PolicyEditor.test.tsx`'s binding table is allowed to name more of it than `fields` does
+   *  `PolicyEditor.warnings.test.tsx`'s binding table is allowed to name more of it than `fields` does
    *  -- every member it names must still be one this anchor claims. */
   readonly prefix?: string;
   /** The mount condition this anchor's `WarnBlock` sits under, where it has one. */
@@ -1176,7 +1176,7 @@ const ANCHORS = [
   // Mixed, the way `keep_last` is: the bare field is the card's own complaint (the protection
   // is on with no sources), and the family under it is one bar each. Only the family binds to
   // a control -- the card-level one names two remedies and there is no single box to point it
-  // at, which is where `PolicyEditor.test.tsx`'s `unbound` says so out loud (#189).
+  // at, which is where `PolicyEditor.warnings.test.tsx`'s `unbound` says so out loud (#189).
   {
     id: "keep_rating_rules",
     fields: ["keep_rating_rules", "keep_rating_rules.imdb.floor"],
@@ -1226,7 +1226,7 @@ const ANCHORS = [
  *  and claims only while it holds.
  *
  *  This is data, and exported, because reconciling an anchor against its renderer is a test's
- *  job: `PolicyEditor.test.tsx` walks THIS list, drives one warning per claimed field through
+ *  job: `PolicyEditor.warnings.test.tsx` walks THIS list, drives one warning per claimed field through
  *  the page in the state each guard requires, and fails when one renders nowhere -- an anchor
  *  added with no `warningsAt` call site, or a `WarnBlock` deleted from under one. That walk
  *  was a hand-mirrored copy of this list, which could not see a new anchor at all, and before
@@ -1578,7 +1578,7 @@ export function PolicyEditor({
   // promise to render it (rules 42, 7/24).
   const allWarnings = useMemo(() => validation?.warnings ?? [], [validation]);
   // Which guards hold this render. The mount condition each one names is a checked fact, not
-  // a claim about itself: the walk in `PolicyEditor.test.tsx` drives every guard both ways
+  // a claim about itself: the walk in `PolicyEditor.warnings.test.tsx` drives every guard both ways
   // and pins a control that exists on the held branch only, so a guard naming the wrong
   // condition fails there rather than reading green.
   const guardsHeld: Record<WarningGuard, boolean> = {

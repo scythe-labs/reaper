@@ -145,7 +145,11 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--strict-markers --strict-config -m 'not live'"
+# `--dist worksteal` applies only under `-n`. Without `-n`, xdist forces `dist=no`, so a single
+# worker debug run is unchanged. The default `load` hands out tests in chunks and never reclaims
+# one, so the worker holding the 5-7s property tests finishes alone while the rest idle. Measured
+# 53s -> 43-46s for the same 562s of CPU (docs/LEARNINGS.md, 2026-08-20).
+addopts = "--strict-markers --strict-config -m 'not live' --dist worksteal"
 markers = [
     "live: talks to a real instance; requires .env.local. Deselected by default.",
     # pytest-httpx2 registers this in its own pytest_configure, but exposes only the
