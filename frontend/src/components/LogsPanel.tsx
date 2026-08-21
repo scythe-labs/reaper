@@ -8,9 +8,9 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { announce, useSlowWait } from "../announce";
 import { api, type LogLine } from "../api";
-import { count } from "../format";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SetRow } from "./SetRow";
@@ -60,6 +60,7 @@ const _logStore: { lines: KeptLine[]; cursor: number; wrap: boolean } = {
 };
 
 export function LogsPanel() {
+  const { t } = useTranslation();
   const [live, setLive] = useState(true);
   const [search, setSearch] = useState("");
   const [minLevel, setMinLevel] = useState("all");
@@ -100,7 +101,7 @@ export function LogsPanel() {
   // line after it is. That is the behavior to want. A log region that announced on insertion
   // would read the operator up to 2000 accumulated lines for opening the tab, which is why the
   // sweep speaks the WAIT here and never the arrival.
-  useSlowWait(logs.isPending && lines.length === 0 ? "Still loading the log." : null);
+  useSlowWait(logs.isPending && lines.length === 0 ? t("logs.loadingWait") : null);
 
   // Memoized on exactly what the filter reads. Without it this whole pass ran on every
   // render, and the panel re-renders on each 2s poll and each keystroke in the search box.
@@ -145,44 +146,41 @@ export function LogsPanel() {
    *  `refetch` resolves with the result rather than rejecting, so the outcome is read off it. */
   const retry = async () => {
     const result = await logs.refetch();
-    announce(result.isError ? "The log still didn't load." : "The log is up to date.");
+    announce(result.isError ? t("logs.retryFailure") : t("logs.retrySuccess"));
   };
 
   return (
     <div className="panel">
-      <h2>Logs</h2>
-      <p className="muted">
-        What Reaper is doing right now, and the trail of what it did. Every removal decision is
-        answerable from here. The newest {count(2000)} lines are kept.
-      </p>
+      <h2>{t("logs.title")}</h2>
+      <p className="muted">{t("logs.description", { limit: 2000 })}</p>
 
       <div className="logbar">
         <input
           type="search"
           className="log-search"
-          placeholder="Search the log…"
+          placeholder={t("logs.searchPlaceholder")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search the log"
+          aria-label={t("logs.searchLabel")}
         />
         <select
           value={minLevel}
           onChange={(e) => setMinLevel(e.target.value)}
-          aria-label="Only show this level and up"
+          aria-label={t("logs.levelFilterLabel")}
         >
           {/* No "Debug and up": debug is the lowest level there is, so it would keep
               every line, which is what "All levels" already does. Each option names a
               floor that filters something out. */}
-          <option value="all">All levels</option>
-          <option value="INFO">Info and up</option>
-          <option value="WARNING">Warnings and up</option>
-          <option value="ERROR">Errors only</option>
+          <option value="all">{t("logs.levelFilterAll")}</option>
+          <option value="INFO">{t("logs.levelFilterInfo")}</option>
+          <option value="WARNING">{t("logs.levelFilterWarning")}</option>
+          <option value="ERROR">{t("logs.levelFilterError")}</option>
         </select>
         {/* Both of these are on/off states, so both are the product's one on/off control
             rather than a pair of pressed buttons that each said "on" a different way. */}
         <label className="toggle">
-          <Switch checked={live} onChange={setLive} ariaLabel="Follow new lines" />
-          <span>Follow new lines</span>
+          <Switch checked={live} onChange={setLive} ariaLabel={t("logs.followLabel")} />
+          <span>{t("logs.followLabel")}</span>
         </label>
         <label className="toggle">
           <Switch
@@ -191,28 +189,28 @@ export function LogsPanel() {
               setWrap(next);
               _logStore.wrap = next;
             }}
-            ariaLabel="Wrap long lines"
+            ariaLabel={t("logs.wrapLabel")}
           />
-          <span>Wrap long lines</span>
+          <span>{t("logs.wrapLabel")}</span>
         </label>
         <span className="muted log-count">
           {visible.length === lines.length
-            ? `${count(lines.length)} ${lines.length === 1 ? "line" : "lines"}`
-            : `${count(visible.length)} of ${count(lines.length)} lines`}
+            ? t("logs.lineCount", { n: lines.length })
+            : t("logs.lineCountOfTotal", { visible: visible.length, total: lines.length })}
         </span>
       </div>
 
       {logs.isPending && lines.length === 0 ? (
-        <p className="muted">Loading the log…</p>
+        <p className="muted">{t("logs.loading")}</p>
       ) : logs.isError && lines.length === 0 ? (
         // `standing`: `["logs"]` polls every 2s while Follow new lines is on, so this mounts and
         // unmounts with the connection rather than with anything pressed. As an alert a flapping
         // connection re-announced byte-identical text over whoever was reading the pane. What the
         // operator does press is Try again, and `retry` is what answers it.
         <Notice tone="error" standing>
-          Couldn't load the log.{" "}
+          {t("logs.loadError")}{" "}
           <button className="ghost sm" onClick={() => void retry()}>
-            Try again
+            {t("logs.retryButton")}
           </button>
         </Notice>
       ) : (
@@ -231,13 +229,11 @@ export function LogsPanel() {
           // the tab would read out the whole accumulated window. What `role="log"` buys is every
           // line AFTER it, which is exactly the part of a live log worth hearing.
           role="log"
-          aria-label="Application log"
+          aria-label={t("logs.consoleLabel")}
         >
           {visible.length === 0 ? (
             <p className="muted log-empty">
-              {lines.length === 0
-                ? "Nothing yet. New lines appear here as Reaper works."
-                : "Nothing matches your search."}
+              {lines.length === 0 ? t("logs.emptyNoLines") : t("logs.emptyNoMatch")}
             </p>
           ) : (
             visible.map((line) => (
@@ -259,12 +255,12 @@ export function LogsPanel() {
         // unrelated switch speak a failure the operator had already been told about.
         <Notice tone="error" standing>
           {live ? (
-            "Couldn't load new lines. Reaper is trying again."
+            t("logs.retryingError")
           ) : (
             <>
-              Couldn't load new lines, and updates are paused.{" "}
+              {t("logs.pausedError")}{" "}
               <button className="ghost sm" onClick={() => void retry()}>
-                Try again
+                {t("logs.retryButton")}
               </button>
             </>
           )}
@@ -272,45 +268,36 @@ export function LogsPanel() {
       )}
 
       <div className="set-group log-level-group">
-        <h3>Logging</h3>
+        <h3>{t("logs.settingsHeading")}</h3>
         <div className="set-rows">
-          <SetRow
-            label="Logging level"
-            help={
-              <>
-                How much Reaper writes, both here and in the container output. Info is the everyday
-                setting. Debug is chatty and best while chasing a problem. Takes effect immediately,
-                no restart.
-              </>
-            }
-          >
+          <SetRow label={t("logs.levelLabel")} help={t("logs.levelHelp")}>
             <select
               value={recordLevel ?? "INFO"}
               disabled={setLevel.isPending || recordLevel === null}
-              aria-label="Logging level"
+              aria-label={t("logs.levelLabel")}
               onChange={(e) => setLevel.mutate(e.target.value)}
             >
-              <option value="DEBUG">Debug</option>
-              <option value="INFO">Info</option>
-              <option value="WARNING">Warning</option>
+              <option value="DEBUG">{t("logs.levelDebug")}</option>
+              <option value="INFO">{t("logs.levelInfo")}</option>
+              <option value="WARNING">{t("logs.levelWarning")}</option>
               {/* REAPER_LOG_LEVEL also takes ERROR, which this picker does not offer:
                   hiding warnings from a tool that deletes files serves nobody. Render it
                   while it is the live level anyway, or a box with no matching option shows
                   blank and the picker stops saying what Reaper is recording. Picking any
                   other level stores that one and drops this option (#700). */}
-              {recordLevel === "ERROR" && <option value="ERROR">Error</option>}
+              {recordLevel === "ERROR" && <option value="ERROR">{t("logs.levelError")}</option>}
             </select>
           </SetRow>
           {/* A button, not a box, so it releases the control track (`.set-row-plain`). */}
           <SetRow
             variant="plain"
-            label="Log files"
+            label={t("logs.downloadLabel")}
             help={
               <>
-                Save the whole log to your computer, handy for a bug report.
+                {t("logs.downloadHelpBase")}{" "}
                 {logs.data
-                  ? ` Reaper keeps the newest ${count(logs.data.files_kept)} files on the server, a fuller trail than the window above.`
-                  : " Reaper keeps a fuller trail on the server than the window above."}
+                  ? t("logs.downloadRetentionKnown", { n: logs.data.files_kept })
+                  : t("logs.downloadRetentionUnknown")}
               </>
             }
           >
@@ -319,13 +306,15 @@ export function LogsPanel() {
               onClick={() => download.mutate()}
               disabled={download.isPending}
             >
-              {download.isPending ? "Preparing…" : "Download logs"}
+              {download.isPending ? t("logs.downloadPreparing") : t("logs.downloadButton")}
             </button>
           </SetRow>
         </div>
         {setLevel.error && <Notice tone="error">{setLevel.error.message}</Notice>}
         {download.error && (
-          <Notice tone="error">The download didn't start: {download.error.message}</Notice>
+          <Notice tone="error">
+            {t("logs.downloadError", { message: download.error.message })}
+          </Notice>
         )}
       </div>
     </div>

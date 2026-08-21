@@ -275,7 +275,7 @@ describe("who is allowed to say the picker sentence", () => {
     readFileSync(join(dirname(fileURLToPath(import.meta.url)), name), "utf8");
 
   it("is this hook, and neither of the two screens driving it", () => {
-    expect(read("PlexPin.tsx")).toContain(`= "${CHOOSE_SERVER_SAID}"`);
+    expect(read("PlexPin.tsx")).toContain(`= i18next.t("plex.pin.chooseServerSaid")`);
 
     for (const caller of ["Login.tsx", "PlexPanel.tsx"]) {
       expect(

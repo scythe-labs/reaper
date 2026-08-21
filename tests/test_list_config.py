@@ -296,16 +296,20 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
             )
 
     def test_the_modal_spells_every_refusal_the_way_this_module_does(self) -> None:
-        """``ListModal.tsx`` says these same sentences before the round trip.
+        """The i18n catalog says these same sentences before the round trip.
 
         Two copies of one requirement, which is rule 144's hazard: each side was pinned by its
         own test, nothing bound the pair, and a one-sided edit left both suites green. The
         failure message names the other file, because a comment asking a future author to
         remember the second copy does nothing.
+
+        The frontend copy lives in the en-US catalog since Stage 4 (``lists.blocked.*``), so
+        this binds backend sentence to catalog message; the frontend's own gates
+        (``i18n-keys.test.ts``) bind the catalog to the keys ``ListModal.tsx`` renders.
         """
-        modal = (
-            Path(__file__).resolve().parents[1] / "frontend/src/components/ListModal.tsx"
-        ).read_text(encoding="utf-8")
+        modal = (Path(__file__).resolve().parents[1] / "frontend/src/locales/en/ui.json").read_text(
+            encoding="utf-8"
+        )
         for sentence in (
             "Give the list a name, so you can pick it out on the Policy screen.",
             "Say which Plex library to look in.",
@@ -315,7 +319,7 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
         ):
             assert sentence in modal, (
                 f"services/list_config.py refuses with {sentence!r}, and "
-                "frontend/src/components/ListModal.tsx no longer says it before the round "
+                "frontend/src/locales/en/ui.json no longer says it before the round "
                 "trip. Edit both, or drop the browser-side check."
             )
 

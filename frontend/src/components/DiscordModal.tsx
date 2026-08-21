@@ -16,6 +16,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type InstanceTest } from "../api";
 import { ModalShell } from "./ModalShell";
@@ -28,6 +29,7 @@ import { isDiscordWebhook } from "./Settings";
 const WEBHOOK_ERROR_ID = "discord-modal-webhook-error";
 
 export function DiscordModal({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["notifications"], queryFn: api.notifications });
   const connected = data?.has_webhook ?? false;
@@ -49,7 +51,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
     mutationFn: () => api.setWebhook(url.trim()),
     onSuccess: async () => {
       await invalidate();
-      announce("Discord webhook saved.");
+      announce(t("services.discord.savedAnnouncement"));
       onClose();
     },
     onError: (e: Error) => setError(e.message),
@@ -75,7 +77,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
     mutationFn: () => api.clearWebhook(),
     onSuccess: async () => {
       await invalidate();
-      announce("Discord webhook removed. Leaving-soon warnings won't be sent.");
+      announce(t("services.discord.removedAnnouncement"));
       onClose();
     },
     onError: (e: Error) => setError(e.message),
@@ -91,8 +93,8 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
     <ModalShell
       title={
         <>
-          <span className="kind-badge kind-discord">Discord</span>{" "}
-          {connected ? "Edit Discord" : "Add Discord"}
+          <span className="kind-badge kind-discord">{t("services.discord.badge")}</span>{" "}
+          {connected ? t("services.discord.titleEdit") : t("services.discord.titleAdd")}
         </>
       }
       onClose={onClose}
@@ -101,10 +103,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
       canClose={!busy}
       className="service-modal"
     >
-      <p className="blurb">
-        Reaper posts a heads-up here while a title is in its grace period, so someone can watch it
-        or spare it before it goes.
-      </p>
+      <p className="blurb">{t("services.discord.blurb")}</p>
 
       <form
         className="service-form"
@@ -115,7 +114,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
         }}
       >
         <label className="field-sm">
-          <span className="field-label">Webhook URL</span>
+          <span className="field-label">{t("services.discord.field.webhookUrl")}</span>
           <input
             type="password"
             autoComplete="off"
@@ -124,32 +123,33 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
               setUrl(e.target.value);
               setError(null);
             }}
-            placeholder={connected ? "leave blank to keep the current one" : "from Discord"}
+            placeholder={
+              connected
+                ? t("services.discord.field.placeholderEdit")
+                : t("services.discord.field.placeholderAdd")
+            }
             aria-invalid={badFormat ? true : undefined}
             aria-describedby={badFormat ? WEBHOOK_ERROR_ID : undefined}
           />
-          <span className="help">
-            In Discord: Server Settings, Integrations, Webhooks. Copy the webhook URL.
-          </span>
+          <span className="help">{t("services.discord.field.help")}</span>
         </label>
 
         {/* Beside the control that fixes it (rule 42), not in the shared slot at the foot
             where a failed save also lands. */}
         {badFormat && (
           <Notice tone="error" id={WEBHOOK_ERROR_ID}>
-            That doesn't look like a Discord webhook address. It should start with
-            https://discord.com/api/webhooks/
+            {t("services.discord.badFormat")}
           </Notice>
         )}
 
         {/* Only while it still describes what is in the box (rule 85). */}
         {test && test.of === testedWith() && <TestBadge result={test.result} />}
 
-        {error && <Notice tone="error">That didn't work: {error}</Notice>}
+        {error && <Notice tone="error">{t("services.discord.saveError", { error })}</Notice>}
 
         <div className="add-actions">
           <button type="button" className="ghost" onClick={onClose} disabled={busy}>
-            Cancel
+            {t("services.common.cancel")}
           </button>
           <span className="flex-spacer" />
           {connected && (
@@ -162,7 +162,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
               }}
               disabled={busy}
             >
-              {remove.isPending ? "Removing…" : "Remove"}
+              {remove.isPending ? t("services.common.removing") : t("services.common.remove")}
             </button>
           )}
           <button
@@ -174,10 +174,12 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
             }}
             disabled={!canTest || busy}
           >
-            {sendTest.isPending ? "Sending…" : "Send test"}
+            {sendTest.isPending
+              ? t("services.discord.sendTestPending")
+              : t("services.discord.sendTestButton")}
           </button>
           <button type="submit" className="primary" disabled={!validNew || busy}>
-            {save.isPending ? "Saving…" : "Save"}
+            {save.isPending ? t("services.common.saving") : t("services.common.save")}
           </button>
         </div>
       </form>

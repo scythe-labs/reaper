@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import functools
 import hashlib
 import json
 import os
@@ -3306,6 +3307,28 @@ def test_docs_referenced_from_code_exist() -> None:
 #: `reaper.api.review._chip` matches on its `api.` segment. Adding `.` to that class reads as
 #: tighter and silently drops every `:func:`reaper.…`` cross-reference in the tree, which is the
 #: spelling both pre-existing stale citations this guard first caught were written in.
+@functools.cache
+def _ui_catalog_leaves() -> tuple[tuple[str, str], ...]:
+    """Every (dotted key, message) leaf of the hand-edited en-US UI catalog."""
+    catalog = json.loads((FRONTEND_SRC / "locales" / "en" / "ui.json").read_text(encoding="utf-8"))
+    leaves: list[tuple[str, str]] = []
+
+    def walk(node: object, prefix: str) -> None:
+        if isinstance(node, str):
+            leaves.append((prefix, node))
+            return
+        assert isinstance(node, dict)
+        for name, child in node.items():
+            walk(child, f"{prefix}.{name}" if prefix else name)
+
+    walk(catalog, "")
+    return tuple(leaves)
+
+
+def _ui_catalog_keys() -> frozenset[str]:
+    return frozenset(key for key, _ in _ui_catalog_leaves())
+
+
 _DOTTED_SYMBOL = re.compile(
     r"(?<![/\w])(api|services|clients|engine|db|auth)((?:\.[a-z_][\w]*)+)\.([A-Za-z_]\w{1,})\b"
 )
@@ -3382,6 +3405,12 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
                     )
             for match in _DOTTED_SYMBOL.finditer(line):
                 if match.group(0).endswith(suffixes):
+                    continue
+                # An i18n catalog key ("services.discord.badge") is shaped exactly like a
+                # dotted citation of `reaper.services`. It resolves in its own symbol
+                # table -- the en-US catalog -- and the frontend's missing-key gate
+                # (i18n-keys.test.ts) is what holds a stale one, so this guard defers.
+                if match.group(0) in _ui_catalog_keys():
                     continue
                 package, middle, symbol = match.groups()
                 # Resolve by importing the longest prefix that IS a module, then walking what is
@@ -4097,19 +4126,19 @@ def test_every_query_failure_branch_is_counted() -> None:
 # construction. Its line now points at the close the modal already has, and ``App.tsx`` is gone
 # from this dict.
 _RELOAD_ADVICE = {
-    "frontend/src/components/AboutPanel.tsx": 1,
     "frontend/src/components/BackupPanel.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
-    "frontend/src/components/GeneralPanel.tsx": 1,
-    "frontend/src/components/JobsPanel.tsx": 2,
     "frontend/src/components/NotInScanPanel.tsx": 1,
-    "frontend/src/components/PlexPanel.tsx": 1,
     "frontend/src/components/PolicyEditor.tsx": 1,
     "frontend/src/components/ReapBreakdown.tsx": 1,
     "frontend/src/components/ReapConfirm.tsx": 1,
     "frontend/src/components/ReapPlan.tsx": 1,
     "frontend/src/components/RestoreCard.tsx": 3,
     "frontend/src/components/SecurityPanel.tsx": 1,
+    # The Stage 4 conversions to date: About's, General's, Plex's, and Jobs' two, each moved
+    # here with its surface. A count leaves a component row for this one as its surface
+    # converts; the advice itself stays deliberate either way.
+    "frontend/src/locales/en/ui.json": 5,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -4146,6 +4175,14 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
         n = len(re.findall(r"(?i)\breload", _without_comments(path.read_text(encoding="utf-8"))))
         if n:
             found[str(path.relative_to(REPO))] = n
+    # Stage 4 moves a converted surface's sentences into the catalog, advice included, so the
+    # catalog is part of the population: an extraction moves a count here, and a NEW advice
+    # sentence still cannot arrive unpinned through either door.
+    in_catalog = len(
+        re.findall(r"(?i)\breload", " ".join(value for _, value in _ui_catalog_leaves()))
+    )
+    if in_catalog:
+        found["frontend/src/locales/en/ui.json"] = in_catalog
     assert found == _RELOAD_ADVICE, (
         "the reload-advice population moved.\n"
         f"expected: {_RELOAD_ADVICE}\nfound:    {found}\n"
@@ -4156,7 +4193,9 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
     )
 
 
-# Every "couldn't load" sentence the shipped tree renders, and the file rendering each one. The
+# Every "couldn't load" sentence the shipped tree renders, and the file rendering each one --
+# which, for a surface Stage 4 has converted, is the en-US catalog: the sentence moves there
+# with its surface, one entry per key that spells it. The
 # count above matches the WORD `reload` per file, so it is blind to two panels drifting apart on
 # the sentence they print when a read never landed. That is what W11-36 is about: "Couldn't load
 # these settings. Reload to try again." is written at four sites and "Couldn't load this page.
@@ -4172,15 +4211,15 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # earns its own key here with the same reasoning written down.
 _NEVER_LOADED_COPY = {
     "Couldn't load Scales.": ["frontend/src/components/Fairness.tsx"],
-    "Couldn't load new lines, and updates are paused.": ["frontend/src/components/LogsPanel.tsx"],
-    "Couldn't load new lines. Reaper is trying again.": ["frontend/src/components/LogsPanel.tsx"],
-    "Couldn't load the Leaving Soon settings.": ["frontend/src/components/PlexPanel.tsx"],
+    "Couldn't load new lines, and updates are paused.": ["frontend/src/locales/en/ui.json"],
+    "Couldn't load new lines. Reaper is trying again.": ["frontend/src/locales/en/ui.json"],
+    "Couldn't load the Leaving Soon settings.": ["frontend/src/locales/en/ui.json"],
     "Couldn't load the library list.": [
-        "frontend/src/components/PlexPanel.tsx",
         "frontend/src/components/SetupPlexStep.tsx",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the library list. Try again.": ["frontend/src/components/SetupPlexStep.tsx"],
-    "Couldn't load the log.": ["frontend/src/components/LogsPanel.tsx"],
+    "Couldn't load the log.": ["frontend/src/locales/en/ui.json"],
     "Couldn't load the reasons for this item. Close this panel and click the item to try again.": [
         "frontend/src/components/WhyPanelFallback.tsx"
     ],
@@ -4189,23 +4228,20 @@ _NEVER_LOADED_COPY = {
     "Couldn't load the seasons. Collapse and expand to try again.": [
         "frontend/src/components/ReviewQueue.tsx"
     ],
-    "Couldn't load the shelf status. Reload to try again.": [
-        "frontend/src/components/JobsPanel.tsx"
-    ],
-    "Couldn't load the upkeep jobs. Reload to try again.": [
-        "frontend/src/components/JobsPanel.tsx"
-    ],
-    "Couldn't load the watch history record.": ["frontend/src/components/PlexPanel.tsx"],
+    "Couldn't load the shelf status. Reload to try again.": ["frontend/src/locales/en/ui.json"],
+    "Couldn't load the upkeep jobs. Reload to try again.": ["frontend/src/locales/en/ui.json"],
+    "Couldn't load the watch history record.": ["frontend/src/locales/en/ui.json"],
     "Couldn't load these settings.": ["frontend/src/components/PolicyEditor.tsx"],
     "Couldn't load these settings. Reload to try again.": [
-        "frontend/src/components/GeneralPanel.tsx",
-        "frontend/src/components/PlexPanel.tsx",
         "frontend/src/components/PolicyEditor.tsx",
         "frontend/src/components/SecurityPanel.tsx",
+        # general.loadError and plex.loadError, still the one shared sentence.
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this page. Reload to try again.": [
-        "frontend/src/components/AboutPanel.tsx",
         "frontend/src/components/BackupPanel.tsx",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load this person's requests. Close this panel and click the card to try again.": [
         "frontend/src/components/ScalesPanel.tsx"
@@ -4213,11 +4249,14 @@ _NEVER_LOADED_COPY = {
     "Couldn't load what a reap would remove. Reaper just can't show it right now."
     " Reload to try again.": ["frontend/src/components/ReapBreakdown.tsx"],
     "Couldn't load your connections.": [
-        "frontend/src/components/ServicesPanel.tsx",
         "frontend/src/components/SetupConnectStep.tsx",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your lists, so there is no way to tell here whether they are working.": [
-        "frontend/src/components/ListsPanel.tsx"
+        # lists.loadError and lists.loadErrorRetrying: one sentence, two button states,
+        # the SafetyBanner linked/link-less precedent.
+        "frontend/src/locales/en/ui.json",
+        "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load your review queue.": ["frontend/src/components/ReviewQueue.tsx"],
     "Reaper couldn't load the things a rule can look at, so there's nothing to pick from right"
@@ -4273,6 +4312,12 @@ def test_the_never_loaded_sentences_are_pinned_per_sentence() -> None:
         for run in _TEXT_RUN.split(flat):
             if _NEVER_LOADED.search(run):
                 found.setdefault(run.strip(), []).append(str(path.relative_to(REPO)))
+    # The catalog carries a converted surface's sentences (Stage 4), one value per key, so a
+    # sentence two panels share appears once per key that spells it and drift stays visible.
+    for _, value in _ui_catalog_leaves():
+        for run in _TEXT_RUN.split(" ".join(value.split())):
+            if _NEVER_LOADED.search(run):
+                found.setdefault(run.strip(), []).append("frontend/src/locales/en/ui.json")
     assert {sentence: sorted(files) for sentence, files in found.items()} == _NEVER_LOADED_COPY, (
         "the never-loaded copy moved.\n"
         f"expected: {_NEVER_LOADED_COPY}\nfound:    {found}\n"
@@ -5205,17 +5250,20 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
 
 
 _JOBS_PANEL_TSX = FRONTEND_SRC / "components" / "JobsPanel.tsx"
-#: ``JOB_META`` read as the whole declaration up to the ``};`` that closes it, then picked
-#: apart inside, rather than anchored on a delimiter one spelling happens to put there
-#: (rule 147): a key may be a bare identifier or the computed ``[SCAN_ID]``, and both are
-#: ordinary here.
-_JOB_META_BLOCK = re.compile(r"const JOB_META: Record<string, JobMeta> = \{(.*?)\n\};", re.DOTALL)
-_JOB_META_KEY = re.compile(r'^  (?:\[(\w+)\]|"?(\w+)"?):\s*\{', re.MULTILINE)
-_SCAN_ID_CONST = re.compile(r'const SCAN_ID = "([\w]+)";')
-#: Every entry carries exactly one ``title:``, so counting them counts the population the key
-#: matcher is supposed to collect. A flag-shaped assertion cannot tell an entry that complies
-#: from one this parser stopped seeing -- both read green (rule 145/147).
-_JOB_META_TITLE = re.compile(r"^    title:", re.MULTILINE)
+#: ``jobMeta`` read as the whole function up to the ``}`` that closes it, then picked apart
+#: inside, rather than anchored on a delimiter one spelling happens to put there (rule 147).
+#: It was a frozen ``JOB_META`` table until Stage 4 moved the copy into the i18n catalog;
+#: now each job id is a ``case`` whose arm reads its ``jobs.meta.*`` keys, and a case may
+#: name the id as a literal or through a module constant -- both are ordinary here.
+_JOB_META_BLOCK = re.compile(r"function jobMeta\(id: string\): JobMeta \{(.*?)\n\}", re.DOTALL)
+_JOB_META_KEY = re.compile(r'^    case (?:(\w+)|"(\w+)"):', re.MULTILINE)
+_ID_CONST = re.compile(r'const (SCAN_ID|UPDATE_CHECK_ID) = "(\w+)";')
+#: Every case's arm carries exactly one multiline ``title:``, so counting them counts the
+#: population the key matcher is supposed to collect (the ``default`` arm returns inline and
+#: is rightly not counted: it is the fallback, not copy). A flag-shaped assertion cannot
+#: tell an entry that complies from one this parser stopped seeing -- both read green
+#: (rule 145/147).
+_JOB_META_TITLE = re.compile(r"^        title:", re.MULTILINE)
 
 
 def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
@@ -5234,14 +5282,11 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     """
     source = _JOBS_PANEL_TSX.read_text(encoding="utf-8")
     block_match = _JOB_META_BLOCK.search(source)
-    assert block_match, (
-        "parsed no JOB_META declaration out of JobsPanel.tsx -- the matcher is stale"
-    )
+    assert block_match, "parsed no jobMeta function out of JobsPanel.tsx -- the matcher is stale"
     block = block_match.group(1)
 
-    scan_id = _SCAN_ID_CONST.search(source)
-    assert scan_id, "parsed no SCAN_ID constant out of JobsPanel.tsx -- the matcher is stale"
-    constants = {"SCAN_ID": scan_id.group(1)}
+    constants = dict(_ID_CONST.findall(source))
+    assert constants, "parsed no id constants out of JobsPanel.tsx -- the matcher is stale"
 
     keys = {
         constants[computed] if computed else literal
@@ -5249,18 +5294,19 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     }
     entries = len(_JOB_META_TITLE.findall(block))
     assert len(keys) == entries, (
-        f"JOB_META holds {entries} entries but this test collected {len(keys)} keys. "
+        f"jobMeta holds {entries} arms but this test collected {len(keys)} case keys. "
         "The key matcher missed a spelling -- fix it before trusting the comparison below, "
         "which cannot tell an entry that complies from one it never saw (rule 147)."
     )
 
     assert keys == set(SCHEDULABLE_JOB_IDS), (
-        "frontend/src/components/JobsPanel.tsx's JOB_META and the jobs the server schedules "
+        "frontend/src/components/JobsPanel.tsx's jobMeta and the jobs the server schedules "
         "disagree.\n"
         f"  scheduled with no copy: {sorted(set(SCHEDULABLE_JOB_IDS) - keys) or 'none'}\n"
         f"  copy for no such job:   {sorted(keys - set(SCHEDULABLE_JOB_IDS)) or 'none'}\n"
-        "Add the title/desc/offWarning to JOB_META, or drop the stale entry. The off-warning "
-        "states what stops happening when the job is off (rule 55)."
+        "Add a case reading the job's jobs.meta.* title/desc/offWarning from the catalog, or "
+        "drop the stale one. The off-warning states what stops happening when the job is off "
+        "(rule 55)."
     )
 
 
@@ -7532,7 +7578,8 @@ def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None
 _ACCENT_DEFAULT_COPIES: dict[str, int] = {
     "src/reaper/api/settings.py": 1,
     "frontend/src/accent.ts": 1,
-    "frontend/src/components/GeneralPanel.tsx": 2,
+    # The two refusal sentences naming the color are catalog messages since Stage 4.
+    "frontend/src/locales/en/ui.json": 2,
     "frontend/src/styles/00-tokens.css": 4,
 }
 

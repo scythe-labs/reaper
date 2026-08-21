@@ -10,8 +10,10 @@
 // in both files, and the two copies had already drifted apart.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import type { PlexServerChoice } from "../api";
+import i18next from "../i18n";
 
 /** What the app says when a sign-in lands on the server picker.
  *
@@ -20,8 +22,9 @@ import type { PlexServerChoice } from "../api";
  *  step once: Settings announced the picker and the login screen said nothing (#177, rule 72).
  *
  *  Exported because `PlexPin.test.tsx` reads the two callers' source and fails by name in
- *  whichever one states it again. */
-export const CHOOSE_SERVER_SAID = "Signed in with Plex. Choose which server Reaper should manage.";
+ *  whichever one states it again. Resolved from the catalog at module load, which is safe
+ *  because `../i18n` inits synchronously with inline resources. */
+export const CHOOSE_SERVER_SAID = i18next.t("plex.pin.chooseServerSaid");
 
 /** Poll every two seconds. The wait is a person staring at a browser tab, so the faster
  *  of the two intervals this replaced wins: two seconds still costs at most 150 requests
@@ -61,7 +64,7 @@ interface PinPollHandlers<R extends PinPollResult> {
 }
 
 function failureText(e: unknown): string {
-  return e instanceof Error ? e.message : "Plex sign-in failed.";
+  return e instanceof Error ? e.message : i18next.t("plex.pin.signInFailedFallback");
 }
 
 /** Drive one PIN through to a final answer.
@@ -241,6 +244,7 @@ export function ServerPickList({
   onPick: (machineId: string) => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <>
       {servers.map((s) => (
@@ -254,7 +258,7 @@ export function ServerPickList({
         </button>
       ))}
       <button type="button" className="link" onClick={onCancel}>
-        Cancel
+        {t("plex.cancel")}
       </button>
     </>
   );

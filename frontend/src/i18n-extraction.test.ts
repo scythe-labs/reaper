@@ -8,17 +8,16 @@
 // completely, and this gate is what holds it done.
 //
 // What the scan reads is the TypeScript AST, not a regex over the text (rule 147), and it
-// covers exactly four populations:
+// covers exactly three populations, each in VALUE position only -- the expression itself,
+// the branches of a ternary, the operands of `||`/`??`/`+`, the right side of `&&`:
 //   1. JSX text with at least one letter.
-//   2. String-ish literals under a visible attribute (VISIBLE_ATTRS), whatever the
-//      spelling: a bare literal, a template, either branch of a ternary, `||`/`??`
-//      fallbacks.
-//   3. String-ish literals a JSX child renders as a VALUE: `{"text"}`, the branches of
-//      `{cond ? "day" : "days"}`, the operands of `||`/`??`/`+`, the right side of `&&`.
-//   4. Every argument of an `announce()` call, since a live region that speaks the wrong
-//      language is worse than one that says nothing.
-// The first argument of `t()`/`i18next.t()` is a catalog id, not copy, and is skipped
-// wherever it appears.
+//   2. String-ish literals whose value a visible attribute (VISIBLE_ATTRS) renders. JSX
+//      passed through such an attribute as a component prop is scanned as JSX, not as a
+//      string, so a className inside a `title={<span .../>}` prop is not copy.
+//   3. String-ish literals whose value an `announce()` call speaks, since a live region
+//      that speaks the wrong language is worse than one that says nothing.
+// Everything outside value position is data, not copy: `===` comparisons, call arguments
+// (a t() key, an ICU discriminant param like `is4k: on ? "yes" : "no"`).
 //
 // Named limits (rule 118: a check that cannot discriminate must not read as a proof):
 // copy that reaches the operator through a plain function call (`fmt("literal")`, a
@@ -33,7 +32,23 @@ import { sourceText } from "./test/sources";
 
 // Files fully extracted to the catalog, src-relative. Grown by the Stage 4 merge step,
 // one surface at a time, never by an extraction agent (the list is shared state).
-const CONVERTED = ["components/SafetyBanner.tsx"];
+const CONVERTED = [
+  "components/AboutPanel.tsx",
+  "components/DiscordModal.tsx",
+  "components/GeneralPanel.tsx",
+  "components/JobStatus.tsx",
+  "components/JobsPanel.tsx",
+  "components/ListModal.tsx",
+  "components/ListsPanel.tsx",
+  "components/LogsPanel.tsx",
+  "components/NotificationsPanel.tsx",
+  "components/PlexPanel.tsx",
+  "components/PlexPin.tsx",
+  "components/PlexTrashNotice.tsx",
+  "components/SafetyBanner.tsx",
+  "components/ServiceModal.tsx",
+  "components/ServicesPanel.tsx",
+];
 
 // Attributes whose value the operator sees or hears.
 const VISIBLE_ATTRS = new Set([
@@ -47,8 +62,6 @@ const VISIBLE_ATTRS = new Set([
   "placeholder",
   "title",
 ]);
-
-const T_CALLEES = new Set(["t", "i18next.t", "i18n.t"]);
 
 const hasLetter = (s: string) => /\p{L}/u.test(s);
 
@@ -77,27 +90,8 @@ export function leftoverCopy(fileName: string, text: string): Leftover[] {
   const templateText = (node: ts.TemplateExpression) =>
     [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(" ");
 
-  // Every string-ish literal under `node`, whatever the spelling, minus t() keys.
-  const literalsUnder = (root: ts.Node) => {
-    const visit = (n: ts.Node): void => {
-      if (ts.isCallExpression(n) && T_CALLEES.has(n.expression.getText(sf))) {
-        n.arguments.slice(1).forEach(visit);
-        return;
-      }
-      if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
-        if (hasLetter(n.text)) flag(n, n.text);
-      } else if (ts.isTemplateExpression(n)) {
-        if (hasLetter(templateText(n))) flag(n, templateText(n));
-        n.templateSpans.forEach((s) => visit(s.expression));
-      } else {
-        n.forEachChild(visit);
-      }
-    };
-    visit(root);
-  };
-
-  // The expressions whose VALUE a `{...}` child renders. A literal anywhere else in the
-  // expression (a `===` comparison, a call argument) is data, not copy.
+  // The expressions whose VALUE lands in front of the operator. A literal anywhere else
+  // (a `===` comparison, a call argument) is data, not copy.
   const valuePositions = (e: ts.Expression): ts.Expression[] => {
     if (ts.isParenthesizedExpression(e)) return valuePositions(e.expression);
     if (ts.isConditionalExpression(e))
@@ -115,29 +109,38 @@ export function leftoverCopy(fileName: string, text: string): Leftover[] {
     return [e];
   };
 
+  const flagValues = (e: ts.Expression) => {
+    for (const v of valuePositions(e)) {
+      if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) {
+        if (hasLetter(v.text)) flag(v, v.text);
+      } else if (ts.isTemplateExpression(v)) {
+        if (hasLetter(templateText(v))) flag(v, templateText(v));
+      }
+    }
+  };
+
   const visit = (node: ts.Node): void => {
     if (ts.isJsxText(node)) {
       if (hasLetter(node.text)) flag(node, node.text);
     } else if (ts.isJsxAttribute(node)) {
       if (VISIBLE_ATTRS.has(node.name.getText(sf)) && node.initializer) {
-        literalsUnder(node.initializer);
-        return;
+        const init = node.initializer;
+        if (ts.isStringLiteral(init)) {
+          if (hasLetter(init.text)) flag(init, init.text);
+        } else if (ts.isJsxExpression(init) && init.expression) {
+          flagValues(init.expression);
+        }
+        // No early return: JSX handed through the attribute as a prop still gets the
+        // JSX walk below, so a literal text node inside it is caught as JSX text.
       }
     } else if (
       ts.isJsxExpression(node) &&
       node.expression &&
       (ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent))
     ) {
-      for (const v of valuePositions(node.expression)) {
-        if (ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v)) {
-          if (hasLetter(v.text)) flag(v, v.text);
-        } else if (ts.isTemplateExpression(v)) {
-          if (hasLetter(templateText(v))) flag(v, templateText(v));
-        }
-      }
+      flagValues(node.expression);
     } else if (ts.isCallExpression(node) && node.expression.getText(sf) === "announce") {
-      node.arguments.forEach(literalsUnder);
-      return;
+      node.arguments.forEach(flagValues);
     }
     node.forEachChild(visit);
   };
@@ -176,7 +179,7 @@ describe("the i18n extraction gate", () => {
   it("catches every spelling the tree writes copy in (rule 147)", () => {
     const flagged = (src: string, name = "probe.tsx") => leftoverCopy(name, src).map((l) => l.text);
 
-    // Accepted spellings: each of the four populations, in the forms components use.
+    // Accepted spellings: each of the three populations, in the forms components use.
     expect(flagged(`const a = <p>Deletion is on.</p>;`)).toEqual(["Deletion is on."]);
     expect(flagged(`const a = <button aria-label="Close" />;`)).toEqual(["Close"]);
     expect(flagged(`const a = <div title={busy ? "Working" : "Idle"} />;`)).toEqual([
@@ -198,6 +201,18 @@ describe("the i18n extraction gate", () => {
     expect(flagged(`const a = <span>{kind === "movie" ? one : two}</span>;`)).toEqual([]);
     expect(flagged(`announce(t("queue.saved", { n }));`)).toEqual([]);
     expect(flagged(`const a = <div title={t("a.b") + ":"} />;`)).toEqual([]);
+    expect(
+      flagged(`const a = <input placeholder={k === "tautulli" ? t("a.b") : t("c.d")} />;`),
+    ).toEqual([]);
+    expect(
+      flagged(`const a = <select aria-label={t("a.b", { is4k: on ? "yes" : "no" })} />;`),
+    ).toEqual([]);
+    expect(
+      flagged(`const a = <Shell title={<span className="kind-badge">{t("a.b")}</span>} />;`),
+    ).toEqual([]);
+
+    // JSX handed through a prop is still JSX: a literal text node inside it is caught.
+    expect(flagged(`const a = <Shell title={<span>Legend</span>} />;`)).toEqual(["Legend"]);
 
     // A .ts module: generics parse as generics, never as phantom JSX, and announce()
     // copy is still read.
