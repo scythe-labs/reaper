@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Build the review-queue screenshot the README and the release notes show off.
+"""Build an invented review-queue screenshot, kept as the spare.
 
-Reaper ships to operators whose libraries we will never see, so the picture on the front page
-cannot be one: a real screenshot carries a real account name, real titles and real artwork
-somebody else owns. This renders the same screen from invented data instead. The markup is the
-markup `ReviewQueue`/`WhyPanel` emit, the stylesheet is `frontend/src/index.css` inlined in its
-own load order, and every poster and backdrop is drawn here as flat SVG, so nothing in the
-output belongs to anyone.
+The README shows a real screenshot now, of the maintainer's own instance, because a picture
+of invented titles sells nothing. This still renders the same screen from invented data, and
+it is kept so that call can be reversed with a one-line README edit rather than rebuilt.
+
+The markup is the markup `ReviewQueue`/`WhyPanel` emit, the stylesheet is
+`frontend/src/index.css` inlined in its own load order, and every poster and backdrop is drawn
+here as flat SVG, so nothing in the output belongs to anyone.
 
     uv run python scripts/gen_screenshot_mockup.py           # write the page
     uv run python scripts/gen_screenshot_mockup.py --render  # and shoot it with headless Chrome
 
 `--render` wants Chrome and writes a 2x PNG beside the page, which is the artifact the README
-shows; the page itself is a build product and is not committed. Rendering needs a browser, so
-CI cannot re-shoot it -- `tests/test_screenshot_mockup.py` gates what it can without one: that
-this script still runs against the current stylesheet, that the page it emits fetches nothing
-and embeds only art drawn here, and that the committed PNG is the size this capture box
-produces (rule 68).
+would show if this call were reversed. The page itself is a build product and is not committed.
+
+Rendering needs a browser, so CI cannot re-shoot it. `tests/test_screenshot_mockup.py` gates
+what it can without one: that this script still runs against the current stylesheet, that the
+page it emits fetches nothing and embeds only art drawn here, and that the committed PNG is the
+size this capture box produces (rule 68).
 """
 
 from __future__ import annotations
@@ -35,8 +37,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 STYLES = ROOT / "frontend" / "src"
 OUT_DIR = ROOT / "docs" / "media"
-PAGE = OUT_DIR / "review-queue.html"
-SHOT = OUT_DIR / "review-queue.png"
+PAGE = OUT_DIR / "review-queue-mockup.html"
+SHOT = OUT_DIR / "review-queue-mockup.png"
 
 # The capture box. 1440 CSS px keeps the split view (the panel sits beside the list above
 # 1100px) and 2x keeps the text sharp where a README scales the picture down. The height is

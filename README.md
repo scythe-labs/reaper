@@ -66,8 +66,9 @@ https://docs.scythelabs.dev/getting-started/install
 
 ## Preview
 
-![The review queue, with each candidate's score beside it and a panel breaking down why one
-of them scored 91](docs/media/review-queue.png)
+![Reaper's review queue: scored titles on the left, each showing how long it has gone
+unwatched, and a panel on the right breaking down why one of them scored
+90](docs/media/review-queue.webp)
 
 ## Safety
 
