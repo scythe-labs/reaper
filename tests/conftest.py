@@ -34,6 +34,7 @@ the real delay for a client retry or a poll loop only burns wall clock for no si
 import asyncio
 import contextvars
 import logging
+import shutil
 import socket
 import sys
 from collections.abc import AsyncIterator, Iterator
@@ -532,28 +533,45 @@ def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
 # nothing else, and a file with its own seeding overrides ``client`` and asks for
 # ``settings`` or ``sync_db`` instead of rewriting the four lines above it.
 #
-# **Every one of them is function-scoped, and that is load-bearing rather than a default.**
-# ``_hermetic`` above is function-scoped and takes a function-scoped ``monkeypatch``, so
-# anything higher-scoped is set up BEFORE it: measured, such a fixture sees the real
-# ``catch_up_on_startup`` and ``env_file`` still pointing at the developer's dotenv files,
-# and an app booted there reads their credentials and starts the IMDb download (rule 37).
-# The one fixture in the suite that is session-scoped, ``test_openapi_tags.schema``, applies
-# those three patches itself for exactly this reason.
+# **Every one that builds a ``Settings`` or boots an app is function-scoped, and that is
+# load-bearing rather than a default.** ``_hermetic`` above is function-scoped and takes a
+# function-scoped ``monkeypatch``, so anything higher-scoped is set up BEFORE it: measured, such
+# a fixture sees the real ``catch_up_on_startup`` and ``env_file`` still pointing at the
+# developer's dotenv files, and an app booted there reads their credentials and starts the IMDb
+# download (rule 37). The one booting fixture in the suite that is session-scoped,
+# ``test_openapi_tags.schema``, applies those three patches itself for exactly this reason.
+# ``_schema_template`` below is session-scoped too, and may be: it builds no ``Settings`` and
+# boots nothing, only ``create_all`` against a bare file path.
 # --------------------------------------------------------------------------------------
 
 
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    """A throwaway install rooted at ``tmp_path``, with its schema already created.
+@pytest.fixture(scope="session")
+def _schema_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """An empty database with every table created, built once per worker and copied per test.
 
-    The schema is made here rather than by whatever opens the database first, because the
-    app's own lifespan reads it on the way up -- it seeds instances and checks a local admin
-    exists -- so a ``create_app`` against an empty file fails before any test body runs.
+    ``create_all`` over the schema is ~80ms, and about a thousand tests take ``settings``. A
+    file copy of the result costs a fraction of that. Built from a bare URL on purpose: no
+    ``Settings`` is constructed here, so there is nothing for a dotenv file to reach (rule 37,
+    and the note above on scope).
     """
-    resolved = Settings(data_dir=tmp_path, secret_key="test-key")
-    engine = sa_create_engine(resolved.sync_database_url)
+    path = tmp_path_factory.mktemp("schema") / "template.db"
+    engine = sa_create_engine(f"sqlite:///{path}")
     Base.metadata.create_all(engine)
     engine.dispose()
+    return path
+
+
+@pytest.fixture
+def settings(tmp_path: Path, _schema_template: Path) -> Settings:
+    """A throwaway install rooted at ``tmp_path``, with its schema already created.
+
+    The schema is in place before anything opens the database, because the app's own
+    lifespan reads it on the way up -- it seeds instances and checks a local admin exists --
+    so a ``create_app`` against an empty file fails before any test body runs. It arrives as
+    a copy of ``_schema_template`` rather than a fresh ``create_all`` per test.
+    """
+    resolved = Settings(data_dir=tmp_path, secret_key="test-key")
+    shutil.copyfile(_schema_template, resolved.database_path)
     return resolved
 
 
