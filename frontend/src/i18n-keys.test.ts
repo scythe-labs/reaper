@@ -33,8 +33,18 @@ import { shippedSource, sourceText, srcRelative } from "./test/sources";
 // A namespace listed here is proven by that file's own tests, not by this gate.
 // why.ts composes under any namespace (composeIn). "chip." and "warning." are the two #868
 // adds next (status chip text, policy warnings), registered ahead of their first key.
+// PolicyRuleEditors.tsx reads a field's label, help paragraph and unit by its server key
+// (`why.field.<key>`, `policyRules.fieldHelp.<key>`, `policyRules.fieldUnit.<key>`) now that
+// the vocabulary endpoint no longer ships them (#868 phase 4); proven complete by
+// `test_review_chips.py::test_every_field_and_fixed_check_has_catalog_copy` for the label and
+// by `tests/test_review_chips.py`'s pinned help/unit sets for the other two.
 const DYNAMIC: Record<string, string[]> = {
   "why.ts": ["why.", "chip.", "warning."],
+  "components/PolicyRuleEditors.tsx": [
+    "why.field.",
+    "policyRules.fieldHelp.",
+    "policyRules.fieldUnit.",
+  ],
 };
 
 const T_CALLEES = new Set(["t", "i18next.t", "i18n.t"]);

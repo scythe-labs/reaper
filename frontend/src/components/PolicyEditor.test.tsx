@@ -1093,18 +1093,12 @@ describe("why an 'Add rule' will not act", () => {
   // for.
   const TEXT_FIELD = {
     key: "genre",
-    label: "Genre",
-    help_text: "",
     type: "text",
-    unit_suffix: "",
     ops: ["eq", "contains"],
   };
   const NUMBER_FIELD = {
     key: "quality_score",
-    label: "Quality score",
-    help_text: "",
     type: "int",
-    unit_suffix: "",
     ops: ["gte", "lte"],
   };
 

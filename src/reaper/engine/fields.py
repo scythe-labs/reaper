@@ -185,10 +185,12 @@ class FieldSpec:
 
     key: str
     label: str
-    """What the UI shows. Carries the unit, because a bare number is how a rating
-    floor of 7.5 ends up compared against a Tomatometer of 96."""
+    """English, for the save-boundary `ValueError`s below and in `engine/policy.py`
+    (`Condition.validate_for`, `_validate_value_type`, `GradedKeepSpec`/`GradedCondemnSpec`
+    validation) -- the one place left that still reads it. The browser no longer does: the
+    policy editor speaks the catalog's `why.field.<key>` for the same field (#868 phase 4).
+    Never serialized by `api.vocabulary.get_vocabulary` (`FieldOut` carries no label)."""
 
-    help_text: str
     type: FieldType
     lanes: tuple[Lane, ...]
     ops: tuple[Op, ...]
@@ -201,9 +203,6 @@ class FieldSpec:
     before serializing, the same as ``lanes`` -- a movie policy cannot even build the
     rule. A stale rule saved before this filter still reads Absent and only ever leans
     toward keeping, so scoring is unaffected."""
-
-    unit_suffix: str = ""
-    """Rendered inside the input, so the unit cannot be misread."""
 
     multi: bool = False
     """The fact is a comma-joined list ("Horror, Comedy"), not one value. ``eq`` and
@@ -236,13 +235,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="days_unwatched",
         label="Days since anyone watched it",
-        help_text=(
-            "Counted from the last play. If it has never been played, it is counted "
-            "from whichever is later: when it was added, or the start of your watch "
-            "history. Never from 1970."
-        ),
         type=FieldType.DAYS,
-        unit_suffix="days",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.days_observed_unwatched,
@@ -250,9 +243,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="size_bytes",
         label="Size on disk",
-        help_text="How much space this file occupies.",
         type=FieldType.BYTES,
-        unit_suffix="GB",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.size_bytes,
@@ -260,16 +251,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="recent_watchers",
         label="People who watched it recently",
-        help_text=(
-            "How many different people have watched this within your popularity "
-            "window. Windowed on purpose: on a long-lived server almost everything "
-            "has been watched by someone, eventually, so an all-time count protects "
-            "nearly the whole library and the rule stops meaning anything. Only a "
-            "fraction of those items still have watchers in the last year, and that "
-            "is the number that tells you the title is still alive."
-        ),
         type=FieldType.COUNT,
-        unit_suffix="people",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.distinct_watchers,
@@ -278,13 +260,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="watchers_all_time",
         label="People who have ever watched it",
-        help_text=(
-            "Everyone who has ever watched this. It can only be used to keep a title, "
-            "never to remove one. Using it to remove things would make recent viewing "
-            "count for nothing."
-        ),
         type=FieldType.COUNT,
-        unit_suffix="people",
         # Protect only. This is the registry doing its job: an all-time watcher count
         # is a fine reason to KEEP something and a terrible reason to delete it, and
         # the lane list is what makes the latter unconstructable.
@@ -296,13 +272,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="imdb_rating",
         label="IMDb rating",
-        help_text=(
-            "Always pair this with a vote floor. An 8.3 drawn from a few hundred votes "
-            "is noise, not quality. Every library holds a few of them, and a rating "
-            "floor on its own would keep every one of them, forever."
-        ),
         type=FieldType.RATING_TENTHS,
-        unit_suffix="/10",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.imdb_rating_tenths,
@@ -310,13 +280,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="imdb_votes",
         label="IMDb vote count",
-        help_text=(
-            "How many people rated it. A useful protection in its own right: a film "
-            "with a million votes is culturally significant even if nobody here has "
-            "watched it lately."
-        ),
         type=FieldType.COUNT,
-        unit_suffix="votes",
         lanes=(Lane.PROTECT,),
         ops=NUMERIC_OPS,
         read=lambda f: f.imdb_votes,
@@ -324,11 +288,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="season_rank",
         label="How far back the season is",
-        help_text=(
-            "The newest season on disk is 1, the one before it 2, and so on. Keeping the "
-            "last 2 seasons means 2 or less. Counted over seasons that actually hold "
-            "files, specials excluded, never from what Sonarr planned to download."
-        ),
         type=FieldType.COUNT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         media_types=("tv",),
@@ -343,7 +302,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
         # that used to spell this ``on_curated_list`` are re-spelled by
         # ``policy_migrations.convert_list_protections``.
         label="On one of your lists",
-        help_text="Matches a list by the name it has on Settings → Lists.",
         type=FieldType.TEXT,
         lanes=(Lane.PROTECT,),
         ops=TEXT_OPS,
@@ -353,10 +311,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="whitelisted",
         label="On a list you curate yourself",
-        help_text=(
-            'A tag list, a Plex collection, or your watchlist. Use "On one of your '
-            'lists" to match one list by name; this is the yes/no over all of them.'
-        ),
         type=FieldType.BOOL,
         lanes=(Lane.PROTECT,),
         ops=BOOL_OPS,
@@ -365,7 +319,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="streaming_now",
         label="Being watched right now",
-        help_text="Re-checked in the seconds before any delete, never only at scan time.",
         type=FieldType.BOOL,
         lanes=(Lane.PROTECT,),
         ops=BOOL_OPS,
@@ -374,11 +327,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="requested",
         label="Requested by a user",
-        help_text=(
-            "Whether someone asked for this through your requests app. If Reaper cannot "
-            "tell, because the requests app is unreachable or this title could not be "
-            "matched to a request, this is left unknown and never counts toward removal."
-        ),
         type=FieldType.BOOL,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=BOOL_OPS,
@@ -387,10 +335,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="genre",
         label="Genre",
-        help_text=(
-            'The genres recorded for this title. Use "contains" to match one genre '
-            "within a title that has several (for example, contains Reality)."
-        ),
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=TEXT_OPS,
@@ -400,12 +344,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="release_age",
         label="Age since release",
-        help_text=(
-            "How long ago the title was released. Pairs well with how long it has gone "
-            "unwatched: old and untouched is a stronger case than either alone."
-        ),
         type=FieldType.DAYS,
-        unit_suffix="days",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         # Movie-only, because ``season_scan.build_season_facts`` has no clean per-season
         # release date and writes Absent for every season. Offering it on a TV policy sold
@@ -419,11 +358,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="quality",
         label="File quality",
-        help_text=(
-            "The quality of the file on disk, as your library names it (for example "
-            'Bluray-1080p, SDTV). Use "contains" to match a resolution: contains 2160p '
-            "for 4K."
-        ),
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         # Movie-only for the same reason as ``release_age``: a season mixes episode
@@ -435,10 +369,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="show_ended",
         label="The show has ended",
-        help_text=(
-            "Whether the series has finished for good. An ended show will get no new "
-            "seasons to draw viewers back; a returning one still might. TV only."
-        ),
         type=FieldType.BOOL,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         media_types=("tv",),

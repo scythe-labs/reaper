@@ -63,6 +63,35 @@ function rampPhrase(fieldKey: string): string | undefined {
   }
 }
 
+/** A field's label, read from the catalog by its server key (`why.field.<key>`, the same
+ *  subject the why-panel's condition sentences compose), never from the wire: the vocabulary
+ *  endpoint stopped shipping one (#868 phase 4). Falls back to the raw key for a stored rule
+ *  naming a field this build's catalog has no entry for.
+ *
+ *  Three call sites below bake this into a generated rule NAME, which is then stored: a rule
+ *  name is operator data, not UI chrome, so it is written once, in the UI language active at
+ *  that moment, and never re-translated when the operator's language changes later -- the same
+ *  way a list name or a policy name is never retranslated. */
+function fieldLabel(key: string): string {
+  const catalogKey = `why.field.${key}`;
+  return i18next.exists(catalogKey) ? i18next.t(catalogKey) : key;
+}
+
+/** A field's help paragraph, from the catalog (`policyRules.fieldHelp.<key>`). Most fields
+ *  carry one; `undefined` where this build's catalog has none, so the caller renders nothing
+ *  rather than an empty paragraph. */
+function fieldHelp(key: string): string | undefined {
+  const catalogKey = `policyRules.fieldHelp.${key}`;
+  return i18next.exists(catalogKey) ? i18next.t(catalogKey) : undefined;
+}
+
+/** A field's unit suffix, from the catalog (`policyRules.fieldUnit.<key>`). Most fields have
+ *  none (a rank, a count, a yes/no) -- those read as `""`, same as the wire's old default. */
+function fieldUnit(key: string): string {
+  const catalogKey = `policyRules.fieldUnit.${key}`;
+  return i18next.exists(catalogKey) ? i18next.t(catalogKey) : "";
+}
+
 /** The sentinel option value for a ramp phrase in the condition dropdown. */
 const RAMP_OP = "__ramp__";
 
@@ -137,7 +166,7 @@ function rampValue(field: VocabField | undefined, value: number): string {
     return i18next.t("policyRules.rampValueGb", { gb: Math.round(value / 1e9) });
   if (field?.type === "days") return humanDays(value);
   if (field?.type === "rating_tenths") return (value / 10).toFixed(1);
-  return withUnit(value.toLocaleString(), field?.unit_suffix);
+  return withUnit(value.toLocaleString(), field ? fieldUnit(field.key) : undefined);
 }
 
 /**
@@ -202,11 +231,11 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
         });
   }
   const f = fields.find((x) => x.key === c.field);
-  const label = f?.label ?? c.field;
+  const label = fieldLabel(c.field);
   const op = opLabel(c.op) ?? c.op;
   let value: string;
   // Cleared by the branches that have already said their unit inside `value`.
-  let unit = f?.unit_suffix;
+  let unit = f ? fieldUnit(f.key) : undefined;
   if (f?.type === "rating_tenths" && typeof c.value === "number") value = (c.value / 10).toFixed(1);
   else if (f?.type === "bytes" && typeof c.value === "number") {
     value = i18next.t("policyRules.rampValueGb", { gb: Math.round(c.value / 1e9) });
@@ -221,7 +250,7 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
 
 function describeCondemn(rule: CustomCondemn, fields: VocabField[]): string {
   const f = fields.find((x) => x.key === rule.field);
-  const label = f?.label ?? rule.field;
+  const label = fieldLabel(rule.field);
   if (rule.kind === "graded") {
     const phrase = rampPhrase(rule.field) ?? i18next.t("policyRules.rampPhraseDefault");
     return i18next.t("policyRules.condemn.graded", {
@@ -293,17 +322,20 @@ function SuggestInput({
     popRef.current?.querySelector(".suggest-opt.active")?.scrollIntoView({ block: "nearest" });
   }, [highlight]);
 
-  // The one composed sentence in this component: a server-provided field label plus a static
+  // The one composed sentence in this component: a catalog field label plus a static
   // suffix (rule 144), shared by all three branches below rather than composed three times.
-  const valueAriaLabel = t("policyRules.suggestInput.valueAriaLabel", { field: field.label });
+  const valueAriaLabel = t("policyRules.suggestInput.valueAriaLabel", {
+    field: fieldLabel(field.key),
+  });
+  const unit = fieldUnit(field.key);
 
   if (!isText) {
     // A number that has a unit wears it in the box, not in a placeholder that vanishes the
     // moment you type. Fields with no unit (a rank, a count) stay a plain box.
-    return field.unit_suffix ? (
+    return unit ? (
       <FixedQuantity
         value={value}
-        suffix={field.unit_suffix}
+        suffix={unit}
         step={field.type === "rating_tenths" ? 0.1 : 1}
         ariaLabel={valueAriaLabel}
         describedBy={describedBy}
@@ -343,7 +375,7 @@ function SuggestInput({
         aria-label={valueAriaLabel}
         aria-describedby={describedBy}
         value={value}
-        placeholder={field.unit_suffix || t("policyRules.suggestInput.valuePlaceholder")}
+        placeholder={unit || t("policyRules.suggestInput.valuePlaceholder")}
         onChange={(e) => {
           onChange(e.target.value);
           setOpen(true);
@@ -468,6 +500,7 @@ export function RemoveRulesEditor({
   // respond, on a form whose next step is invisible (#188).
   const condemnEmpty =
     !isRamp && field !== undefined && field.type !== "bool" && rValue.trim() === "";
+  const helpText = field ? fieldHelp(field.key) : undefined;
 
   // Re-seed the half-built rule when the operator picks a DIFFERENT field: its comparison,
   // its value and its ramp bounds all belong to the old field and would otherwise be carried
@@ -493,7 +526,7 @@ export function RemoveRulesEditor({
         ...condemn,
         {
           kind: "graded",
-          name: uniqueName(condemn, `${field.label}: ${phrase}`),
+          name: uniqueName(condemn, `${fieldLabel(field.key)}: ${phrase}`),
           field: field.key,
           weight: rWeight,
           floor: rFrom,
@@ -505,7 +538,7 @@ export function RemoveRulesEditor({
         ...condemn,
         {
           kind: "boolean",
-          name: uniqueName(condemn, field.label),
+          name: uniqueName(condemn, fieldLabel(field.key)),
           field: field.key,
           op: rOp,
           value: coerceValue(field, rValue),
@@ -599,7 +632,7 @@ export function RemoveRulesEditor({
               <option value="">{t("policyRules.whenPlaceholder")}</option>
               {condemnFields.map((f) => (
                 <option key={f.key} value={f.key}>
-                  {f.label}
+                  {fieldLabel(f.key)}
                 </option>
               ))}
             </select>
@@ -734,7 +767,7 @@ export function RemoveRulesEditor({
               {t("policyRules.enterValueHelp")}
             </p>
           )}
-          {field?.help_text && <p className="help">{field.help_text}</p>}
+          {helpText && <p className="help">{helpText}</p>}
           <p className="help">{t("policyRules.removeEditor.helpBlurb")}</p>
         </>
       )}
@@ -899,6 +932,7 @@ export function KeepRulesEditor({
   // Why Add is off here, the condemn composer's twin (rule 72). A yes/no always has an answer,
   // so only a typed value -- or an unpicked list -- can be missing.
   const hardEmpty = hardField !== undefined && hardField.type !== "bool" && hValue.trim() === "";
+  const hardHelpText = hardField ? fieldHelp(hardField.key) : undefined;
   // The keep-rule twin of the re-seed above, and suppressed for the same reason: a new field
   // needs its own comparison and value, and `hardFields` is reallocated every render (H-3).
   useEffect(() => {
@@ -937,6 +971,7 @@ export function KeepRulesEditor({
   const leanIsList = leanField?.key === "on_list";
   // And the third (rule 72). A numeric lean waits on its number; a membership lean on its list.
   const leanEmpty = leanField !== undefined && (leanIsList ? lList === "" : lAt === "");
+  const leanHelpText = leanField ? fieldHelp(leanField.key) : undefined;
   const addLean = () => {
     if (!leanField || leanEmpty) return;
     if (leanIsList) {
@@ -961,7 +996,7 @@ export function KeepRulesEditor({
       onKeeps([
         ...keeps,
         {
-          name: uniqueName(keeps, leanField.label),
+          name: uniqueName(keeps, fieldLabel(leanField.key)),
           field: leanField.key,
           max_discount: lPoints,
           floor: 0,
@@ -1031,7 +1066,7 @@ export function KeepRulesEditor({
               k.value != null
                 ? t("policyRules.keepEditor.onListSentence", { list: k.value })
                 : t("policyRules.keepEditor.leanSentence", {
-                    field: f?.label ?? k.field,
+                    field: fieldLabel(k.field),
                     direction: k.direction,
                     value: rampValue(f, k.saturate_at),
                   });
@@ -1110,7 +1145,7 @@ export function KeepRulesEditor({
                   <option value="">{t("policyRules.keepEditor.keepWhenPlaceholder")}</option>
                   {hardFields.map((f) => (
                     <option key={f.key} value={f.key}>
-                      {f.label}
+                      {fieldLabel(f.key)}
                     </option>
                   ))}
                 </select>
@@ -1181,7 +1216,7 @@ export function KeepRulesEditor({
                       {hardIsList ? t("policyRules.pickListHelp") : t("policyRules.enterValueHelp")}
                     </p>
                   ))}
-                {hardField?.help_text && <p className="help">{hardField.help_text}</p>}
+                {hardHelpText && <p className="help">{hardHelpText}</p>}
               </div>
             ) : (
               <div className="condition-add">
@@ -1194,7 +1229,7 @@ export function KeepRulesEditor({
                   <option value="">{t("policyRules.whenPlaceholder")}</option>
                   {leanFields.map((f) => (
                     <option key={f.key} value={f.key}>
-                      {f.label}
+                      {fieldLabel(f.key)}
                     </option>
                   ))}
                 </select>
@@ -1223,10 +1258,10 @@ export function KeepRulesEditor({
                           ]}
                         />
                         <span className="muted">{t("policyRules.keepEditor.fullEffectAt")}</span>
-                        {leanField.unit_suffix ? (
+                        {fieldUnit(leanField.key) ? (
                           <FixedQuantity
                             value={lAt}
-                            suffix={leanField.unit_suffix}
+                            suffix={fieldUnit(leanField.key)}
                             step={leanField.type === "rating_tenths" ? 0.1 : 1}
                             ariaLabel={t("policyRules.fullEffectAriaLabel")}
                             describedBy={leanEmpty ? LEAN_EMPTY_ID : undefined}
@@ -1278,7 +1313,7 @@ export function KeepRulesEditor({
                         : t("policyRules.enterNumberHelp")}
                     </p>
                   ))}
-                {leanField?.help_text && <p className="help">{leanField.help_text}</p>}
+                {leanHelpText && <p className="help">{leanHelpText}</p>}
               </div>
             )}
           </div>

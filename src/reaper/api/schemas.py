@@ -1175,11 +1175,14 @@ class FieldValuesOut(BaseModel):
 
 
 class FieldOut(BaseModel):
+    """A field's key, type and operators only. The browser says the words: the catalog's
+    ``why.field.<key>`` is the label the policy editor renders, ``policyRules.fieldHelp.<key>``
+    and ``policyRules.fieldUnit.<key>`` the help paragraph and unit where the field carries one
+    (#868 phase 4). ``FieldSpec.label`` still exists server-side, for the save-boundary
+    ``ValueError``s in ``engine/fields.py`` and ``engine/policy.py`` -- never serialized here."""
+
     key: str
-    label: str
-    help_text: str
     type: FieldType
-    unit_suffix: str
     ops: list[Op]
 
 
