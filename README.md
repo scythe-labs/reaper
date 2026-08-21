@@ -8,6 +8,7 @@
 <p align="center">
   <a href="https://github.com/scythe-labs/reaper/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/scythe-labs/reaper/actions/workflows/ci.yml/badge.svg?branch=dev"></a>
   <a href="https://codecov.io/gh/scythe-labs/reaper"><img alt="Coverage" src="https://codecov.io/gh/scythe-labs/reaper/branch/dev/graph/badge.svg"></a>
+  <a href="https://hosted.weblate.org/engage/reaper/"><img alt="Translation status" src="https://hosted.weblate.org/widget/reaper/ui/svg-badge.svg"></a>
   <a href="LICENSE"><img alt="License: AGPL-3.0-or-later" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue"></a>
   <img alt="Python 3.13" src="https://img.shields.io/badge/python-3.13-blue">
   <img alt="React 19" src="https://img.shields.io/badge/react-19-blue">
@@ -112,8 +113,6 @@ Setup instructions, the verification gates, commit conventions, and the AI polic
 
 Translations happen on [Hosted Weblate](https://hosted.weblate.org/projects/reaper/), which
 opens the pull requests here. No git needed.
-
-[![Translation status](https://hosted.weblate.org/widget/reaper/ui/svg-badge.svg)](https://hosted.weblate.org/engage/reaper/)
 
 Bug reports and questions are welcome:
 [open an issue](https://github.com/scythe-labs/reaper/issues/new/choose) or start a
