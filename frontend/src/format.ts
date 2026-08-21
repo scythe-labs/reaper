@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Everything here formats through the locale i18next serves strings in, so a number, date
-// or list can never disagree with the sentence around it (docs/I18N_PLAN.md, Stage 2).
+// or list can never disagree with the sentence around it (docs/history/I18N_PLAN.md, Stage 2).
 // Before this, `date()` and `time()` passed `undefined` as the locale, so a German browser
 // got German dates inside English sentences.
 
@@ -152,7 +152,7 @@ export function humanDays(days: number): string {
 /** A window length phrased for "in the last {window}": `humanDays`, except a single-unit
  *  window drops the redundant "1" -- you say "in the last year", not "in the last 1 year".
  *  A multi-unit window ("1 year, 6 months") keeps it. Mirrors the retired
- *  `clock.humanize_window`, whose sentences moved into the catalog (docs/I18N_PLAN.md §5). */
+ *  `clock.humanize_window`, whose sentences moved into the catalog (docs/history/I18N_PLAN.md §5). */
 export function humanWindow(days: number): string {
   const text = humanDays(days);
   return text.startsWith("1 ") && !text.includes(",") ? text.slice(2) : text;

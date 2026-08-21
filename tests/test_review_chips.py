@@ -1812,7 +1812,7 @@ class TestTheMatchStatusVocabulary:
         say so. The population is **discovered** now -- every module-level ``*_REASON``
         string under ``src/reaper`` -- so a new reason is covered the moment it is named,
         and the only way out is an entry in ``_NO_PANEL_ROUTE`` that says why. The copy
-        lives in the catalog since the typed-reason conversion (docs/I18N_PLAN.md §5), so
+        lives in the catalog since the typed-reason conversion (docs/history/I18N_PLAN.md §5), so
         the walk reads ``why.cause`` instead of ``WhyPanel.tsx``.
         """
         causes = _catalog_causes()

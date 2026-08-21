@@ -50,7 +50,7 @@ class ReasonKey(BaseModel):
     the rating gate's per-bar clauses, a blocked check's cause -- so ``p`` stays untyped
     here and the frontend's composer recurses (``frontend/src/why.ts``). Rows written
     before the conversion carry a prose ``detail`` and no key; rows written after carry a
-    key and no prose. See docs/I18N_PLAN.md §5.
+    key and no prose. See docs/history/I18N_PLAN.md §5.
     """
 
     k: str

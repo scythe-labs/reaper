@@ -302,7 +302,7 @@ def _code_and_live_docs() -> list[Path]:
 #: The directories holding copy in a language other than English: a UI catalog Weblate writes
 #: under ``frontend/src/locales/<tag>/`` and a manual under ``frontend/src/docs/content/<tag>/``.
 #: The English originals sit at ``locales/en/`` and directly in ``content/``. The
-#: American-English gate reads source copy and leaves these alone (docs/I18N_PLAN.md §8); every
+#: American-English gate reads source copy and leaves these alone (docs/history/I18N_PLAN.md §8); every
 #: other gate walking the tree is language-neutral and keeps reading them.
 _TRANSLATED_ROOTS = (FRONTEND_SRC / "locales", FRONTEND_SRC / "docs" / "content")
 
@@ -2488,14 +2488,14 @@ _MYPY_INVOCATION = re.compile(r"uv run mypy ((?:[\w./\[\]*-]+ ?)+?)(?=\s*(?:#|`|
 #: `.github/workflows/ci.yml`, `CONTRIBUTING.md`, `.claude/skills/reaper-review/SKILL.md`, and
 #: `tests/_fakes.py`'s own docstring -- which is the copy most likely to go stale, since it is
 #: the file arguing for its place on the gate. `docs/history/**` is frozen and records what the
-#: gate was at the time, so it is skipped rather than counted, and `docs/I18N_PLAN.md` proposes
+#: gate was at the time, so it is skipped rather than counted, and `docs/history/I18N_PLAN.md` proposes
 #: a gate for a plan nothing has started.
 _EXPECTED_MYPY_SITES = 4
 
 #: Files that quote the command as a record rather than as the instruction to follow. A record
 #: is pinned to its moment, so holding it to today's gate would ask a finished plan to be edited
 #: every time the gate moves.
-_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md")
+_MYPY_RECORDS = ("docs/history/", "docs/history/I18N_PLAN.md")
 
 
 def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:

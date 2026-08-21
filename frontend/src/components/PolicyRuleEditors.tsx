@@ -45,7 +45,7 @@ import { Notice } from "./Notice";
 // remove. (Most of these fields are filtered out of the remove vocabulary today because a
 // built-in signal covers them; the map stays complete so a future field just works.)
 //
-// A switch, not a Record<string,string>: `t()` needs a literal key (docs/I18N_PLAN.md §4),
+// A switch, not a Record<string,string>: `t()` needs a literal key (docs/history/I18N_PLAN.md §4),
 // and `field.key` is server data, so each field gets its own literal `t()` call rather than
 // one computed from the key (same shape as `ReapBreakdown.tsx`'s `reasonLabel`).
 function rampPhrase(fieldKey: string): string | undefined {

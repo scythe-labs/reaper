@@ -73,7 +73,7 @@ describe("social preview card", () => {
   });
 
   it("every evidence row on the card is copy a gate actually produces", () => {
-    // The gates' sentences live in the catalog now (docs/I18N_PLAN.md §5), so the card is
+    // The gates' sentences live in the catalog now (docs/history/I18N_PLAN.md §5), so the card is
     // pinned against the English catalog rather than engine/gates.py.
     const catalog = readFileSync(
       join(repoDir, "frontend", "src", "locales", "en", "ui.json"),

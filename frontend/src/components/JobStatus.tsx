@@ -16,7 +16,7 @@ export interface JobFlash {
  *  renders it, and `useJobFlash` announces it at the transition (#192, rule 144). The chip
  *  otherwise reached only an operator who happened to navigate onto it inside its 4.2-second
  *  window, which for a job they pressed Run now on is nobody. Plain function, not a component:
- *  reads the catalog through the shared `i18next` instance rather than a hook (docs/I18N_PLAN.md §3). */
+ *  reads the catalog through the shared `i18next` instance rather than a hook (docs/history/I18N_PLAN.md §3). */
 export function flashSentence(flash: JobFlash): string {
   return i18next.t("jobs.status.flashSentence", { lead: flashLead(flash.ok), text: flash.text });
 }

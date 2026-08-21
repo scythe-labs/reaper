@@ -1,9 +1,9 @@
 # Translating Reaper: what it would take
 
-> **IN EXECUTION since 2026-08-20 — stages land on the `i18n` integration branch (§10), and
-> nothing reaches `dev` before the final PR.** Each stage's Status line below is the live
-> state. Written 2026-07-30 as a proposal, against `frontend/src/` at 26,554 lines and
-> `src/reaper/` at 100 files.
+> **FROZEN 2026-08-21. Stages 1 through 6 landed on `dev` as #NNN. Stage 7 (RTL) is optional
+> and tracked as #861.** Each stage's Status line below is its record. Written 2026-07-30 as a
+> proposal, against `frontend/src/` at 26,554 lines and `src/reaper/` at 100 files, and run
+> 2026-08-20 to 2026-08-21 on the `i18n` integration branch (§10).
 >
 > **Reviewed 2026-08-20 against a tree a third larger** (123 non-test frontend files, 36,287
 > lines). Every load-bearing claim held: the three parse sites, the copy maps, the §4
@@ -418,7 +418,9 @@ an argument (rule 147), so the gate reads the parser's AST, and
 exact devDependency for that one test. The plan's "CI sync" is nothing in CI: Weblate pulls on
 the webhook and pushes pull requests, and the gates that bind those pull requests are the ones
 above. Weblate's API rejects a push URL without a push branch; the fork flow wants the push URL
-empty.
+empty. Weblate also refuses a branch that lacks the base file (`template: File does not
+exist`), so the component could not read `dev` before the final PR landed. The flip to `dev`
+is `docs/STATUS.md` open work 5 until it is done.
 
 **Hosted Weblate, on the Libre plan**, on the Audiobookshelf and Uptime Kuma precedent, which is
 where community-scale self-hosted projects land. Three things this depends on, all checked:

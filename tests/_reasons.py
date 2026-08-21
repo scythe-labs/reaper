@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Helpers for asserting on typed reasons (docs/I18N_PLAN.md §5).
+"""Helpers for asserting on typed reasons (docs/history/I18N_PLAN.md §5).
 
 The engine stopped composing English: a detail is a ``Reason`` -- a catalog id plus raw
 params -- and the sentence lives in ``frontend/src/locales/en/ui.json`` under ``why.*``.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
 //
-// Stage 4's missing-key gate (docs/I18N_PLAN.md): every catalog key the tree references
+// Stage 4's missing-key gate (docs/history/I18N_PLAN.md): every catalog key the tree references
 // resolves in `locales/en/ui.json`, and every catalog message is a message a reader can
 // receive. Stage 4's fan-out is why this exists: extraction agents convert files while
 // the orchestrator merges their key maps into the catalog in a separate step, so the

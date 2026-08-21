@@ -7,7 +7,7 @@
 // below finds it, Vite gives it its own chunk, and the modal reads it through `manualFor`.
 //
 // The fallback is the English manual entire, never a per-doc mix. Half a translated manual is
-// worse than an English one (docs/I18N_PLAN.md, Stage 5). English stays a static import, so the
+// worse than an English one (docs/history/I18N_PLAN.md, Stage 5). English stays a static import, so the
 // default locale costs no second fetch and every existing test reads it synchronously.
 
 import type { Doc } from "./blocks";

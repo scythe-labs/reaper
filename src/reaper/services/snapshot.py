@@ -1777,7 +1777,7 @@ _NO_DISPLAY = Display()
 #: producer and reader imports the constant; never re-type the literal.
 HAND_SPARE_REASON = Reason("hand_spare")
 
-#: The sentence the same row carried before reasons were typed (docs/I18N_PLAN.md §5).
+#: The sentence the same row carried before reasons were typed (docs/history/I18N_PLAN.md §5).
 #: Read-side comparisons accept it beside ``HAND_SPARE_REASON`` because stored explanations
 #: outlive the writer; nothing writes it any more.
 HAND_SPARE_DETAIL = "you spared this by hand"

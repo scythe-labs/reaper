@@ -84,7 +84,7 @@ def _obs_to_dict(obs: Observation[Any]) -> dict[str, Any]:
     return {"k": "unknown", "r": obs.reason, "s": obs.source}
 
 
-#: Stored prose reasons mapped to the stable ids that replaced them (docs/I18N_PLAN.md §5).
+#: Stored prose reasons mapped to the stable ids that replaced them (docs/history/I18N_PLAN.md §5).
 #: ``Unknown.reason`` values were operator-facing sentences until the i18n conversion made
 #: them catalog ids; snapshots frozen before that carry the sentences, and this thaw is the
 #: one place they are translated forward, so a replay composes the same "could not check"
@@ -174,7 +174,7 @@ def _result_from_dict(d: dict[str, Any]) -> GateResult:
         gate=GateId(d["gate"]),
         outcome=d["outcome"],
         # A str here is a detail frozen before reasons were typed; it thaws as a legacy
-        # reason and renders raw, exactly as it did before (docs/I18N_PLAN.md §5).
+        # reason and renders raw, exactly as it did before (docs/history/I18N_PLAN.md §5).
         detail=from_wire(d["detail"]),
         blocked=d["blocked"],
         # The thaw, stated rather than left to a ``KeyError`` (rule 104): a row frozen before

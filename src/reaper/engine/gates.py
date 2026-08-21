@@ -145,7 +145,7 @@ class GateResult:
 
     ``detail`` is not a log line -- it is what the user reads, as a typed
     :class:`~reaper.engine.reason.Reason` the frontend composes from the catalog
-    (docs/I18N_PLAN.md §5). Every gate that was checked and did *not* fire still
+    (docs/history/I18N_PLAN.md §5). Every gate that was checked and did *not* fire still
     reports its actual figures, because "protections checked that did not fire,
     with the numbers" is the block that makes a deletion trustworthy.
     """

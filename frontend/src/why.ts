@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Composing a typed reason into the operator's sentence (docs/I18N_PLAN.md §5).
+// Composing a typed reason into the operator's sentence (docs/history/I18N_PLAN.md §5).
 //
 // The backend stopped writing English details: a gate, signal or keep row carries a
 // `detail_key` -- a catalog id plus raw params -- and this module turns it into the

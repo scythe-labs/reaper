@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The one i18n init, run by the app (main.tsx) and by every test file (test/setup.ts), so
-// what a test asserts on is byte-identical to what the app renders (docs/I18N_PLAN.md §4).
+// what a test asserts on is byte-identical to what the app renders (docs/history/I18N_PLAN.md §4).
 //
 // Three decisions live here and all come from the plan:
 //

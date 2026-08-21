@@ -102,7 +102,7 @@ def _shortfall_text(short: Reason) -> str:
     """The shortfall clause in English, for warning copy that stays backend-composed.
 
     Policy warnings are server-composed operator copy and stay English until their own
-    surface is extracted (docs/I18N_PLAN.md §5 converts only the gate and signal details).
+    surface is extracted (docs/history/I18N_PLAN.md §5 converts only the gate and signal details).
     The catalog's ``why.cause.*`` entries carry the same sentences for the why-panel;
     ``tests/test_review_chips.py`` pins the pair so the two cannot drift.
     """

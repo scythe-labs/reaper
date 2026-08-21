@@ -2,7 +2,7 @@
 """A typed reason: what the engine says instead of an English sentence.
 
 Every ``GateResult.detail``, ``SignalResult.detail`` and keep detail used to be a composed
-English sentence, stored verbatim and in three places parsed back apart (docs/I18N_PLAN.md
+English sentence, stored verbatim and in three places parsed back apart (docs/history/I18N_PLAN.md
 §5). A :class:`Reason` carries the sentence's identity and its numbers instead; the catalog
 (``frontend/src/locales/en/ui.json``, the ``why`` namespace) holds the words, and the
 frontend composes them. Rule 92's constraint, applied to the whole detail vocabulary: the

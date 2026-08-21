@@ -444,7 +444,7 @@ def _declared(label: str, model: type[BaseModel]) -> set[str]:
     """The keys the writer owes this block: its model's fields, less the stated exceptions.
 
     On the signal, keep and protection rows, ``detail`` is declared and deliberately never
-    written: it is the prose of a row frozen before details were typed (docs/I18N_PLAN.md
+    written: it is the prose of a row frozen before details were typed (docs/history/I18N_PLAN.md
     §5), so only stored legacy rows carry it and every fresh row writes ``detail_key``
     instead. The ``match`` block's own ``detail`` is untouched audit prose and stays owed."""
     fields = set(model.model_fields)

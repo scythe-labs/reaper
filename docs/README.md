@@ -112,7 +112,6 @@ auto-memory note to explain the product, move it here.
 | `DECISIONS.md` | knowledge | **live** — one section per daggered `STATUS.md` row |
 | `LEARNINGS.md` | knowledge | **live** — append by topic |
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
-| `I18N_PLAN.md` | state (one feature) | **live** — in execution; stages land on the `i18n` branch, nothing on `dev` yet |
 | `brand/README.md` | reference | stable; nothing here ships |
 | `../manual/` | the operator's manual | **live** — half generated from the app's help content |
 | `../website/` | the manual's site | **live** — Docusaurus; owns no words of its own |
@@ -127,3 +126,4 @@ auto-memory note to explain the product, move it here.
 | `history/REWATCH_PLAN.md` | history | frozen — movie stages landed as #803 and #805; TV validated, unscoped, #554 |
 | `history/RETURN_PLAN.md` | history | frozen — the one stage landed as #812, opt-in; #553 closed |
 | `history/COLLECTIONS_PLAN.md` | history | frozen — chip, picker and collection screen landed, #816 |
+| `history/I18N_PLAN.md` | history | frozen — Stages 1 through 6 landed as #NNN; Stage 7 (RTL) is #861 |

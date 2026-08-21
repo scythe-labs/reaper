@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
 //
-// Stage 6's gate over the translated catalogs (docs/I18N_PLAN.md). Weblate writes every
+// Stage 6's gate over the translated catalogs (docs/history/I18N_PLAN.md). Weblate writes every
 // `locales/<tag>/ui.json` but the English one and opens the pull request itself, so this is
 // the review of that pull request: a translation that breaks an ICU plural, renames an
 // argument, or adds a tag no render site draws turns the check red with the key named, and

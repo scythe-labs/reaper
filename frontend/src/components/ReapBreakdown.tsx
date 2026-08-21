@@ -21,7 +21,7 @@ import { Notice } from "./Notice";
 // unwatched"); here they name the reason a title was condemned, so they get their own
 // short phrasing. A custom rule has no entry and shows under its own name. A plain
 // function, not a frozen table, so a language change is picked up the next time this
-// renders (same shape as JobsPanel's `jobMeta`, docs/I18N_PLAN.md §3).
+// renders (same shape as JobsPanel's `jobMeta`, docs/history/I18N_PLAN.md §3).
 function reasonLabel(id: string): string {
   switch (id) {
     case "unwatched":

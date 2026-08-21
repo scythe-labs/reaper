@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
 //
-// Stage 5's gate (docs/I18N_PLAN.md): a translated manual is the English manual with every
+// Stage 5's gate (docs/history/I18N_PLAN.md): a translated manual is the English manual with every
 // word replaced and nothing else changed. The modal falls back to English entire rather than
 // mixing, so the one thing a locale module can get wrong is its shape: a doc dropped, a
 // section id respelled (a deep link from the app then lands nowhere), a table row lost, a

@@ -35,7 +35,7 @@ import { Notice } from "./Notice";
  *  "aborted" -- one word for one mechanism, the same as the reap bar and the report above
  *  (U-15). An unknown state (an older or newer build) reads through unchanged rather than
  *  being hidden. A plain function, not a component, so it reads the catalog through the
- *  shared `i18next` instance rather than the `useTranslation` hook (docs/I18N_PLAN.md §3). */
+ *  shared `i18next` instance rather than the `useTranslation` hook (docs/history/I18N_PLAN.md §3). */
 function runState(state: string): string {
   if (state === "planned") return i18next.t("reapPlan.runState.notRun");
   if (state === "executing") return i18next.t("reapPlan.runState.running");
@@ -179,7 +179,7 @@ function Report({ report }: { report: RunReport }) {
           construction here and so says nothing, and then called the per-item outcomes
           "steps" -- a plan of 3 seasons read "3 steps were walked" over the 9 journalled
           steps in the table below it (I-1). The two branches are separate whole messages
-          (docs/I18N_PLAN.md §3, SafetyBanner precedent), never a shared stem: word order is
+          (docs/history/I18N_PLAN.md §3, SafetyBanner precedent), never a shared stem: word order is
           the translator's to choose. */}
       <p className="blurb">
         {report.skipped > 0 ? (
@@ -352,7 +352,7 @@ export function ReapPlan({
         <Notice tone="warn" standing as="div" className="notice-doc">
           <span>
             {/* The stored reason is server-composed operator copy, already English (§5/§6 of
-                docs/I18N_PLAN.md), so it rides through as a value rather than being reworded
+                docs/history/I18N_PLAN.md), so it rides through as a value rather than being reworded
                 here. `?? ""` keeps a null reason from interpolating as the literal text
                 "null" -- the original JSX simply skipped rendering it. */}
             <Trans

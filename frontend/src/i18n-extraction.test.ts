@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @vitest-environment node
 //
-// Stage 4's extraction gate (docs/I18N_PLAN.md): once a file is declared extracted, no
+// Stage 4's extraction gate (docs/history/I18N_PLAN.md): once a file is declared extracted, no
 // user-visible English literal may sit in it again. Rule 144 is why the unit is the whole
 // file and never "the easy strings": a converted file vouches for a consistency a
 // half-converted one does not have, so CONVERTED grows only when a surface is done

@@ -1724,7 +1724,7 @@ describe("the synopsis disclosure", () => {
 });
 
 describe("a fresh explanation composes from the catalog", () => {
-  // Rows written since the typed-reason conversion (docs/I18N_PLAN.md §5) carry
+  // Rows written since the typed-reason conversion (docs/history/I18N_PLAN.md §5) carry
   // `detail_key` and no prose; the panel composes each sentence via `why.ts`. The legacy
   // fixtures across the rest of this file are the other half of the contract: a stored
   // pre-conversion snapshot still renders its prose verbatim.

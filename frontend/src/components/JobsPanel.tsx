@@ -146,7 +146,7 @@ function clockLabel(hour: number, minute: number): string {
 /** A cron line in plain words, for the shapes the presets and defaults produce. Anything
  *  outside those reads as its raw line rather than a confident wrong guess.
  *
- *  Extracted in Stage 2 (docs/I18N_PLAN.md): the `jobs.cron.*` keys are frozen and unchanged
+ *  Extracted in Stage 2 (docs/history/I18N_PLAN.md): the `jobs.cron.*` keys are frozen and unchanged
  *  by this extraction, per this surface's binding note. */
 function describeCron(cron: string): string {
   const parts = cron.trim().split(/\s+/);

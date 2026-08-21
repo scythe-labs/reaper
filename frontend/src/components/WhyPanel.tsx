@@ -1126,7 +1126,7 @@ function Signals({ item }: { item: CandidateDetail }) {
 
 /** One row's sentence, either age of row: composed from the catalog when the row carries
  *  a typed `detail_key`, the stored prose verbatim when it predates typed details
- *  (docs/I18N_PLAN.md §5). Callers with a legacy-only rewording pass it as `onLegacy`. */
+ *  (docs/history/I18N_PLAN.md §5). Callers with a legacy-only rewording pass it as `onLegacy`. */
 function rowText(
   row: { detail: string | null; detail_key?: import("../api").ReasonKey | null },
   onLegacy: (detail: string) => string = (detail) => detail,

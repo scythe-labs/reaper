@@ -306,7 +306,7 @@ export type SignalState = "adds" | "argues_keep" | "not_applicable" | "unreadabl
 /** A typed detail on the wire: the catalog key under `why.*` plus its raw params.
  *  `frontend/src/why.ts` composes it; params may nest further keys (a blocked check's
  *  cause, the rating gate's per-bar clauses). Rows frozen before the conversion carry
- *  prose `detail` instead, rendered verbatim (docs/I18N_PLAN.md §5). */
+ *  prose `detail` instead, rendered verbatim (docs/history/I18N_PLAN.md §5). */
 export interface ReasonKey {
   k: string;
   p?: Record<string, unknown> | null;

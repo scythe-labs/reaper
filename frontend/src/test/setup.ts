@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 
 // The app's own i18n init, with the real English catalog and en-US pinned, so every
-// copy-bound query in the suite reads the exact bytes the app renders (docs/I18N_PLAN.md §4).
+// copy-bound query in the suite reads the exact bytes the app renders (docs/history/I18N_PLAN.md §4).
 // It guards its own document writes, so the node-environment test files can run it too.
 import "../i18n";
 

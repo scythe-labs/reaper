@@ -401,8 +401,7 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
   six places in `src/`: `engine/signals.py`, `engine/policy.py` (three times), `engine/gates.py`,
   and `api/review.py`. Read it before touching any of them: it is also the only place the rewatch
   curve is written down, now that the engines that measured it are gone.
-- The live plan: `docs/I18N_PLAN.md` (in execution; stages land on the `i18n` branch, nothing on `dev` yet).
-  `docs/README.md`'s map is the list to correct. `RETURN_PLAN.md` was the other one and is
-  frozen into `docs/history/`, #553 having closed with it.
+- No plan is live. `I18N_PLAN.md` and `RETURN_PLAN.md` were the last two and are frozen into
+  `docs/history/` (#NNN and #553 closed them). `docs/README.md`'s map is the list to correct.
 - `docs/history/` — frozen: the retired plan narratives and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.
