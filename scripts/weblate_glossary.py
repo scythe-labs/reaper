@@ -118,8 +118,6 @@ def _ensure_component(key: str, *, dry_run: bool) -> bool:
             "file_format": "tbx",
             "is_glossary": True,
             "filemask": f"{GLOSSARY_DIR}/*.tbx",
-            "template": GLOSSARY_FILE,
-            "new_base": GLOSSARY_FILE,
         }
     )
     if dry_run:
