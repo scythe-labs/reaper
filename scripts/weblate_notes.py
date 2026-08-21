@@ -117,7 +117,9 @@ def _fetch_units(key: str) -> dict[str, dict[str, Any]]:
     return units
 
 
-def sync(notes: dict[str, str], units: dict[str, dict[str, Any]], *, dry_run: bool, key: str) -> int:
+def sync(
+    notes: dict[str, str], units: dict[str, dict[str, Any]], *, dry_run: bool, key: str
+) -> int:
     """Write every note that differs from Weblate's stored explanation. Returns the process
     exit code: 0 on success, 1 if any note's key had no matching unit."""
     changed = unchanged = missing = 0

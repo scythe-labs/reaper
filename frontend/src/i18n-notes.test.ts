@@ -152,9 +152,7 @@ describe("translator notes (locales/en/ui.notes.json)", () => {
 
     const missing = [...required].filter((k) => !noteKeys.has(k)).sort();
     const notInCatalog = [...noteKeys].filter((k) => !(k in EN)).sort();
-    const notRequired = [...noteKeys]
-      .filter((k) => k in EN && !required.has(k))
-      .sort();
+    const notRequired = [...noteKeys].filter((k) => k in EN && !required.has(k)).sort();
     const empty = [...noteKeys].filter((k) => NOTES[k]!.trim() === "").sort();
 
     expect(

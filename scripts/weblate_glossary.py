@@ -135,7 +135,7 @@ def _ensure_component(key: str, *, dry_run: bool) -> bool:
 def _sync_read_only_flags(key: str, *, dry_run: bool) -> None:
     """Add Weblate's `read-only` flag to every term in READ_ONLY_TERMS, leaving any flag
     already set on a unit in place."""
-    remaining = {term: True for term in READ_ONLY_TERMS}
+    remaining = dict.fromkeys(READ_ONLY_TERMS, True)
     url: str | None = GLOSSARY_UNITS_URL
     while url is not None:
         page = _request(url, key=key)
