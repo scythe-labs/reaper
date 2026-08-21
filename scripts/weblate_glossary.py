@@ -6,7 +6,8 @@ Standalone by design (stdlib only, rule 15), and run by hand rather than by CI: 
 component is a one-time, human-approved step, and seeding follows a language being added,
 which a person does on Weblate. `frontend/src/locales/glossary/en.tbx` is the glossary
 itself. TBX is a bilingual format on Weblate, so a term lives inside each target language's
-file and the English file is never read by Weblate: this script reads it instead, and posts
+file and the English file is never read by Weblate (the component's language filter skips
+it): this script reads it instead, and posts
 every term it holds into each target language's glossary translation, with the TBX
 ``descrip`` as the term's explanation. "Sanctuary" and "Limbo", Reaper's own product names,
 carry Weblate's `read-only` flag, so a translator sees them without a target box inviting a
@@ -113,11 +114,41 @@ def _request(
     raise RuntimeError(f"{method} {url} failed after {MAX_ATTEMPTS} tries: {last}")
 
 
+def _language_filter(source_code: str) -> str:
+    """The language filter that keeps the English file out of Weblate's language list.
+
+    The component is bilingual (no template, #877), so ``en.tbx`` matches the filemask as
+    an English translation of an English component, and Weblate raises its "Duplicated
+    translation" alert for it. The file stays in git as the glossary this script seeds from;
+    this filter is how Weblate is told to skip it.
+    """
+    return f"^(?!{source_code}$)[^.]+$"
+
+
+def _ensure_language_filter(component: dict[str, Any], *, key: str, dry_run: bool) -> None:
+    """Reconcile an existing component's language filter, so a re-run converges."""
+    wanted = _language_filter(component["source_language"]["code"])
+    if component.get("language_regex") == wanted:
+        print("glossary language filter already set")
+        return
+    if dry_run:
+        print(f"would PATCH language_regex to {wanted!r}")
+        return
+    _request(
+        GLOSSARY_COMPONENT_URL,
+        method="PATCH",
+        key=key,
+        body=json.dumps({"language_regex": wanted}).encode(),
+    )
+    print("set the glossary language filter")
+
+
 def _ensure_component(key: str, *, dry_run: bool) -> bool:
     """True once the glossary component exists. Creates it only when absent."""
     existing = _request(GLOSSARY_COMPONENT_URL, key=key, allow_404=True)
     if existing is not None:
         print("glossary component already exists, nothing to create")
+        _ensure_language_filter(existing, key=key, dry_run=dry_run)
         return True
 
     ui = _request(UI_COMPONENT_URL, key=key)
@@ -129,6 +160,7 @@ def _ensure_component(key: str, *, dry_run: bool) -> bool:
             "file_format": "tbx",
             "is_glossary": True,
             "filemask": f"{GLOSSARY_DIR}/*.tbx",
+            "language_regex": _language_filter(ui["source_language"]["code"]),
         }
     )
     if dry_run:
