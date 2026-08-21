@@ -5,8 +5,9 @@
 // "Kept until <a day last week>" reads as a promise about a day already gone.
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { Chip } from "../api";
+import type { Chip, ReasonKey } from "../api";
 import { CSS } from "../test/stylesheet";
+import { composeIn } from "../why";
 import { OverrideChip, StatusChip } from "./StatusChip";
 
 /** An ISO instant `days` from now. Negative is a spare whose count has already run down. */
@@ -67,14 +68,15 @@ describe("the spared chip", () => {
 // has no rule for paints as an unstyled span. `held` is the came-back hold's (#553): the one
 // protection with an expiry, outlined because it is Reaper's decision and not the owner's.
 describe("the server chip's tones", () => {
-  function serverChip(tone: "kept" | "quiet" | "look" | "held", text: string) {
-    const { container } = render(<StatusChip chip={{ tone, text }} />);
+  function serverChip(tone: "kept" | "quiet" | "look" | "held", reason: ReasonKey) {
+    const { container } = render(<StatusChip chip={{ tone, reason }} />);
     return container.querySelector("span")!;
   }
 
   it("draws the came-back countdown in its own tone", () => {
-    const el = serverChip("held", "Came back, 412 days left");
-    expect(el.textContent).toBe("Came back, 412 days left");
+    const reason: ReasonKey = { k: "came_back", p: { days_left: 12 } };
+    const el = serverChip("held", reason);
+    expect(el.textContent).toBe(composeIn("chip.text", reason));
     expect(el.className).toContain("status-held");
   });
 

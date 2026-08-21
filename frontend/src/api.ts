@@ -55,11 +55,10 @@ export interface Snapshot {
  *  kept, and amber means only "left for you to decide". */
 export interface Chip {
   tone: "kept" | "quiet" | "look" | "held";
-  text: string;
-  /** The same fact as `text`, worded as a lowercase clause that can follow "Reap
-   *  requested, kept for now:" -- or null when this chip names no reason a reap would
-   *  be refused. Read it through `chipWhy`; never parse `text` to recover it. */
-  why?: string | null;
+  /** The typed id plus raw params. The browser composes the chip's own text and its
+   *  standalone sentence from this, through `why.ts`'s `composeIn` (`StatusChip.tsx`'s
+   *  `StatusChip` and `chipWhy`) -- never a re-decision, and never English off the wire. */
+  reason: ReasonKey;
 }
 
 /** One square of a show card's season strip: the lightest per-season mark, across

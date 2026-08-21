@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The one status chip a card (or season row) wears. The text arrives display-ready
-// from the server -- the protection that keeps a Sanctuary item, or what stopped Reaper
-// short on a Limbo one -- so this only picks the tone's color: green for "kept", gray
-// for "nothing to act on", amber outline for "deliberately left for you to decide".
+// The one status chip a card (or season row) wears. The server sends a typed reason --
+// the protection that keeps a Sanctuary item, or what stopped Reaper short on a Limbo one
+// -- and this composes it into the chip's text through `why.ts`'s `composeIn`, then picks
+// the tone's color: green for "kept", gray for "nothing to act on", amber outline for
+// "deliberately left for you to decide".
 //
 // The chips an owner's own decision puts on an item live here too, so the queue and the
 // show panel say the same words about a spare or a reap.
@@ -11,12 +12,14 @@
 import { useTranslation } from "react-i18next";
 import type { Chip, Override } from "../api";
 import { spareRemaining } from "../format";
+import { composeIn } from "../why";
 
 export function StatusChip({ chip }: { chip: Chip | null }) {
   if (!chip) return null;
+  const text = composeIn("chip.text", chip.reason);
   return (
-    <span className={`status-chip status-${chip.tone}`} title={chip.text}>
-      {chip.text}
+    <span className={`status-chip status-${chip.tone}`} title={text}>
+      {text}
     </span>
   );
 }
@@ -31,20 +34,21 @@ export function CondemnedChip() {
   );
 }
 
-/** The refused-reap chip's clause: why the item is still being kept, in lowercase, ready
- *  to sit after "Reap requested, kept for now:".
+/** The refused-reap chip's sentence: why the item is still being kept, capitalized and
+ *  full-stopped, ready to stand alone or to sit after "Reap requested, kept for now.".
  *
  *  A reap is refused in two different lanes, and their chips read nothing alike -- a
  *  structural protection that fired ("Kept, playing right now") and a row Reaper cannot
- *  identify ("it couldn't be found in Plex") -- so the server words the clause for both
- *  beside the chip text itself (`_chip` in `api/review.py`). A check that merely could not
- *  RUN is no longer one of the lanes: it stopped refusing a reap (`engine/verdict.py`). This used to slice the "Kept, " prefix
- *  off and look the rest up in a map of the backend's exact prose: rewording one chip
- *  server-side dropped every held-reap explanation to the generic fallback below, with
- *  the tests still green because they transcribed the same strings (H-1). Null is a real
- *  answer -- a chip about the score names no reason a reap would be refused. */
+ *  identify ("it couldn't be found in Plex") -- so both compose from the chip's own typed
+ *  `reason`, through `chip.sentence.<id>` (`why.ts`'s `composeIn`). A check that merely
+ *  could not RUN is no longer one of the lanes: it stopped refusing a reap
+ *  (`engine/verdict.py`). Null only when `chip` itself is null -- every id has a sentence,
+ *  so a chip that exists always composes one, including a score chip that names no reason
+ *  a reap would be refused (that sentence just never reaches the screen: a fired
+ *  protection or an unresolved check is what makes `override_effective` false, and either
+ *  one sends `verdict="protect"`/its own "look"/"match" chip instead of a score chip). */
 export function chipWhy(chip: Chip | null): string | null {
-  return chip?.why ?? null;
+  return chip ? composeIn("chip.sentence", chip.reason) : null;
 }
 
 /** Which class family an override chip is drawn in. Cards use the `.chip` family that

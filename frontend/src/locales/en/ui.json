@@ -592,7 +592,7 @@
         "others_watching": "{count, plural, one {Kept, someone else is watching it} other {Kept, # others are watching it}}",
         "others_watching_unknown": "Kept, others are watching it",
         "curated_list": "Kept, on a protected list",
-        "no_history": "Kept, no watch history, kept to be safe",
+        "no_history": "Kept, no watch history",
         "dormancy": "Kept, hasn't sat unwatched long enough",
         "unmanaged": "Kept, not managed by Sonarr or Radarr",
         "season": {
@@ -670,7 +670,7 @@
         "unreadable": "Reaper couldn't read what it matched in Plex."
       },
       "look": {
-        "comparable": "It watched more than a season your rule keeps.",
+        "comparable": "Someone watched more than a season your rule keeps.",
         "unknowable": "Reaper couldn't check who watched these seasons.",
         "unsettled": "A check on it couldn't be settled."
       },
@@ -2231,7 +2231,7 @@
     "searchPlaceholder": "Search titles, shows, years…",
     "seasonCount": "{n, plural, one {1 season} other {# seasons}}",
     "seasonDivergence": {
-      "confirmSafeUnknown": "Reaper couldn't confirm it's safe to remove",
+      "confirmSafeUnknown": "Reaper couldn't confirm it's safe to remove.",
       "keptDespiteReap": "Kept even though the whole show is set to reap.",
       "keptDespiteReapExpired": "Kept even though the whole show is set to reap. Your spare ran out, so the next scan judges it again.",
       "keptForNowChip": "Kept for now",
@@ -2728,8 +2728,8 @@
     },
     "statusChip": {
       "exceptSeasons": "except {n, plural, one {# season} other {# seasons}}",
-      "reapRequestedKept": "Reap requested, kept for now: {why}",
-      "reapRequestedKeptDefaultWhy": "Reaper couldn't confirm it's safe to remove",
+      "reapRequestedKept": "Reap requested, kept for now. {why}",
+      "reapRequestedKeptDefaultWhy": "Reaper couldn't confirm it's safe to remove.",
       "reapedByHand": "Reaped by hand, {detail}",
       "sparedByHand": "Spared by hand",
       "sparedByHandWith": "Spared by hand, {suffix}",

@@ -1376,7 +1376,7 @@ class TestTheChipSentence:
                 ),
                 "abstain",
                 82,
-                "It watched more than a season your rule keeps.",
+                "Someone watched more than a season your rule keeps.",
             ),
             (
                 _exp(60, unknown=[{"gate": "custom", "detail": "A rule asked a human to look."}]),

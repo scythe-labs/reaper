@@ -710,13 +710,6 @@ function seasonName(title: string, showTitle: string): string {
     .replace(`${showTitle} — `, "");
 }
 
-/** Capitalize the first letter and end the clause as a sentence -- turns a lowercase "why"
- *  clause ("it couldn't be found in Plex") into a standalone reason line. */
-function capitalizeSentence(text: string): string {
-  const t = text.charAt(0).toUpperCase() + text.slice(1);
-  return /[.!?]$/.test(t) ? t : `${t}.`;
-}
-
 /** The one-time banner atop an expanded show whose WHOLE-SHOW decision (spare or reap) drives
  *  its seasons. It states that decision once so the rows below no longer each repeat it -- every
  *  inheriting season used to carry an identical `KeptByShowNote`, which read as a wall of the
@@ -801,8 +794,10 @@ function seasonDivergence(
   // removal. Judged by the item's own fate, so an inherited held reap reads the same as an own one.
   if (handFate(season) === "refused") {
     // The specific reason the engine held it (from the stored explanation) beats the chip's
-    // short phrase, which beats a generic line -- so the row says WHY, e.g. that the season it
-    // was compared against is kept because Sonarr is still downloading it.
+    // sentence, which beats a generic line -- so the row says WHY, e.g. that the season it
+    // was compared against is kept because Sonarr is still downloading it. Both `cardReason`
+    // and `chipWhy` already compose a full sentence (capital lead, full stop), so nothing
+    // here reworks the clause.
     const why =
       cardReason(season) ??
       chipWhy(season.chip) ??
@@ -813,7 +808,7 @@ function seasonDivergence(
           {i18next.t("reviewQueue.seasonDivergence.keptForNowChip")}
         </span>
       ),
-      reason: capitalizeSentence(why),
+      reason: why,
     };
   }
   const own = season.override_own;
