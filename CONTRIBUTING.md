@@ -27,6 +27,12 @@ If you want to know who writes this and how, the README has an honest answer und
 - **Ask a question.** [Discussions](https://github.com/scythe-labs/reaper/discussions) is the
   place for setup help, ideas that are still forming, and anything that is not yet an issue.
 - **Fix the docs.** Instructions that did not work are a bug.
+- **Translate it.** Reaper's strings live on
+  [Hosted Weblate](https://hosted.weblate.org/projects/reaper/). Translate there, and Weblate
+  opens the pull request here. Only `frontend/src/locales/en/ui.json` is edited by hand. Every
+  other `locales/<tag>/ui.json` is written by Weblate and overwritten on its next sync, so a
+  pull request editing one is closed. The in-app manual is the exception: it is translated by
+  hand as `frontend/src/docs/content/<tag>/index.ts`, the whole manual at once.
 - **Send a watch-history dump.** Reaper's scoring is tuned against real libraries, and it has
   been tuned against very few of them. `scripts/tautulli_anon_dump.py` reads your Tautulli and
   writes a file holding the numbers the engine reads, with no titles, usernames, email
