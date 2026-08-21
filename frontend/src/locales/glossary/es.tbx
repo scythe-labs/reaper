@@ -1,6 +1,6 @@
-<?xml version="1.0"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE martif PUBLIC "ISO 12200:1999A//DTD MARTIF core (DXFcdV04)//EN" "TBXcdv04.dtd">
-<martif type="TBX">
+<martif type="TBX" xml:lang="en">
     <martifHeader>
         <fileDesc>
             <sourceDesc>
@@ -10,6 +10,62 @@
     </martifHeader>
     <text>
         <body>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>Sanctuary</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>Sanctuary</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>Limbo</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>Limbo</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>Condemned</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>Condemned</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>Reap</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>Reap</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>Spare</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>Spare</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>Leaving Soon</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>Leaving Soon</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>shelf</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>shelf</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>practice run</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>practice run</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>protection</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>protection</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>keep rule</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>keep rule</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>grace</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>grace</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>scan</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>scan</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>souls</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>souls</term></tig></langSet>
+            </termEntry>
+            <termEntry>
+                <langSet xml:lang="en"><tig><term>Scales</term></tig></langSet>
+                <langSet xml:lang="es"><tig><term>Scales</term></tig></langSet>
+            </termEntry>
         </body>
     </text>
 </martif>
