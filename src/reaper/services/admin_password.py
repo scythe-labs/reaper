@@ -21,6 +21,7 @@ from reaper.auth.sessions import close_all_for_user
 from reaper.auth.tokens import hash_token
 from reaper.clock import utcnow
 from reaper.db.models import AppUser, AuthProvider
+from reaper.refusal import Refusal
 
 # The admin password arms deletion, so it earns a stronger floor than a throwaway login
 # would. Length is the single biggest factor in resistance to guessing; 12 is the modern
@@ -33,8 +34,8 @@ MIN_PASSWORD_LENGTH = 12
 _DECOY = hash_password(generate_password())
 
 
-class PasswordError(RuntimeError):
-    """A password could not be set (too short, etc.). The message is safe to show."""
+class PasswordError(Refusal):
+    """A password could not be set (too short, etc.). A catalog code plus raw params."""
 
 
 class PasswordVerificationBusyError(RuntimeError):
@@ -125,7 +126,7 @@ async def set_password(
     ``keep_session_token`` (the acting admin's own cookie) to spare the current tab.
     """
     if len(password) < MIN_PASSWORD_LENGTH:
-        raise PasswordError(f"Use at least {MIN_PASSWORD_LENGTH} characters.")
+        raise PasswordError("error.password.too_short", min_length=MIN_PASSWORD_LENGTH)
 
     admins = await _local_admins(session)
     if admins:

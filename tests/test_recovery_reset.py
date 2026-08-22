@@ -180,7 +180,9 @@ class TestRecoveryModeHoldsDeletionOff:
             # Not 403: the password was right. Saying "that didn't match" would send the
             # operator to guess at a password that is not the problem.
             assert refused.status_code == 409, refused.text
-            assert "Recovery mode is on" in refused.json()["detail"]
+            refused_body = refused.json()
+            assert refused_body["code"] == "error.settings.recovery_mode_blocks_arming"
+            assert "Recovery mode is on" in refused_body["detail"]
             assert client.get("/api/settings/safety").json()["destructive_enabled"] is False
 
     def test_the_banner_is_told_which_state_it_is_in(self, tmp_path: Path) -> None:
@@ -264,9 +266,9 @@ class TestARecoverySessionCanSetANewPassword:
         from swapping the credential that arms deletion."""
         refused = client.post("/api/settings/admin-password", json={"password": NEW_PASSWORD})
         assert refused.status_code == 403
-        assert refused.json()["detail"] == (
-            "The current password didn't match. Nothing was changed."
-        )
+        refused_body = refused.json()
+        assert refused_body["code"] == "error.auth.change_password_mismatch"
+        assert refused_body["detail"] == ("The current password didn't match. Nothing was changed.")
 
     def test_the_mark_is_spent_on_the_first_change(self, client: TestClient) -> None:
         """Single-use, like the code that granted it. Left standing, one recovery boot would

@@ -1027,7 +1027,8 @@ phase 5 of #868 added. Gates and signals kept this contract from #862 on. Three 
 because #862 drew its line at the why panel. The card's status chip, the policy warnings and the
 rule vocabulary were composed server-side in English, so a translated UI still showed English on
 every card and across the policy editor. #868 moved them, one PR per surface (#870, #872, #873,
-#874, #875), and a translator note per composed string rides the PR that closes it.
+#874, #875), and a translator note per composed string rides the PR that closes it. Phase 8
+did the same for every refusal, below.
 
 Two corollaries hold. **No string surgery on translated text.** A sentence that needs a capital
 and a period is its own catalog entry (`chip.sentence.*` beside `chip.text.*`), so
@@ -1038,6 +1039,16 @@ A legacy row whose stored prose already holds an English span gets its own id
 leak is visible and scoped to rows a rescan replaces. A rule name the operator typed travels as a
 param. It is their data in their language.
 
-What stays English on purpose: HTTP error `detail` bodies until each refusal carries a code,
-log lines, the confirmation phrase, the `reaper-admin` CLI, OpenAPI tag descriptions and the
-API-key auth box, and Discord posts and the tray until the backend has a catalog of its own.
+What stays English on purpose: log lines, the confirmation phrase, the `reaper-admin` CLI,
+OpenAPI tag descriptions and the API-key auth box, and Discord posts and the tray until the
+backend has a catalog of its own.
+
+**HTTP error bodies get a code and keep their English `detail`.** `detail` stays the
+formatted English sentence, because an API-key client or a documented example reads it as
+one. `code` and a raw `params` map ride beside it at the top level
+(`reaper.refusal.MESSAGES`, `api.errors.refuse`), and a 422 carries them on each item the
+catalog knows. Services raise a `Refusal` with the code, so the English is written once.
+The browser is the first typed reader. `frontend/src/errors.ts`'s `describeError` composes
+`error.*` from `ui.json` the way `why`, `chip` and `warning` are composed, and falls back to
+the carried `detail` when a code has no entry (an older server, a newer build). A job's
+outcome sentence still travels as free text (#885).

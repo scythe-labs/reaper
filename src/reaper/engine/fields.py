@@ -44,6 +44,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Known, Observation, Unknown
 from reaper.engine.reason import Reason
+from reaper.refusal import Refusal
 from reaper.text import fold
 
 
@@ -184,12 +185,6 @@ class FieldSpec:
     """One thing a user may write a condition about."""
 
     key: str
-    label: str
-    """English, for the save-boundary `ValueError`s below and in `engine/policy.py`
-    (`Condition.validate_for`, `_validate_value_type`, `GradedKeepSpec`/`GradedCondemnSpec`
-    validation) -- the one place left that still reads it. The browser no longer does: the
-    policy editor speaks the catalog's `why.field.<key>` for the same field (#868 phase 4).
-    Never serialized by `api.vocabulary.get_vocabulary` (`FieldOut` carries no label)."""
 
     type: FieldType
     lanes: tuple[Lane, ...]
@@ -234,7 +229,6 @@ class FieldSpec:
 REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="days_unwatched",
-        label="Days since anyone watched it",
         type=FieldType.DAYS,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
@@ -242,7 +236,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="size_bytes",
-        label="Size on disk",
         type=FieldType.BYTES,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
@@ -250,7 +243,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="recent_watchers",
-        label="People who watched it recently",
         type=FieldType.COUNT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
@@ -259,7 +251,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="watchers_all_time",
-        label="People who have ever watched it",
         type=FieldType.COUNT,
         # Protect only. This is the registry doing its job: an all-time watcher count
         # is a fine reason to KEEP something and a terrible reason to delete it, and
@@ -271,7 +262,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="imdb_rating",
-        label="IMDb rating",
         type=FieldType.RATING_TENTHS,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
@@ -279,7 +269,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="imdb_votes",
-        label="IMDb vote count",
         type=FieldType.COUNT,
         lanes=(Lane.PROTECT,),
         ops=NUMERIC_OPS,
@@ -287,7 +276,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="season_rank",
-        label="How far back the season is",
         type=FieldType.COUNT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         media_types=("tv",),
@@ -301,7 +289,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
         # -- tag, collection, watchlist, IMDb -- comes to keep or lean. The stored rules
         # that used to spell this ``on_curated_list`` are re-spelled by
         # ``policy_migrations.convert_list_protections``.
-        label="On one of your lists",
         type=FieldType.TEXT,
         lanes=(Lane.PROTECT,),
         ops=TEXT_OPS,
@@ -310,7 +297,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="whitelisted",
-        label="On a list you curate yourself",
         type=FieldType.BOOL,
         lanes=(Lane.PROTECT,),
         ops=BOOL_OPS,
@@ -318,7 +304,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="streaming_now",
-        label="Being watched right now",
         type=FieldType.BOOL,
         lanes=(Lane.PROTECT,),
         ops=BOOL_OPS,
@@ -326,7 +311,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="requested",
-        label="Requested by a user",
         type=FieldType.BOOL,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=BOOL_OPS,
@@ -334,7 +318,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="genre",
-        label="Genre",
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=TEXT_OPS,
@@ -343,7 +326,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="release_age",
-        label="Age since release",
         type=FieldType.DAYS,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         # Movie-only, because ``season_scan.build_season_facts`` has no clean per-season
@@ -357,7 +339,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="quality",
-        label="File quality",
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         # Movie-only for the same reason as ``release_age``: a season mixes episode
@@ -368,7 +349,6 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="show_ended",
-        label="The show has ended",
         type=FieldType.BOOL,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         media_types=("tv",),
@@ -425,20 +405,25 @@ class Condition:
         try:
             return BY_KEY[self.field]
         except KeyError:
-            raise ValueError(f'Unknown field "{self.field}".') from None
+            raise Refusal("error.policy.unknown_field", field=self.field) from None
 
     def validate_for(self, lane: Lane) -> None:
         spec = self.spec()
         if lane not in spec.lanes:
             allowed = _join_or([_LANE_HOME[x] for x in spec.lanes])
-            raise ValueError(
-                f'"{spec.label}" cannot be used to {_LANE_USE[lane]}. It only works as {allowed}.'
+            raise Refusal(
+                "error.policy.field_wrong_lane",
+                field=self.field,
+                use=_LANE_USE[lane],
+                allowed=allowed,
             )
         if self.op not in spec.ops:
             allowed = _join_or([f'"{_OP_NAME[o]}"' for o in spec.ops])
-            raise ValueError(
-                f'"{spec.label}" cannot be compared with "{_OP_NAME[self.op]}". '
-                f"It works with {allowed}."
+            raise Refusal(
+                "error.policy.field_wrong_operator",
+                field=self.field,
+                op=_OP_NAME[self.op],
+                allowed=allowed,
             )
         self._validate_value_type(spec)
 
@@ -470,16 +455,16 @@ class Condition:
         value = self.value
         if spec.type is FieldType.BOOL:
             if not isinstance(value, bool):
-                raise ValueError(f'"{spec.label}" expects true or false, got {value}.')
+                raise Refusal("error.policy.field_expects_bool", field=self.field, value=value)
         elif spec.type is FieldType.TEXT:
             if not isinstance(value, str):
-                raise ValueError(f'"{spec.label}" expects text, got {value}.')
+                raise Refusal("error.policy.field_expects_text", field=self.field, value=value)
             if not value.strip():
-                raise ValueError(f'"{spec.label}" needs a value.')
+                raise Refusal("error.policy.field_needs_value", field=self.field)
             if self.op is Op.IN and not _split_csv(value):
                 # A comma-only list ("," / " , ") survives the strip above but splits to
                 # nothing, which is the same never-matches protection by another spelling.
-                raise ValueError(f'"{spec.label}" needs at least one value to match.')
+                raise Refusal("error.policy.field_needs_list_value", field=self.field)
             if self.op is Op.EQ and spec.multi and "," in value:
                 # The separator half, reached from the rule end. A multi-valued fact is one
                 # comma-joined string and ``_compare`` splits it back to test membership, so
@@ -488,14 +473,11 @@ class Condition:
                 # nothing. ``list_config._clean_name`` refuses the separator where the name
                 # is TYPED, which is where an operator can act on it; this is the boundary a
                 # hand-written body or an imported policy comes through (rule 108).
-                raise ValueError(
-                    f'"{spec.label}" can\'t match a value with a comma in it. '
-                    "Reaper separates values with one, so pick a single one."
-                )
+                raise Refusal("error.policy.field_value_has_comma", field=self.field)
         # Numeric field types (days, bytes, count, rating tenths). bool is an int
         # subclass in Python, so it must be rejected explicitly.
         elif isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f'"{spec.label}" expects a whole number, got {value}.')
+            raise Refusal("error.policy.field_expects_number", field=self.field, value=value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,7 +697,7 @@ def _num(value: object) -> float:
         return float(value)
     if isinstance(value, int | float):
         return float(value)
-    raise ValueError(f'"{value}" is not a number.')
+    raise Refusal("error.policy.value_not_numeric", value=str(value))
 
 
 # ---------------------------------------------------------------------------

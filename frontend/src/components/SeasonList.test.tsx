@@ -23,7 +23,10 @@ const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 // Three reads the queue makes for the whole list, through hooks no test here names: the
 // unmeasured allowance (["profile"]), the expand-seasons and spare-length preferences

@@ -31,6 +31,7 @@ from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import PlexServer
 from reaper.db.session import create_engine, create_session_factory
+from reaper.engine.reason import Reason
 from reaper.services import app_settings, leaving_soon
 
 
@@ -135,7 +136,9 @@ class TestTheSettingsRoutes:
                 result="4 added, 1 cleared",
             )
             await app_settings.set_leaving_soon_last_skip(
-                session, at="2026-08-04T20:06:00+00:00", result="Reaper couldn't reach Plex"
+                session,
+                at="2026-08-04T20:06:00+00:00",
+                reason=Reason("error.leaving_soon.skip_unreachable"),
             )
             await session.commit()
 
@@ -143,11 +146,38 @@ class TestTheSettingsRoutes:
 
         assert body["last_skip"] == {
             "at": "2026-08-04T20:06:00+00:00",
-            "result": "Reaper couldn't reach Plex",
+            "result_reason": {"k": "error.leaving_soon.skip_unreachable", "p": None},
         }
         # The completed pass survives the skip. Overwriting it would take the shelf's only
         # true counts down with a pass that wrote nothing to Plex.
         assert (body["last"]["movies"], body["last"]["seasons"]) == (280, 311)
+
+    async def test_a_skip_stored_before_the_typed_conversion_still_reads(
+        self, client: TestClient, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A row written before phase 8a carries a bare English phrase under ``"result"``
+        instead of a wire-encoded reason. Rule 96: an old row must still read, thawed as
+        ``Reason("legacy", {"text": ...})`` exactly as ``engine.reason.from_wire`` already
+        does for a bare stored string -- it just stops composing through the catalog.
+
+        Written straight into the row rather than through ``set_leaving_soon_last_skip``,
+        which only ever writes the new shape now: the point is a value an OLDER build left
+        behind, which today's setter cannot produce any more.
+        """
+        async with factory() as session:
+            await app_settings._set(
+                session,
+                app_settings.LEAVING_SOON_LAST_SKIP_KEY,
+                {"at": "2026-07-01T00:00:00+00:00", "result": "Reaper couldn't reach Plex"},
+            )
+            await session.commit()
+
+        body = client.get("/api/settings/leaving-soon").json()
+
+        assert body["last_skip"] == {
+            "at": "2026-07-01T00:00:00+00:00",
+            "result_reason": {"k": "legacy", "p": {"text": "Reaper couldn't reach Plex"}},
+        }
 
     def test_the_switches_flip_and_stick(self, client: TestClient) -> None:
         body = client.put(
@@ -229,13 +259,17 @@ class TestTheSettingsRoutes:
     def test_a_manual_update_while_off_is_refused_in_plain_words(self, client: TestClient) -> None:
         resp = client.post("/api/leaving-soon/sync")
         assert resp.status_code == 400
-        assert "Leaving Soon is off" in resp.json()["detail"]
+        body = resp.json()
+        assert body["code"] == "error.leaving_soon.disabled"
+        assert "Leaving Soon is off" in body["detail"]
 
     def test_a_manual_update_without_plex_names_the_missing_link(self, client: TestClient) -> None:
         client.put("/api/settings/leaving-soon", json={"enabled": True})
         resp = client.post("/api/leaving-soon/sync")
         assert resp.status_code == 400
-        assert "linked Plex server" in resp.json()["detail"]
+        body = resp.json()
+        assert body["code"] == "error.leaving_soon.unlinked"
+        assert "linked Plex server" in body["detail"]
 
     def test_a_linked_server_that_will_not_answer_is_a_502_in_reapers_words(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -268,8 +302,10 @@ class TestTheSettingsRoutes:
         resp = client.post("/api/leaving-soon/sync")
 
         assert resp.status_code == 502
-        detail = resp.json()["detail"]
-        assert detail.startswith("Reaper couldn't reach Plex")
+        body = resp.json()
+        assert body["code"] == "error.plex.unreachable"
+        assert body["params"]["error"] == "movie listing for section 3 stalled at 200 of 1000"
+        assert body["detail"].startswith("Reaper couldn't reach Plex")
 
     def test_about_reports_the_facts(self, client: TestClient) -> None:
         body = client.get("/api/about").json()

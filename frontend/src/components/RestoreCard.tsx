@@ -32,6 +32,7 @@ import {
 import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type RestoreSummary } from "../api";
+import { describeError } from "../errors";
 import { useSuccessorFocus } from "../focus";
 import { since } from "../format";
 import i18next from "../i18n";
@@ -175,7 +176,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // wrong for two of them (#178). Nothing was staged here: the file never got read.
       setError(
         err instanceof Error
-          ? t("backup.restore.chooseFailed", { message: err.message })
+          ? t("backup.restore.chooseFailed", { message: describeError(err) })
           : t("backup.restore.chooseFailedFallback"),
       );
     } finally {
@@ -229,7 +230,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // The only one of the three the old shared lead-in was right for.
       setError(
         err instanceof Error
-          ? t("backup.restore.restoreFailed", { message: err.message })
+          ? t("backup.restore.restoreFailed", { message: describeError(err) })
           : t("backup.restore.restoreFailedFallback"),
       );
     } finally {
@@ -255,7 +256,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // where it was.
       setError(
         err instanceof Error
-          ? t("backup.restore.restartFailed", { message: err.message })
+          ? t("backup.restore.restartFailed", { message: describeError(err) })
           : t("backup.restore.restartFailedFallback"),
       );
     } finally {
@@ -297,7 +298,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // need to know is that it is still there.
       setError(
         err instanceof Error
-          ? t("backup.restore.cancelFailed", { message: err.message })
+          ? t("backup.restore.cancelFailed", { message: describeError(err) })
           : t("backup.restore.cancelFailedFallback"),
       );
     } finally {

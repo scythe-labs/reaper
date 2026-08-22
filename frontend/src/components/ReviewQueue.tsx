@@ -46,6 +46,7 @@ import {
 } from "../api";
 import { announce } from "../announce";
 import { useBackGuard } from "../backnav";
+import { describeError } from "../errors";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
 import i18next from "../i18n";
@@ -3027,7 +3028,7 @@ export function ReviewQueue({
             {t("reviewQueue.bulkFailuresMessage", { n: bulkFailures })}
           </p>
         )}
-        {reapNow.error && <p className="error bulk-error">{reapNow.error.message}</p>}
+        {reapNow.error && <p className="error bulk-error">{describeError(reapNow.error)}</p>}
         {reapRun && (
           <ReapConfirm
             run={reapRun}

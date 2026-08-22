@@ -32,6 +32,7 @@ from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings, parse_trusted_proxies
 from reaper.crypto import SecretBox
 from reaper.db.models import AppSetting
+from reaper.engine.reason import Reason, from_wire, to_wire
 
 DESTRUCTIVE_KEY = "destructive_enabled"
 SCAN_SCHEDULE_KEY = "scan_schedule"
@@ -713,14 +714,25 @@ async def set_leaving_soon_last(
     )
 
 
-async def get_leaving_soon_last_skip(session: AsyncSession) -> dict[str, Any] | None:
-    """The last scan that finished without updating the shelf, and why in one clause."""
+async def get_leaving_soon_last_skip(session: AsyncSession) -> tuple[str, Reason] | None:
+    """When the last skip happened, and why, as a typed reason.
+
+    A row written before this conversion (phase 8a) carries a bare English phrase under
+    ``"result"`` instead of a wire-encoded reason; thawed as ``Reason("legacy", {"text":
+    ...})`` exactly as ``engine.reason.from_wire`` already does for a bare stored string
+    (rule 96: an old row still reads, it just stops being typed)."""
     value = await _get(session, LEAVING_SOON_LAST_SKIP_KEY, default=None)
-    return dict(value) if isinstance(value, dict) else None
+    if not isinstance(value, dict):
+        return None
+    at = str(value.get("at", ""))
+    reason = from_wire(
+        {"k": value["k"], "p": value.get("p")} if "k" in value else str(value.get("result", ""))
+    )
+    return at, reason
 
 
-async def set_leaving_soon_last_skip(session: AsyncSession, *, at: str, result: str) -> None:
-    await _set(session, LEAVING_SOON_LAST_SKIP_KEY, {"at": at, "result": result})
+async def set_leaving_soon_last_skip(session: AsyncSession, *, at: str, reason: Reason) -> None:
+    await _set(session, LEAVING_SOON_LAST_SKIP_KEY, {"at": at, **to_wire(reason)})
 
 
 # --- Plex libraries ----------------------------------------------------------

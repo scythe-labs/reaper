@@ -25,11 +25,12 @@ import json
 from collections.abc import Sequence
 from contextlib import AsyncExitStack
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from reaper.api import tags as api_tags
+from reaper.api.errors import refuse, refuse_from
 from reaper.api.schemas import (
     ListConfigIn,
     ListConfigOut,
@@ -101,12 +102,6 @@ async def get_lists(request: Request) -> list[ProtectionListOut]:
             )
         )
     return out
-
-
-def _refused(exc: list_config.ListConfigError) -> HTTPException:
-    """The service's own words, at 400. It writes for the operator, so nothing is reworded
-    here -- a second phrasing of one refusal is the copy that drifts (rule 144)."""
-    return HTTPException(status_code=400, detail=str(exc))
 
 
 async def _authorable_media(
@@ -212,7 +207,7 @@ async def add_list(request: Request, body: ListConfigIn) -> ListConfigOut:
                 session, name=body.name, source=body.source, config=body.config
             )
         except list_config.ListConfigError as exc:
-            raise _refused(exc) from None
+            refuse_from(exc)
         # A list the operator adds here writes no keep rule on its own. Settings owns what a
         # list IS; Policy owns what it does, and the operator chooses whether and how strongly
         # it protects. The row renders "Not used by your policy yet" until they do, so adding a
@@ -235,7 +230,7 @@ async def edit_list(request: Request, list_id: int, body: ListConfigPatch) -> Li
             before = (await list_config.get(session, list_id)).name
             row = await list_config.update(session, list_id, name=body.name, config=body.config)
         except list_config.ListConfigError as exc:
-            raise _refused(exc) from None
+            refuse_from(exc)
         # A renamed list's rules follow it, or every one of them would go on naming a list
         # that no longer exists while rendering as a live protection.
         await list_rules.rename_list(session, before, row.name)
@@ -288,7 +283,7 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
                 require_scan_sources=False,
             )
         except scan_runner.ScanConfigError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
+            refuse_from(exc)
 
         # Plex is optional and fails CLOSED, exactly as it does in a scan: with no live
         # server no collection provider is built, so nothing is synced for one and nothing
@@ -310,13 +305,7 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
             except list_config.ListRegistryUnreadableError:
                 # This pass retires, so a row that will not decode has to stop it rather than
                 # read as one the operator deleted (rules 65/91).
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "One of your lists is saved in a form Reaper can't read, so it didn't "
-                        "check any of them. Open that list, set it up again, and save it."
-                    ),
-                ) from None
+                refuse(409, "error.lists.registry_unreadable")
 
         synced = await snapshot.sync_protection_lists(
             app.state.cache_engine,
@@ -348,7 +337,7 @@ async def remove_list(request: Request, list_id: int) -> None:
             name = (await list_config.get(session, list_id)).name
             await list_config.delete(session, list_id)
         except list_config.ListConfigError as exc:
-            raise _refused(exc) from None
+            refuse_from(exc)
         # The rules naming it leave with it, so none goes on rendering as a live
         # protection covering nothing (rule 25).
         await list_rules.detach_list(session, name)

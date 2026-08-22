@@ -26,8 +26,8 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 import reaper.api.settings
+import reaper.refusal
 from reaper.api.plex import PlexUpdateIn, update_plex_settings
-from reaper.api.settings import _BAD_CRON
 from reaper.auth.ratelimit import argon2_gate
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError, PlexSection
@@ -899,7 +899,9 @@ class TestSafety:
 
         refused = client.put("/api/settings/safety", json={"enabled": True, "password": ""})
         assert refused.status_code == 400, refused.text
-        assert refused.json()["detail"] == (
+        refused_body = refused.json()
+        assert refused_body["code"] == "error.settings.no_password_set_for_arming"
+        assert refused_body["detail"] == (
             "Set an admin password first. It's what confirms turning deletion on."
         )
         assert client.get("/api/settings/safety").json()["destructive_enabled"] is False
@@ -1209,12 +1211,12 @@ class TestSetupStatus:
         assert _preflight_refusal(whole) is None
 
         no_plex = ReapGateway(plex=None, tautulli=object())  # type: ignore[arg-type]
-        assert (refusal := _preflight_refusal(no_plex)) is not None
-        assert "without Plex" in refusal
+        assert (code := _preflight_refusal(no_plex)) is not None
+        assert "without Plex" in reaper.refusal.MESSAGES[code]
 
         no_tautulli = ReapGateway(plex=object(), tautulli=None)  # type: ignore[arg-type]
-        assert (refusal := _preflight_refusal(no_tautulli)) is not None
-        assert "without Tautulli" in refusal
+        assert (code := _preflight_refusal(no_tautulli)) is not None
+        assert "without Tautulli" in reaper.refusal.MESSAGES[code]
 
         # ...and the same two absences, asked of the configuration instead of the clients.
         _make_scan_ready(client)
@@ -1320,9 +1322,11 @@ class TestSchedule:
         self, client: TestClient
     ) -> None:
         """The scan arm and the upkeep arm answer a cron the scheduler will not take with the
-        same words, and those words are ``_BAD_CRON`` with its slot filled. The two arms each
-        spelled the sentence out, byte-identically, with nothing asserting either, so a reword
-        of one would have shipped an operator two explanations of one refusal (rule 144).
+        same words, and those words are ``MESSAGES["error.settings.bad_cron"]`` with its slot
+        filled. Both arms raise the same code (``refuse(422, "error.settings.bad_cron", ...)``)
+        rather than spelling English out, so a reword of the one catalog template moves both
+        (phase 8a; this used to guard a shared ``_BAD_CRON`` constant each arm formatted by
+        hand, the same shape one level up).
 
         **Three mutations, one assertion each, and none of the three catches another.** Do not
         collapse them:
@@ -1332,29 +1336,31 @@ class TestSchedule:
         - *An arm re-inlines the sentence verbatim.* Caught by the source count alone. Both
           copies render identically, which is what the dedup means, so no assertion over a
           response can ever see it.
-        - *An arm raises ``_BAD_CRON`` unformatted.* Caught by the ``{reason}`` assertion alone.
+        - *An arm raises the template unformatted.* Caught by the ``{reason}`` assertion alone.
           The raw template starts and ends with the very halves being compared, and its literal
           ``{reason}`` is long enough to satisfy the length bound, so every other check here
           passes while the placeholder ships to the operator (rule 21).
 
         Every expectation is derived from the declaration, so none of this restates the sentence.
         """
-        prefix, suffix = _BAD_CRON.split("{reason}")
+        prefix, suffix = reaper.refusal.MESSAGES["error.settings.bad_cron"].split("{reason}")
 
         # Rule 144, and rule 147's caution about what a text scan can see: `prefix` is the
-        # declaration's own first half, so a re-inlined f-string anywhere in the package is a
+        # declaration's own first half, so a re-inlined f-string anywhere in the tree is a
         # second hit however the rest of it was reworded.
-        package = Path(reaper.api.settings.__file__).parent
+        package = Path(reaper.refusal.__file__).parent
         copies = sum(f.read_text(encoding="utf-8").count(prefix) for f in package.rglob("*.py"))
         assert copies == 1, (
-            f"{copies} copies of the cron refusal in src/reaper, expected only _BAD_CRON's "
+            f"{copies} copies of the cron refusal in src/reaper, expected only the catalog's "
             "declaration. An arm spelling its own sentence renders identically to this one."
         )
 
         for job_id in ("scheduled_scan", "refresh_ratings"):
             resp = client.put(f"/api/settings/jobs/{job_id}/schedule", json={"cron": "nope"})
             assert resp.status_code == 422, job_id
-            detail = resp.json()["detail"]
+            body = resp.json()
+            assert body["code"] == "error.settings.bad_cron", job_id
+            detail = body["detail"]
             assert detail.startswith(prefix), (job_id, detail)
             assert detail.endswith(suffix), (job_id, detail)
             assert "{reason}" not in detail, (job_id, detail)
@@ -1437,7 +1443,9 @@ class TestPlexStatus:
     def test_the_certificate_check_cannot_be_set_before_linking(self, client: TestClient) -> None:
         response = client.put("/api/settings/plex", json={"web_url": "", "verify_tls": False})
         assert response.status_code == 422
-        assert "Link one" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.plex.verify_tls_no_server"
+        assert "Link one" in body["detail"]
 
     @pytest.mark.parametrize("address", ["plex.example", "http://", "https://", "ftp://a.local"])
     def test_the_web_address_must_be_a_full_web_address(
@@ -1680,8 +1688,11 @@ class TestPlexLinkChoice:
         )
         assert blip.status_code == 200, blip.text
         assert blip.json()["status"] == "retrying"
-        # And it says why, so a longer wait reads as a wait rather than a hang.
-        assert "could not reach it" in blip.json()["reason"]
+        # And it carries why, as a typed reason (phase 8a's second wave), so a longer wait
+        # reads as a wait rather than a hang once the frontend composes it (phase 8b).
+        reason = blip.json()["reason"]
+        assert reason["k"] == "error.plex.link_unreachable"
+        assert reason["p"] == {"name": "Attic", "count": 1}
         assert client.get("/api/settings/plex").json()["linked"] is False
 
         # The SAME sign-in finishes once the server answers. Nothing was burned.
@@ -1705,7 +1716,9 @@ class TestPlexLinkChoice:
             json={"pin_id": start["pin_id"], "machine_identifier": "somebody-elses-machine"},
         )
         assert bad.status_code == 400
-        assert "No server this account owns" in bad.json()["detail"]
+        bad_body = bad.json()
+        assert bad_body["code"] == "error.plex.link_choice_not_found"
+        assert "No server this account owns" in bad_body["detail"]
 
         # The refusal consumed the PIN, so the obtained token cannot be replayed.
         retry = client.post(
@@ -1745,7 +1758,9 @@ class TestPlexLinkChoice:
             "/api/settings/plex/connection", json={"uri": "https://192.0.2.50:32400"}
         )
         assert refused.status_code == 409, refused.text
-        assert "a different Plex server" in refused.json()["detail"]
+        refused_body = refused.json()
+        assert refused_body["code"] == "error.plex.connection_wrong_server"
+        assert "a different Plex server" in refused_body["detail"]
         # Nothing was written: the stored address is still the one linking found.
         assert (
             client.get("/api/settings/plex").json()["connection_uri"]
@@ -1894,7 +1909,9 @@ class TestPlexLibrarySync:
 
         answer = client.post("/api/settings/plex/libraries/sync")
         assert answer.status_code == 502, answer.text
-        assert "Could not reach Plex" in answer.json()["detail"]
+        answer_body = answer.json()
+        assert answer_body["code"] == "error.plex.libraries_sync_failed"
+        assert "Could not reach Plex" in answer_body["detail"]
 
     def test_the_sync_route_refuses_before_a_server_is_linked(self, client: TestClient) -> None:
         assert client.post("/api/settings/plex/libraries/sync").status_code == 400

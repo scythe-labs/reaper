@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce, useSlowWait } from "../announce";
 import { api, type LogLine } from "../api";
+import { describeError } from "../errors";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SetRow } from "./SetRow";
@@ -310,10 +311,10 @@ export function LogsPanel() {
             </button>
           </SetRow>
         </div>
-        {setLevel.error && <Notice tone="error">{setLevel.error.message}</Notice>}
+        {setLevel.error && <Notice tone="error">{describeError(setLevel.error)}</Notice>}
         {download.error && (
           <Notice tone="error">
-            {t("logs.downloadError", { message: download.error.message })}
+            {t("logs.downloadError", { message: describeError(download.error) })}
           </Notice>
         )}
       </div>

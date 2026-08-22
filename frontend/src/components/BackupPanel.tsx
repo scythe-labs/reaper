@@ -11,6 +11,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api";
+import { describeError } from "../errors";
 import { since } from "../format";
 import { RestoreCard } from "./RestoreCard";
 import { StaleReadNotice } from "./StaleReadNotice";
@@ -40,7 +41,7 @@ export function BackupPanel({
       // The server stamps "last backup" as the file goes out; pick it up.
       await qc.invalidateQueries({ queryKey: ["backup-info"] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("backup.download.errorFallback"));
+      setError(err instanceof Error ? describeError(err) : t("backup.download.errorFallback"));
     } finally {
       setBusy(false);
     }

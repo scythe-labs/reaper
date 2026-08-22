@@ -45,7 +45,9 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import PlexServer, Snapshot
+from reaper.engine.reason import Reason
 from reaper.notify.discord import DiscordNotifier, build_notifier
+from reaper.refusal import Refusal
 from reaper.services import app_settings
 from reaper.services.grace import GraceReport, grace_report
 from reaper.services.profiles import active_profile_settings
@@ -73,15 +75,21 @@ LEAVING_SOON_COLLECTION = "Leaving Soon"
 SHELF_CONCURRENCY = 4
 
 
-class LeavingSoonDisabledError(RuntimeError):
+class LeavingSoonDisabledError(Refusal):
     """The shelf is turned off, so there is nothing to update."""
 
+    def __init__(self) -> None:
+        super().__init__("error.leaving_soon.disabled", status=400)
 
-class LeavingSoonDegradedError(RuntimeError):
+
+class LeavingSoonDegradedError(Refusal):
     """The last scan declared itself untrustworthy, so the shelf must not act on it."""
 
+    def __init__(self) -> None:
+        super().__init__("error.leaving_soon.degraded", status=400)
 
-class LeavingSoonUnlinkedError(RuntimeError):
+
+class LeavingSoonUnlinkedError(Refusal):
     """No Plex server is linked, so there is nowhere to put a shelf.
 
     Its own class because the route answers it 400 and a client ``PlexError`` 502. This used
@@ -89,6 +97,9 @@ class LeavingSoonUnlinkedError(RuntimeError):
     problem and an upstream failure, and the route could not tell them apart: an unreachable
     server was reported as a bad request, in a sentence the client wrote for a log (#734).
     """
+
+    def __init__(self) -> None:
+        super().__init__("error.leaving_soon.unlinked", status=400)
 
 
 async def _latest_scan_degraded(session: AsyncSession) -> bool:
@@ -504,15 +515,9 @@ async def _run_pass(
     """The pass itself. Split from :func:`run_sync` only so the lock wraps it whole."""
     async with session_factory() as session:
         if not await app_settings.leaving_soon_enabled(session):
-            raise LeavingSoonDisabledError(
-                "Leaving Soon is off. Turn it on in Settings, under Plex, "
-                "and Reaper will keep the shelf up to date."
-            )
+            raise LeavingSoonDisabledError()
         if await _latest_scan_degraded(session):
-            raise LeavingSoonDegradedError(
-                "The last scan couldn't be trusted, so the shelf wasn't updated. "
-                "Run a scan that finishes cleanly first."
-            )
+            raise LeavingSoonDegradedError()
         safety = await app_settings.runtime_safety(session, settings)
         libraries = await app_settings.enabled_plex_libraries(session)
         profile = await active_profile_settings(session)
@@ -528,9 +533,7 @@ async def _run_pass(
         plex = await _plex_client(session, box, settings)
 
     if plex is None:
-        raise LeavingSoonUnlinkedError(
-            "Leaving Soon needs a linked Plex server. Link one in Settings first."
-        )
+        raise LeavingSoonUnlinkedError()
 
     try:
         movie_keys, season_keys, _titles = _grace_keys(report)
@@ -621,7 +624,7 @@ async def after_scan(
             # fall-through to the heads-up below: it reads the same condemned set (rule
             # 116), so "shelf off" and "scan untrustworthy" are not the same skip.
             log.info("leaving_soon.skipped_degraded")
-            await _record_skip(session_factory, "the scan didn't finish cleanly")
+            await _record_skip(session_factory, Reason("error.leaving_soon.skip_degraded"))
             return
         except LeavingSoonUnlinkedError:
             # Shelf on, no server linked at all. A separate clause from the one below, and
@@ -629,14 +632,14 @@ async def after_scan(
             # only signal for which of the two happened, and the fixes are different (rule
             # 21). One class carried both until #734.
             log.info("leaving_soon.skipped_unlinked")
-            await _record_skip(session_factory, "no Plex server is linked")
+            await _record_skip(session_factory, Reason("error.leaving_soon.skip_unlinked"))
             recorded = True
         except PlexError as exc:
             # Shelf on and a server linked, but it did not answer. Fall through to the
             # Discord heads-up below, but do not swallow it silently: an operator who
             # enabled the shelf and sees it not updating has no other trail to this cause.
             log.warning("leaving_soon.shelf_unreachable", error=str(exc))
-            await _record_skip(session_factory, "Reaper couldn't reach Plex")
+            await _record_skip(session_factory, Reason("error.leaving_soon.skip_unreachable"))
             recorded = True
 
         # Shelf off, or on with no reachable server: the Discord heads-up still runs
@@ -677,14 +680,14 @@ async def after_scan(
         # reason already written above. What is left is a surprise nobody has a name for,
         # and the row still has to say the shelf did not move.
         if shelf_on and not recorded:
-            await _record_skip(session_factory, "the update didn't finish")
+            await _record_skip(session_factory, Reason("error.leaving_soon.skip_failed"))
 
 
 async def _record_skip(
     session_factory: async_sessionmaker[AsyncSession],
-    result: str,
+    reason: Reason,
 ) -> None:
-    """Write down that a scan finished without updating the shelf, and why in one clause.
+    """Write down that a scan finished without updating the shelf, and why, as a typed reason.
 
     Read beside the last completed pass and preferred only while it is newer, so a pass that
     later completes wins on its own timestamp and this is never cleared -- the arrangement
@@ -696,7 +699,7 @@ async def _record_skip(
     try:
         async with session_factory() as session:
             await app_settings.set_leaving_soon_last_skip(
-                session, at=utcnow().isoformat(), result=result
+                session, at=utcnow().isoformat(), reason=reason
             )
             await session.commit()
     except Exception as exc:

@@ -17,7 +17,10 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { ShowPanel } from "./ShowPanel";
 import { WhyPanel } from "./WhyPanel";
 
-vi.mock("../api", () => ({
+// Spreads the real module for ApiError (rule 135): describeError's `instanceof ApiError`
+// check throws against a mock that answers for `api` alone.
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
   api: { override: vi.fn(), clearOverride: vi.fn(), profile: vi.fn(), general: vi.fn() },
 }));
 

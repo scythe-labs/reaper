@@ -572,7 +572,13 @@ class TestTheRoutes:
         )
 
         assert r.status_code == 400
-        assert r.json()["detail"] == "Say which collection in that library to read."
+        body = r.json()
+        # ListConfigError is now a Refusal subclass of its own (phase 8a's second wave): the
+        # code names the condition, with no params, rather than wrapping the service's
+        # English in a generic pass-through.
+        assert body["code"] == "error.lists.collection_required"
+        assert body["params"] == {}
+        assert body["detail"] == "Say which collection in that library to read."
 
     def test_editing_the_config_leaves_the_name_alone(self, client: TestClient) -> None:
         """Rule 1: an omitted field and an explicit one are different requests. The edit
@@ -599,7 +605,9 @@ class TestTheRoutes:
         r = client.patch("/api/lists/configured/9999", json={"name": "Keep"})
 
         assert r.status_code == 400
-        assert "no longer exists" in r.json()["detail"]
+        body = r.json()
+        assert body["code"] == "error.lists.not_found"
+        assert "no longer exists" in body["detail"]
 
 
 def _definition(**overrides: object) -> list_config.ListDefinition:
@@ -763,7 +771,9 @@ class TestCheckingTheListsNow:
         response = client.post("/api/lists/sync", json={})
 
         assert response.status_code == 409, response.text
-        assert "can't read" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.lists.registry_unreadable"
+        assert "can't read" in body["detail"]
         assert not seen, "checked the lists anyway, which retires what it could not read"
 
     def test_plex_not_answering_is_said_plainly_and_retires_nothing(
@@ -795,7 +805,7 @@ class TestCheckingTheListsNow:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def refuses(factory: object, settings: object, box: object, **kw: object) -> Any:
-            raise scan_runner.ScanConfigError("Add a Radarr before checking.")
+            raise scan_runner.ScanConfigError("error.scan.missing_sources")
 
         monkeypatch.setattr(scan_runner, "build_sources", refuses)
         seen = self._syncs(monkeypatch, {})
@@ -803,7 +813,16 @@ class TestCheckingTheListsNow:
         response = client.post("/api/lists/sync", json={})
 
         assert response.status_code == 400, response.text
-        assert response.json()["detail"] == "Add a Radarr before checking."
+        body = response.json()
+        # ScanConfigError is now a Refusal subclass of its own (phase 8a's second wave): the
+        # route answers through refuse_from(exc) rather than wrapping its English in a
+        # generic pass-through code.
+        assert body["code"] == "error.scan.missing_sources"
+        assert body["params"] == {}
+        assert body["detail"] == (
+            "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
+            "Add them in Settings first."
+        )
         assert not seen
 
     def test_it_counts_the_checks_that_landed_apart_from_the_ones_that_failed(
@@ -938,4 +957,6 @@ class TestARowStaysOnScreenSoTheOperatorCanFixIt:
         response = client.delete("/api/lists/configured/9999")
 
         assert response.status_code == 400, response.text
-        assert "no longer exists" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.lists.not_found"
+        assert "no longer exists" in body["detail"]

@@ -12,6 +12,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from reaper.config import Settings
+from reaper.refusal import MESSAGES
 
 
 def test_health_returns_ok(client: TestClient) -> None:
@@ -46,3 +47,55 @@ def test_every_route_response_model_resolves(client: TestClient) -> None:
         if route.response_field is not None:
             # Raises PydanticUserError if the annotation cannot be resolved.
             route.response_field.validate({}, {}, loc=("response",))
+
+
+def test_a_coded_refusal_carries_its_code_and_params_beside_the_english(
+    client: TestClient,
+) -> None:
+    """``main._refusal_reason`` (phase 8a): every ``api.errors.refuse`` refusal answers with
+    ``detail`` (the plain English an API client already reads), plus ``code`` and ``params``
+    at the top level for a typed reader. A fresh install has no API key yet, which is the
+    plainest ``refuse(404, "error.settings.no_api_key")`` in the tree.
+    """
+    response = client.get("/api/settings/general/api-key")
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": MESSAGES["error.settings.no_api_key"],
+        "code": "error.settings.no_api_key",
+        "params": {},
+    }
+
+
+def test_a_schema_refusal_types_the_field_it_understands_and_leaves_the_rest_plain(
+    client: TestClient,
+) -> None:
+    """``main._validation_reason`` (phase 8a): a wire-schema body carrying both a coded
+    refusal (``GateSettingIn``'s ``_must_be_authorable``, a ``PydanticCustomError`` whose
+    ``type`` is the catalog code) and an ordinary type mismatch pydantic catches on its own
+    answers with one ``detail`` list holding both shapes side by side -- the coded item
+    carrying ``code``/``params``, the plain one carrying neither.
+    """
+    response = client.post(
+        "/api/policy",
+        json={
+            # A retired gate id: PolicyBody.RETIRED_GATES lists it, so GateSettingIn's
+            # own validator refuses it as unauthorable -- the coded item.
+            "gates": [{"gate": "season_progression", "enabled": True}],
+            # Every other required field is simply missing, which is FastAPI's own
+            # "missing" type error -- plain, uncoded, on several items in the same list.
+        },
+    )
+    assert response.status_code == 422
+    items = response.json()["detail"]
+    assert items, "expected at least one validation item"
+
+    coded = [item for item in items if item.get("code") == "error.policy.retired_gate"]
+    assert len(coded) == 1
+    assert coded[0]["params"] == {}
+    assert coded[0]["msg"] == MESSAGES["error.policy.retired_gate"]
+    assert coded[0]["loc"][-2:] == ["0", "gate"]
+    assert "Value error" not in coded[0]["msg"]
+
+    plain = [item for item in items if item["type"] == "missing"]
+    assert plain, "expected at least one ordinary missing-field error"
+    assert all("code" not in item for item in plain)

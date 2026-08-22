@@ -42,7 +42,10 @@ vi.mock("./SetupConnectStep", () => ({
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 const { announceSpy } = vi.hoisted(() => ({ announceSpy: vi.fn() }));
 vi.mock("../announce", async (importOriginal) => ({

@@ -41,6 +41,9 @@ import { shippedSource, sourceText, srcRelative } from "./test/sources";
 // the vocabulary endpoint no longer ships them (#868 phase 4); proven complete by
 // `test_review_chips.py::test_every_field_and_fixed_check_has_catalog_copy` for the label and
 // by `tests/test_review_chips.py`'s pinned help/unit sets for the other two.
+// errors.ts's describeError composes every coded ApiError under "error." the same way
+// (phase 8b): a refusal's code is already the catalog's full dotted path, so the namespace
+// prefix it strips before calling composeIn is proven there, not here.
 const DYNAMIC: Record<string, string[]> = {
   "why.ts": [
     "why.",
@@ -51,6 +54,7 @@ const DYNAMIC: Record<string, string[]> = {
     "services.discord.testResult.",
     "services.modal.mapError",
   ],
+  "errors.ts": ["error."],
   "components/PolicyRuleEditors.tsx": [
     "why.field.",
     "policyRules.fieldHelp.",

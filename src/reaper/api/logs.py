@@ -16,12 +16,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from reaper import logbuffer
 from reaper.api import tags as api_tags
+from reaper.api.errors import refuse
 from reaper.services import app_settings
 
 router = APIRouter(prefix="/api", tags=[api_tags.LOGS])
@@ -144,7 +145,7 @@ async def put_log_level(request: Request, payload: LogLevelIn) -> LogsOut:
     """
     canonical = logbuffer.normalize_level(payload.level)
     if canonical is None or canonical not in logbuffer.UI_LEVELS:
-        raise HTTPException(422, "Pick Debug, Info, or Warning.")
+        refuse(422, "error.logs.bad_level")
     factory = request.app.state.session_factory
     async with factory() as session:
         await app_settings.set_log_level(session, canonical)

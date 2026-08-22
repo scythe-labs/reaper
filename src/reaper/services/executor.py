@@ -129,6 +129,7 @@ from reaper.db.models import (
     StepState,
 )
 from reaper.engine.policy import ProfileSettings
+from reaper.refusal import MESSAGES, Refusal
 from reaper.services import list_config, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
@@ -377,26 +378,31 @@ class ReapGateway:
     def radarr_for(self, instance_id: int) -> MovieDeleter:
         client = self.radarr.get(instance_id)
         if client is None:
-            raise ExecutionError(
-                f"No Radarr instance {instance_id} is configured, but the plan targets it. "
-                "Refusing to guess which server to delete from."
-            )
+            raise ExecutionError("error.reap.radarr_instance_missing", instance_id=instance_id)
         return client
 
     def sonarr_for(self, instance_id: int) -> SeasonPruner:
         client = self.sonarr.get(instance_id)
         if client is None:
-            raise ExecutionError(
-                f"No Sonarr instance {instance_id} is configured, but the plan targets it. "
-                "Refusing to guess which server to delete from."
-            )
+            raise ExecutionError("error.reap.sonarr_instance_missing", instance_id=instance_id)
         return client
 
 
-class ExecutionError(RuntimeError):
+class ExecutionError(Refusal):
     """The run could not proceed. Raised for the conditions that void a whole run
     (a changed manifest, a cap breach, a failed canary) -- never for a single item,
-    which is skipped rather than aborting the run."""
+    which is skipped rather than aborting the run. A catalog code plus raw params.
+
+    Defaults to 409 rather than ``Refusal``'s own 422: every one of these is a request that
+    was fine when it was approved but is no longer actionable now (a stale plan, a run
+    already claimed, a run that already executed) -- a conflict with the current state, not
+    a content refusal.
+    """
+
+    def __init__(
+        self, code: str, /, *, status: int = 409, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 @dataclass(frozen=True)
@@ -534,11 +540,12 @@ class _Delete:
 #: the run removed anything, so the two sentences told them to start a scan and that one was
 #: already going, in the same breath (rule 144). The surface that knows whether a scan was
 #: launched is the one that says so.
-_JOURNAL_HALT = (
-    "Reaper could not save its record of what it just did, so it stopped before touching "
-    "anything else. Anything already removed stays removed. Check the free space and "
-    "permissions on Reaper's data folder."
-)
+#:
+#: Derived from the catalog rather than restated: the two ``raise ExecutionError`` sites below
+#: pass the literal ``"error.reap.journal_halt"`` code (so the refusal walk can see it), and
+#: this constant reads the same English back out for the report/step fields that carry the
+#: sentence directly rather than through an exception (rule 144).
+_JOURNAL_HALT = MESSAGES["error.reap.journal_halt"]
 
 
 class _JournalWriteError(RuntimeError):
@@ -627,7 +634,7 @@ class _JournalRow:
 async def _load(session: AsyncSession, run_id: int) -> tuple[ReapRun, list[ActionStep]]:
     run = await session.get(ReapRun, run_id)
     if run is None:
-        raise ExecutionError(f"No run {run_id}.")
+        raise ExecutionError("error.reap.no_run", run_id=run_id)
     steps = list(
         (
             await session.execute(
@@ -739,10 +746,7 @@ def _deletable_bytes(deletable: Sequence[_Delete], *, allow_unmeasured: bool = F
     """
     unknown = sorted(d.candidate.media_key for d in deletable if d.candidate.size_bytes is None)
     if unknown and not allow_unmeasured:
-        raise ExecutionError(
-            "Reaper couldn't measure the size of these items, so it can't check the run "
-            f"against your limits: {unknown}. The run is aborted."
-        )
+        raise ExecutionError("error.reap.unmeasured_for_caps", keys=", ".join(unknown))
     return sum(d.candidate.size_bytes for d in deletable if d.candidate.size_bytes is not None)
 
 
@@ -769,10 +773,9 @@ def _check_caps(
     unmeasured = sum(1 for d in deletable if d.candidate.size_bytes is None)
     if unmeasured > settings.max_unmeasured_per_run:
         raise ExecutionError(
-            f"This run would delete {unmeasured} items Reaper couldn't measure, over your "
-            f"limit of {settings.max_unmeasured_per_run} per run. It stops rather than "
-            "deleting just part. Raise the unknown-size allowance in Policy, under Pace and "
-            "limits."
+            "error.reap.unmeasured_over_limit",
+            unmeasured=unmeasured,
+            limit=settings.max_unmeasured_per_run,
         )
 
     # The four run-size caps are the optional second layer, on top of the deletion
@@ -784,17 +787,13 @@ def _check_caps(
     total_bytes = _deletable_bytes(deletable, allow_unmeasured=allow_unmeasured)
     if items > settings.max_items_per_run:
         raise ExecutionError(
-            f"This plan would remove {items} titles, over your per-run cap of "
-            f"{settings.max_items_per_run}. It stops rather than deleting just part, "
-            "because which titles go must never come down to sort order. Raise the cap "
-            "or turn limits off in Policy, under Pace and limits."
+            "error.reap.items_over_run_cap", items=items, cap=settings.max_items_per_run
         )
     if total_bytes > settings.max_bytes_per_run:
         raise ExecutionError(
-            f"This plan would remove {total_bytes / 1024**3:.0f} GB, over your per-run "
-            f"cap of {settings.max_bytes_per_run / 1024**3:.0f} GB. It stops rather than "
-            "deleting just part. Raise the cap or turn limits off in Policy, under Pace "
-            "and limits."
+            "error.reap.bytes_over_run_cap",
+            gb=round(total_bytes / 1024**3),
+            cap_gb=round(settings.max_bytes_per_run / 1024**3),
         )
 
 
@@ -915,14 +914,14 @@ class Executor:
         # run is re-planned from a fresh scan, not re-executed; refusing here makes that
         # explicit rather than letting a re-trigger fail confusingly at the first item.
         if run.state != RunState.PLANNED:
-            raise ExecutionError(
-                f"Run {run_id} is {run.state.value}, not runnable. A run executes once."
-            )
+            raise ExecutionError("error.reap.not_runnable", run_id=run_id, state=run.state.value)
 
         # A real (non-dry) run requires the host ceiling to be up. This is the
         # executor's own check; the transport enforces it again independently.
         if not self._dry_run and not self._safety.destructive_allowed:
-            raise ExecutionError(f"Refusing to execute for real: {self._safety.why_blocked()}")
+            if self._safety.recovery_mode:
+                raise ExecutionError("error.safety.recovery_mode_active")
+            raise ExecutionError("error.safety.deletion_off")
 
         # ...and it requires the clients to drive the delete AND to run the two live
         # pre-delete interlocks. No Plex means no streaming veto; no Tautulli means no
@@ -930,27 +929,16 @@ class Executor:
         # is deleting without being able to see who is watching.
         if not self._dry_run:
             if self._gateway is None:
-                raise ExecutionError(
-                    "Refusing a real run with no clients configured: there is nothing to "
-                    "issue the delete through, and no way to check who is watching."
-                )
+                raise ExecutionError("error.reap.no_clients_configured")
             if self._gateway.plex is None:
-                raise ExecutionError(
-                    "Refusing a real run without Plex: the active-stream veto (re-polled "
-                    "before every delete) cannot run, and deleting blind to who is "
-                    "watching is exactly what must never happen."
-                )
+                # Same condition and the same words as the execute route's own earlier
+                # check (api.runs._preflight_refusal), which this is the backstop for --
+                # one code, so the two cannot drift apart (rule 144).
+                raise ExecutionError("error.runs.preflight_no_plex")
             if self._gateway.tautulli is None:
-                raise ExecutionError(
-                    "Refusing a real run without Tautulli: the played-since-approval check "
-                    "cannot run, and the grace period exists precisely so a late view can "
-                    "still spare an item."
-                )
+                raise ExecutionError("error.runs.preflight_no_tautulli")
             if self._armed_recheck is None:
-                raise ExecutionError(
-                    "Refusing a real run without a live arm check: turning deletion off "
-                    "could not stop a run already in progress."
-                )
+                raise ExecutionError("error.reap.no_arm_check")
 
         condemned = await _condemned(self._session, run.snapshot_id)
 
@@ -982,11 +970,7 @@ class Executor:
         # recompute and the "executes once" guard above.
         current_hash = manifest_hash(sorted(condemned.values(), key=lambda c: c.media_key))
         if current_hash != run.approved_manifest_hash:
-            raise ExecutionError(
-                "The condemned set changed since this plan was approved: an item was "
-                "added, removed, or resized. The approval was for a different plan and "
-                "is void. Re-scan, re-review, and approve the new plan."
-            )
+            raise ExecutionError("error.reap.manifest_changed")
 
         # -- interlock 1, second half: the policy must still be the one in force ----
         # The manifest above cannot catch a policy edit: it hashes frozen candidate rows,
@@ -1005,10 +989,7 @@ class Executor:
         # Reaper had to recover reads as the shipped default here (``active_policy`` never
         # raises), which will not match and so refuses -- the same direction rule 65 wants.
         if run.policy_hash != await live_policy_hash(self._session):
-            raise ExecutionError(
-                "Your policy changed after this plan was approved, so the plan is out of "
-                "date and nothing was deleted. Run a new scan, then review and plan again."
-            )
+            raise ExecutionError("error.reap.policy_changed")
 
         # -- interlock 1, third half: the protection lists must still be the ones scanned ----
         # The two hashes above cannot see a list edit. A keep list is not policy -- retagging
@@ -1032,11 +1013,7 @@ class Executor:
         live_lists = await list_config.current_fingerprint(self._session)
         stored_lists = snapshot.list_config_hash if snapshot is not None else None
         if stored_lists is None or live_lists is None or stored_lists != live_lists:
-            raise ExecutionError(
-                "Your protection lists changed after this plan was approved, so the plan is "
-                "out of date and nothing was deleted. Run a new scan, then review and plan "
-                "again."
-            )
+            raise ExecutionError("error.reap.lists_changed")
 
         # Group every step by the item it belongs to, keeping every planned item that
         # actually carries an irreversible delete step. An item is one delete unit -- a
@@ -1114,9 +1091,7 @@ class Executor:
             # execute() is typed as the base Result; a DML statement always yields a
             # CursorResult, which is what carries rowcount.
             if cast("CursorResult[Any]", claimed).rowcount != 1:
-                raise ExecutionError(
-                    f"Run {run.id} was already claimed by another request. A run executes once."
-                )
+                raise ExecutionError("error.reap.already_claimed", run_id=run.id)
             run.state = RunState.EXECUTING
             run.started_at = started
             await self._session.commit()
@@ -1424,19 +1399,17 @@ class Executor:
 
         if past_items + items > self._settings.max_items_per_30d:
             raise ExecutionError(
-                f"This run would delete {items} items on top of the {past_items} already "
-                f"deleted in the last 30 days, over the rolling cap of "
-                f"{self._settings.max_items_per_30d}. It stops rather than deleting just part. "
-                "Wait for the window to pass, raise the cap, or turn limits off in Policy, "
-                "under Pace and limits."
+                "error.reap.items_over_rolling_cap",
+                items=items,
+                past_items=past_items,
+                cap=self._settings.max_items_per_30d,
             )
         if past_bytes + total_bytes > self._settings.max_bytes_per_30d:
             raise ExecutionError(
-                f"This run would delete {total_bytes / 1024**3:.0f} GB on top of the "
-                f"{past_bytes / 1024**3:.0f} GB already deleted in the last 30 days, over "
-                f"the rolling cap of {self._settings.max_bytes_per_30d / 1024**3:.0f} GB. It "
-                "stops rather than deleting just part. Wait for the window to pass, raise the "
-                "cap, or turn limits off in Policy, under Pace and limits."
+                "error.reap.bytes_over_rolling_cap",
+                gb=round(total_bytes / 1024**3),
+                past_gb=round(past_bytes / 1024**3),
+                cap_gb=round(self._settings.max_bytes_per_30d / 1024**3),
             )
 
     async def _rolling_30d_deletions(self) -> tuple[int, int]:
@@ -1535,19 +1508,12 @@ class Executor:
             # and honest: every earlier item's marks are already committed, and the
             # abort reason tells the owner exactly why the rest were not touched.
             if not self._dry_run and not await self._still_armed():
-                raise ExecutionError(
-                    "Deletion was turned off while this run was in progress, so the run "
-                    "stopped here. Anything already deleted stays deleted; nothing "
-                    "further was sent."
-                )
+                raise ExecutionError("error.reap.deletion_disabled_mid_run")
             # The explicit Stop, checked in the same breath and the same fail-graceful way:
             # a graceful halt through an ExecutionError, so execute()'s abort path runs and
             # -- crucially -- still tidies Plex for whatever was already removed.
             if not self._dry_run and await self._stop_requested():
-                raise ExecutionError(
-                    "You stopped this run, so it halted here. Anything already removed "
-                    "stays removed; nothing further was sent."
-                )
+                raise ExecutionError("error.reap.stopped_by_operator")
             # The owner's overrides, re-read before EVERY item of a real run. Loading them
             # once at run start meant a Spare clicked while a long reap was in flight was
             # invisible to it and the file was deleted anyway -- with Stop the only mid-run
@@ -1636,7 +1602,7 @@ class Executor:
                 report.skipped += 1
                 self._emit_progress(done, total, report, outcome.title)
                 if not journalled:
-                    raise ExecutionError(_JOURNAL_HALT)
+                    raise ExecutionError("error.reap.journal_halt")
                 continue  # a skip touched no file, so it does not consume the canary
 
             # From here the item was really acted on (verified or failed).
@@ -1667,7 +1633,7 @@ class Executor:
             # not be recorded, and an unrecorded removal is one the rolling budget never
             # charges (rule 5/30).
             if not journalled:
-                raise ExecutionError(_JOURNAL_HALT)
+                raise ExecutionError("error.reap.journal_halt")
 
             if outcome.state == StepState.FAILED and first_real_attempt:
                 # The canary -- the first real deletion -- misbehaved. Halt the whole run:
@@ -1680,9 +1646,7 @@ class Executor:
                     detail=outcome.detail,
                 )
                 raise ExecutionError(
-                    f'The first item, the test item ("{outcome.title}"), did not '
-                    f"finish the way Reaper expected: {outcome.detail}. Stopping now, "
-                    "before anything else is touched."
+                    "error.reap.canary_failed", title=outcome.title, detail=outcome.detail
                 )
             # A later item failing is recorded and survivable: one stubborn item is not a
             # reason to abandon the rest, and the canary already proved the mechanism works.
@@ -1698,12 +1662,7 @@ class Executor:
                     title=outcome.title,
                     detail=outcome.detail,
                 )
-                raise ExecutionError(
-                    f'The run stopped at "{outcome.title}". Reaper could not tell '
-                    "what went wrong there, so it did not touch anything after it. Anything "
-                    "already removed stays removed. The details are in the run's own list "
-                    "and in the log."
-                )
+                raise ExecutionError("error.reap.item_failed_unexplained", title=outcome.title)
 
     async def _refresh_overrides(self) -> None:
         """Re-read the owner's spare/reap decisions, mid-run, before the next item.
@@ -1726,11 +1685,7 @@ class Executor:
             self._decisions = await whitelist.overrides(self._session)
         except Exception as exc:
             log.warning("reap.override_recheck_unreadable", error=str(exc))
-            raise ExecutionError(
-                "Reaper could not re-check your keep and remove decisions, so the run "
-                "stopped here rather than risk deleting something you just kept. Anything "
-                "already deleted stays deleted; nothing further was sent."
-            ) from exc
+            raise ExecutionError("error.reap.overrides_unreadable") from exc
 
     async def _one_delete(
         self, delete: _Delete, *, is_canary: bool, approved_at: datetime

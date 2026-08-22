@@ -34,10 +34,11 @@ import math
 from collections.abc import Callable, Sequence
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api.errors import RefusalHTTPException, refuse
 from reaper.auth import proxy
 from reaper.auth.ratelimit import Throttle, password_throttle
 from reaper.config import Settings
@@ -110,11 +111,7 @@ def refuse_if_waiting(retry: float) -> None:
     """Turn a positive wait into the one 429 every limit answers with."""
     if retry > 0.0:
         seconds = max(1, math.ceil(retry))
-        raise HTTPException(
-            429,
-            "Too many attempts. Please wait and try again.",
-            headers={"Retry-After": str(seconds)},
-        )
+        refuse(429, "error.auth.too_many_attempts", headers={"Retry-After": str(seconds)})
 
 
 def throttled(throttle: Throttle, *keys: str) -> None:
@@ -155,11 +152,11 @@ def _record_password_failure(throttle: Throttle, keys: Sequence[str], *, gate: s
 # ---------------------------------------------------------------------------
 
 
-def busy_hashing() -> HTTPException:
+def busy_hashing() -> RefusalHTTPException:
     """The one 503 every password-hashing route sheds load with."""
-    return HTTPException(
+    return RefusalHTTPException(
         503,
-        "The server is busy checking passwords. Please try again shortly.",
+        "error.auth.password_hashing_busy",
         headers={"Retry-After": "2"},
     )
 
@@ -185,7 +182,7 @@ async def require_admin_password(
     *,
     keys: tuple[str, ...],
     gate: str,
-    refusal: str,
+    code: str,
 ) -> None:
     """Ask for the admin password behind the lockout, or refuse. The four gates' ritual, once.
 
@@ -204,12 +201,12 @@ async def require_admin_password(
     recorded, so a capacity refusal never reaches the lockout counters (rule 11/98). That is
     structural rather than a branch here: the exception leaves before the ``if`` below runs.
 
-    ``refusal`` is the sentence the operator reads, and it names what was kept rather than what
-    went wrong (rule 21). ``gate`` names the interlock in the log and is never shown.
+    ``code`` names the catalog sentence the operator reads, which names what was kept rather
+    than what went wrong (rule 21). ``gate`` names the interlock in the log and is never shown.
     """
     throttled(password_throttle, *keys)
     if not await _verify_admin_password(session, password):
         _record_password_failure(password_throttle, keys, gate=gate)
-        raise HTTPException(403, refusal)
+        refuse(403, code)
     for key in keys:
         password_throttle.record_success(key)

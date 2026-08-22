@@ -49,6 +49,7 @@ import {
   type SignalSetting,
 } from "../api";
 import { announce } from "../announce";
+import { describeError } from "../errors";
 import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
 import { DocLink, HelpIcon } from "../docs/DocLink";
 import { bytes, count, humanDays } from "../format";
@@ -1881,7 +1882,9 @@ export function PolicyEditor({
   // else (a timeout, a 500) means the CHECK itself failed, which must not be dressed up
   // as a policy error nor lock Save: the server re-validates on save regardless.
   const invalidMessage =
-    invalidError instanceof ApiError && invalidError.status === 422 ? invalidError.message : null;
+    invalidError instanceof ApiError && invalidError.status === 422
+      ? describeError(invalidError)
+      : null;
   const validatorDown = invalidError !== null && invalidMessage === null;
 
   // The savebar saves two INDEPENDENT things, so a problem in one must not hold the other
@@ -2914,8 +2917,8 @@ export function PolicyEditor({
             >
               {saving ? t("common.saving") : t("common.saveChanges")}
             </button>
-            {save.error && <Notice tone="error">{save.error.message}</Notice>}
-            {savePace.error && <Notice tone="error">{savePace.error.message}</Notice>}
+            {save.error && <Notice tone="error">{describeError(save.error)}</Notice>}
+            {savePace.error && <Notice tone="error">{describeError(savePace.error)}</Notice>}
           </div>
         )}
       </div>
@@ -2932,7 +2935,7 @@ export function PolicyEditor({
           <div className="sim sim-info">
             <h3>{t("policyEditor.sim.errorHeading")}</h3>
             <p>{t("policyEditor.sim.errorBody")}</p>
-            <p className="error">{simError.message}</p>
+            <p className="error">{describeError(simError)}</p>
           </div>
         ) : simulation ? (
           simulation.exact ? (
@@ -2947,7 +2950,7 @@ export function PolicyEditor({
               scanning={scanning}
               followupQueued={scanState?.followup_queued ?? false}
               starting={startScan.isPending}
-              startError={startScan.error ? startScan.error.message : null}
+              startError={startScan.error ? describeError(startScan.error) : null}
               onScan={() => startScan.mutate()}
               percent={scanState?.percent ?? 0}
               detail={scanState?.detail ?? ""}

@@ -7,15 +7,18 @@
 // or a fragment another key nests, and where the string shows in the app. This gate does not
 // judge the WORDING of a note -- only that the required set of keys has exactly one.
 //
-// The required set is derived, never pasted (rule 145): every key under the seven namespaces a
-// translator most needs guided (why., chip., warning., the two policyRules.field* families,
-// policySim.staleReason., services.discord.testResult.), two one-off leaves outside them
-// (services.modal.mapError, lists.plexError), and every OTHER catalog message carrying an ICU
-// argument or a tag -- a plain sentence with nothing to interpolate needs no note. "Carries an
-// argument or a tag" is answered by parsing the message with the same ICU library the other two
-// catalog gates use (i18n-keys.test.ts, i18n-locales.test.ts), not by a brace-matching regex:
-// an escaped literal brace (`'{'text'}'`) parses as plain text, so a regex counting braces would
-// over-collect exactly where rule 147 warns a hand-rolled matcher usually fails.
+// The required set is derived, never pasted (rule 145): every key under the eight namespaces a
+// translator most needs guided (why., chip., warning., error., the two policyRules.field*
+// families, policySim.staleReason., services.discord.testResult.), two one-off leaves outside
+// them (services.modal.mapError, lists.plexError), and every OTHER catalog message carrying an
+// ICU argument or a tag -- a plain sentence with nothing to interpolate needs no note. "error."
+// joins the whole-namespace group rather than relying on the ICU-argument rule alone (phase
+// 8b): a coded refusal with no param still needs the translator told which screen it fires on.
+// "Carries an argument or a tag" is answered by parsing the message with the same ICU library
+// the other two catalog gates use (i18n-keys.test.ts, i18n-locales.test.ts), not by a
+// brace-matching regex: an escaped literal brace (`'{'text'}'`) parses as plain text, so a
+// regex counting braces would over-collect exactly where rule 147 warns a hand-rolled matcher
+// usually fails.
 
 import { TYPE, type MessageFormatElement } from "@formatjs/icu-messageformat-parser";
 import { IntlMessageFormat } from "intl-messageformat";
@@ -36,6 +39,7 @@ const REQUIRED_NAMESPACES = [
   "why.",
   "chip.",
   "warning.",
+  "error.",
   "policyRules.fieldHelp.",
   "policyRules.fieldUnit.",
   "policySim.staleReason.",
@@ -76,7 +80,7 @@ export function requiredKeysOf(catalog: Catalog): Set<string> {
 }
 
 const HOW_TO_UPDATE =
-  "A required key is: every key under why., chip., warning., policyRules.fieldHelp., " +
+  "A required key is: every key under why., chip., warning., error., policyRules.fieldHelp., " +
   "policyRules.fieldUnit., policySim.staleReason. or services.discord.testResult., plus the " +
   "two exact keys services.modal.mapError and lists.plexError, plus any OTHER catalog message " +
   "carrying an ICU argument or a tag. Write (or remove) the note in " +
@@ -86,7 +90,7 @@ const HOW_TO_UPDATE =
 //: three assertions below already name every individual key that moved, but a set that shrank
 //: by exactly as much as it grew would leave them empty while this population changed under
 //: everyone's feet.
-const EXPECTED_REQUIRED_COUNT = 836;
+const EXPECTED_REQUIRED_COUNT = 1048;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {
@@ -103,7 +107,7 @@ describe("translator notes (locales/en/ui.notes.json)", () => {
   });
 
   it("the required-set rule catches a namespaced key and an argued/tagged one alike, and only those (rule 145)", () => {
-    // Six of the seven required namespaces are exercised here; the seventh
+    // Seven of the eight required namespaces are exercised here; the eighth
     // (services.discord.testResult.) is proven the same way by the full-catalog tests below,
     // since a literal "services.*.*" fixture string here reads as a Python symbol citation to
     // the repo's own hygiene gate (test_a_dotted_symbol_citation_resolves_to_a_real_symbol) --
@@ -112,6 +116,7 @@ describe("translator notes (locales/en/ui.notes.json)", () => {
       "why.anything": "Plain sentence.",
       "chip.anything": "Plain sentence.",
       "warning.anything": "Plain sentence.",
+      "error.anything": "Plain sentence.",
       "policyRules.fieldHelp.anything": "Plain sentence.",
       "policyRules.fieldUnit.anything": "days",
       "policySim.staleReason.anything": "Plain sentence.",
@@ -126,6 +131,7 @@ describe("translator notes (locales/en/ui.notes.json)", () => {
         "why.anything",
         "chip.anything",
         "warning.anything",
+        "error.anything",
         "policyRules.fieldHelp.anything",
         "policyRules.fieldUnit.anything",
         "policySim.staleReason.anything",

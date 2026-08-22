@@ -18,6 +18,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trans, useTranslation } from "react-i18next";
 import { useSlowWait } from "../announce";
 import { ApiError, api, type RequesterRow } from "../api";
+import { describeError } from "../errors";
 import { bytes, count } from "../format";
 import { BalanceBar } from "./BalanceBar";
 import { CardOpen } from "./CardOpen";
@@ -274,7 +275,7 @@ export function Fairness({
           wrote; a fetch failure's own message is not operator copy (rule 21). */}
       {error && !data && (
         <Notice tone="error">
-          {error instanceof ApiError ? error.message : t("scales.board.loadFailed")}
+          {error instanceof ApiError ? describeError(error) : t("scales.board.loadFailed")}
         </Notice>
       )}
       {error && data && <StaleReadNotice what={t("scales.board.staleWhat")} />}

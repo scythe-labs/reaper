@@ -168,7 +168,9 @@ class TestGeneralSettings:
         client.put("/api/settings/general", json={"accent_color": "#4f46e5"})
         response = client.put("/api/settings/general", json={"accent_color": "blue"})
         assert response.status_code == 422
-        assert "#" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.settings.accent_color_invalid"
+        assert "#" in body["detail"]
         # The bad value never landed; the previous color still stands.
         assert client.get("/api/settings/general").json()["accent_color"] == "#4f46e5"
 
@@ -241,7 +243,9 @@ class TestGeneralSettings:
     def test_a_malformed_url_is_refused_in_plain_words(self, client: TestClient) -> None:
         response = client.put("/api/settings/general", json={"application_url": "reaper.local"})
         assert response.status_code == 422
-        assert "http" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.settings.application_url_invalid"
+        assert "http" in body["detail"]
 
     def test_a_malformed_proxy_entry_is_refused(self, client: TestClient) -> None:
         response = client.put("/api/settings/general", json={"trusted_proxies": ["not-an-address"]})
@@ -269,7 +273,9 @@ class TestGeneralSettings:
             },
         )
         assert response.status_code == 422
-        assert "http" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.settings.application_url_invalid"
+        assert "http" in body["detail"]
         assert client.get("/api/settings/general").json() == before
 
         # The same body with that field corrected writes all six, so the test cannot pass by
@@ -355,11 +361,13 @@ class TestGeneralSettings:
                     application_name="Media Reaper", timezone="Nowhere/Nothing"
                 )
             )
+        assert getattr(bad_zone.value, "code", None) == "error.settings.timezone_unknown"
         assert "time zone" in bad_zone.value.detail
         # The suite runs from source, so `desktop_platform()` is None and this is the
         # container operator's refusal, reached with no session and nothing written.
         with pytest.raises(HTTPException) as bad_platform:
             settings_api._validated_desktop_values(settings_api.GeneralSettingsIn(tray=False))
+        assert getattr(bad_platform.value, "code", None) == "error.settings.desktop_only"
         assert "Windows and macOS apps" in bad_platform.value.detail
 
 
@@ -383,7 +391,9 @@ class TestDesktopSettings:
     def test_saving_tray_off_a_desktop_build_is_refused(self, client: TestClient) -> None:
         response = client.put("/api/settings/general", json={"tray": False})
         assert response.status_code == 422
-        assert "Windows and macOS apps" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.settings.desktop_only"
+        assert "Windows and macOS apps" in body["detail"]
 
     def test_a_refused_tray_writes_none_of_the_settings_beside_it(self, client: TestClient) -> None:
         """The other half of ``test_one_bad_field_writes_none_of_the_others``, for the one
@@ -401,7 +411,9 @@ class TestDesktopSettings:
             json={"application_name": "Media Reaper", "accent_color": "#4f46e5", "tray": False},
         )
         assert response.status_code == 422
-        assert "Windows and macOS apps" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.settings.desktop_only"
+        assert "Windows and macOS apps" in body["detail"]
         assert client.get("/api/settings/general").json() == before
 
     def test_a_desktop_save_lands_in_launcher_conf_and_the_next_read(
@@ -501,7 +513,9 @@ class TestDesktopSettings:
         monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "windows")
         response = client.put("/api/settings/general", json={"dock_icon": True})
         assert response.status_code == 422
-        assert "macOS app" in response.json()["detail"]
+        body = response.json()
+        assert body["code"] == "error.settings.dock_icon_macos_only"
+        assert "macOS app" in body["detail"]
         conf = tmp_path / "launcher.conf"
         assert not conf.exists() or "REAPER_DOCK_ICON" not in conf.read_text(encoding="utf-8")
         # tray, the knob Windows does have, still saves on its own.
@@ -744,7 +758,9 @@ class TestTheApiKeyLane:
             "/api/settings/safety", json={"enabled": True}, headers={"X-Api-Key": key}
         )
         assert refused.status_code == 403
-        assert refused.json()["detail"] == (
+        body = refused.json()
+        assert body["code"] == "error.auth.api_key_write_denied"
+        assert body["detail"] == (
             "This needs the web app, signed in. An API key writes only these: start a scan, "
             "plan a run and dry run it, edit the policy, and change the run limits and grace."
         )
@@ -756,7 +772,9 @@ class TestTheApiKeyLane:
         bare = _bare(client)
         denied = bare.get("/api/logs", headers={"X-Api-Key": key})
         assert denied.status_code == 403
-        assert denied.json()["detail"] == (
+        body = denied.json()
+        assert body["code"] == "error.auth.api_key_read_denied"
+        assert body["detail"] == (
             "This needs the web app, signed in. An API key reads everything except the key "
             "itself, the backup download, the logs, who watched what, and who you are signed in as."
         )
@@ -793,7 +811,9 @@ class TestTheApiKeyLane:
         assert bare.get("/api/fairness", headers=headers).status_code == 403, twin
         person = bare.get("/api/fairness/people/someone", headers=headers)
         assert person.status_code == 403, twin
-        assert "who watched what" in person.json()["detail"], twin
+        person_body = person.json()
+        assert person_body["code"] == "error.auth.api_key_read_denied", twin
+        assert "who watched what" in person_body["detail"], twin
 
         # The browser still reaches it: this fenced a credential, it did not retire a page.
         # 400 is the handler's own "Scales needs a Seerr and a Tautulli" on a fixture that
@@ -801,7 +821,9 @@ class TestTheApiKeyLane:
         # something behind it answered, where the key never got that far.
         signed_in = client.get("/api/fairness")
         assert signed_in.status_code == 400, signed_in.text
-        assert "who watched what" not in signed_in.json()["detail"]
+        signed_in_body = signed_in.json()
+        assert signed_in_body["code"] == "error.fairness.needs_seerr_and_tautulli"
+        assert "who watched what" not in signed_in_body["detail"]
 
     def test_the_refusal_never_denies_a_write_the_fence_allows(self, client: TestClient) -> None:
         """The regression, driven from both ends in one test.
@@ -816,9 +838,11 @@ class TestTheApiKeyLane:
         bare = _bare(client)
         headers = {"X-Api-Key": key}
 
-        detail = bare.put("/api/settings/safety", json={"enabled": True}, headers=headers).json()[
-            "detail"
-        ]
+        refused_body = bare.put(
+            "/api/settings/safety", json={"enabled": True}, headers=headers
+        ).json()
+        assert refused_body["code"] == "error.auth.api_key_write_denied"
+        detail = refused_body["detail"]
 
         profile = bare.get("/api/profile", headers=headers)
         assert profile.status_code == 200, profile.text
@@ -1102,7 +1126,9 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         # The same credential, one unsafe method, no header.
         refused = panel.post("/api/override", json={})
         assert refused.status_code == 403
-        assert "CSRF" in refused.json()["detail"]
+        body = refused.json()
+        assert body["code"] == "error.auth.csrf_blocked"
+        assert "CSRF" in body["detail"]
 
         schema = client.get("/api/openapi.json").json()
         session_scheme = schema["components"]["securitySchemes"]["Session"]

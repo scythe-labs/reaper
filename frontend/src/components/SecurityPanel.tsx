@@ -12,6 +12,7 @@ import { type ChangeEvent, type ReactNode, useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api } from "../api";
+import { describeError } from "../errors";
 import { useSafety } from "../useSafety";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
@@ -125,9 +126,9 @@ function AdminPasswordForm({
     t("security.form.currentRequiredError")
   ) : save.error ? (
     needed ? (
-      t("security.form.setFailedError", { message: save.error.message })
+      t("security.form.setFailedError", { message: describeError(save.error) })
     ) : (
-      t("security.form.changeFailedError", { message: save.error.message })
+      t("security.form.changeFailedError", { message: describeError(save.error) })
     )
   ) : null;
 

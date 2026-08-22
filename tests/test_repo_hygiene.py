@@ -43,6 +43,7 @@ from reaper.engine.gates import (
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
+from reaper.refusal import MESSAGES
 from reaper.services import app_settings, plex_link
 from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
 from reaper.services.season_scan import SeasonJudgment
@@ -4202,7 +4203,17 @@ _RELOAD_ADVICE = {
     # word, plus the catalog's own reloadButton label. Stage 4 converted every
     # component that gave it, so this is the whole population but for RestoreCard's
     # key literals above.
-    "frontend/src/locales/en/ui.json": 11,
+    #
+    # Phase 8b's error.* catalog (docs/history/I18N_PLAN.md) added two more, both already the
+    # server's own English in reaper.refusal.MESSAGES and newly reachable through this walk
+    # only because they now also live in ui.json: error.lists.not_found ("That list no longer
+    # exists. Reload the page.") fires from an edit/remove on a list already gone, so there is
+    # no draft worth keeping -- the thing it was an edit OF no longer exists. error.runs.
+    # confirmation_mismatch ("... Reload, review, and confirm again.") fires when the reap
+    # plan on screen no longer matches what the server holds, so the confirmation box it is
+    # about is already stale; nothing else on that page is a draft, a staged file, a secret or
+    # a selection.
+    "frontend/src/locales/en/ui.json": 13,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -5429,7 +5440,9 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 88
+#: 89 adds `api/errors.py` (phase 8a: `refuse`/`RefusalHTTPException`/`refusal_body`, the one
+#: conversion of a coded refusal into an HTTP response every route goes through).
+_EXPECTED_LAYERED_MODULES = 89
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -5750,7 +5763,8 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
 #: A different population from that constant, which counts the 87 under the four packages only.
-_EXPECTED_SOURCE_MODULES = 120
+#: 122 adds `api/errors.py` and top-level `refusal.py` (phase 8a's catalog and typed refusal).
+_EXPECTED_SOURCE_MODULES = 122
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`
@@ -5967,7 +5981,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 238
+_EXPECTED_FRONTEND_MODULES = 241
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -6220,36 +6234,40 @@ def _names_an_instance_error(node: ast.expr | None) -> bool:
     return isinstance(node, ast.Name) and node.id in _INSTANCE_ERROR_NAMES
 
 
-def _http_status_args(handler: ast.ExceptHandler) -> list[tuple[int, ast.expr]]:
-    """The status argument of every ``HTTPException(...)`` raised inside ``handler``.
+def _http_status_sites(handler: ast.ExceptHandler) -> list[tuple[int, str, ast.expr | None]]:
+    """Every call inside ``handler`` that turns the caught error into an HTTP response: its
+    line, its callee name, and the status argument it hand-writes (``None`` for
+    ``refuse_from``, which takes no status argument at all).
 
-    Collected from the whole handler body rather than from its first statement, so an arm that
-    branches before raising is read too, and returned in source order -- ``ast.walk`` is
-    breadth-first, so a raise nested inside an ``if`` comes back after one written below it.
+    ``ast.walk`` visits the ``ast.Call`` node itself whether it sits under an ``ast.Raise``
+    (``raise HTTPException(...)``) or a bare ``ast.Expr`` (``refuse(...)``, ``refuse`` being
+    typed ``NoReturn`` and raising internally), so neither wrapper needs its own branch.
 
-    **Both spellings of the status, because the tree spells it both ways**: positionally, which
-    is what every arm here uses, and as ``status_code=``, which ``api/lists.py`` uses twice. A
-    reader of the positional form alone does not report a keyword-spelled arm as a violation --
-    it drops that arm out of the population entirely, so the count below fails saying an arm
+    **Four spellings, because the tree spells it four ways**: ``raise HTTPException(status,
+    ...)`` positionally; ``status_code=``, which ``api/lists.py`` uses twice; ``refuse(status,
+    code, ...)`` (phase 8a), hand-writing a status the same way; and ``refuse_from(exc)``
+    (phase 8a's second wave) -- the one spelling that carries no status argument at all,
+    because ``api.errors.refuse_from`` always reads ``exc.status`` internally, which is what
+    makes the five instance-error arms this walk exists for structurally unable to hand-write
+    one any more. A reader missing any one spelling does not report that arm as a violation --
+    it drops the arm out of the population entirely, so the count below fails saying an arm
     stopped answering when the truth is that it answered in a spelling nobody could read
     (rule 147).
     """
-    out: list[tuple[int, ast.expr]] = []
+    out: list[tuple[int, str, ast.expr | None]] = []
     for node in ast.walk(handler):
-        if not isinstance(node, ast.Raise) or node.exc is None:
+        if not isinstance(node, ast.Call):
             continue
-        exc = node.exc
-        if not isinstance(exc, ast.Call):
-            continue
-        callee = exc.func
+        callee = node.func
         name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-        if name != "HTTPException":
-            continue
-        keyword = next((kw.value for kw in exc.keywords if kw.arg == "status_code"), None)
-        status = exc.args[0] if exc.args else keyword
-        if status is not None:
-            out.append((node.lineno, status))
-    return sorted(out, key=lambda pair: pair[0])
+        if name == "refuse_from":
+            out.append((node.lineno, name, None))
+        elif name in ("HTTPException", "refuse"):
+            keyword = next((kw.value for kw in node.keywords if kw.arg == "status_code"), None)
+            status = node.args[0] if node.args else keyword
+            if status is not None:
+                out.append((node.lineno, name, status))
+    return sorted(out, key=lambda site: site[0])
 
 
 def _instance_error_handlers() -> list[tuple[str, int, ast.ExceptHandler]]:
@@ -6272,8 +6290,12 @@ def test_no_route_hand_writes_the_status_an_instance_error_already_declares() ->
     base class: correct only because those callees can raise nothing but ``InstanceNotFound``
     today, so a service that grew a blank-field guard the way ``create_instance`` has would
     have told the operator the instance did not exist. Reading the declaration is what makes
-    that unable to happen again, and this is what keeps a sixth arm from reintroducing it
-    (rule 144).
+    that unable to happen again.
+
+    Phase 8a's second wave moved all five to ``refuse_from(exc)``, which reads ``exc.status``
+    internally and takes no status argument to hand-write in the first place -- so what this
+    now guards is that a sixth arm (or an edit to one of the five) does not slip back to a
+    bare ``refuse``/``HTTPException`` call that types the number in again (rule 144).
     """
     handlers = _instance_error_handlers()
     assert len(handlers) == _EXPECTED_INSTANCE_ERROR_HANDLERS, (
@@ -6284,14 +6306,14 @@ def test_no_route_hand_writes_the_status_an_instance_error_already_declares() ->
 
     answered = 0
     for path, _, handler in handlers:
-        for lineno, arg in _http_status_args(handler):
+        for lineno, name, status in _http_status_sites(handler):
             answered += 1
-            assert isinstance(arg, ast.Attribute) and arg.attr == "status", (
-                f"{path}:{lineno} raises HTTPException with a hand-written status. "
-                f"Use `exc.status`, which services/instances.py declares per subclass."
+            assert name == "refuse_from" and status is None, (
+                f"{path}:{lineno} answers with `{name}`, hand-writing a status. Use "
+                "`refuse_from(exc)`, which always reads `exc.status`."
             )
     assert answered == _EXPECTED_INSTANCE_ERROR_RESPONSES, (
-        f"{answered} of those arms answer with an HTTPException, expected "
+        f"{answered} of those arms answer with an HTTP response, expected "
         f"{_EXPECTED_INSTANCE_ERROR_RESPONSES}"
     )
 
@@ -6329,13 +6351,15 @@ def test_the_instance_error_matcher_reads_every_form_the_clause_can_take() -> No
 
 
 def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
-    """``_http_status_args`` reads the raise, not the handler's first line.
+    """``_http_status_sites`` reads the whole handler body, not its first line.
 
     An arm that logs first, or branches before raising, still raises a status -- and a reader
     that only inspected ``handler.body[0]`` would call both of those clean. Driven against a
     nested raise, since that is the shape a future arm most plausibly takes, and against
     ``status_code=``, which is a live spelling in ``api/lists.py`` and reaches the ban only
-    because the reader takes it (rule 147).
+    because the reader takes it, and against both ``refuse(...)`` (phase 8a) and
+    ``refuse_from(...)`` (phase 8a's second wave), bare calls rather than a ``raise`` at all
+    (rule 147).
     """
     nested = ast.parse(
         "try:\n"
@@ -6347,9 +6371,9 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
         "    raise HTTPException(status_code=409, detail=str(exc)) from exc\n"
     )
     handler = next(n for n in ast.walk(nested) if isinstance(n, ast.ExceptHandler))
-    args = _http_status_args(handler)
-    assert len(args) == 2, f"both raises should be read, got {len(args)}"
-    (_, positional), (_, keyword) = args
+    sites = _http_status_sites(handler)
+    assert len(sites) == 2, f"both raises should be read, got {len(sites)}"
+    (_, _, positional), (_, _, keyword) = sites
     assert isinstance(positional, ast.Constant) and positional.value == 404
     assert isinstance(keyword, ast.Constant) and keyword.value == 409
 
@@ -6361,14 +6385,47 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
         "    raise HTTPException(exc.status, str(exc)) from exc\n"
     )
     handler = next(n for n in ast.walk(clean) if isinstance(n, ast.ExceptHandler))
-    ((_, arg),) = _http_status_args(handler)
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "HTTPException"
     assert isinstance(arg, ast.Attribute) and arg.attr == "status"
+
+    # The refuse() spelling: a bare call, never a `raise`, and still readable.
+    refuses_clean = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        '    refuse(exc.status, "error.instances.not_found", error=str(exc))\n'
+    )
+    handler = next(n for n in ast.walk(refuses_clean) if isinstance(n, ast.ExceptHandler))
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "refuse"
+    assert isinstance(arg, ast.Attribute) and arg.attr == "status"
+
+    refuses_dirty = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        '    refuse(404, "error.instances.not_found", error=str(exc))\n'
+    )
+    handler = next(n for n in ast.walk(refuses_dirty) if isinstance(n, ast.ExceptHandler))
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "refuse"
+    assert isinstance(arg, ast.Constant) and arg.value == 404
+
+    # The refuse_from() spelling: no status argument at all, since it always reads exc.status.
+    refuse_from_clean = ast.parse(
+        "try:\n    pass\nexcept InstanceError as exc:\n    refuse_from(exc)\n"
+    )
+    handler = next(n for n in ast.walk(refuse_from_clean) if isinstance(n, ast.ExceptHandler))
+    ((_, name, arg),) = _http_status_sites(handler)
+    assert name == "refuse_from"
+    assert arg is None
 
     # A raise that is not an HTTPException contributes nothing, so a `raise` re-raising the
     # original cannot be read as an arm that stopped answering.
     bare = ast.parse("try:\n    pass\nexcept InstanceError:\n    raise\n")
     handler = next(n for n in ast.walk(bare) if isinstance(n, ast.ExceptHandler))
-    assert _http_status_args(handler) == []
+    assert _http_status_sites(handler) == []
 
 
 # --- the bold-when-active strut, and the sentence enumerating it (rule 144) -----------
@@ -7666,10 +7723,16 @@ def test_every_display_field_the_source_carries_reaches_its_lanes_pack() -> None
 #: already compared against the app's token by `test_the_site_palette_matches_the_app_palette`,
 #: and a second check of the same pair would fail twice for one edit.
 _ACCENT_DEFAULT_COPIES: dict[str, int] = {
-    "src/reaper/api/settings.py": 1,
+    # The Python-side refusal sentence moved into the catalog module (phase 8a):
+    # `refusal.MESSAGES["error.settings.accent_color_invalid"]`, no longer inline in the route.
+    "src/reaper/refusal.py": 1,
     "frontend/src/accent.ts": 1,
-    # The two refusal sentences naming the color are catalog messages since Stage 4.
-    "frontend/src/locales/en/ui.json": 2,
+    # Two client-side validation messages (general.accent.error, general.savebar.accentBlocked)
+    # have named the color since Stage 4. Phase 8b's error.* catalog added a third: the SAME
+    # server refusal above (`error.settings.accent_color_invalid`) is now also reachable from
+    # ui.json, so a client bypassing the two local checks (an API client, a race) still names
+    # the color rather than reading a raw code.
+    "frontend/src/locales/en/ui.json": 3,
     "frontend/src/styles/00-tokens.css": 4,
 }
 
@@ -8036,3 +8099,332 @@ def test_the_revision_walk_still_sees_every_revision() -> None:
         "A count that FELL means the matcher stopped reading a spelling the tree uses, which "
         "is worse than a red gate: it reads as every revision complying."
     )
+
+
+# --- phase 8a: every coded refusal has a raiser, and no route composes English on the spot ---
+
+#: Every shape phase 8a's conversion left in the tree that carries an `"error.*"` code as a
+#: literal: `refuse(status, code, ...)` and `RefusalHTTPException(status, code, ...)` (the API
+#: layer's own raise), `Refusal(code, ...)` (the engine/service layer's -- `error.policy.*`'s
+#: 37 sites among them), `PydanticCustomError(code, ...)` (the three wire-schema validators),
+#: `Reason(code, ...)` (`services.leaving_soon`'s stored skip reasons, which ride the engine's
+#: typed-reason container rather than an HTTP-shaped exception), and a `super().__init__(code,
+#: ...)` inside a `Refusal` subclass's own `__init__` (the three `LeavingSoon*Error` classes,
+#: which take no constructor argument at their call site). Phase 8a's second wave turned every
+#: remaining service exception that used to compose its own English (`LoginError`,
+#: `PasswordError`, `PlexLinkError` and its retryable sibling, `RestoreError`, the `Instance*`
+#: family, `ListConfigError`, `PlanError`, `ExecutionError`, `ScanConfigError`) into a `Refusal`
+#: subclass too, each keeping `code` as its own raise-site argument exactly like `Refusal`
+#: itself -- so they read the same way and need no separate shape here. Two shapes hold no call
+#: argument at all and are read separately below: a `code=` keyword on any call
+#: (`require_admin_password(..., code=...)`), and a bare `return code` / `return code, params`
+#: (`api.middleware.api_key_refusal`, whose two codes never reach a call argument). Every site
+#: is filtered to a string constant starting with `"error."`, which is the whole catalog's
+#: namespace and nothing else in the tree spells that way.
+_CODE_CALL_INDEX: dict[str, int] = {
+    "refuse": 1,
+    "Refusal": 0,
+    "PydanticCustomError": 0,
+    "RefusalHTTPException": 1,
+    "_reject": 2,
+    "Reason": 0,
+    # Phase 8a's second wave: every service exception that used to compose its own English
+    # is now a `Refusal` subclass, and each keeps `code` as its own first positional arg
+    # (some through a thin per-subclass `__init__` that only fixes the default `status`),
+    # so every one of these reads exactly like `Refusal` itself at its raise site.
+    "LoginError": 0,
+    "PasswordError": 0,
+    "PlexLinkError": 0,
+    "PlexLinkRetryableError": 0,
+    "RestoreError": 0,
+    "InstanceError": 0,
+    "InstanceNotFoundError": 0,
+    "InstanceConflictError": 0,
+    "ListConfigError": 0,
+    "PlanError": 0,
+    "ExecutionError": 0,
+    "ScanConfigError": 0,
+}
+
+
+def _refusal_code_sites() -> dict[str, list[str]]:
+    """Every `"error.*"` code raised anywhere under `src/reaper`, mapped to its sites.
+
+    See `_CODE_CALL_INDEX`'s comment for the call shapes; a `code=` keyword and a bare
+    `return` are read directly below since neither is one of those calls. Rule 145: both
+    directions are reconciled against `reaper.refusal.MESSAGES` by hand in the test below, and
+    both populations -- codes and sites -- are pinned so a walk that stopped reading part of
+    the tree cannot pass by agreeing with a catalog measured the same way.
+    """
+    sites: dict[str, list[str]] = {}
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            code_arg: ast.expr | None = None
+            lineno = 0
+            if isinstance(node, ast.Call):
+                lineno = node.lineno
+                func = node.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                if name in _CODE_CALL_INDEX:
+                    idx = _CODE_CALL_INDEX[name]
+                    if len(node.args) > idx:
+                        code_arg = node.args[idx]
+                elif (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "__init__"
+                    and isinstance(func.value, ast.Call)
+                    and isinstance(func.value.func, ast.Name)
+                    and func.value.func.id == "super"
+                    and node.args
+                ):
+                    code_arg = node.args[0]
+                if code_arg is None:
+                    for kw in node.keywords:
+                        if kw.arg == "code" and isinstance(kw.value, ast.Constant):
+                            code_arg = kw.value
+                            break
+            elif isinstance(node, ast.Return) and node.value is not None:
+                lineno = node.lineno
+                value = node.value
+                if isinstance(value, ast.Constant):
+                    code_arg = value
+                elif (
+                    isinstance(value, ast.Tuple)
+                    and value.elts
+                    and isinstance(value.elts[0], ast.Constant)
+                ):
+                    code_arg = value.elts[0]
+            if (
+                isinstance(code_arg, ast.Constant)
+                and isinstance(code_arg.value, str)
+                and code_arg.value.startswith("error.")
+            ):
+                sites.setdefault(code_arg.value, []).append(f"{path.relative_to(REPO)}:{lineno}")
+    return sites
+
+
+_EXPECTED_REFUSAL_CODES = 209
+_EXPECTED_REFUSAL_SITES = 235
+
+
+def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
+    """The two-way agreement rule 145 asks for, modeled on
+    ``test_review_chips.py``'s ``TestTheMatchStatusVocabulary``: every code the engine, a
+    service or a route can raise is a key in ``reaper.refusal.MESSAGES``, and every key in
+    that catalog has somewhere in ``src/reaper`` that actually raises it. A code with no
+    template renders as itself (``Refusal.__str__``'s fallback) rather than failing loudly, so
+    an orphan on either side is silent in production until someone reads the raw response;
+    this is what catches it in review instead.
+
+    **Both populations are pinned** (rule 145): the count of codes AND the count of raising
+    sites, not just the two sets. A walk that quietly stopped reading half the tree would
+    still agree on the SET it found with a catalog built the same way, so the counts are the
+    only thing that can say the walk regressed rather than the catalog having shrunk to match.
+
+    The catalog side of this -- every code above also being a key under ``ui.json``'s
+    ``error.*`` namespace, which the browser composes -- is
+    ``test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose`` below, phase 8b's.
+    """
+    sites = _refusal_code_sites()
+    total = sum(len(v) for v in sites.values())
+    assert len(sites) == _EXPECTED_REFUSAL_CODES, (
+        f"expected {_EXPECTED_REFUSAL_CODES} distinct refusal codes raised under src/reaper, "
+        f"found {len(sites)}. If you added or removed one, bump the constant here."
+    )
+    assert total == _EXPECTED_REFUSAL_SITES, (
+        f"expected {_EXPECTED_REFUSAL_SITES} raising sites across those codes, found {total}. "
+        "A count that fell without the code count falling too means the walk stopped seeing "
+        "a spelling the tree uses (rule 147)."
+    )
+
+    catalog = set(MESSAGES)
+    walked = set(sites)
+    assert walked <= catalog, (
+        f"raised with no catalog entry: {sorted(walked - catalog)}. Add each to "
+        "reaper.refusal.MESSAGES."
+    )
+    assert catalog <= walked, (
+        f"in MESSAGES with no raising site this walk can see: {sorted(catalog - walked)}. "
+        "Either the code is dead, or it is raised through a shape _refusal_code_sites does "
+        "not recognize yet -- teach the walk the shape rather than deleting the entry."
+    )
+
+
+#: The three codes `frontend/src/api.ts` sets itself, for a body that carried no coded reason
+#: at all (no reply, a reply with no reason, a reply the browser could not parse). Nothing
+#: under `src/reaper` ever raises them -- there is no Python raise site for "the browser
+#: couldn't reach me" -- so they are the one deliberate exception to the two-way equality
+#: below, the same shape `NARROWED`/`WIDENED`/`PENDING_PHASE_8B` hold their own deliberate
+#: exceptions in `tests/test_api_type_mirror.py`.
+_TRANSPORT_ONLY_CODES = frozenset(
+    {
+        "error.transport.server_unreachable",
+        "error.transport.request_failed",
+        "error.transport.bad_reply",
+    }
+)
+
+#: `len(MESSAGES) + len(_TRANSPORT_ONLY_CODES)`, pinned so the population this test collects
+#: cannot silently shrink to match a catalog that lost entries (rule 145).
+_EXPECTED_CATALOG_ERROR_KEYS = 212
+
+
+def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:
+    """The browser-side twin of ``test_every_refusal_code_has_a_raiser_and_a_catalog_entry``.
+
+    That test proves every raise site names a ``reaper.refusal.MESSAGES`` code and every code
+    has a raise site. This proves the other hop: every ``MESSAGES`` code is also a leaf of
+    ``ui.json``'s ``error.*`` namespace (which the browser composes via ``why.ts``'s
+    ``composeIn("error", ...)``), and every ``error.*`` leaf is one of those codes or a
+    declared transport-only exception -- never an orphan a translator was handed for nothing,
+    and never a code the browser has no words for.
+    """
+    catalog_error_keys = {key for key, _ in _ui_catalog_leaves() if key.startswith("error.")}
+    assert len(catalog_error_keys) == _EXPECTED_CATALOG_ERROR_KEYS, (
+        f"expected {_EXPECTED_CATALOG_ERROR_KEYS} error.* leaves in ui.json, found "
+        f"{len(catalog_error_keys)}. If you added or removed one, bump the constant here."
+    )
+
+    backend = set(MESSAGES)
+    missing = backend - catalog_error_keys
+    assert missing == set(), (
+        f"in reaper.refusal.MESSAGES with no matching ui.json error.* entry: {sorted(missing)}. "
+        "Add each to the catalog's error section so the browser can compose it."
+    )
+
+    orphaned = catalog_error_keys - backend - _TRANSPORT_ONLY_CODES
+    assert orphaned == set(), (
+        f"ui.json error.* keys naming no reaper.refusal.MESSAGES code and not a declared "
+        f"transport-only code: {sorted(orphaned)}. Either the code is dead on the server "
+        "side, or _TRANSPORT_ONLY_CODES needs it named."
+    )
+
+    missing_transport = _TRANSPORT_ONLY_CODES - catalog_error_keys
+    assert missing_transport == set(), (
+        f"transport-only codes missing from ui.json: {sorted(missing_transport)}. "
+        "frontend/src/api.ts sets these itself; they still need a catalog entry to compose."
+    )
+
+
+_EXPECTED_BARE_HTTPEXCEPTION_SITES = 2
+
+
+def _http_exception_detail_sites() -> list[tuple[str, int, ast.expr]]:
+    """Every bare ``HTTPException(...)`` call under ``src/reaper/api/``, with its ``detail`` arg.
+
+    ``RefusalHTTPException`` -- a different name -- is exempt by construction: it always
+    formats its detail from ``reaper.refusal.MESSAGES``, which is the whole point of it
+    existing, so this walk is only ever pointed at bare ``HTTPException``, the one spelling a
+    route can still reach for instead of ``api.errors.refuse``.
+    """
+    found: list[tuple[str, int, ast.expr]] = []
+    for path in sorted((SRC / "api").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name != "HTTPException":
+                continue
+            detail = node.args[1] if len(node.args) >= 2 else None
+            if detail is None:
+                detail = next((kw.value for kw in node.keywords if kw.arg == "detail"), None)
+            if detail is not None:
+                found.append((path.relative_to(REPO).as_posix(), node.lineno, detail))
+    return found
+
+
+def _is_composed_on_the_spot(node: ast.expr) -> bool:
+    """Whether a ``detail`` argument is prose written at the raise site rather than a coded
+    lookup: a string literal, an f-string, or a bare ``str(...)`` call.
+    ``validation_error_items(...)`` -- the one shape a ``detail`` is still allowed to come
+    from -- is none of these; driven against both directions in
+    ``test_the_bare_httpexception_matcher_reads_every_shape_it_claims`` (rule 147).
+    """
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return True
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        return name == "str"
+    return False
+
+
+def test_no_route_raises_a_bare_httpexception_with_composed_english() -> None:
+    """Every operator-facing refusal is a catalog code now (phase 8a), never English composed
+    at the raise site. ``api.errors.refuse`` and ``RefusalHTTPException`` are the only doors:
+    this bans the one FastAPI itself still accepts, ``raise HTTPException(status, "some
+    sentence")``, from ever coming back under ``src/reaper/api/``.
+
+    Exempt nothing, per the plan this landed under: the two sites this walk still finds
+    (``api.policy._to_body``, ``api.runs.update_profile``) pass
+    ``detail=validation_error_items(...)`` -- a list of per-field dicts, not a sentence --
+    which is the one shape FastAPI's own ``RequestValidationError`` handler answers with too,
+    so it is read here and left alone rather than carved out by name.
+    """
+    sites = _http_exception_detail_sites()
+    assert len(sites) == _EXPECTED_BARE_HTTPEXCEPTION_SITES, (
+        f"expected {_EXPECTED_BARE_HTTPEXCEPTION_SITES} bare HTTPException(...) call(s) under "
+        f"src/reaper/api/, found {len(sites)}: {[(p, n) for p, n, _ in sites]}. If you added "
+        "one: either it belongs in reaper.refusal (raise Refusal, or call api.errors.refuse), "
+        "or it is a genuine detail=[...] list like the two already here, in which case bump "
+        "this constant."
+    )
+    composed = [(p, n) for p, n, detail in sites if _is_composed_on_the_spot(detail)]
+    assert not composed, (
+        f"HTTPException raised with English composed at the call site: {composed}. Use "
+        "api.errors.refuse(status, code, **params) instead, with the code's template declared "
+        "in reaper.refusal.MESSAGES."
+    )
+
+
+def test_the_bare_httpexception_matcher_reads_every_shape_it_claims() -> None:
+    """Rule 147: the ban's own matcher, driven against what it must catch and what it must
+    leave alone, so a future call shape cannot silently fall out of the population it counts.
+    """
+    caught = (
+        'raise HTTPException(422, "Pick one.")',
+        'raise HTTPException(422, f"{value} is bad.")',
+        "raise HTTPException(422, str(exc))",
+        'raise HTTPException(status_code=422, detail="Pick one.")',
+    )
+    for source in caught:
+        tree = ast.parse(source)
+        call = next(
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "HTTPException"
+        )
+        detail = (
+            call.args[1]
+            if len(call.args) >= 2
+            else next(kw.value for kw in call.keywords if kw.arg == "detail")
+        )
+        assert _is_composed_on_the_spot(detail), f"should be caught: {source}"
+
+    left_alone = (
+        "raise HTTPException(422, detail=validation_error_items(exc.errors()))",
+        "x = RefusalHTTPException(422, code, params)",
+    )
+    for source in left_alone:
+        tree = ast.parse(source)
+        maybe_call: ast.Call | None = next(
+            (
+                n
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "HTTPException"
+            ),
+            None,
+        )
+        if maybe_call is None:
+            continue  # the RefusalHTTPException case: this ban does not look at it at all
+        detail = (
+            maybe_call.args[1]
+            if len(maybe_call.args) >= 2
+            else next(kw.value for kw in maybe_call.keywords if kw.arg == "detail")
+        )
+        assert not _is_composed_on_the_spot(detail), f"should be left alone: {source}"

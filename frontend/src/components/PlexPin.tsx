@@ -12,8 +12,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import type { PlexServerChoice } from "../api";
+import type { PlexServerChoice, ReasonKey } from "../api";
+import { describeError } from "../errors";
 import i18next from "../i18n";
+import { composeError } from "../why";
 
 /** What the app says when a sign-in lands on the server picker.
  *
@@ -46,8 +48,9 @@ export interface PinPollResult {
    *  perfectly good and send the operator back through the whole approval round trip. */
   status: "pending" | "retrying" | "ok" | "choose_server";
   servers: PlexServerChoice[] | null;
-  /** Present only with status "retrying": why, in the operator's words. */
-  reason?: string | null;
+  /** Present only with status "retrying": why this poll couldn't finish yet, composed
+   *  through `why.ts`'s `composeError` (phase 8b). */
+  reason?: ReasonKey | null;
 }
 
 interface PinPollHandlers<R extends PinPollResult> {
@@ -64,7 +67,7 @@ interface PinPollHandlers<R extends PinPollResult> {
 }
 
 function failureText(e: unknown): string {
-  return e instanceof Error ? e.message : i18next.t("plex.pin.signInFailedFallback");
+  return e instanceof Error ? describeError(e) : i18next.t("plex.pin.signInFailedFallback");
 }
 
 /** Drive one PIN through to a final answer.
@@ -157,7 +160,8 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
               // "pending" or "retrying" -- neither is final, so keep polling. Only
               // "retrying" carries a reason; say it, so a longer-than-usual wait is
               // explained rather than looking like a hang.
-              const reason = result.status === "retrying" ? (result.reason ?? null) : null;
+              const reason =
+                result.status === "retrying" && result.reason ? composeError(result.reason) : null;
               setRetrying(reason);
               // And say it by ear as well. Every transition in this flow is driven by the
               // two-second poll rather than by the operator, so this paragraph swaps its text

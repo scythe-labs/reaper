@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { announce } from "../announce";
 import { api } from "../api";
+import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
 import { Notice } from "./Notice";
 
@@ -189,7 +190,7 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
           it keeps deleting -- and this is the only Stop on every screen but the sheet. */}
       {stop.error && (
         <Notice tone="error" className="reap-bar-error">
-          {t("reapConfirm.bar.stopError", { error: stop.error.message })}
+          {t("reapConfirm.bar.stopError", { error: describeError(stop.error) })}
         </Notice>
       )}
       <span className="reap-bar-fill" style={{ width: `${pct}%` }} />

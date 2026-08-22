@@ -67,6 +67,7 @@ from reaper.engine.signals import (
     SignalId,
 )
 from reaper.ratings import RatingSource, is_percentage_source, source_label
+from reaper.refusal import Refusal
 
 SCHEMA_VERSION = 3
 """Bumped when the stored SHAPE changes. 3 marks bodies written after the rating bar moved
@@ -184,21 +185,11 @@ class GateSetting(Frozen):
         # RATING_FLOOR gate setting is now only the on/off switch, so it carries no
         # threshold of its own to police.
         if self.gate is GateId.SERVER_POPULARITY and self.threshold < 1:
-            raise ValueError(
-                "Keeping anything watched by 0 people would protect your whole library. "
-                "Set it to at least 1, or switch this protection off instead."
-            )
+            raise Refusal("error.policy.gate_popularity_floor_zero")
         if self.gate is GateId.RETURNED and self.threshold < 1:
-            raise ValueError(
-                "A title that came back has to be kept for at least a day. To stop keeping "
-                "them at all, switch this protection off with its toggle."
-            )
+            raise Refusal("error.policy.gate_returned_floor_zero")
         if self.gate is GateId.MIN_DORMANCY and self.threshold < 5:
-            raise ValueError(
-                "Give titles at least 5 days before removing them. To remove things faster "
-                "than that, switch this protection off with its toggle rather than setting "
-                "it this low."
-            )
+            raise Refusal("error.policy.gate_dormancy_floor_low")
         return self
 
 
@@ -216,9 +207,10 @@ class SignalSetting(Frozen):
     @model_validator(mode="after")
     def _floor_below_saturation(self) -> Self:
         if self.floor >= self.saturate_at:
-            raise ValueError(
-                f"floor ({self.floor}) must be below saturate_at ({self.saturate_at}), "
-                "or the signal is either always off or always at full pressure."
+            raise Refusal(
+                "error.policy.signal_floor_not_below_saturation",
+                floor=self.floor,
+                saturate_at=self.saturate_at,
             )
         return self
 
@@ -287,19 +279,18 @@ class GradedCondemnSpec(Frozen):
     @model_validator(mode="after")
     def _valid_graded(self) -> Self:
         if self.floor >= self.saturate_at:
-            raise ValueError(
-                f"floor ({self.floor}) must be below saturate_at ({self.saturate_at}), "
-                "or the rule is either always off or always at full pressure."
+            raise Refusal(
+                "error.policy.custom_rule_floor_not_below_saturation",
+                floor=self.floor,
+                saturate_at=self.saturate_at,
             )
         spec = BY_KEY.get(self.field)
         if spec is None:
-            raise ValueError(f'Unknown field "{self.field}".')
+            raise Refusal("error.policy.unknown_field", field=self.field)
         if Lane.CONDEMN not in spec.lanes:
-            raise ValueError(f'"{spec.label}" cannot be used to remove things.')
+            raise Refusal("error.policy.field_wrong_lane_condemn", field=self.field)
         if Op.GTE not in spec.ops:
-            raise ValueError(
-                f'"{spec.label}" is not a number, so it cannot be graded. Use a yes/no rule.'
-            )
+            raise Refusal("error.policy.custom_rule_not_numeric", field=self.field)
         return self
 
 
@@ -335,7 +326,7 @@ class GradedKeepSpec(Frozen):
     def _valid_keep(self) -> Self:
         spec = BY_KEY.get(self.field)
         if spec is None:
-            raise ValueError(f'Unknown field "{self.field}".')
+            raise Refusal("error.policy.unknown_field", field=self.field)
         if spec.key == "on_list":
             # The membership form: flat, so the ramp fields are inert and unvalidated.
             #
@@ -346,24 +337,20 @@ class GradedKeepSpec(Frozen):
             # `on_list` alone, so the reachable paths were an imported or restored body and
             # the API.
             if not (self.value or "").strip():
-                raise ValueError("Say which list this keep rule is about.")
+                raise Refusal("error.policy.keep_rule_missing_list")
             return self
         if spec.type is FieldType.TEXT and spec.multi:
-            raise ValueError(
-                f'"{spec.label}" is not a list, so it cannot be graded. Use a protection instead.'
-            )
+            raise Refusal("error.policy.keep_rule_not_a_list", field=self.field)
         if self.value is not None:
-            raise ValueError(
-                f'"{spec.label}" is a number, so this rule ramps; it does not take a list name.'
-            )
+            raise Refusal("error.policy.keep_rule_unexpected_list_value", field=self.field)
         if self.floor >= self.saturate_at:
-            raise ValueError(
-                f"floor ({self.floor}) must be below saturate_at ({self.saturate_at})."
+            raise Refusal(
+                "error.policy.keep_rule_floor_not_below_saturation",
+                floor=self.floor,
+                saturate_at=self.saturate_at,
             )
         if Op.GTE not in spec.ops:
-            raise ValueError(
-                f'"{spec.label}" is not a number, so it cannot be graded. Use a protection instead.'
-            )
+            raise Refusal("error.policy.keep_rule_not_numeric", field=self.field)
         return self
 
 
@@ -386,19 +373,15 @@ class RatingRuleSpec(Frozen):
     def _vote_floor_matches_the_source(self) -> Self:
         if is_percentage_source(self.source):
             if self.min_votes != 0:
-                raise ValueError(
-                    f"{source_label(self.source)} is a percentage with no vote count, so a "
-                    "vote floor on it would do nothing. Leave the votes at 0 for this source."
+                raise Refusal(
+                    "error.policy.rating_vote_floor_on_percentage",
+                    source=source_label(self.source),
                 )
         elif self.min_votes < 1:
             # A rating floor with no vote floor protects an 8.3 drawn from a few hundred
             # votes -- a number that means nothing. The same refusal the single-source gate
             # carried, now per source that actually counts votes.
-            raise ValueError(
-                f"A vote floor of 0 makes the bar on {source_label(self.source)} meaningless: it "
-                "would protect a high score drawn from a handful of votes. Use at least 1 "
-                "(1000 is a sensible default)."
-            )
+            raise Refusal("error.policy.rating_vote_floor_zero", source=source_label(self.source))
         return self
 
 
@@ -731,12 +714,9 @@ class PolicyBody(Frozen):
         total = sum(s.weight for s in self.signals) + sum(c.weight for c in self.custom_condemn)
         if total != MAX_SCORE:
             over = total - MAX_SCORE
-            fix = f"Take {over} away" if over > 0 else f"Give out the other {-over}"
-            raise ValueError(
-                f"Your rules add up to {total} points. {fix} before saving. "
-                f"Removal points always total {MAX_SCORE}, so each one is worth "
-                "the same wherever you spend it."
-            )
+            if over > 0:
+                raise Refusal("error.policy.weights_over_100", total=total, amount=over)
+            raise Refusal("error.policy.weights_under_100", total=total, amount=-over)
         return self
 
     # An `_at_least_one_signal` validator lived here, refusing an all-zero policy. A total
@@ -747,14 +727,12 @@ class PolicyBody(Frozen):
     @model_validator(mode="after")
     def _no_duplicates(self) -> Self:
         if len({g.gate for g in self.gates}) != len(self.gates):
-            raise ValueError("A gate is configured twice; the second would silently win.")
+            raise Refusal("error.policy.duplicate_gate")
         if len({s.signal for s in self.signals}) != len(self.signals):
-            raise ValueError("A signal is configured twice; the second would silently win.")
+            raise Refusal("error.policy.duplicate_signal")
         names = [c.name for c in self.custom_condemn]
         if len(set(names)) != len(names):
-            raise ValueError(
-                "Two custom rules share a name; the second would silently double-count."
-            )
+            raise Refusal("error.policy.duplicate_custom_rule_name")
         # A custom rule may not take a built-in signal's id as its name. The stored score
         # breakdown identifies rows by that string, so a rule named "unwatched" would
         # collide with the built-in row: the why-panel would drop its "Your rule" tag and
@@ -762,26 +740,17 @@ class PolicyBody(Frozen):
         builtin = {s.value for s in SignalId}
         for name in names:
             if name in builtin:
-                raise ValueError(
-                    f'"{name}" is the name of a built-in signal. Give your rule a '
-                    "different name so the score breakdown cannot confuse the two."
-                )
+                raise Refusal("error.policy.custom_rule_name_collides", name=name)
         keep_names = [k.name for k in self.graded_keeps]
         if len(set(keep_names)) != len(keep_names):
-            raise ValueError("Two keep rules share a name; the second would silently double-count.")
+            raise Refusal("error.policy.duplicate_keep_rule_name")
         # The stored explanation identifies keep rows by name, and the built-in rewatch keep
         # rides in the same list -- the same collision the custom-rule check above prevents.
         if REWATCH_KEEP in keep_names:
-            raise ValueError(
-                f'"{REWATCH_KEEP}" is the name of the built-in rewatch keep. Give your rule '
-                "a different name so the score breakdown cannot confuse the two."
-            )
+            raise Refusal("error.policy.keep_rule_name_collides_rewatch", name=REWATCH_KEEP)
         rating_sources = [r.source for r in self.keep_rating_rules]
         if len(set(rating_sources)) != len(rating_sources):
-            raise ValueError(
-                "The same rating source is listed twice. Set one bar per source, or the "
-                "second would silently win."
-            )
+            raise Refusal("error.policy.duplicate_rating_source")
         return self
 
     def popularity_window_days(self) -> int:
@@ -1202,17 +1171,18 @@ class ProfileSettings(Frozen):
             # never fire while enforcement is off.
             return self
         if self.max_items_per_run > self.max_items_per_30d:
-            raise ValueError(
-                f"A single run may delete {self.max_items_per_run} items but the 30-day "
-                f"cap is {self.max_items_per_30d}. The rolling cap would be meaningless."
+            raise Refusal(
+                "error.policy.run_cap_exceeds_rolling_cap_items",
+                run_cap=self.max_items_per_run,
+                rolling_cap=self.max_items_per_30d,
             )
         if self.max_bytes_per_run > self.max_bytes_per_30d:
-            raise ValueError("A single run may delete more bytes than the entire 30-day budget.")
+            raise Refusal("error.policy.run_cap_exceeds_rolling_cap_bytes")
         if self.max_unmeasured_per_run > self.max_items_per_run:
-            raise ValueError(
-                f"A run may delete {self.max_unmeasured_per_run} items with an unknown "
-                f"size but only {self.max_items_per_run} items in total. Lower the first "
-                "number, or raise the second."
+            raise Refusal(
+                "error.policy.unmeasured_cap_exceeds_run_cap",
+                unmeasured_cap=self.max_unmeasured_per_run,
+                run_cap=self.max_items_per_run,
             )
         return self
 

@@ -47,6 +47,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.policy import PolicyBody, join_and
 from reaper.engine.policy_migrations import LIST_GATES_NOW_KEEP_RULES, PolicyRepair
+from reaper.refusal import Refusal
 from reaper.services import (
     app_settings,
     history_sync,
@@ -64,8 +65,20 @@ from reaper.text import fold
 log = structlog.get_logger(__name__)
 
 
-class ScanConfigError(RuntimeError):
-    """A scan cannot run because the required instances are not configured."""
+class ScanConfigError(Refusal):
+    """A scan cannot run because the required instances are not configured. A catalog code
+    plus raw params.
+
+    Defaults to 400 rather than ``Refusal``'s own 422: the one route that turns this into an
+    HTTP response (``api.lists``'s check-now) has always answered 400. The two background
+    catchers (``api.scan``, ``services.scheduler``) read ``str(exc)`` for a status line and
+    never touch this field.
+    """
+
+    def __init__(
+        self, code: str, /, *, status: int = 400, **params: str | int | float | bool
+    ) -> None:
+        super().__init__(code, status=status, **params)
 
 
 class ScanInProgressError(RuntimeError):
@@ -189,17 +202,8 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
                 # gate into an `on_list` rule naming it, which is the outcome this whole path
                 # exists to reach (rules 25, 144;
                 # `tests/test_api.py` drives both orders).
-                raise ScanConfigError(
-                    "A protection you set up is pointing at a list that is no longer there, so "
-                    "the scan stopped instead of leaving titles unprotected. Add the list back "
-                    "on Settings, Lists, then open Policy and save. Turning that protection off "
-                    "instead drops it for good."
-                )
-            raise ScanConfigError(
-                f'Policy enables the "{setting.gate.value}" protection, but Reaper has no '
-                "implementation for it. Refusing to scan rather than silently skipping a "
-                "protection you asked for."
-            )
+                raise ScanConfigError("error.scan.list_gate_missing_list")
+            raise ScanConfigError("error.scan.gate_unimplemented", gate=setting.gate.value)
         gates.append(
             gate_type(GateConfig(threshold=setting.threshold, window_days=setting.window_days))
         )
@@ -312,10 +316,7 @@ async def build_sources(
     tautulli_row = next((r for r in rows if r.kind is InstanceKind.TAUTULLI), None)
 
     if require_scan_sources and ((not radarr_rows and not sonarr_rows) or tautulli_row is None):
-        raise ScanConfigError(
-            "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
-            "Add them in Settings first."
-        )
+        raise ScanConfigError("error.scan.missing_sources")
 
     # Each client carries its instance's own TLS setting (``verify_tls``, on by default):
     # the decrypted API key travels on these connections, so certificate verification is
@@ -662,10 +663,7 @@ async def _run_scan_locked(
         # Asserted rather than assumed: a scan without watch history judges dormancy against
         # nothing, and every score leans on dormancy.
         if tautulli is None:  # pragma: no cover - the guard in build_sources precedes it
-            raise ScanConfigError(
-                "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
-                "Add them in Settings first."
-            )
+            raise ScanConfigError("error.scan.missing_sources")
 
         async with session_factory() as policy_session:
             active_movie, active_tv = await profiles.active_policies(policy_session)

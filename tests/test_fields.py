@@ -187,12 +187,6 @@ class TestUnitsAreRendered:
         result = evaluate(Condition(field="size_bytes", op=Op.GTE, value=1_000_000_000), _facts())
         assert "8.0 GB" in text(result.detail)
 
-    def test_every_field_carries_its_label(self) -> None:
-        """The catalog carries the help and the unit now (#868 phase 4); ``label`` survives on
-        ``FieldSpec`` only for the save-boundary ``ValueError``s below, still non-empty."""
-        for spec in BY_KEY.values():
-            assert spec.label
-
 
 class TestCustomProtectGate:
     """A user-authored condition, wearing the built-in Gate interface. It can only ever

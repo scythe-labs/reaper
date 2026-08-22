@@ -20,13 +20,14 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from reaper.api import tags as api_tags
 from reaper.api.deps import newest_snapshot, session_factory
+from reaper.api.errors import refuse
 from reaper.api.policy import _candidate_media_type, _to_body
 from reaper.api.review import (
     _decode_explanation,
@@ -535,7 +536,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     async with session_factory(request)() as session:
         snapshot = await newest_snapshot(session)
         if snapshot is None:
-            raise HTTPException(404, "No scan has run yet, so there is nothing to simulate.")
+            refuse(404, "error.simulate.no_scan")
 
         other_type = "movie" if body.media_type == "tv" else "tv"
         other = (await active_policy(session, other_type)).body

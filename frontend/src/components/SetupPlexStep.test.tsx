@@ -25,7 +25,10 @@ const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 // Answered file-wide, because every mount here renders the linked step and reads both. Left
 // unanswered they resolved to `undefined`, which React Query files as a failed read, so six of

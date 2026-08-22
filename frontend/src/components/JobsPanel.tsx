@@ -14,10 +14,12 @@ import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type Schedule, type ScheduledJob } from "../api";
 import { useBackCloseMirror, useBackGuard } from "../backnav";
+import { describeError } from "../errors";
 import { count, weekday } from "../format";
 import i18next from "../i18n";
 import { shelfSkipIsCurrent } from "../shelfStatus";
 import { useGeneralSettings } from "../useGeneralSettings";
+import { composeError } from "../why";
 import { JobStatus, useJobFlash } from "./JobStatus";
 import { ModalShell } from "./ModalShell";
 import { ScanRow } from "./ScanBar";
@@ -242,7 +244,7 @@ function ScheduleModal({
       void queryClient.invalidateQueries({ queryKey: ["schedule"] });
       onClose();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   /** Whether a dismissal is allowed, computed once and handed to every path that can dismiss:
@@ -387,7 +389,7 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
         <div className="jobrow-sched">{maintenanceScheduleText(job)}</div>
         {run.error && (
           <Notice tone="error" inline>
-            {t("jobs.row.startFailed", { message: run.error.message })}
+            {t("jobs.row.startFailed", { message: describeError(run.error) })}
           </Notice>
         )}
       </div>
@@ -551,7 +553,9 @@ function LeavingSoonRow({
           runningLabel={t("jobs.leavingSoon.updating")}
           lastRunAt={currentSkip ? currentSkip.at : (last?.at ?? null)}
           lastOk={currentSkip ? false : last ? last.ok : null}
-          lastResult={currentSkip ? currentSkip.result : (last?.result ?? null)}
+          lastResult={
+            currentSkip ? composeError(currentSkip.result_reason) : (last?.result ?? null)
+          }
           flash={flash}
         />
         {last && (
@@ -593,7 +597,7 @@ function LeavingSoonRow({
         </div>
         {runSync.error && (
           <Notice tone="error" inline>
-            {t("jobs.leavingSoon.updateFailed", { message: runSync.error.message })}
+            {t("jobs.leavingSoon.updateFailed", { message: describeError(runSync.error) })}
           </Notice>
         )}
       </div>

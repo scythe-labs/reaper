@@ -28,6 +28,7 @@ import {
   type SeerrService,
 } from "../api";
 import { useBackCloseMirror } from "../backnav";
+import { describeError } from "../errors";
 import i18next from "../i18n";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { composeIn } from "../why";
@@ -521,7 +522,7 @@ export function ServiceModal({
       setTest({ result: r, of: issued.of });
       announce(testSentence(r));
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   const save = useMutation({
@@ -631,7 +632,7 @@ export function ServiceModal({
       invalidate();
       onClose();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   // Either there is a whole address and key to send, or the instance is saved and untouched and

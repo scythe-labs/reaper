@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
 from reaper.api.deps import session_factory
+from reaper.api.errors import refuse, validation_error_items
 from reaper.api.schemas import (
     ConditionIn,
     GateSettingOut,
@@ -128,17 +129,7 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             keep_rating_match=payload.keep_rating_match,
         )
     except ValidationError as exc:
-        raise HTTPException(
-            422,
-            detail=[
-                {
-                    "loc": [str(part) for part in error["loc"]],
-                    "msg": error["msg"].removeprefix("Value error, "),
-                    "type": error["type"],
-                }
-                for error in exc.errors()
-            ],
-        ) from exc
+        raise HTTPException(422, detail=validation_error_items(exc.errors())) from exc
 
 
 async def _requests_app_configured(session: AsyncSession) -> bool:
@@ -464,10 +455,8 @@ async def probe_policy(payload: PolicyProbeIn) -> PolicyProbeOut:
             saturate_at=payload.saturate_at,
             floor=payload.floor,
         )
-    except ValidationError as exc:
-        raise HTTPException(
-            422, "That range doesn't work: the starting point has to come before the far end."
-        ) from exc
+    except ValidationError:
+        refuse(422, "error.policy.probe_range_invalid")
 
     match payload.kind:
         case "signal":
@@ -481,8 +470,8 @@ async def probe_policy(payload: PolicyProbeIn) -> PolicyProbeOut:
                     ),
                     payload.value,
                 )
-            except UnprobableSignalError as exc:
-                raise HTTPException(422, "Reaper can't try values against that rule.") from exc
+            except UnprobableSignalError:
+                refuse(422, "error.policy.probe_unprobable")
         case _ as unreachable:
             assert_never(unreachable)
     return PolicyProbeOut(points=answer.points)

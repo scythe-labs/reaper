@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 import { act, render, renderHook, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { announce, Announcer } from "../announce";
+import type { ReasonKey } from "../api";
+import { composeError } from "../why";
 import type { PinPollResult } from "./PlexPin";
 import { CHOOSE_SERVER_SAID, usePlexPinPoll } from "./PlexPin";
 
@@ -112,7 +114,14 @@ describe("a wait that is taking longer than usual", () => {
   // the waiting paragraph swapping to "your server is restarting" is a change nobody touched
   // anything to cause: on screen it changed, by ear it did not (#177). `announce()` only speaks
   // through a mounted `Announcer`, so the region is mounted here rather than assumed.
-  const REASON = "Your Plex server is restarting. Reaper is still waiting.";
+  // A real catalog code and params (phase 8b), never a transcribed sentence: REASON is what
+  // the real composer renders for it, so these tests prove the wire-to-screen pipeline rather
+  // than a copy of it.
+  const REASON_KEY: ReasonKey = {
+    k: "error.plex.link_unreachable",
+    p: { name: "Attic", count: 2 },
+  };
+  const REASON = composeError(REASON_KEY);
 
   beforeEach(() => {
     vi.mocked(announce).mockClear();
@@ -144,7 +153,7 @@ describe("a wait that is taking longer than usual", () => {
         await vi.advanceTimersByTimeAsync(2000);
       });
       await act(async () => {
-        answer().ok({ status: "retrying", servers: null, reason: REASON });
+        answer().ok({ status: "retrying", servers: null, reason: REASON_KEY });
       });
 
       // Both halves: the paragraph has it to render, and it was spoken.
@@ -171,7 +180,7 @@ describe("a wait that is taking longer than usual", () => {
           await vi.advanceTimersByTimeAsync(2000);
         });
         await act(async () => {
-          answer().ok({ status: "retrying", servers: null, reason: REASON });
+          answer().ok({ status: "retrying", servers: null, reason: REASON_KEY });
         });
       }
 
@@ -191,9 +200,10 @@ describe("a wait that is taking longer than usual", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { answer } = pollingHook();
-      const SECOND = "Reaper is still waiting for your Plex server to finish starting.";
+      const SECOND_KEY: ReasonKey = { k: "error.plex.link_timed_out" };
+      const SECOND = composeError(SECOND_KEY);
 
-      for (const reason of [REASON, REASON, SECOND]) {
+      for (const reason of [REASON_KEY, REASON_KEY, SECOND_KEY]) {
         await act(async () => {
           await vi.advanceTimersByTimeAsync(2000);
         });

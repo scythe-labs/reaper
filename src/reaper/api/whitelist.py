@@ -17,12 +17,13 @@ file to being *judged* by the policy again; it re-enters the review queue as a c
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.api import tags as api_tags
 from reaper.api.deps import session_factory
+from reaper.api.errors import refuse
 from reaper.api.schemas import OverrideIn, RemovedOut, WhitelistEntryOut
 from reaper.clock import utcnow
 from reaper.db.models import Candidate, FirstFlagged, Snapshot, WhitelistEntry
@@ -78,11 +79,7 @@ async def _resolve_title(session: AsyncSession, media_key: str) -> str:
         )
     ).scalar_one_or_none()
     if candidate is None:
-        raise HTTPException(
-            404,
-            "Reaper has no record of that item. "
-            f"It keeps only the last {retention.KEEP_SNAPSHOTS} scans.",
-        )
+        refuse(404, "error.whitelist.unknown_item", keep_scans=retention.KEEP_SNAPSHOTS)
     if candidate.group_key == media_key and candidate.group_title:
         return candidate.group_title
     return candidate.title

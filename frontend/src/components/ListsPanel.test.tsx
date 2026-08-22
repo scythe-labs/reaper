@@ -26,7 +26,10 @@ import { ListsPanel } from "./ListsPanel";
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 /** The default hard use: one keeps-it-outright rule per media type, the shape a fresh list
  *  gets server-side. Two entries, one sentence -- the panel deduplicates. */

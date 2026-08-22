@@ -7,7 +7,14 @@
 
 import { describe, expect, it } from "vitest";
 import i18next from "./i18n";
-import { blockedParts, cardReason, composeIn, composeReason, dormantSpan } from "./why";
+import {
+  blockedParts,
+  cardReason,
+  composeError,
+  composeIn,
+  composeReason,
+  dormantSpan,
+} from "./why";
 
 describe("composeReason", () => {
   it("renders the worked example the repo quotes", () => {
@@ -148,6 +155,44 @@ describe("composeIn", () => {
   it('composeReason is composeIn under "why"', () => {
     const key = { k: "dormancy_past_floor", p: { days: 2059, floor_days: 1095 } };
     expect(composeIn("why", key)).toBe(composeReason(key));
+  });
+
+  // Phase 8b: the browser's half of a coded API refusal, off the real error.* catalog.
+  it("pluralizes an error.* entry's count param", () => {
+    expect(composeIn("error", { k: "password.too_short", p: { min_length: 1 } })).toBe(
+      "Use at least 1 character.",
+    );
+    expect(composeIn("error", { k: "password.too_short", p: { min_length: 8 } })).toBe(
+      "Use at least 8 characters.",
+    );
+  });
+
+  it("derives an error.* entry's field_label through why.field.*, same as why.ts", () => {
+    expect(
+      composeIn("error", { k: "policy.field_needs_value", p: { field: "recent_watchers" } }),
+    ).toBe('"People who watched it recently" needs a value.');
+    // Unrecognized field: falls back to the raw key, same posture as why.ts.
+    expect(
+      composeIn("error", { k: "policy.field_needs_value", p: { field: "not_a_real_field" } }),
+    ).toBe('"not_a_real_field" needs a value.');
+  });
+});
+
+describe("composeError", () => {
+  it("strips the wire code's leading 'error.' before composing, so the namespace isn't doubled", () => {
+    expect(
+      composeError({ k: "error.policy.field_needs_value", p: { field: "recent_watchers" } }),
+    ).toBe('"People who watched it recently" needs a value.');
+  });
+
+  it("falls back to the bare code when this build's catalog has no entry for it", () => {
+    expect(composeError({ k: "error.not_a_real.code" })).toBe("not_a_real.code");
+  });
+
+  it("still honors the legacy shape composeIn already handles", () => {
+    expect(composeError({ k: "legacy", p: { text: "an old stored sentence" } })).toBe(
+      "an old stored sentence",
+    );
   });
 });
 

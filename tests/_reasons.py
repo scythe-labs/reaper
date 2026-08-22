@@ -263,3 +263,16 @@ def catalog_entry(dotted: str, namespace: str = "why") -> str:
         node = node[part]
     assert isinstance(node, str), f"{namespace}.{dotted} is a section, not an entry"
     return node
+
+
+def refusal_text(code: str, **params: Any) -> str:
+    """A coded refusal's English, from the real backend catalog (``reaper.refusal.MESSAGES``).
+
+    The test-side twin of ``api.errors.refuse``: a suite asserting an API error's ``detail``
+    renders it from the code and params the response actually carries, rather than
+    transcribing the sentence -- the same reason ``text`` above renders a ``Reason`` from the
+    ``why`` catalog instead of a hand-copied string. Phase 8a (docs/history/I18N_PLAN.md §5).
+    """
+    from reaper.refusal import MESSAGES
+
+    return MESSAGES[code].format(**params)
