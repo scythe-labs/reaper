@@ -427,8 +427,15 @@ async def full_history_sweep(
         )
         async with client:
             state = await history_sync.sync(cache_engine, client, full=True)
-        log.info("scheduler.history_swept", rows=state.rows)
-        await _record_run(session_factory, "full_history_sweep", ok=True, result="History updated")
+        log.info("scheduler.history_swept", rows=state.rows, unservable=state.unservable)
+        if state.unservable:
+            # A partial outcome, recorded the way the lists job records one: the count, and
+            # not ok, so the Jobs page keeps saying so until Tautulli is repaired.
+            result = f"History updated, but Tautulli couldn't return {state.unservable} plays"
+            ok = False
+        else:
+            result, ok = "History updated", True
+        await _record_run(session_factory, "full_history_sweep", ok=ok, result=result)
     except Exception as exc:
         # The instance lookup and client construction are inside this try too, so a broken
         # DB read or a bad decrypt is recorded as a failed run instead of escaping unrecorded.

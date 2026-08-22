@@ -1902,9 +1902,15 @@ class TestRunScanHistorySync:
     keeps that item deletable-looking snapshot from being executed.
     """
 
-    async def test_a_failed_history_sync_degrades_the_snapshot(
-        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def _degradations_with_sync(
+        self,
+        history_sync_stub: Any,
+        tmp_path: Path,
+        cache_engine: AsyncEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> list[str]:
+        """Run the orchestrator with ``history_sync.sync`` replaced and return the
+        degradation reasons the scan was handed. Both tests below vary only the sync."""
         from types import SimpleNamespace
 
         from reaper.engine.policy import ProfileSettings
@@ -1915,9 +1921,6 @@ class TestRunScanHistorySync:
         async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
             captured.update(kwargs)
             return SimpleNamespace(id=1, item_count=0, degraded=False)
-
-        async def failing_sync(engine: Any, tautulli: Any) -> Any:
-            raise IntegrationError("tautulli", "unreachable (boom)")
 
         class _CmTautulli:
             async def __aenter__(self) -> _CmTautulli:
@@ -1948,7 +1951,7 @@ class TestRunScanHistorySync:
             return []
 
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
-        monkeypatch.setattr(history_sync, "sync", failing_sync)
+        monkeypatch.setattr(history_sync, "sync", history_sync_stub)
         monkeypatch.setattr(profiles, "active_policies", fake_policies)
         monkeypatch.setattr(profiles, "active_profile", fake_profile)
         monkeypatch.setattr(snapshot_service, "scan", fake_scan)
@@ -1970,9 +1973,38 @@ class TestRunScanHistorySync:
         finally:
             await engine.dispose()
 
-        reasons = captured.get("extra_degrade_reasons")
+        return list(captured.get("extra_degrade_reasons") or [])
+
+    async def test_a_failed_history_sync_degrades_the_snapshot(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def failing_sync(engine: Any, tautulli: Any) -> Any:
+            raise IntegrationError("tautulli", "unreachable (boom)")
+
+        reasons = await self._degradations_with_sync(
+            failing_sync, tmp_path, cache_engine, monkeypatch
+        )
+
         assert reasons, "a failed history sync must hand the scan a degradation reason"
         assert any("Watch history could not be refreshed" in r for r in reasons)
+        assert any("nothing may be deleted" in r for r in reasons)
+
+    async def test_a_sync_that_stepped_over_rows_degrades_the_snapshot_too(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A row Tautulli could not return is stepped over so the rest of the walk lands
+        (``history_sync.MAX_UNSERVABLE_ROWS``), and the sync returns rather than raises. The
+        missing play is still evidence the scan does not hold, in the condemn direction, so
+        the snapshot degrades on the count exactly as it does on a raise (rule 28)."""
+
+        async def sync_with_gaps(engine: Any, tautulli: Any) -> history_sync.HistoryState:
+            return history_sync.HistoryState(rows=10, earliest=None, latest=None, unservable=3)
+
+        reasons = await self._degradations_with_sync(
+            sync_with_gaps, tmp_path, cache_engine, monkeypatch
+        )
+
+        assert any("Tautulli couldn't return 3 of your plays" in r for r in reasons)
         assert any("nothing may be deleted" in r for r in reasons)
 
 
@@ -2026,7 +2058,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
             )
 
         async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
-            return SimpleNamespace(rows=0)
+            return SimpleNamespace(rows=0, unservable=0)
 
         async def fake_policies(session: Any) -> Any:
             return (
@@ -2348,7 +2380,7 @@ class TestOneScanAtATime:
             return profiles.ActiveProfile(ProfileSettings())
 
         async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
-            return SimpleNamespace(rows=0)
+            return SimpleNamespace(rows=0, unservable=0)
 
         async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
             return {}
@@ -2717,7 +2749,7 @@ class TestKeepHistoryCoverage:
             return ([], [], _OffTautulli(), [], None)
 
         async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
-            return SimpleNamespace(rows=0)
+            return SimpleNamespace(rows=0, unservable=0)
 
         async def fake_policies(session: Any) -> Any:
             return (
@@ -3781,7 +3813,7 @@ class TestTheScanRecordsTheListsItGatheredUnder:
             return profiles.ActiveProfile(ProfileSettings())
 
         async def ok_sync(engine: Any, tautulli: Any) -> Any:
-            return SimpleNamespace(rows=0)
+            return SimpleNamespace(rows=0, unservable=0)
 
         async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
             return {}

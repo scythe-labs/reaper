@@ -1987,7 +1987,9 @@ class Executor:
             try:
                 # A season's episodes are children of its rating key; a movie is the key
                 # itself. Querying the season by parent_rating_key catches an episode play
-                # the movie-style rating_key query would miss.
+                # the movie-style rating_key query would miss. ``include_activity`` is left
+                # to Tautulli on purpose, where the mirror walk passes 0 (rule 72): a play
+                # in progress arriving here reads as played since approval, which spares.
                 if candidate.media_type == "season":
                     data = await gateway.tautulli.history(parent_rating_key=rating_key, after=after)
                 else:

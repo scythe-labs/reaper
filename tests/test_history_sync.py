@@ -27,7 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog.testing import capture_logs
 
-from reaper.clients.base import IntegrationError, transport_failure
+from reaper.clients.base import IntegrationError, http_failure, transport_failure
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.session import create_engine
@@ -272,6 +272,128 @@ class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
             await sync(engine, fake, full=True)
 
         assert fake.lengths == [8, 4, 2]
+
+
+class _RowsTautulliCannotServe(PagingTautulli):
+    """A Tautulli that answers HTTP 500 for any page holding one of the ``bad`` offsets,
+    which is what the live one does for a row its history formatter cannot render. Records
+    every ``(start, length)`` it was asked, probe included. The failure is built by the
+    production mapper (``clients.base.http_failure``), so the walk sees a real 500 (rule 119).
+    """
+
+    def __init__(self, rows: list[dict[str, Any]], *, bad: set[int], status: int = 500) -> None:
+        super().__init__(rows)
+        self.bad = bad
+        self.status = status
+        self.asked: list[tuple[int, int]] = []
+
+    async def history(self, **kwargs: Any) -> dict[str, Any]:
+        start, length = int(kwargs.get("start", 0)), int(kwargs.get("length", 100))
+        self.asked.append((start, length))
+        if any(start <= offset < start + length for offset in self.bad):
+            response = httpx2.Response(
+                self.status, request=httpx2.Request("GET", "http://tautulli.example/api/v2")
+            )
+            raise http_failure("tautulli", response, "GET", "/api/v2")
+        return await super().history(**kwargs)
+
+
+class TestARowTheSourceCannotServeIsSteppedOverNotFatal:
+    """Tautulli renders ``get_history`` rows in Python after the query, and a row it cannot
+    render fails the whole page it is on with a 500, at any page size. Two undated rows sat
+    on the last page of every full sweep for three runs, so the sweep failed each time, every
+    row on that page went unmirrored, and no page size or timeout could change that. The
+    walk now isolates the row, steps over it, and says so (``MAX_UNSERVABLE_ROWS``)."""
+
+    async def test_the_rows_beside_a_bad_one_still_land_and_the_count_is_reported(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The live shape: the two oldest rows are the bad ones. Every other row lands, the
+        state carries the count, and the ledger shows the halving down to one row, the two
+        skips, and the walk ending on the empty page past them."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        fake = _RowsTautulliCannotServe([_row(n, days_ago=n) for n in range(1, 13)], bad={10, 11})
+
+        state = await sync(engine, fake, full=True)
+
+        assert await _count(engine) == 10
+        assert state.unservable == 2
+        assert fake.asked == [
+            (0, 1),  # the regression check's probe
+            (0, 8),
+            (8, 8),
+            (8, 4),
+            (8, 2),
+            (10, 4),
+            (10, 2),
+            (10, 1),  # stands alone and still fails: stepped over
+            (11, 1),  # the second one, straight from a one-row page
+            (12, 1),  # past the end, empty, done
+        ]
+
+    async def test_the_page_climbs_back_after_a_bad_row_in_the_middle(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bad row early in a long history must not leave the rest of the walk at one row
+        a page. The page doubles on every page that lands until it is back at the top."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        fake = _RowsTautulliCannotServe([_row(n, days_ago=n) for n in range(1, 21)], bad={5})
+
+        state = await sync(engine, fake, full=True)
+
+        assert await _count(engine) == 19
+        assert state.unservable == 1
+        assert [length for start, length in fake.asked if start > 5] == [1, 2, 4, 8]
+
+    async def test_too_many_bad_rows_is_a_broken_source_and_raises(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The skip is bounded. Past ``MAX_UNSERVABLE_ROWS`` the walk raises the domain error
+        with the count, and what landed before it stays in the mirror."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        monkeypatch.setattr(history_sync, "MIN_PAGE_SIZE", 2)
+        monkeypatch.setattr(history_sync, "MAX_UNSERVABLE_ROWS", 1)
+        fake = _RowsTautulliCannotServe([_row(n, days_ago=n) for n in range(1, 13)], bad={10, 11})
+
+        with pytest.raises(IntegrationError, match=r"could not return 2 rows of history"):
+            await sync(engine, fake, full=True)
+
+        assert await _count(engine) == 10
+
+    @pytest.mark.parametrize("status", [404, 502, 503])
+    async def test_any_other_status_still_aborts_at_once(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch, status: int
+    ) -> None:
+        """A 502 or 503 is a proxy saying the source is away, and a 4xx is the request
+        itself. No smaller page fixes either, so the walk must not spend the descent."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 8)
+        fake = _RowsTautulliCannotServe(
+            [_row(n, days_ago=n) for n in range(1, 13)], bad={3}, status=status
+        )
+
+        with pytest.raises(IntegrationError, match=rf"HTTP {status} for GET /api/v2"):
+            await sync(engine, fake, full=True)
+
+        assert fake.asked == [(0, 1), (0, 8)]  # the probe, one page, never shrank
+
+
+class TestTheWalkAsksForHistoryWithoutActivity:
+    """Tautulli appends its temporary session table to ``get_history`` as activity unless
+    told not to, and a session that table holds without a start time fails every page it
+    is on with HTTP 500. The walk drops a row with no ``row_id`` anyway, so it asks without
+    activity, and the regression probe counts the same rows the walk reads."""
+
+    async def test_every_page_and_the_probe_pass_zero(self, engine: AsyncEngine) -> None:
+        """The client's default is ``None`` (Tautulli decides), so a call that omits the
+        argument is distinguishable from one that passes 0 (rule 141)."""
+        fake = PagingTautulli([_row(n, days_ago=n) for n in range(1, 10)])
+
+        await sync(engine, fake, full=True)
+
+        assert fake.include_activity, "nothing was asked"
+        assert set(fake.include_activity) == {0}
 
 
 class TestTheSweepCarriesItsOwnReadBudget:

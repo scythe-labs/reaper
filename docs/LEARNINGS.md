@@ -4309,6 +4309,51 @@ as a backend assertion that disagreed with what `i18next` rendered in `PolicyEdi
 The fix substitutes at brace depth zero only. The twin earned its keep here: a test that
 transcribed the sentence would have agreed with the wrong renderer.
 
+## A row Tautulli cannot render fails every page that holds it (2026-08-21)
+
+Three full sweeps in a row failed on the last page with `HTTP 500 for GET /api/v2`, after the
+page size and the read budget had both been changed for #780. Neither could have mattered: a 500
+is not a timeout, and the walk raised on it at once. Reproduced through Reaper's own client
+against a live instance at 427,096 rows, then bisected by offset.
+
+**Two rows, both undated, and neither of them history.** Ascending by date, `start=0` answers
+500 and `start=2` answers 200. `after=1970-01-02` excludes both rows and the crash with them,
+and nothing in that history is dated before 2018. The first reading was two undated history
+rows, and raw SQL through the `sql` command refuted it: `session_history` held 427,094 rows,
+every `started` an integer, where the API reported 427,096. The two extra rows were in
+`sessions`, Tautulli's temporary table of plays in progress: no `started`, no `rating_key`, no
+`media_type`, no `user_id`, state `playing`, last touched in a window when the operator's
+Tautulli was being OOM-killed. `get_history` appends that table to its listing as activity
+unless `include_activity=0` is passed, a null date sorts last, and the formatter cannot render
+a session without a start time. The body is `{"result": "error", "message": "Check the logs for
+errors"}`, Tautulli's uncaught-exception path for an API command, and its traceback goes to
+`tautulli_api.log`, which `get_logs` does not read. The incremental sync never met them because
+its `after` filter excludes an undated row either way.
+
+**Dated to a one-day window by the sweep log, then to the hour by the rows.** The 08-19 sweep
+completed at 426,726 rows and the 08-20 sweep was the first 500, so the rows appeared between
+those two runs. Their `stopped` timestamps sit inside that window. Before that there was nothing
+to hit, which is why earlier tests of the same job passed.
+
+**The walk never wanted those rows.** It drops anything without a `row_id`, which is what a play
+in progress arrives as, so it now asks with `include_activity=0` and the probe counts the same
+rows the walk reads. The executor's per-item re-ask keeps Tautulli's default on purpose: a play
+in progress there reads as played since approval, which spares.
+
+**Measured through the step-over alone, a real `sync(full=True)` into a throwaway mirror**: 452s
+and 53 requests, against 237s and 18 for the clean sweep measured on 08-14. The halving and the
+doubling back cost 34 requests for two adjacent rows, about 6.5s each at that offset, so a bad
+row costs roughly two minutes of sweep. A true bisect that remembered the far end of the failing
+window would halve that (18 requests simulated) and was not written: the job runs every three
+days, the fix belongs at the source, and `MAX_UNSERVABLE_ROWS` bounds the worst case at 20 rows.
+**Through the final walk, with activity left out**: 194s, 427,096 rows, none skipped, 19
+requests, and `inserted` equal to `fetched` on every page where every earlier run had fetched
+and dropped the six plays in progress.
+
+⇒ A page that fails at every size is not a size problem. Ask what is IN the page before
+changing how much of it is asked for, and bisect by offset against the live source: the log says
+which page, and that is enough to find the row.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

@@ -183,6 +183,9 @@ class PagingTautulli(TautulliClient):
         #: The read budget each call arrived with, probe included, so a test can tell the
         #: sweep's own budget from the client-wide one every other caller keeps.
         self.read_timeouts: list[float | None] = []
+        #: ``include_activity`` as each call sent it, probe included. ``None`` is the
+        #: client's default and means Tautulli decides, so a walk that omits it is visible.
+        self.include_activity: list[int | None] = []
 
     async def history(
         self,
@@ -195,9 +198,11 @@ class PagingTautulli(TautulliClient):
         length: int = 100,
         start: int = 0,
         grouping: int = 0,
+        include_activity: int | None = None,
         read_timeout: float | None = None,
     ) -> dict[str, Any]:
         self.read_timeouts.append(read_timeout)
+        self.include_activity.append(include_activity)
         # The length=1 probe the regression check makes does not count as a page fetch.
         if length > 1:
             self.after_calls.append(after)
