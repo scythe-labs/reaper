@@ -223,7 +223,7 @@ MESSAGES: dict[str, str] = {
     ),
     "error.safety.deletion_off": (
         "Deletion is turned off, so Reaper can look but can't remove anything. "
-        "Turn it on in Policy -> Deletion when you're ready."
+        "Turn it on in Policy → Deletion when you're ready."
     ),
     # -----------------------------------------------------------------------------
     # Plex: linking, connection, libraries, watch evidence.

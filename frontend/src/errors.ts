@@ -21,14 +21,14 @@
 import type { ApiErrorItem } from "./api";
 import { ApiError } from "./api";
 import i18next from "./i18n";
-import { composeIn } from "./why";
+import { composeError } from "./why";
 
 /** One code composed through the catalog, or `fallback` when this build's catalog has no
  *  entry for it -- an older server's code, or a build that predates a newly added one. */
 function composeCode(code: string, params: Record<string, unknown>, fallback: string): string {
   const key = code.replace(/^error\./, "");
   if (!i18next.exists(`error.${key}`)) return fallback;
-  return composeIn("error", { k: key, p: params });
+  return composeError({ k: code, p: params });
 }
 
 function composeItem(item: ApiErrorItem): string {

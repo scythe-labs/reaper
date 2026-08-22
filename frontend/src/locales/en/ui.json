@@ -715,7 +715,7 @@
       "api_key_throttled": "Too many bad API keys from this address. Wait a moment and try again.",
       "api_key_write_denied": "This needs the web app, signed in. An API key writes only these: {permissions}.",
       "arm_deletion_password_mismatch": "That password didn't match. Deletion stays off.",
-      "change_password_mismatch": "The current password didn't match. Nothing was changed.",
+      "change_password_mismatch": "The current password didn't match.",
       "csrf_blocked": "This request was blocked by Reaper's CSRF protection.",
       "forget_watch_password_mismatch": "That password didn't match. The record was kept.",
       "forward_origin_has_path": "That address must be just the site, with nothing after it.",
@@ -729,7 +729,7 @@
       "plex_not_owner": "That Plex account does not own this server, so it cannot administer Reaper. Sign in as the server owner, or use a local account.",
       "recovery_link_invalid": "That recovery link is invalid, expired, or already used.",
       "recovery_no_admin": "The recovery code was valid, but this install has no admin account yet. Sign in with Plex to claim the server, or on Docker and snap run: reaper-admin create-admin --username admin",
-      "restore_password_mismatch": "That password didn't match. Nothing was restored.",
+      "restore_password_mismatch": "That password didn't match.",
       "sign_in_busy": "The server is busy verifying sign-ins. Please try again shortly.",
       "too_many_attempts": "Too many attempts. Please wait and try again.",
       "wrong_credentials": "Wrong username or password."
@@ -926,7 +926,7 @@
       "preflight_no_tautulli": "Refusing a real run without Tautulli: the played-since-approval check cannot run, and the grace period exists precisely so a late view can still spare an item."
     },
     "safety": {
-      "deletion_off": "Deletion is turned off, so Reaper can look but can't remove anything. Turn it on in Policy -> Deletion when you're ready.",
+      "deletion_off": "Deletion is turned off, so Reaper can look but can't remove anything. Turn it on in Policy → Deletion when you're ready.",
       "recovery_mode_active": "Recovery mode is on, so Reaper can look but can't remove anything. Turn it off and restart."
     },
     "scan": {
