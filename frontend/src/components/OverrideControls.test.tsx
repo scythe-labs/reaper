@@ -12,7 +12,12 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { OverrideControls, OverrideMark } from "./OverrideControls";
 import { QueueSettingsContext, type QueueSettings } from "./queueSettings";
 
-vi.mock("../api", () => ({ api: { general: vi.fn(), profile: vi.fn() } }));
+// Spreads the real module for ApiError (rule 135): describeError's `instanceof ApiError`
+// check throws against a mock that answers for `api` alone.
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: { general: vi.fn(), profile: vi.fn() },
+}));
 
 /** An ISO instant `days` from now. Negative is a spare whose count has already run down. */
 function inDays(days: number): string {
