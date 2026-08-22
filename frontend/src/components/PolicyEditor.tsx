@@ -926,12 +926,12 @@ function SignalRamp({
               <div
                 className="ramp-strip-fill"
                 style={{
-                  left: `${strip.fillFrom}%`,
+                  insetInlineStart: `${strip.fillFrom}%`,
                   width: `${strip.fillTo - strip.fillFrom}%`,
                   background: rampFill(strip),
                 }}
               />
-              <div className="ramp-strip-bar" style={{ left: `${strip.bar}%` }} />
+              <div className="ramp-strip-bar" style={{ insetInlineStart: `${strip.bar}%` }} />
             </div>
             <div className="ramp-strip-scale">
               <span>{strip.scaleFrom}</span>

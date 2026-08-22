@@ -210,6 +210,17 @@
 .season-expander .chevron.open {
   transform: rotate(90deg);
 }
+/* The glyph points along the reading direction, and a browser mirrors the LAYOUT for
+   `dir="rtl"` but never the artwork, so this arrow would go on pointing back at the margin the
+   reader started from. Both states are written out: the open one composes the flip with its
+   rotate, because `transform` is one property and a second rule would replace the first. Scale
+   before rotate, so the tip still ends up pointing down when the list is open. */
+[dir="rtl"] .season-expander .chevron {
+  transform: scaleX(-1);
+}
+[dir="rtl"] .season-expander .chevron.open {
+  transform: scaleX(-1) rotate(90deg);
+}
 /* Its twin, .fold-caret in 13-receipt.css, was already stopped; this one was the sibling the
    fix did not reach (rule 72). Same widget, same rotate. */
 @media (prefers-reduced-motion: reduce) {

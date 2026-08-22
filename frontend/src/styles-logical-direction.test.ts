@@ -34,11 +34,6 @@ const KEEP_PHYSICAL = new Map([
   [".scan-toast|left", "centered the same way as .sheet"],
   [".hist-thresh b|left", "centered the same way as .sheet"],
   [
-    ".filter-menu|left",
-    "--pop-shift is a leftward pixel pull usePopoverShift measures against the viewport (rule 138); the stylesheet cannot flip it alone",
-  ],
-  [".suggest-pop|left", "--pop-shift, the same as .filter-menu"],
-  [
     ".doc-diagram .dd-varrow|border-left",
     "half of a symmetric transparent pair drawing a DOWNWARD triangle: the axis is vertical, so neither side is an inline side",
   ],

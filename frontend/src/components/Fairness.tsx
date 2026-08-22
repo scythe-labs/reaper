@@ -239,7 +239,10 @@ export function Fairness({
       <span className="fair-stat-lbl">{t("scales.board.notInScanLabel")}</span>{" "}
       <span className="fair-stat-sub">{t("scales.board.notInScanSub")}</span>{" "}
       <span className="fair-stat-more">
-        {t("scales.board.seeWhatTheseAre")} <span aria-hidden="true">›</span>
+        {t("scales.board.seeWhatTheseAre")}{" "}
+        <span className="dir-glyph" aria-hidden="true">
+          ›
+        </span>
       </span>
     </button>
   );

@@ -151,7 +151,7 @@
 .filter-menu {
   position: absolute;
   top: calc(100% + 6px);
-  left: var(--pop-shift, 0px);
+  inset-inline-start: var(--pop-shift, 0px);
   z-index: var(--z-nav);
   min-width: 190px;
   max-width: min(260px, calc(100vw - 1.5rem));

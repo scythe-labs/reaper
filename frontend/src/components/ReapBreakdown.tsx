@@ -292,7 +292,10 @@ export function ReapBreakdown({
             count: count(data.hand_reaped_held),
           })}{" "}
           <button className="link" onClick={onGoToReview}>
-            {t("reapPlan.breakdown.seeReview")} <span aria-hidden="true">→</span>
+            {t("reapPlan.breakdown.seeReview")}{" "}
+            <span className="dir-glyph" aria-hidden="true">
+              →
+            </span>
           </button>
         </div>
       )}
@@ -321,7 +324,10 @@ export function ReapBreakdown({
       <div className="rb-line">
         {t("reapPlan.breakdown.reviewQueueLead")}{" "}
         <button className="link" onClick={onGoToReview}>
-          {t("reapPlan.breakdown.reviewQueue")} <span aria-hidden="true">→</span>
+          {t("reapPlan.breakdown.reviewQueue")}{" "}
+          <span className="dir-glyph" aria-hidden="true">
+            →
+          </span>
         </button>
       </div>
     </div>

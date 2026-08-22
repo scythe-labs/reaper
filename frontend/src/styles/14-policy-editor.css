@@ -564,7 +564,7 @@
 .suggest-pop {
   position: absolute;
   top: calc(100% + 4px);
-  left: var(--pop-shift, 0px);
+  inset-inline-start: var(--pop-shift, 0px);
   z-index: var(--z-nav);
   min-width: 100%;
   max-width: min(20rem, calc(100vw - 1.5rem));

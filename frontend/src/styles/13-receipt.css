@@ -279,6 +279,15 @@
 .gates-fold[open] .fold-caret {
   transform: rotate(90deg);
 }
+/* Mirrored for a right-to-left page, both states spelled out, for the reason written against
+   its twin `.season-expander .chevron` in 25-select-mode.css (rule 72: same widget, same
+   rotate, so the same fix). */
+[dir="rtl"] .fold-caret {
+  transform: scaleX(-1);
+}
+[dir="rtl"] .gates-fold[open] .fold-caret {
+  transform: scaleX(-1) rotate(90deg);
+}
 .fold-open-label {
   display: none;
 }

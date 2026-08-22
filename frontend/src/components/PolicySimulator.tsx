@@ -50,7 +50,7 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
           </div>
         );
       })}
-      <div className="hist-thresh" style={{ left: `${threshold}%` }}>
+      <div className="hist-thresh" style={{ insetInlineStart: `${threshold}%` }}>
         <b>{threshold}</b>
       </div>
     </div>

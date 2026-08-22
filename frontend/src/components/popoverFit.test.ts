@@ -8,7 +8,7 @@
 // The numbers are a phone: a 390px-wide screen and the filter menu at its 260px widest.
 
 import { describe, expect, it } from "vitest";
-import { popoverShift } from "./popoverFit";
+import { fixedMenuPos, inlineStartOf, popoverShift } from "./popoverFit";
 
 describe("popoverShift", () => {
   // Written from what the placement promises, never read off its branches (rule 119). Each row
@@ -37,6 +37,82 @@ describe("popoverShift", () => {
           expect(anchorLeft + shift).toBeGreaterThanOrEqual(Math.min(anchorLeft, 8));
         }
       }
+    }
+  });
+});
+
+// These two are the only places in the app that measure the viewport in raw pixels, so they are
+// the only two the browser's own `dir="rtl"` mirroring cannot reach (#861). Everything else
+// mirrors because the stylesheet names its sides by reading order.
+describe("inlineStartOf", () => {
+  it("is the left edge in a left-to-right page and the mirror of the right edge otherwise", () => {
+    const rect = { left: 300, right: 360 };
+    expect(inlineStartOf(rect, 390, false)).toBe(300);
+    // 390 - 360: the same box is 30px from the edge an Arabic reader starts at.
+    expect(inlineStartOf(rect, 390, true)).toBe(30);
+  });
+
+  it("measures a box against whichever edge the reader starts from, symmetrically", () => {
+    // A box against the far edge in one direction is against the near edge in the other, so
+    // the two readings of any rect sum to the space the rect does not fill.
+    for (const [left, right] of [
+      [0, 40],
+      [120, 260],
+      [350, 390],
+    ] as const) {
+      const ltr = inlineStartOf({ left, right }, 390, false);
+      const rtl = inlineStartOf({ left, right }, 390, true);
+      expect(ltr + rtl).toBe(390 - (right - left));
+    }
+  });
+});
+
+describe("fixedMenuPos", () => {
+  // A trigger near the RIGHT edge of a 390px phone, which is where the caret sits on a card.
+  const nearRightEdge = { left: 330, right: 360, top: 200, bottom: 224 };
+  // And one near the left edge, the mirror case.
+  const nearLeftEdge = { left: 30, right: 60, top: 200, bottom: 224 };
+
+  it("hangs the menu back from the trigger's far edge, whichever edge that is", () => {
+    // Left to right: the menu's right edge meets the trigger's right edge, so it starts
+    // 360 - 200 = 160px from the left.
+    expect(fixedMenuPos(nearRightEdge, 200, 100, 390, 800, 8, false).start).toBe(160);
+    // Right to left: the trigger's far edge is its LEFT one, 390 - 30 = 360px from the reading
+    // edge, so the menu starts 160px from the RIGHT. The mirror of the same number.
+    expect(fixedMenuPos(nearLeftEdge, 200, 100, 390, 800, 8, true).start).toBe(160);
+  });
+
+  it("clamps to the near gutter rather than run the menu off the reading edge", () => {
+    // A menu wider than the space before the trigger cannot start at a negative offset.
+    expect(fixedMenuPos(nearLeftEdge, 200, 100, 390, 800, 8, false).start).toBe(8);
+    expect(fixedMenuPos(nearRightEdge, 200, 100, 390, 800, 8, true).start).toBe(8);
+  });
+
+  it("keeps the menu on screen in both directions, whatever the trigger's position", () => {
+    for (let left = 0; left <= 360; left += 10) {
+      for (const rtl of [false, true]) {
+        const { start } = fixedMenuPos(
+          { left, right: left + 30, top: 200, bottom: 224 },
+          200,
+          100,
+          390,
+          800,
+          8,
+          rtl,
+        );
+        expect(start).toBeGreaterThanOrEqual(8);
+        expect(start + 200).toBeLessThanOrEqual(390 - 8);
+      }
+    }
+  });
+
+  it("flips above the trigger the same way in either direction", () => {
+    // The vertical decision is not a reading-order one, so it must not have picked one up.
+    const low = { left: 100, right: 130, top: 760, bottom: 790 };
+    for (const rtl of [false, true]) {
+      const pos = fixedMenuPos(low, 200, 100, 390, 800, 8, rtl);
+      expect(pos.top).toBeUndefined();
+      expect(pos.bottom).toBe(800 - 760 + 4);
     }
   });
 });

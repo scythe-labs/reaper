@@ -1215,9 +1215,11 @@ describe("where a signal starts earning", () => {
     ).toBeVisible();
     expect(screen.queryByLabelText('Where "How low it\'s rated" adds all its points')).toBeNull();
     // The range is drawn now rather than restated: the strip charges everything BELOW the
-    // bar, so its fill starts at the left edge and stops where the bar sits (7.0 of 10).
+    // bar, so its fill starts at the reading edge and stops where the bar sits (7.0 of 10).
+    // Read as the logical property, which is what the component sets so the strip mirrors
+    // with the rest of the page (#861); `style.left` is empty and would assert nothing.
     const { fill } = stripFor("How low it's rated");
-    expect(fill.style.left).toBe("0%");
+    expect(fill.style.insetInlineStart).toBe("0%");
     expect(fill.style.width).toBe("70%");
     // The label says what a title CLEARS, which is the whole of the backwards reading: a
     // higher number now visibly demands more rather than sounding more generous.
@@ -1262,7 +1264,9 @@ describe("where a signal starts earning", () => {
     // Stored in tenths, and the floor goes back to zero with it: the pair carries one degree
     // of freedom, so a stale floor would leave a second number in the body that nothing reads
     // and nobody can see. The strip is what shows it landed -- the bar moves to 5.5 of 10.
-    await waitFor(() => expect(stripFor("How low it's rated").bar.style.left).toBe("55%"));
+    await waitFor(() =>
+      expect(stripFor("How low it's rated").bar.style.insetInlineStart).toBe("55%"),
+    );
   });
 
   it("says nothing about a range for a signal worth no points", async () => {
@@ -1437,7 +1441,7 @@ describe("putting a ramp back the way Reaper ships it", () => {
 
     // Both ends back, and the strip is what shows it: the bar moves to 365 of a 3650 track.
     await waitFor(() =>
-      expect(stripFor("How long it's gone unwatched").bar.style.left).toBe("10%"),
+      expect(stripFor("How long it's gone unwatched").bar.style.insetInlineStart).toBe("10%"),
     );
     // The weight is untouched. Removal weights total exactly 100, so putting one back on its
     // own would break the budget the save bar enforces.
