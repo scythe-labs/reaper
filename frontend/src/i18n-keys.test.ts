@@ -44,6 +44,11 @@ import { shippedSource, sourceText, srcRelative } from "./test/sources";
 // errors.ts's describeError composes every coded ApiError under "error." the same way
 // (phase 8b): a refusal's code is already the catalog's full dotted path, so the namespace
 // prefix it strips before calling composeIn is proven there, not here.
+// signalRamp.ts (phase 9) reads a built-in signal's near/far/lead/scale labels by its own
+// signal id (RAMP_SPECS keyed on "unwatched"/"season_rank"/etc.), so `rampUnits()` hands
+// i18next.t() a computed key under "signals.ramp."; proven complete by this module's own
+// RAMP_SPECS covering every id `rampUnits` can be asked for (a signal absent from it returns
+// null rather than a partial lookup).
 const DYNAMIC: Record<string, string[]> = {
   "why.ts": [
     "why.",
@@ -60,6 +65,7 @@ const DYNAMIC: Record<string, string[]> = {
     "policyRules.fieldHelp.",
     "policyRules.fieldUnit.",
   ],
+  "components/signalRamp.ts": ["signals.ramp."],
 };
 
 const T_CALLEES = new Set(["t", "i18next.t", "i18n.t"]);
