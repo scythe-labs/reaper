@@ -68,11 +68,12 @@
     "leavingSoon": {
       "counts": "<movieNum>{movieCount}</movieNum> {movies, plural, one {movie} other {movies}} and <seasonNum>{seasonCount}</seasonNum> {seasons, plural, one {season} other {seasons}} on the shelves",
       "countsAtLastUpdate": "<movieNum>{movieCount}</movieNum> {movies, plural, one {movie} other {movies}} and <seasonNum>{seasonCount}</seasonNum> {seasons, plural, one {season} other {seasons}} were on the shelves at the last update",
-      "desc": "Adds every title that's counting down to the Plex \"Leaving Soon\" shelf, so people see it before it's removed.",
+      "desc": "Adds every title that's counting down to the Plex shelf, so people see it before it's removed.",
       "didNotUpdate": "It didn't update",
       "loadFailed": "Couldn't load the shelf status. Reload to try again.",
       "manageLink": "Manage in Plex → Leaving Soon",
       "offNotice": "Off. <btn>Turn it on in Plex → Leaving Soon</btn>",
+      "renaming": "Plex still shows \"{was}\". This update renames it.",
       "runsAfterScan": "Runs after every scan",
       "shelfName": "Leaving Soon shelf",
       "title": "Update {shelf}",
@@ -1072,9 +1073,12 @@
     "leavingSoon": {
       "allowUnarmedHelp": "Until deletion is on, Reaper writes nothing to Plex, this shelf included. Turn this on to show the shelf while Reaper is still read-only. It can never remove files.",
       "allowUnarmedLabel": "Update while read-only",
-      "enableHelp": "Keeps a Leaving Soon collection in each library turned on above, and labels everything in it. Items appear when they start counting down and leave when spared or removed. Updates after every scan, or from the Jobs page.",
-      "enableLabel": "Show \"Leaving Soon\" in Plex",
+      "enableHelp": "Keeps a {shelf} collection in each library turned on above, and labels everything in it. Items appear when they start counting down and leave when spared or removed. Updates after every scan, or from the Jobs page.",
+      "enableLabel": "Show \"{shelf}\" in Plex",
       "loadError": "Couldn't load the Leaving Soon settings.",
+      "nameHelp": "What the collection and the label are called in Plex.",
+      "nameLabel": "Shelf name",
+      "nameSaved": "Shelf name saved.",
       "status": {
         "held": "on the shelves",
         "heldSkipped": "were on the shelves at the last update",
@@ -1084,11 +1088,12 @@
         "neverRan": "Not updated yet. It runs after every scan, or from the Jobs page.",
         "neverRanSkipped": "The last scan didn't update the shelves. The Jobs page says why.",
         "passLine": "{result}. {line}",
+        "renaming": "Plex still shows \"{was}\". The next update renames it.",
         "seasonsCount": "{count} {n, plural, one {season} other {seasons}}"
       }
     },
     "leavingSoonGroup": {
-      "blurb": "While an item counts down its grace period, Reaper can put it on a \"Leaving Soon\" shelf in Plex, so people see it before it goes. Movies in your movie libraries, seasons in your TV libraries.",
+      "blurb": "While an item counts down its grace period, Reaper can put it on a shelf in Plex, so people see it before it goes. Movies in your movie libraries, seasons in your TV libraries.",
       "heading": "Leaving Soon"
     },
     "libraries": {

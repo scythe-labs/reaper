@@ -17,7 +17,7 @@ import { useSuccessorFocus } from "../focus";
 import i18next from "../i18n";
 import { countBesideServerText, since } from "../format";
 import { invalidateAllPlex as invalidateAllPlexQueries } from "../plexServerQueries";
-import { shelfSkipIsCurrent } from "../shelfStatus";
+import { shelfRenamePending, shelfSkipIsCurrent } from "../shelfStatus";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { useSafety } from "../useSafety";
 import { jobResultText } from "./JobStatus";
@@ -493,10 +493,36 @@ export function PlexPanel({
     queryFn: api.leavingSoonSettings,
     enabled: linked,
   });
+  // The shelf-name box, seeded from the stored name and following it the same way the web
+  // address above does -- same sentinel, same reason (rule 72). Its Save is inline for the
+  // same reason those two are: this panel has no save bar, and the row writes through the
+  // Leaving Soon route rather than `saveGeneral`.
+  const [shelfName, setShelfName] = useState("");
+  const [shelfNameSeededFrom, setShelfNameSeededFrom] = useState<string | null>(null);
+  const afterShelfNameSave = useSuccessorFocus();
+  const savedShelfName = leavingSoon.data?.name ?? "";
+  useEffect(() => {
+    setShelfName(savedShelfName);
+    setShelfNameSeededFrom(savedShelfName);
+  }, [savedShelfName]);
+
   const saveLeavingSoon = useMutation({
     mutationFn: api.setLeavingSoonSettings,
-    onSuccess: (s) => {
+    onSuccess: (s, sent) => {
       queryClient.setQueryData(["leaving-soon-settings"], s);
+      // Re-seed from the response, not from the effect above (rule 39). Clearing the box is
+      // how the help says to go back to the default, and it saves the empty string: the route
+      // stores that as unset and reports back the SAME default name it was already returning,
+      // so `savedShelfName` never changes identity and that effect never re-fires. The box
+      // would sit empty against a name it now matches -- a Save that never goes away, and a
+      // section-switch confirm no button on this panel can satisfy.
+      if (sent.name !== undefined) {
+        setShelfName(s.name);
+        setShelfNameSeededFrom(s.name);
+        // The switches beside it flip visibly. This row's only success signal was the Save
+        // going away, which is an absence (rule 72, with the web address row above).
+        announce(t("plex.leavingSoon.nameSaved"));
+      }
     },
   });
 
@@ -515,10 +541,23 @@ export function PlexPanel({
     // whose grammar the skip clauses are written for; this line says the state and points at
     // it.
     const skipped = shelfSkipIsCurrent(leavingSoon.data);
+    // A saved rename that no pass has carried across yet. First, because it is the one fact
+    // here that contradicts what the operator is looking at: the box two rows up says one
+    // name and their library still shows another, and the counts after it are about the shelf
+    // under the OLD name.
+    // Joined with a space and nothing else, as the skipped clause below is: each half is a
+    // whole composed sentence carrying its own punctuation, and neither is edited after it
+    // is composed.
+    const renaming = shelfRenamePending(leavingSoon.data)
+      ? t("plex.leavingSoon.status.renaming", { was: leavingSoon.data.applied_name })
+      : "";
+    const lead = (rest: string) => (renaming ? `${renaming} ${rest}` : rest);
     if (!last) {
-      return skipped
-        ? t("plex.leavingSoon.status.neverRanSkipped")
-        : t("plex.leavingSoon.status.neverRan");
+      return lead(
+        skipped
+          ? t("plex.leavingSoon.status.neverRanSkipped")
+          : t("plex.leavingSoon.status.neverRan"),
+      );
     }
     // Not `count` -- `resultText` below is the service's own sentence and already carries
     // comma-grouped numbers, so a browser-locale count beside it puts two thousands
@@ -550,8 +589,10 @@ export function PlexPanel({
       seasons,
       held,
     });
-    if (skipped) return `${t("plex.leavingSoon.status.laterScanSkipped")} ${line}`;
-    return resultText ? t("plex.leavingSoon.status.passLine", { result: resultText, line }) : line;
+    if (skipped) return lead(`${t("plex.leavingSoon.status.laterScanSkipped")} ${line}`);
+    return lead(
+      resultText ? t("plex.leavingSoon.status.passLine", { result: resultText, line }) : line,
+    );
   })();
 
   // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask
@@ -586,7 +627,15 @@ export function PlexPanel({
   // explain it. Its row renders unconditionally, so the reachability half of the claim holds
   // wherever this form does. Once linked the switch is not a draft at all: it is already saved.
   const certDirty = !linked && verifySeededFrom === savedVerify && verifyCert !== savedVerify;
-  const hasDrafts = webUrlDirty || manualDirty || certDirty;
+  // Its row renders behind `linked && leavingSoon.data`, so both belong in the claim: the row
+  // is the only way to save this box, and reporting a draft the operator cannot reach leaves
+  // them the discard button and nothing else (rule 146).
+  const shelfNameDirty =
+    linked &&
+    !!leavingSoon.data &&
+    shelfNameSeededFrom === savedShelfName &&
+    shelfName.trim() !== savedShelfName;
+  const hasDrafts = webUrlDirty || manualDirty || certDirty || shelfNameDirty;
   useEffect(() => {
     onDirtyChange?.(hasDrafts);
   }, [hasDrafts, onDirtyChange]);
@@ -1188,17 +1237,50 @@ export function PlexPanel({
             <>
               <StaleReadSlot plan={stale} slot={t("plex.stale.leavingSoon")} />
               <div className="set-rows">
+                {/* The name the two rows below talk about, so it comes first. Its own inline
+                  Save, like the web address row above and for the same reason. `maxLength` is
+                  the route's own bound (`app_settings.LEAVING_SOON_NAME_MAX`), so a long name
+                  is stopped in the box rather than coming back a 422. */}
+                <SetRow
+                  label={t("plex.leavingSoon.nameLabel")}
+                  help={t("plex.leavingSoon.nameHelp")}
+                >
+                  <input
+                    type="text"
+                    ref={afterShelfNameSave.ref as RefObject<HTMLInputElement>}
+                    value={shelfName}
+                    aria-label={t("plex.leavingSoon.nameLabel")}
+                    onChange={(e) => setShelfName(e.target.value)}
+                    maxLength={60}
+                    autoComplete="off"
+                  />
+                  {shelfNameDirty && (
+                    <button
+                      type="button"
+                      className="primary sm"
+                      disabled={saveLeavingSoon.isPending}
+                      onClick={() => {
+                        afterShelfNameSave.arriving();
+                        saveLeavingSoon.mutate({ name: shelfName.trim() });
+                      }}
+                    >
+                      {saveLeavingSoon.isPending ? t("common.saving") : t("common.save")}
+                    </button>
+                  )}
+                </SetRow>
                 {/* Both rows here carry a Switch and nothing else, so they release the control
-                  track (`.set-row-plain`). */}
+                  track (`.set-row-plain`). Each names the shelf, so each takes the STORED name
+                  rather than the box above: until Save lands, the name in the box is not what
+                  either switch would do anything to. */}
                 <SetRow
                   variant="plain"
-                  label={t("plex.leavingSoon.enableLabel")}
-                  help={t("plex.leavingSoon.enableHelp")}
+                  label={t("plex.leavingSoon.enableLabel", { shelf: savedShelfName })}
+                  help={t("plex.leavingSoon.enableHelp", { shelf: savedShelfName })}
                 >
                   <Switch
                     checked={leavingSoon.data.enabled}
                     disabled={saveLeavingSoon.isPending}
-                    ariaLabel={t("plex.leavingSoon.enableLabel")}
+                    ariaLabel={t("plex.leavingSoon.enableLabel", { shelf: savedShelfName })}
                     onChange={(enabled) => saveLeavingSoon.mutate({ enabled })}
                   />
                 </SetRow>

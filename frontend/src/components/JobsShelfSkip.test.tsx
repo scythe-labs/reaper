@@ -69,7 +69,15 @@ const NO_LIBRARY_PASS: LeavingSoonResult = {
 };
 
 function shelf(over: Partial<LeavingSoonSettings> = {}): LeavingSoonSettings {
-  return { enabled: true, allow_unarmed: false, last: COMPLETED, last_skip: null, ...over };
+  return {
+    enabled: true,
+    allow_unarmed: false,
+    name: "Leaving Soon",
+    applied_name: "Leaving Soon",
+    last: COMPLETED,
+    last_skip: null,
+    ...over,
+  };
 }
 
 beforeEach(() => {
@@ -178,6 +186,52 @@ describe("the shelf row after a scan that skipped the update", () => {
     // No completed pass means no counts to qualify, so that line is absent rather than
     // reporting a shelf nobody has ever measured.
     expect(counts).toBe("");
+  });
+});
+
+describe("the shelf row while a rename is still outstanding", () => {
+  /** Reads the whole row, since the rename line sits beside the schedule rather than in the
+   *  status sentence. */
+  async function rowText(): Promise<string> {
+    renderWithProviders(<Settings panel="jobs" onPanelChange={() => {}} />);
+    const title = await screen.findByText("Update Leaving Soon shelf");
+    const row = title.closest(".jobrow");
+    expect(row, "the shelf row is not on the Jobs panel").not.toBeNull();
+    await waitFor(() => expect(row?.querySelector(".jobrow-last")).not.toBeNull());
+    return row?.textContent ?? "";
+  }
+
+  it("names the shelf Plex still shows, beside the button that would move it", async () => {
+    // Saving a name stores it and nothing else: moving the shelf is a whole-library reconcile
+    // per library. Until a pass runs, what the operator finds in their library is the OLD
+    // name, and this row is where they can do something about that.
+    apiMock.leavingSoonSettings.mockResolvedValue(
+      shelf({ name: "Last chance", applied_name: "Leaving Soon" }),
+    );
+
+    expect(await rowText()).toContain('Plex still shows "Leaving Soon". This update renames it.');
+
+    await expectNoA11yViolations();
+  });
+
+  it("says nothing once the pass has carried it across", async () => {
+    apiMock.leavingSoonSettings.mockResolvedValue(
+      shelf({ name: "Last chance", applied_name: "Last chance" }),
+    );
+
+    expect(await rowText()).not.toContain("Plex still shows");
+  });
+
+  it("says nothing while the shelf is off", async () => {
+    // No pass runs with the shelf off, so the two names would disagree forever and the
+    // sentence would be about a shelf that is not in the library at all.
+    apiMock.leavingSoonSettings.mockResolvedValue(
+      shelf({ enabled: false, name: "Last chance", applied_name: "Leaving Soon" }),
+    );
+    renderWithProviders(<Settings panel="jobs" onPanelChange={() => {}} />);
+    const title = await screen.findByText("Update Leaving Soon shelf");
+
+    expect(title.closest(".jobrow")?.textContent ?? "").not.toContain("Plex still shows");
   });
 });
 

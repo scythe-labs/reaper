@@ -242,6 +242,8 @@ describe("the Leaving Soon row through a failed refetch", () => {
     apiMock.leavingSoonSettings.mockResolvedValue({
       enabled: true,
       allow_unarmed: false,
+      name: "Leaving Soon",
+      applied_name: "Leaving Soon",
       last: null,
     });
     const queryClient = renderPanel("jobs");

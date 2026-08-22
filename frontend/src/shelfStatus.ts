@@ -30,3 +30,17 @@ export function shelfSkipIsCurrent(shelf: LeavingSoonSettings | undefined): bool
   const last = shelf?.last;
   return !last || new Date(skip.at).getTime() > new Date(last.at).getTime();
 }
+
+/** Is a rename saved but not yet carried across to Plex?
+ *
+ *  Saving a name stores it and nothing else: moving the shelf is a whole-library reconcile
+ *  per library, so the next pass does it and Plex keeps showing the old name until then.
+ *  The two surfaces that report a shelf both have to say so, which is why this is here and
+ *  not in either of them (rule 104).
+ *
+ *  False while the shelf is off. No pass runs then, so the names would disagree forever and
+ *  the sentence would be about a shelf that is not in the library at all.
+ */
+export function shelfRenamePending(shelf: LeavingSoonSettings | undefined): boolean {
+  return !!shelf?.enabled && shelf.name !== shelf.applied_name;
+}

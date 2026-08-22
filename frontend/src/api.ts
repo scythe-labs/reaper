@@ -1165,6 +1165,11 @@ export interface WatchEvidence {
 export interface LeavingSoonSettings {
   enabled: boolean;
   allow_unarmed: boolean;
+  /** What the operator calls the shelf: one name for the Plex collection and the label. */
+  name: string;
+  /** What Plex still shows. Equal to `name` except between saving a rename and the pass that
+   *  carries it across, which is the window the Plex panel and the Jobs row report. */
+  applied_name: string;
   last: {
     at: string;
     movies: number;
@@ -2092,8 +2097,12 @@ export const api = {
     del<{ removed: boolean }>(`/api/settings/watch-evidence/${encodeURIComponent(media_key)}`),
 
   leavingSoonSettings: () => request<LeavingSoonSettings>("/api/settings/leaving-soon"),
-  setLeavingSoonSettings: (body: { enabled?: boolean; allow_unarmed?: boolean }) =>
-    put<LeavingSoonSettings>("/api/settings/leaving-soon", body),
+  setLeavingSoonSettings: (body: {
+    enabled?: boolean;
+    allow_unarmed?: boolean;
+    /** Empty resets to the shipped default. */
+    name?: string;
+  }) => put<LeavingSoonSettings>("/api/settings/leaving-soon", body),
 
   about: () => request<About>("/api/about"),
   update: () => request<Update>("/api/about/update"),

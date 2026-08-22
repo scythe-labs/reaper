@@ -91,6 +91,8 @@ beforeEach(() => {
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
     allow_unarmed: false,
+    name: "Leaving Soon",
+    applied_name: "Leaving Soon",
     last: null,
   });
   apiMock.notifications.mockResolvedValue({ has_webhook: false });

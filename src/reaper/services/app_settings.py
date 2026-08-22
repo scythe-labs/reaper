@@ -67,6 +67,18 @@ LEAVING_SOON_ENABLED_KEY = "leaving_soon_enabled"
 #: environment variable (REAPER_ALLOW_UNARMED_LEAVING_SOON) is only the first-run default,
 #: exactly like the deletion switch. Edited in Settings -> Plex.
 LEAVING_SOON_UNARMED_KEY = "leaving_soon_unarmed"
+#: What the shelf is called in Plex: the collection title AND the label, one name for one
+#: shelf. Every Plex user on the server reads it, so it is the operator's word for their own
+#: library rather than a translated string (#869). Not a credential, so rule 16 does not bind
+#: it and `.env.example` carries no matching variable. Edited in Settings -> Plex.
+LEAVING_SOON_NAME_KEY = "leaving_soon_name"
+#: The name Reaper last WROTE to Plex, which is what the server still shows until the next
+#: pass. A rename cannot take effect on its own, so the reconcile needs the old name to find
+#: the collection and the labels it has to carry across. Advanced only after a pass that
+#: wrote every library cleanly, so a rename that half-landed is retried rather than stranded
+#: under a name nothing remembers. An install that predates this row has been writing the
+#: default all along, which is exactly what the default here says.
+LEAVING_SOON_APPLIED_NAME_KEY = "leaving_soon_applied_name"
 #: What the last shelf update did and when -- the status line under the Leaving Soon
 #: settings. ``{"at": iso, "movies": n, "seasons": n, "applied": bool, "ok": bool,
 #: "result": str}``. ``applied`` is false in preview (unarmed) as well as on a genuine
@@ -154,6 +166,15 @@ NOTIFICATION_LANGUAGE_KEY = "notification_language"
 
 DEFAULT_PLEX_WEB_URL = "https://app.plex.tv"
 DEFAULT_APPLICATION_NAME = "Reaper"
+#: What the Plex shelf is called until the operator says otherwise. Plex title-cases this on
+#: the way in, and every comparison in the Plex client casefolds, so the display form is what
+#: Reaper writes and searches for.
+DEFAULT_LEAVING_SOON_NAME = "Leaving Soon"
+#: How long a shelf name may be. A Plex collection title and a label are both free text, so
+#: this is Reaper's own bound: long enough for a phrase in any language, short enough that the
+#: name still reads on a shelf row. Enforced once, at the route (rule 131), which refuses a
+#: longer name rather than storing a truncated one the operator never typed.
+LEAVING_SOON_NAME_MAX = 60
 #: The last-resort time zone: what APScheduler would fall back to if the host's own zone
 #: cannot be read either. UTC is the safe, universal choice.
 DEFAULT_TIMEZONE = "UTC"
@@ -716,6 +737,45 @@ async def leaving_soon_enabled(session: AsyncSession) -> bool:
 
 async def set_leaving_soon_enabled(session: AsyncSession, *, enabled: bool) -> None:
     await _set(session, LEAVING_SOON_ENABLED_KEY, bool(enabled))
+
+
+async def _shelf_name(session: AsyncSession, key: str) -> str:
+    """One of the two shelf-name rows, or the shipped default when it is unset or blank."""
+    value = await _get(session, key, default=None)
+    name = str(value).strip() if value else ""
+    return name or DEFAULT_LEAVING_SOON_NAME
+
+
+async def get_leaving_soon_name(session: AsyncSession) -> str:
+    """What the shelf is called in Plex."""
+    return await _shelf_name(session, LEAVING_SOON_NAME_KEY)
+
+
+async def set_leaving_soon_name(session: AsyncSession, name: str | None) -> None:
+    """Store the shelf name. Empty resets to the default.
+
+    Stores the name alone. What Plex currently shows is a different fact and a different row
+    (:func:`set_leaving_soon_applied_name`), written only once a pass has actually moved the
+    shelf, so a rename saved here is a rename PENDING until then. The length bound belongs to
+    the route, which refuses a long name rather than storing a shorter one nobody typed.
+    """
+    await _set(session, LEAVING_SOON_NAME_KEY, (name or "").strip() or None)
+
+
+async def get_leaving_soon_applied_name(session: AsyncSession) -> str:
+    """The name Plex still shows: what the last completed pass wrote.
+
+    Unset means every pass so far wrote the default, which is what an install predating the
+    setting has been doing. Never falls back to the CURRENT name: that would tell the
+    reconcile a rename had already landed and strand the old collection and its labels in
+    the library under a name nothing would look for again.
+    """
+    return await _shelf_name(session, LEAVING_SOON_APPLIED_NAME_KEY)
+
+
+async def set_leaving_soon_applied_name(session: AsyncSession, name: str) -> None:
+    """Record the name a pass just wrote to Plex."""
+    await _set(session, LEAVING_SOON_APPLIED_NAME_KEY, name)
 
 
 async def leaving_soon_unarmed(session: AsyncSession, settings: Settings) -> bool:

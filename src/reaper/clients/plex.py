@@ -1603,6 +1603,33 @@ class PlexClient:
 
         await self._call(write, what=f"remove items from the {name!r} collection")
 
+    async def rename_collection(self, collection_key: int, name: str) -> None:
+        """Re-title a collection in place, keeping its rating key.
+
+        **Verified against a live server:** ``editTitle`` issues ``PUT
+        /library/sections/{key}/all?type=18&id={key}&title.value=...`` -- the SAME batch edit
+        shape the label writes use, so ``_benign_shape`` already permits it and renaming adds
+        no new write shape to the guard. The collection is read by rating key first, which is
+        a GET.
+
+        In place, rather than dropping the shelf and rebuilding it under the new name: the
+        rating key survives, so a poster, a sort title, or a pin on someone's Plex Home
+        screen survives with it. That is what an operator renaming their shelf expects (#869).
+
+        plexapi locks the title field, as a rename in Plex Web does. Nothing re-titles a
+        collection behind Reaper's back, so the lock costs nothing and stops an agent
+        refresh undoing the operator's name.
+        """
+        server = await self._connect()
+
+        def write() -> None:
+            collection = server.fetchItem(  # type: ignore[no-untyped-call]
+                f"/library/collections/{collection_key}"
+            )
+            collection.editTitle(name)
+
+        await self._call(write, what=f"rename collection {collection_key} to {name!r}")
+
     async def delete_collection(self, collection_key: int) -> None:
         """Delete a whole collection in one request.
 
