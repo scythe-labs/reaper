@@ -30,38 +30,67 @@ import {
 } from "react";
 import { useBackGuard } from "../backnav";
 
-/** Where a `position: fixed` popover sits: always `left`, plus exactly one vertical anchor --
+/** Where a `position: fixed` popover sits: always `start`, plus exactly one vertical anchor --
  *  `top` when it opens below its trigger, `bottom` when it flips above (so the popover stays
  *  snug to the trigger whatever its real rendered height is, rather than a `top` computed from a
- *  guessed one). */
-export type MenuPos = { left: number; top?: number; bottom?: number };
-
-/** How far LEFT an anchor-aligned popover must slide to sit fully on screen, in pixels.
+ *  guessed one).
  *
- *  Never positive: a popover may be pulled back toward the left edge, never pushed right of the
+ *  `start` is a distance from the INLINE-START edge of the viewport, for the caller to hand to
+ *  `inset-inline-start`. In a left-to-right page that is the left edge and the number is a plain
+ *  `left`; in a right-to-left one it is the right edge, and the popover clamps against the
+ *  gutter the reader actually starts from (#861). */
+export type MenuPos = { start: number; top?: number; bottom?: number };
+
+/** Whether the page reads right to left, from the attribute `i18n.ts` sets on `<html>`.
+ *
+ *  Read live rather than passed in, because these are the two places that measure the viewport
+ *  in raw pixels and so are the two the browser's own mirroring cannot reach. Guarded for the
+ *  node-environment tests, which import this module with no document. */
+export const readsRightToLeft = (): boolean =>
+  typeof document !== "undefined" && document.documentElement.dir === "rtl";
+
+/** A viewport rect's distance from the inline-start edge. `left` in a left-to-right page, and
+ *  the mirror of `right` in a right-to-left one, so the geometry below is written once. */
+export function inlineStartOf(
+  rect: { left: number; right: number },
+  viewportWidth: number,
+  rtl = readsRightToLeft(),
+): number {
+  return rtl ? viewportWidth - rect.right : rect.left;
+}
+
+/** How far BACK toward the near gutter an anchor-aligned popover must slide to sit fully on
+ *  screen, in pixels.
+ *
+ *  Every distance here is measured from the INLINE-START edge, so the whole function is the
+ *  reading-order mirror of itself and needs no branch: "left" in a left-to-right page is "right"
+ *  in a right-to-left one, and the caller converts (`inlineStartOf`). The result goes to
+ *  `inset-inline-start`, which flips with the page.
+ *
+ *  Never positive: a popover may be pulled back toward the near gutter, never pushed past the
  *  anchor it belongs to, which would cut the line between a control and the thing it opened.
  *
- *  The pull also stops at the near gutter. A popover too wide for the screen therefore keeps its
- *  LEFT edge and overflows on the right -- headings, tick marks and the start of every label
- *  stay put, and what spills is the end of the longest line. Sliding it the rest of the way would
- *  only move the same missing pixels to the side the operator reads from.
+ *  The pull also stops at that gutter. A popover too wide for the screen therefore keeps its
+ *  inline-START edge and overflows at the far side -- headings, tick marks and the start of every
+ *  label stay put, and what spills is the end of the longest line. Sliding it the rest of the way
+ *  would only move the same missing pixels to the side the operator reads from.
  */
 export function popoverShift(
-  anchorLeft: number,
+  anchorStart: number,
   popoverWidth: number,
   viewportWidth: number,
   gutter = 8,
 ): number {
-  // Where the popover's left edge wants to be, in viewport coordinates: at its anchor, but no
-  // further right than the last position that still leaves all of it on screen, and no further
-  // left than the gutter. `rightmostThatFits` goes NEGATIVE for a popover wider than the screen,
-  // and the gutter floor is what then wins.
-  const rightmostThatFits = viewportWidth - gutter - popoverWidth;
-  const target = Math.min(anchorLeft, Math.max(gutter, rightmostThatFits));
-  // Capping the target AT the anchor above is what makes this a pull left and never a push right,
-  // so no clamp is needed here -- and a subtraction rather than a negation keeps a zero pull at 0
-  // instead of the -0 that compares unequal to it.
-  return target - anchorLeft;
+  // Where the popover's inline-start edge wants to be: at its anchor, but no further along the
+  // line than the last position that still leaves all of it on screen, and no further back than
+  // the gutter. `furthestThatFits` goes NEGATIVE for a popover wider than the screen, and the
+  // gutter floor is what then wins.
+  const furthestThatFits = viewportWidth - gutter - popoverWidth;
+  const target = Math.min(anchorStart, Math.max(gutter, furthestThatFits));
+  // Capping the target AT the anchor above is what makes this a pull back and never a push
+  // forward, so no clamp is needed here -- and a subtraction rather than a negation keeps a zero
+  // pull at 0 instead of the -0 that compares unequal to it.
+  return target - anchorStart;
 }
 
 /** Measures an open popover against the viewport and returns the pixels to slide it left, for the
@@ -83,9 +112,8 @@ export function usePopoverShift(ref: RefObject<HTMLElement | null>, anchorClass:
       const el = ref.current;
       const anchor = el?.closest(`.${anchorClass}`);
       if (!el || !anchor) return;
-      setShift(
-        popoverShift(anchor.getBoundingClientRect().left, el.offsetWidth, window.innerWidth),
-      );
+      const start = inlineStartOf(anchor.getBoundingClientRect(), window.innerWidth);
+      setShift(popoverShift(start, el.offsetWidth, window.innerWidth));
     };
     fit();
     window.addEventListener("resize", fit);
@@ -95,9 +123,10 @@ export function usePopoverShift(ref: RefObject<HTMLElement | null>, anchorClass:
   return shift;
 }
 
-/** Where a `position: fixed` popover belongs, anchored to a trigger's bounding rect: right-
- *  aligned to it and clamped to the viewport horizontally, flipped above the trigger when it
- *  would otherwise run off the bottom.
+/** Where a `position: fixed` popover belongs, anchored to a trigger's bounding rect: aligned to
+ *  the trigger's inline-END and clamped to the viewport horizontally, flipped above the trigger
+ *  when it would otherwise run off the bottom. Alignment follows the reading direction, so the
+ *  menu grows back over the control in both (#861).
  *
  *  `height` is only ever an upper bound for that flip decision, never a drawn coordinate: below,
  *  the popover's TOP is pinned to the anchor's bottom edge; above, its BOTTOM is pinned just over
@@ -111,12 +140,16 @@ export function fixedMenuPos(
   viewportWidth: number,
   viewportHeight: number,
   gutter = 8,
+  rtl = readsRightToLeft(),
 ): MenuPos {
-  const left = Math.max(gutter, Math.min(anchor.right - width, viewportWidth - width - gutter));
+  // The anchor's far edge, as a distance from the inline-start edge of the viewport. The menu
+  // hangs back from it, so its inline-start sits `width` before that.
+  const anchorEnd = rtl ? viewportWidth - anchor.left : anchor.right;
+  const start = Math.max(gutter, Math.min(anchorEnd - width, viewportWidth - width - gutter));
   const below = anchor.bottom + height <= viewportHeight;
   return below
-    ? { left, top: anchor.bottom + 4 }
-    : { left, bottom: viewportHeight - anchor.top + 4 };
+    ? { start, top: anchor.bottom + 4 }
+    : { start, bottom: viewportHeight - anchor.top + 4 };
 }
 
 /** A `position: fixed` popover anchored to a trigger element (the Spare length menu's caret, the

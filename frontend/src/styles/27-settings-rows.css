@@ -42,19 +42,25 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  left: 2px;
+  inset-inline-start: 2px;
   top: 2px;
   background: var(--muted);
+  /* How far the knob travels when the switch goes on, and which way. A transform has no
+     logical form, so the direction is carried in a variable the RTL rule below flips. */
+  --knob-travel: 18px;
   transition:
     transform 0.15s,
     background 0.15s;
+}
+[dir="rtl"] .switch .slider::before {
+  --knob-travel: -18px;
 }
 .switch input:checked + .slider {
   background: var(--accent);
   border-color: var(--accent);
 }
 .switch input:checked + .slider::before {
-  transform: translateX(18px);
+  transform: translateX(var(--knob-travel));
   background: var(--accent-ink);
 }
 .switch input:focus-visible + .slider {
@@ -252,7 +258,7 @@
   height: auto;
   align-self: stretch;
   border: 0;
-  border-right: 1px solid var(--border-strong);
+  border-inline-end: 1px solid var(--border-strong);
   border-radius: 0;
 }
 /* Win over the control-standard input rules (which also match these two inputs) so the
@@ -586,7 +592,7 @@
   overflow-wrap: anywhere;
 }
 .chosen-x {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 .chosen-body {
   padding: 0.75rem 0.85rem;
@@ -655,7 +661,7 @@
 .update-pill {
   display: inline-block;
   vertical-align: 1px;
-  margin-left: var(--space-md);
+  margin-inline-start: var(--space-md);
   font-size: var(--text-xs);
   font-weight: var(--weight-semi);
   padding: var(--space-2xs) var(--space-lg);

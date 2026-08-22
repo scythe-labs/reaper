@@ -4387,6 +4387,67 @@ the files carrying them turned up in #887's failing sets anyway.
 before reading the test. And reproduce a suspected load flake with the SUITE, never with the
 file: running the file alone removes the contention that is the whole cause.
 
+## Grepping for `margin-left` finds 144 of the 167 ways a stylesheet resists mirroring (2026-08-22)
+
+#861 stated the work as "rewrite the 101 left/right styles in the neutral form". A property scan
+over `styles/` found 144 direction-sensitive declarations, converted 125 and left 7 physical on
+purpose. Every gate passed and the conversion was, by every static measure, complete.
+
+**It was not.** Rendering the app at `dir="rtl"` and comparing each element's box against its
+mirror put 2047 of 2648 elements in the right place. The 601 that held still exposed two classes
+a property name cannot match:
+
+- **The four-value box shorthand.** `padding: a b c d` sets right to `b` and left to `d`, so it
+  is a `padding-left` that no search for `padding-left` reaches. 22 sites had one. `.season-list`
+  carried `padding: 0 0.7rem 0.5rem 2.4rem`, and every row of an expanded show sat 27.2px off its
+  mirror, which is exactly the 2.4rem-minus-0.7rem the shorthand asked for.
+- **The gradient angle.** `.card-scrim` faded the card opaque-to-clear at a flat `90deg`, so the
+  title crossed to the other side under RTL and landed on the see-through half. A gradient has no
+  reading-order form at all, so the angle has to ride in a custom property an `[dir="rtl"]` rule
+  flips.
+
+Two more classes were only visible the same way, and both are things a stylesheet cannot mirror
+because they are a drawing or a number rather than a style:
+
+- **Glyphs that point along the line.** A browser mirrors layout and never artwork, and only a
+  handful of characters (brackets, angle quotes) carry the Unicode mirroring property, which
+  `→`, `›`, `↗` and `▸` do not. Six of them pointed back at the margin the reader started from.
+  The two that also rotate when open compose the flip with the rotate, scale first, because
+  `transform` is one property and a second rule would replace the first rather than add to it.
+- **The two places measuring the viewport in raw pixels.** `usePopoverShift` and `fixedMenuPos`
+  pulled a menu toward the LEFT edge whichever way the page read. Rewriting both in distances
+  from the inline-start edge removed the branch instead of adding one: the arithmetic is its own
+  mirror, and the caller converts on the way in.
+
+The mirror finished at 2445/2654. What is left is two benign classes, not a tail: the paths
+inside non-directional icons (a clock is not asymmetric because it is directional), and English
+text runs reordered by bidi, which is what English in an RTL page is supposed to do.
+
+**The rewrite is free in a left-to-right page, measured rather than argued.** 56 screenshots
+across five views, a login screen and two viewports came back pixel-identical before and after,
+and a synthetic page carrying all 116 selectors compared 4176 computed values with no geometry
+change. The only 60 differences were `text-align`'s computed keyword moving `left` to `start`,
+which resolves to the same used value.
+
+**Three negative results, each of which cost time to rule out.** `linear-gradient(var(--a), ...)`
+with `--a: 90deg` rasterizes bit-identically to the literal, so the custom-property indirection
+is not a rendering risk. One capture in four differed from its neighbours by 59 pixels, each off
+by 1/255, on the anti-aliased corners of two poster thumbnails: a JPEG re-decode, not a style
+change. And a release landing mid-session put an "update available" dot on the account chip,
+which widened the chip, shifted the whole masthead, and failed **53 of 56** shots at once, on a
+change that had touched none of it.
+
+⇒ **Pin every server answer the chrome renders, not just the one the page under test is about.**
+Three runs agreeing and one disagreeing is a decode flake; 53 failing in the same rectangle is a
+feed, and the shape of the diff says which before the images are opened. The harness pins the
+scan poll, the log page and the update check for this reason. The About panel cannot be pinned
+that way at all: it prints the running build's own commit, so any two commits render it
+differently, and the mock has to carry the baseline's version string for that page to compare.
+
+⇒ A stylesheet's resistance to mirroring is not a list of property names. Convert by grep, then
+render the mirrored page and measure every box against it, because the two worst cases here were
+both invisible to the grep and both obvious in the render.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

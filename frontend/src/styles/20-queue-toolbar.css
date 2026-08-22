@@ -20,7 +20,7 @@
 }
 .search-icon {
   position: absolute;
-  left: 0.65rem;
+  inset-inline-start: 0.65rem;
   top: 50%;
   transform: translateY(-50%);
   color: var(--faint);
@@ -32,7 +32,7 @@
 .search-input {
   width: 100%;
   padding: var(--control-pad);
-  padding-left: 2rem;
+  padding-inline-start: 2rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -67,7 +67,8 @@
   align-items: center;
   gap: var(--space-sm);
   height: 2.15rem;
-  padding: 0 var(--space-md) 0 var(--space-lg);
+  padding-block: 0;
+  padding-inline: var(--space-lg) var(--space-md);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-pill);
   background: var(--surface);

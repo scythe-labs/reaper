@@ -163,7 +163,7 @@
   padding: 0.45rem 0.2rem;
   background: none;
   border: none;
-  text-align: left;
+  text-align: start;
   font-size: var(--text-md);
   color: var(--text);
   cursor: pointer;
@@ -190,7 +190,7 @@
   overflow-wrap: anywhere;
 }
 .panel-season-size {
-  margin-left: auto;
+  margin-inline-start: auto;
   color: var(--muted);
   font-size: var(--text-sm);
   /* The size never wraps to a second line: a long chip beside it shortens (it carries
@@ -233,7 +233,7 @@
    adjacency matches only when no .why-hero sits between the close and the head; the art panels
    float the disc over the poster instead, well clear of the header. */
 .why-close + .why-head {
-  padding-right: var(--space-6xl);
+  padding-inline-end: var(--space-6xl);
 }
 /* The panel's title is the same media title the queue card carries in .card-title, and takes the
    same break opportunity (rule 139, rule 72). Here it matters more: the panel clips, so a title
@@ -254,7 +254,7 @@
 .why-close {
   position: absolute;
   top: 0.7rem;
-  right: 0.7rem;
+  inset-inline-end: 0.7rem;
   z-index: 3;
   flex: none;
   width: 2rem;
@@ -296,7 +296,7 @@
   text-decoration-color: var(--accent-text);
 }
 .title-ext {
-  margin-left: 0.3rem;
+  margin-inline-start: 0.3rem;
   vertical-align: 2px;
   color: var(--muted);
 }
@@ -397,7 +397,7 @@ a.rating-chip:hover {
 .rule-tag {
   display: inline-flex;
   align-items: center;
-  margin-left: 0.4rem;
+  margin-inline-start: 0.4rem;
   padding: 0 0.3rem;
   border-radius: 4px;
   font-size: var(--text-2xs);
@@ -576,7 +576,7 @@ a.rating-chip:hover {
 }
 .verdict-score span {
   font-size: var(--text-sm);
-  margin-left: 0.3rem;
+  margin-inline-start: 0.3rem;
 }
 .verdict-note {
   margin: 0.4rem 0 0;
@@ -631,5 +631,6 @@ a.rating-chip:hover {
 .signal-note {
   font-size: var(--text-sm);
   color: var(--muted);
-  margin: 0.2rem 0 0 4.8rem;
+  margin-block: 0.2rem 0;
+  margin-inline: 4.8rem 0;
 }

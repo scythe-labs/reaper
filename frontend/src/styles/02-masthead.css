@@ -105,8 +105,7 @@
 .view-tab::before {
   content: "";
   position: absolute;
-  left: 0.4rem;
-  right: 0.4rem;
+  inset-inline: 0.4rem;
   bottom: -1px;
   height: 2px;
   border-radius: 2px 2px 0 0;
@@ -160,7 +159,7 @@
 .view-armed {
   position: absolute;
   top: -1px;
-  right: -11px;
+  inset-inline-end: -11px;
   width: 6px;
   height: 6px;
   border-radius: 50%;

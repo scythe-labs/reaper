@@ -391,7 +391,7 @@ function SpareMenu({
       onKeyDown={(e) => trapTab(e, menuRef.current)}
       style={{
         position: "fixed",
-        left: at.left,
+        insetInlineStart: at.start,
         ...(at.top !== undefined ? { top: at.top } : { bottom: at.bottom }),
       }}
       onClick={(e) => e.stopPropagation()}

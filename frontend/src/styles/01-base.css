@@ -106,6 +106,20 @@ a:hover {
   border: 0;
 }
 
+/* A decorative glyph that points the way the page is read: the "onward" arrow on a jump link,
+ * the "opens elsewhere" arrow on an external one. Under `dir="rtl"` the layout mirrors and the
+ * character does not, because only a handful of characters (brackets, angle quotes) carry the
+ * Unicode mirroring property and none of these do. So the drawing is flipped here.
+ *
+ * Every wearer is `aria-hidden` beside a real label, which is what makes flipping the whole fix:
+ * nothing is being said that could come out backwards, only drawn. A glyph pointing up or down
+ * does NOT wear this -- the account menu's chevron and the sort arrow read the same either way.
+ */
+[dir="rtl"] .dir-glyph {
+  display: inline-block;
+  transform: scaleX(-1);
+}
+
 /* An explanatory line under a heading. Reaper explains itself constantly; this is the
  * voice it does it in. */
 .blurb {

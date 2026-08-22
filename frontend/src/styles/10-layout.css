@@ -30,13 +30,18 @@ main.split {
   main.split .why {
     position: fixed;
     top: 0;
-    right: 0;
+    inset-inline-end: 0;
     height: 100dvh;
     max-height: none;
     width: min(440px, calc(100vw - 1.25rem));
     z-index: var(--z-overlay);
-    border-radius: var(--radius) 0 0 var(--radius);
-    border-right: none;
+    /* Rounded on the side facing the page, square where it meets the edge it is pinned to.
+       Corner longhands rather than the shorthand: the shorthand names corners clockwise from
+       top-left, which is the wrong two corners once the panel comes in from the other side. */
+    border-radius: 0;
+    border-start-start-radius: var(--radius);
+    border-end-start-radius: var(--radius);
+    border-inline-end: none;
     box-shadow: var(--shadow-lg);
   }
 }
@@ -63,8 +68,7 @@ main.split {
   }
   .views {
     position: fixed;
-    left: 0;
-    right: 0;
+    inset-inline: 0;
     bottom: 0;
     z-index: var(--z-nav);
     /* The bar's height is declared here and read by everything that has to clear it, so the
@@ -88,8 +92,7 @@ main.split {
   .view-tab::before {
     top: -1px;
     bottom: auto;
-    left: 0.55rem;
-    right: 0.55rem;
+    inset-inline: 0.55rem;
     border-radius: 0 0 2px 2px;
   }
   /* No visible label, so nothing to reserve a bold width for. */
@@ -118,6 +121,6 @@ main.split {
      `margin: 0 auto`. Here the rail has left the masthead for the bottom bar, so the menu has to
      claim that free space itself and stay in the corner it occupies at every other width. */
   .user-menu {
-    margin-left: auto;
+    margin-inline-start: auto;
   }
 }

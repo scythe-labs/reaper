@@ -58,7 +58,7 @@
   overflow-wrap: anywhere;
 }
 .step-body {
-  margin-left: 0.4rem;
+  margin-inline-start: 0.4rem;
   color: var(--muted);
 }
 /* Why a step failed or was skipped, under the state it explains. A block so it takes its own
@@ -75,7 +75,7 @@
   overflow-wrap: anywhere;
 }
 .canary-tag {
-  margin-left: 0.4rem;
+  margin-inline-start: 0.4rem;
   font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -143,12 +143,12 @@
 }
 .rb-n {
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: end;
   min-width: 5rem;
 }
 .rb-sz {
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: end;
   min-width: 4.5rem;
   color: var(--muted);
 }
@@ -231,7 +231,7 @@
   font-variant-numeric: tabular-nums;
   color: var(--text);
   min-width: 2.5rem;
-  text-align: right;
+  text-align: end;
 }
 .rb-note {
   font-size: var(--text-sm);
