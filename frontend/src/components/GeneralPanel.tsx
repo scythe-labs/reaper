@@ -21,6 +21,7 @@ import { announce } from "../announce";
 import { useSavebarFocus, useSuccessorFocus } from "../focus";
 import i18next from "../i18n";
 import { api, type ExpandSeasonsMode, type GeneralSettings } from "../api";
+import { describeError } from "../errors";
 import { useGeneralSettings } from "../useGeneralSettings";
 import { useMediaQuery } from "../useMediaQuery";
 import { FixedQuantity } from "./QuantityInput";
@@ -298,7 +299,7 @@ export function GeneralPanel({
       setRevealedKey(r.key);
       announce(t("general.notices.apiKeyShown"));
     },
-    onError: (e: Error) => setKeyError(e.message),
+    onError: (e) => setKeyError(describeError(e)),
   });
   const generate = useMutation({
     mutationFn: api.generateApiKey,
@@ -309,7 +310,7 @@ export function GeneralPanel({
       announce(t("general.notices.apiKeyGenerated"));
       void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     },
-    onError: (e: Error) => setKeyError(e.message),
+    onError: (e) => setKeyError(describeError(e)),
   });
 
   // Generating REPLACES whatever key the server holds, the moment it returns and with no undo,
@@ -382,12 +383,12 @@ export function GeneralPanel({
   const copy = useMutation({
     mutationFn: copyKey,
     onMutate: () => setKeyError(null),
-    onError: (e: Error) => setKeyError(e.message),
+    onError: (e) => setKeyError(describeError(e)),
   });
   const removeKey = useMutation({
     mutationFn: api.removeApiKey,
     onMutate: () => setKeyError(null),
-    onError: (e: Error) => setKeyError(e.message),
+    onError: (e) => setKeyError(describeError(e)),
     onSuccess: () => {
       setRevealedKey(null);
       setConfirmRemove(false);
@@ -1053,7 +1054,9 @@ export function GeneralPanel({
       {/* Only when there is no bar to put it in. A control that saves on the spot fails with
           nothing unsaved, so its refusal has nowhere else to go; a refused BAR save renders
           inside the bar instead, beside the fields it just refused to write. */}
-      {save.error && pending.length === 0 && <Notice tone="error">{save.error.message}</Notice>}
+      {save.error && pending.length === 0 && (
+        <Notice tone="error">{describeError(save.error)}</Notice>
+      )}
 
       {/* The one save affordance on this panel (rule 43), the same bar the policy editor uses:
           it names what is unsaved, saves all of it in one press, and offers Discard. Rendered
@@ -1087,7 +1090,7 @@ export function GeneralPanel({
               belief that all six fields went in. The bar is sticky, so a notice outside it
               renders at the document foot -- off screen for anyone editing the top group,
               which is where five of these six fields are. */}
-          {save.error && <Notice tone="error">{save.error.message}</Notice>}
+          {save.error && <Notice tone="error">{describeError(save.error)}</Notice>}
         </div>
       )}
     </div>

@@ -12,6 +12,7 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type PlexLinkPoll, type PlexResourceConnection, type WatchEvidence } from "../api";
+import { describeError } from "../errors";
 import { useSuccessorFocus } from "../focus";
 import i18next from "../i18n";
 import { countBesideServerText, since } from "../format";
@@ -225,7 +226,7 @@ export function PlexPanel({
       announce(t("plex.webAddress.saved"));
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
-    onError: (e: Error) => setWebUrlError(e.message),
+    onError: (e) => setWebUrlError(describeError(e)),
   });
 
   // Flip the stored certificate check on the linked server. It sends the certificate check and
@@ -245,10 +246,10 @@ export function PlexPanel({
     // The toggle flips optimiztically; a failed save must roll it back so the switch
     // never claims the certificate check is on while the server still has it off. The
     // switch is disabled while pending, so `!next` is the value before the flip.
-    onError: (e: Error, next: boolean) => {
+    onError: (e, next: boolean) => {
       setVerifyCert(!next);
       verifyRef.current = !next;
-      setPlexError(e.message);
+      setPlexError(describeError(e));
     },
   });
 
@@ -306,7 +307,7 @@ export function PlexPanel({
       window.open(start.auth_url, "_blank", "noopener");
       pin.begin(start.pin_id);
     } catch (e) {
-      setPlexError(e instanceof Error ? e.message : String(e));
+      setPlexError(describeError(e));
       setLinking(false);
     }
   };
@@ -333,7 +334,7 @@ export function PlexPanel({
       invalidateAllPlex();
       void queryClient.invalidateQueries({ queryKey: ["setup"] });
     },
-    onError: (e: Error) => setPlexError(e.message),
+    onError: (e) => setPlexError(describeError(e)),
   });
 
   // --- the server and connection pickers, fed by the signed-in account ---------
@@ -365,7 +366,7 @@ export function PlexPanel({
       setPlexError(null);
       invalidateAllPlex();
     },
-    onError: (e: Error) => setPlexError(e.message),
+    onError: (e) => setPlexError(describeError(e)),
   });
 
   const [manualOpen, setManualOpen] = useState(false);
@@ -387,7 +388,7 @@ export function PlexPanel({
       setManualOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
-    onError: (e: Error) => setConnError(e.message),
+    onError: (e) => setConnError(describeError(e)),
   });
 
   // Only the server plex.tv marks `current` is the one Reaper is linked to. This used to fall
@@ -1021,7 +1022,7 @@ export function PlexPanel({
               </div>
               {(saveLibraries.error || syncLibraries.error) && (
                 <Notice tone="error">
-                  {(saveLibraries.error ?? syncLibraries.error)?.message}
+                  {describeError(saveLibraries.error ?? syncLibraries.error)}
                 </Notice>
               )}
             </>
@@ -1147,7 +1148,7 @@ export function PlexPanel({
                   failures the same way (rule 72). */}
               {forgetWatchEvidence.error && (
                 <Notice tone="error">
-                  {forgetWatchEvidence.error.message ||
+                  {describeError(forgetWatchEvidence.error) ||
                     t("plex.watchEvidence.forgetFailedFallback")}
                 </Notice>
               )}
@@ -1215,7 +1216,9 @@ export function PlexPanel({
               </div>
             </>
           )}
-          {saveLeavingSoon.error && <Notice tone="error">{saveLeavingSoon.error.message}</Notice>}
+          {saveLeavingSoon.error && (
+            <Notice tone="error">{describeError(saveLeavingSoon.error)}</Notice>
+          )}
         </div>
       )}
 

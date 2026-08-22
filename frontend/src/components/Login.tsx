@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trans, useTranslation } from "react-i18next";
 import { api, ApiError, type AuthContext, type PlexPoll } from "../api";
+import { describeError } from "../errors";
 import { trapTab } from "./ModalShell";
 import { BrandBadge } from "../brand/BrandBadge";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
@@ -80,7 +81,9 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
       pin.begin(pin_id);
     } catch (e) {
       setPhase("error");
-      setError(e instanceof ApiError ? e.message : t("login.plexButton.startFailedFallback"));
+      setError(
+        e instanceof ApiError ? describeError(e) : t("login.plexButton.startFailedFallback"),
+      );
     }
   };
 
@@ -202,7 +205,9 @@ function LocalSheet({
       await api.localLogin(username, password);
       onAuthed();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : t("login.localSheet.signInFailedFallback"));
+      setError(
+        err instanceof ApiError ? describeError(err) : t("login.localSheet.signInFailedFallback"),
+      );
     } finally {
       setBusy(false);
     }
@@ -328,7 +333,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
       await api.recover(code.trim());
       onAuthed();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : t("login.recovery.failedFallback"));
+      setError(err instanceof ApiError ? describeError(err) : t("login.recovery.failedFallback"));
     } finally {
       setBusy(false);
     }

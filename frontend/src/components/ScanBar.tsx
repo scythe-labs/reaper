@@ -16,6 +16,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type ScheduledJob, type Snapshot } from "../api";
 import { DegradedDocLink } from "../docs/DocLink";
+import { describeError } from "../errors";
 import { bytes, count, totalBytes } from "../format";
 import i18next from "../i18n";
 import { useScanStatus } from "../useScanStatus";
@@ -304,7 +305,7 @@ export function ScanRow({
 
         {start.error && (
           <Notice tone="error" inline>
-            {t("common.scanStartFailed", { message: start.error.message })}
+            {t("common.scanStartFailed", { message: describeError(start.error) })}
           </Notice>
         )}
         {/* `standing`, unlike `start.error` directly above it, which answers this bar's own

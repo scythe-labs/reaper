@@ -93,6 +93,16 @@ export function composeReason(key: ReasonKey): string {
   return composeIn("why", key);
 }
 
+/** A bare wire-level `ReasonKey` whose `k` is already a full `error.*` catalog code (a poll's
+ *  retrying reason, a stored Leaving Soon skip) -- unlike a `why`-side reason, whose id never
+ *  repeats the namespace it lives under. `composeIn`'s own namespace prefixing would double it
+ *  ("error.error.plex...."), so the leading "error." is stripped first; `composeIn` already
+ *  handles the "legacy" shape and the missing-entry fallback (the bare code, still readable),
+ *  so nothing else is needed here. */
+export function composeError(key: ReasonKey): string {
+  return composeIn("error", { k: key.k.replace(/^error\./, ""), p: key.p ?? null });
+}
+
 /** The check and cause of a blocked row, composed separately, or null where the row is
  *  not the blocked shape -- a deliberate left-for-you sentence keeps its own row. */
 export function blockedParts(key: ReasonKey): { check: string; cause: string } | null {

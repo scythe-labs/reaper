@@ -34,6 +34,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { ApiError, api, type ReapStatus, type Run, type RunReport } from "../api";
+import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
 import { usePlexTrash, trashWarning } from "../usePlexTrash";
 import { useSafety } from "../useSafety";
@@ -303,7 +304,7 @@ export function ReapConfirm({
           {dry.isPending && <p className="blurb">{t("reapConfirm.practiceRun.checking")}</p>}
           {dry.error && (
             <Notice tone="error">
-              {t("reapConfirm.practiceRun.failed", { message: dry.error.message })}
+              {t("reapConfirm.practiceRun.failed", { message: describeError(dry.error) })}
             </Notice>
           )}
           {dryReport?.dry_run && dryReport.state === "aborted" && (
@@ -393,7 +394,7 @@ export function ReapConfirm({
               />
             </>
           )}
-          {exec.error && <Notice tone="error">{exec.error.message}</Notice>}
+          {exec.error && <Notice tone="error">{describeError(exec.error)}</Notice>}
           <div className="reap-confirm-actions">
             <button className="ghost" onClick={onClose} disabled={exec.isPending}>
               {t("common.cancel")}
@@ -445,7 +446,7 @@ export function ReapConfirm({
               <div className="prog-fill" style={{ width: `${pct}%` }} />
             </div>
           </div>
-          {stop.error && <Notice tone="error">{stop.error.message}</Notice>}
+          {stop.error && <Notice tone="error">{describeError(stop.error)}</Notice>}
           <div className="reap-confirm-actions">
             <span className={`reap-running ${stopping ? "stopping" : "deleting"}`}>
               <span className="spinner" aria-hidden="true" />

@@ -30,6 +30,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type ListConfig, type ProtectionList } from "../api";
 import { useBackGuard } from "../backnav";
+import { describeError } from "../errors";
 import i18next from "../i18n";
 import { composeIn } from "../why";
 import { ListModal } from "./ListModal";
@@ -671,7 +672,9 @@ export function ListsPanel({
               checking={busy(definition.id)}
               onCheck={() => check.mutate(definition.id)}
               onEdit={() => setModal({ list: definition })}
-              checkError={failedTarget === definition.id ? (check.error?.message ?? null) : null}
+              checkError={
+                failedTarget === definition.id && check.error ? describeError(check.error) : null
+              }
             >
               {definition.source === "arr_tag" && <TagCounts definition={definition} mine={mine} />}
               {!used && onGoToPolicy && (
@@ -713,7 +716,7 @@ export function ListsPanel({
           (rules 17/36, 42). */}
       {failedTarget === "all" && (
         <Notice tone="error">
-          {t("lists.checkFailed", { error: check.error?.message ?? "" })}
+          {t("lists.checkFailed", { error: check.error ? describeError(check.error) : "" })}
         </Notice>
       )}
 

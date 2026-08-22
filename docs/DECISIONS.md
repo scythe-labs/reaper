@@ -1050,5 +1050,6 @@ own draft envelope would have broken that reader on every existing integration f
 of them asked to be fixed. `code` and a raw `params` map ride beside it at the top level
 instead (`reaper.refusal.MESSAGES`, `api.errors.refuse`), so a typed reader composes its own
 sentence and an untyped one keeps reading the same body it always has. The browser is the
-first typed reader; composing `error.*` through `ui.json` the way `why`, `chip` and `warning`
-already do is the one thing left, since the catalog itself does not exist yet.
+first typed reader: `frontend/src/errors.ts`'s `describeError` composes `error.*` through
+`ui.json` the way `why`, `chip` and `warning` already do, falling back to the carried English
+`detail` wherever a code has no catalog entry (an older server, or a build that predates it).

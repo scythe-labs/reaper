@@ -19,7 +19,10 @@ const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 // The mocks are shared across tests, so clear call history between them: otherwise a later
 // test that reads `updateInstance.mock.calls[0]` sees an earlier test's save, not its own.

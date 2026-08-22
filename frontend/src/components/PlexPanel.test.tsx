@@ -31,7 +31,10 @@ const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 const LOCAL = "https://10-0-0-2.abcdef.plex.direct:32400";
 const TYPED = "https://plex.example.net:32400";

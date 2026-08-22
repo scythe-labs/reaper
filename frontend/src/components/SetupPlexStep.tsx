@@ -22,6 +22,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type PlexResourceConnection, type SetupStatus } from "../api";
+import { describeError } from "../errors";
 import i18next from "../i18n";
 import { invalidateAllPlex } from "../plexServerQueries";
 import { usePlexLibraries } from "../usePlexLibraries";
@@ -97,7 +98,7 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
       setLinking(true);
       pin.begin(start.pin_id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t("setup.plex.signInStartError"));
+      setError(e instanceof Error ? describeError(e) : t("setup.plex.signInStartError"));
     }
   };
 
@@ -205,7 +206,7 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
       onError(null);
       invalidateAllPlex(queryClient);
     },
-    onError: (e: Error) => onError(e.message),
+    onError: (e) => onError(describeError(e)),
   });
   const setConnection = useMutation({
     mutationFn: (uri: string) => api.plexSetConnection(uri),
@@ -214,12 +215,12 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
       setManualOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
-    onError: (e: Error) => onError(e.message),
+    onError: (e) => onError(describeError(e)),
   });
   const setLibraries = useMutation({
     mutationFn: (keys: number[]) => api.setPlexLibraries(keys),
     onSuccess: (libs) => queryClient.setQueryData(["plex-libraries"], libs),
-    onError: (e: Error) => onError(e.message),
+    onError: (e) => onError(describeError(e)),
   });
 
   /** The one URI the three manual boxes compose. A blank host saves nothing, and a blank port

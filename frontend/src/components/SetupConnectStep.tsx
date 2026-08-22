@@ -24,6 +24,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
 import { api, type Instance, type InstanceKind, type SetupStatus } from "../api";
+import { describeError } from "../errors";
 import i18next from "../i18n";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
@@ -413,7 +414,7 @@ function ConnRow({
           Spans the row's whole width, under the chips it is about. */}
       {removeError && (
         <Notice tone="error" className="conn-row-error">
-          {t("setup.connect.removeFailedError", { message: removeError.message })}
+          {t("setup.connect.removeFailedError", { message: describeError(removeError) })}
         </Notice>
       )}
     </div>

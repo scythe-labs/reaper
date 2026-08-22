@@ -21,6 +21,7 @@ import { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { ApiError, api, type Run, type RunReport } from "../api";
 import { DegradedDocLink } from "../docs/DocLink";
+import { describeError } from "../errors";
 import { bytes, count, date, souls } from "../format";
 import i18next from "../i18n";
 import { reapBlockers } from "../reapReadiness";
@@ -369,7 +370,7 @@ export function ReapPlan({
 
       <ReapBreakdown onGoToPlexSettings={onGoToPlexSettings} onGoToReview={onGoToReview} />
 
-      {plan.error && <Notice tone="error">{plan.error.message}</Notice>}
+      {plan.error && <Notice tone="error">{describeError(plan.error)}</Notice>}
 
       {/* A plan is asked for but not in hand. Never render nothing here: the whole block below
           -- phrase, count, Execute, steps -- hangs off this one query, so a failed fetch used to
@@ -513,7 +514,7 @@ export function ReapPlan({
               </span>
             )}
           </div>
-          {dry.error && <Notice tone="error">{dry.error.message}</Notice>}
+          {dry.error && <Notice tone="error">{describeError(dry.error)}</Notice>}
           {report && <Report report={report} />}
           <Steps run={run} />
         </>

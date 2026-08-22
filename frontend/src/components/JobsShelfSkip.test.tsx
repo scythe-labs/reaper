@@ -46,8 +46,14 @@ const COMPLETED = {
 };
 
 /** Deliberately AFTER `COMPLETED`, since the row's whole decision is which is newer. A fixture
- *  sharing the completed pass's instant would make the comparison unfalsifiable (rule 141). */
-const SKIPPED = { at: "2026-08-04T20:06:00+00:00", result: "Reaper couldn't reach Plex" };
+ *  sharing the completed pass's instant would make the comparison unfalsifiable (rule 141).
+ *  `result_reason` is a real catalog code (phase 8b): `error.leaving_soon.skip_unreachable`
+ *  composes to exactly "Reaper couldn't reach Plex", which is what the assertions below still
+ *  read, so this fixture proves the real composer renders it rather than transcribing it. */
+const SKIPPED = {
+  at: "2026-08-04T20:06:00+00:00",
+  result_reason: { k: "error.leaving_soon.skip_unreachable", p: {} },
+};
 
 /** The service's sentence for a pass with no library turned on, verbatim
  *  (`LeavingSoonResult.summary`). */

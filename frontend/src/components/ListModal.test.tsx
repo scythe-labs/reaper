@@ -22,7 +22,10 @@ import { ListModal } from "./ListModal";
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
-vi.mock("../api", () => ({ api: apiMock }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 const PLEX_DEF: ListConfig = {
   id: 2,

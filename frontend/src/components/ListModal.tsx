@@ -27,6 +27,7 @@ import { useTranslation } from "react-i18next";
 
 import { api, type ListConfig, type ListConfigBody } from "../api";
 import { useBackCloseMirror, useBackGuard } from "../backnav";
+import { describeError } from "../errors";
 import i18next from "../i18n";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { FilterMenu } from "./FilterMenu";
@@ -590,7 +591,9 @@ export function ListModal({
             ))}
 
           {save.error && (
-            <Notice tone="error">{t("lists.saveError", { error: save.error.message })}</Notice>
+            <Notice tone="error">
+              {t("lists.saveError", { error: describeError(save.error) })}
+            </Notice>
           )}
 
           <div className="add-actions">
@@ -623,7 +626,9 @@ export function ListModal({
         <div className="service-form">
           <p>{t("lists.removeWarning")}</p>
           {remove.error && (
-            <Notice tone="error">{t("lists.removeError", { error: remove.error.message })}</Notice>
+            <Notice tone="error">
+              {t("lists.removeError", { error: describeError(remove.error) })}
+            </Notice>
           )}
           <div className="add-actions">
             <span className="flex-spacer" />

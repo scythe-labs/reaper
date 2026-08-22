@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
 import { api, type InstanceTest } from "../api";
+import { describeError } from "../errors";
 import { composeIn } from "../why";
 import { TestBadge, testSentence } from "./ServiceModal";
 import { StaleReadNotice } from "./StaleReadNotice";
@@ -89,7 +90,7 @@ export function NotificationsPanel({
       announce(t("services.discord.savedAnnouncement"));
       invalidate();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
   const testWebhook = useMutation({
     // Test the URL typed in the box (the one about to be saved) if there is one; otherwise
@@ -112,7 +113,7 @@ export function NotificationsPanel({
       setTest({ result, of: issued.of });
       announce(testSentence(result));
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
   // Remove is the rule 72 twin of the API key's, and the harder half of the pair: removing the
   // webhook disables BOTH of the pressed button's siblings in the same breath -- Save wants a
@@ -129,7 +130,7 @@ export function NotificationsPanel({
       announce(t("services.discord.removedAnnouncement"));
       invalidate();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   const connected = data?.has_webhook ?? false;

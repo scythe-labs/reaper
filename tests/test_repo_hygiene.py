@@ -4203,7 +4203,17 @@ _RELOAD_ADVICE = {
     # word, plus the catalog's own reloadButton label. Stage 4 converted every
     # component that gave it, so this is the whole population but for RestoreCard's
     # key literals above.
-    "frontend/src/locales/en/ui.json": 11,
+    #
+    # Phase 8b's error.* catalog (docs/history/I18N_PLAN.md) added two more, both already the
+    # server's own English in reaper.refusal.MESSAGES and newly reachable through this walk
+    # only because they now also live in ui.json: error.lists.not_found ("That list no longer
+    # exists. Reload the page.") fires from an edit/remove on a list already gone, so there is
+    # no draft worth keeping -- the thing it was an edit OF no longer exists. error.runs.
+    # confirmation_mismatch ("... Reload, review, and confirm again.") fires when the reap
+    # plan on screen no longer matches what the server holds, so the confirmation box it is
+    # about is already stale; nothing else on that page is a draft, a staged file, a secret or
+    # a selection.
+    "frontend/src/locales/en/ui.json": 13,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -5971,7 +5981,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 238
+_EXPECTED_FRONTEND_MODULES = 241
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -7717,8 +7727,12 @@ _ACCENT_DEFAULT_COPIES: dict[str, int] = {
     # `refusal.MESSAGES["error.settings.accent_color_invalid"]`, no longer inline in the route.
     "src/reaper/refusal.py": 1,
     "frontend/src/accent.ts": 1,
-    # The two refusal sentences naming the color are catalog messages since Stage 4.
-    "frontend/src/locales/en/ui.json": 2,
+    # Two client-side validation messages (general.accent.error, general.savebar.accentBlocked)
+    # have named the color since Stage 4. Phase 8b's error.* catalog added a third: the SAME
+    # server refusal above (`error.settings.accent_color_invalid`) is now also reachable from
+    # ui.json, so a client bypassing the two local checks (an API client, a race) still names
+    # the color rather than reading a raw code.
+    "frontend/src/locales/en/ui.json": 3,
     "frontend/src/styles/00-tokens.css": 4,
 }
 
@@ -8209,9 +8223,8 @@ def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
     only thing that can say the walk regressed rather than the catalog having shrunk to match.
 
     The catalog side of this -- every code above also being a key under ``ui.json``'s
-    ``error.*`` namespace, which the browser composes -- is phase 8b's:
-    ``test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose`` below is its stub,
-    since asserting against a namespace that does not exist yet would assert against nothing.
+    ``error.*`` namespace, which the browser composes -- is
+    ``test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose`` below, phase 8b's.
     """
     sites = _refusal_code_sites()
     total = sum(len(v) for v in sites.values())
@@ -8238,21 +8251,60 @@ def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
     )
 
 
-@pytest.mark.skip(
-    reason="phase 8b: frontend/src/locales/en/ui.json has no error.* namespace yet. Once it "
-    "does, assert every reaper.refusal.MESSAGES key is a ui.json error.* leaf and vice versa "
-    "-- the same two-way shape as test_every_refusal_code_has_a_raiser_and_a_catalog_entry, "
-    "one layer up."
+#: The three codes `frontend/src/api.ts` sets itself, for a body that carried no coded reason
+#: at all (no reply, a reply with no reason, a reply the browser could not parse). Nothing
+#: under `src/reaper` ever raises them -- there is no Python raise site for "the browser
+#: couldn't reach me" -- so they are the one deliberate exception to the two-way equality
+#: below, the same shape `NARROWED`/`WIDENED`/`PENDING_PHASE_8B` hold their own deliberate
+#: exceptions in `tests/test_api_type_mirror.py`.
+_TRANSPORT_ONLY_CODES = frozenset(
+    {
+        "error.transport.server_unreachable",
+        "error.transport.request_failed",
+        "error.transport.bad_reply",
+    }
 )
-def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:
-    """Stub for phase 8b: the browser-side twin of the walk above.
 
-    Once the SPA's ``ui.json`` carries an ``error.*`` namespace the browser composes a coded
-    refusal from, this asserts the two-way agreement between ``reaper.refusal.MESSAGES`` and
-    that namespace, the same shape already proved between the raising sites and the backend
-    catalog.
+#: `len(MESSAGES) + len(_TRANSPORT_ONLY_CODES)`, pinned so the population this test collects
+#: cannot silently shrink to match a catalog that lost entries (rule 145).
+_EXPECTED_CATALOG_ERROR_KEYS = 212
+
+
+def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:
+    """The browser-side twin of ``test_every_refusal_code_has_a_raiser_and_a_catalog_entry``.
+
+    That test proves every raise site names a ``reaper.refusal.MESSAGES`` code and every code
+    has a raise site. This proves the other hop: every ``MESSAGES`` code is also a leaf of
+    ``ui.json``'s ``error.*`` namespace (which the browser composes via ``why.ts``'s
+    ``composeIn("error", ...)``), and every ``error.*`` leaf is one of those codes or a
+    declared transport-only exception -- never an orphan a translator was handed for nothing,
+    and never a code the browser has no words for.
     """
-    raise NotImplementedError
+    catalog_error_keys = {key for key, _ in _ui_catalog_leaves() if key.startswith("error.")}
+    assert len(catalog_error_keys) == _EXPECTED_CATALOG_ERROR_KEYS, (
+        f"expected {_EXPECTED_CATALOG_ERROR_KEYS} error.* leaves in ui.json, found "
+        f"{len(catalog_error_keys)}. If you added or removed one, bump the constant here."
+    )
+
+    backend = set(MESSAGES)
+    missing = backend - catalog_error_keys
+    assert missing == set(), (
+        f"in reaper.refusal.MESSAGES with no matching ui.json error.* entry: {sorted(missing)}. "
+        "Add each to the catalog's error section so the browser can compose it."
+    )
+
+    orphaned = catalog_error_keys - backend - _TRANSPORT_ONLY_CODES
+    assert orphaned == set(), (
+        f"ui.json error.* keys naming no reaper.refusal.MESSAGES code and not a declared "
+        f"transport-only code: {sorted(orphaned)}. Either the code is dead on the server "
+        "side, or _TRANSPORT_ONLY_CODES needs it named."
+    )
+
+    missing_transport = _TRANSPORT_ONLY_CODES - catalog_error_keys
+    assert missing_transport == set(), (
+        f"transport-only codes missing from ui.json: {sorted(missing_transport)}. "
+        "frontend/src/api.ts sets these itself; they still need a catalog entry to compose."
+    )
 
 
 _EXPECTED_BARE_HTTPEXCEPTION_SITES = 2

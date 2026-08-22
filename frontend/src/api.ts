@@ -1179,8 +1179,11 @@ export interface LeavingSoonSettings {
    *  scheduled scan that crashed. */
   last_skip: {
     at: string;
-    /** Why, in one clause: it trails the exact time on the row's last-run line. */
-    result: string;
+    /** Why, as a typed reason (phase 8b): composed through `why.ts`'s `composeIn("error",
+     *  ...)`, trailing the exact time on the row's last-run line. A row written before this
+     *  conversion carries `{k: "legacy", p: {text}}`, which composes to its stored text
+     *  the same way `why.ts` already handles a legacy `Reason`. */
+    result_reason: ReasonKey;
   } | null;
 }
 
@@ -1482,9 +1485,10 @@ export interface PlexPoll {
   setup: boolean;
   /** Present only with status "choose_server". */
   servers: PlexServerChoice[] | null;
-  /** Present only with status "retrying": why this poll couldn't finish yet. The sign-in
-   *  is still good, so the browser keeps polling instead of failing. */
-  reason?: string | null;
+  /** Present only with status "retrying": why this poll couldn't finish yet, composed
+   *  through `why.ts`'s `composeIn("error", ...)` the same as any other coded refusal
+   *  (phase 8b). The sign-in is still good, so the browser keeps polling instead of failing. */
+  reason?: ReasonKey | null;
 }
 
 // --- setup + settings ------------------------------------------------------
@@ -1620,9 +1624,10 @@ export interface PlexLinkPoll {
   server: PlexStatus | null;
   /** Present only with status "choose_server". */
   servers: PlexServerChoice[] | null;
-  /** Present only with status "retrying": why this poll couldn't finish yet. The sign-in
-   *  is still good, so the browser keeps polling instead of failing. */
-  reason?: string | null;
+  /** Present only with status "retrying": why this poll couldn't finish yet, composed
+   *  through `why.ts`'s `composeIn("error", ...)` the same as any other coded refusal
+   *  (phase 8b). The sign-in is still good, so the browser keeps polling instead of failing. */
+  reason?: ReasonKey | null;
 }
 
 export interface ScheduledJob {
@@ -1704,17 +1709,44 @@ export interface RestoreSummary {
  *  CORS preflight, which this server never grants. See reaper/api/middleware.py. */
 const CSRF_HEADER = { "X-Reaper-CSRF": "1" };
 
+/** One coded item of a 422 validation list (`api.errors.validation_error_items`'s wire
+ *  shape): a field that failed a catalog-known check carries `code`/`params` beside its
+ *  already-formatted English `msg`; one that failed a plain pydantic type check carries
+ *  `code: null` and only `msg`. `describeError` (`errors.ts`) composes the former through
+ *  the catalog and keeps the latter's `msg` as-is. */
+export interface ApiErrorItem {
+  code: string | null;
+  params: Record<string, unknown>;
+  msg: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The refusal's catalog id (`error.<area>.<name>`), or one of the three
+     *  `error.transport.*` ids this client sets itself when the body carried no coded
+     *  reason at all. `null` for a body this build has no code for (an older server, or a
+     *  refusal this catalog does not carry yet) -- `message` is still the right thing to
+     *  show. Null whenever `items` is non-null: a 422 list's own codes ride there instead,
+     *  one per field, since a single top-level code cannot speak for several. */
+    readonly code: string | null = null,
+    /** The raw params `code` composes with (`why.ts`'s `composeIn` derives `field_label`
+     *  etc. from these the same way it does for a `Reason`). Empty when `code` is null. */
+    readonly params: Record<string, unknown> = {},
+    /** A 422's own per-field list, each carrying its own `code`/`params` (or neither, for
+     *  a plain pydantic type error) beside the English `msg` already folded into
+     *  `message` above. `null` outside the 422-list shape. */
+    readonly items: readonly ApiErrorItem[] | null = null,
   ) {
     super(message);
     this.name = "ApiError";
   }
 }
 
-/** Pull a human-readable reason out of a FastAPI error body.
+/** What a failed response means for the ApiError to carry: the English `message` every
+ *  caller has always read, plus the coded reason(s) behind it (phase 8b) for `describeError`
+ *  (`errors.ts`) to compose in the operator's own language.
  *
  *  `detail` is a string for HTTPException and a list of {loc, msg} for a validation
  *  failure. The domain's refusals arrive as the latter, and they are the most useful
@@ -1723,26 +1755,59 @@ export class ApiError extends Error {
  *
  *  When there is no detail at all there is nothing of Reaper's to say, and what comes back
  *  is not Reaper's: a reverse proxy during a container restart answers with its own HTML
- *  and no `detail`. Every component renders `error.message` verbatim, so the old fallback
+ *  and no `detail`. Every component renders `describeError(error)`, so the old fallback
  *  put a bare "Request failed (502)." across the review queue, the reap sheet and every
  *  settings panel (U-14, rule 21). The status still goes to the console, where whoever is
- *  debugging can read it. */
-function reason(status: number, body: unknown): string {
-  const detail = (body as { detail?: unknown } | null)?.detail;
+ *  debugging can read it. These three fallbacks are coded too (`error.transport.*`), so a
+ *  translated build reads them the same way as every other refusal. */
+function parseFailure(
+  status: number,
+  body: unknown,
+): {
+  message: string;
+  code: string | null;
+  params: Record<string, unknown>;
+  items: ApiErrorItem[] | null;
+} {
+  const b = body as { detail?: unknown; code?: unknown; params?: unknown } | null;
+  const detail = b?.detail;
 
-  if (typeof detail === "string") return detail;
+  if (typeof detail === "string") {
+    const code = typeof b?.code === "string" ? b.code : null;
+    const params = (b?.params as Record<string, unknown> | undefined) ?? {};
+    return { message: detail, code, params, items: null };
+  }
 
   if (Array.isArray(detail)) {
-    const messages = detail
-      .map((e) => (e as { msg?: string }).msg)
-      .filter((m): m is string => Boolean(m));
-    if (messages.length) return messages.join(" ");
+    const items: ApiErrorItem[] = detail
+      .map((e) => {
+        const entry = e as { msg?: unknown; code?: unknown; params?: unknown };
+        return {
+          code: typeof entry.code === "string" ? entry.code : null,
+          params: (entry.params as Record<string, unknown> | undefined) ?? {},
+          msg: typeof entry.msg === "string" ? entry.msg : "",
+        };
+      })
+      .filter((item) => item.msg.length > 0);
+    if (items.length) {
+      return { message: items.map((i) => i.msg).join(" "), code: null, params: {}, items };
+    }
   }
 
   console.warn(`Reaper: request failed with HTTP ${status} and no reason in the body.`, body);
   return status >= 500
-    ? "Reaper couldn't reach the server. Try again."
-    : "Reaper couldn't do that. Try again.";
+    ? {
+        message: "Reaper couldn't reach the server. Try again.",
+        code: "error.transport.server_unreachable",
+        params: {},
+        items: null,
+      }
+    : {
+        message: "Reaper couldn't do that. Try again.",
+        code: "error.transport.request_failed",
+        params: {},
+        items: null,
+      };
 }
 
 /** What to do when the server stops recognizing the session. Set once at startup (main.tsx).
@@ -1781,7 +1846,11 @@ async function parseBody<T>(response: Response): Promise<T> {
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new ApiError(response.status, "Reaper got an unexpected reply from the server.");
+    throw new ApiError(
+      response.status,
+      "Reaper got an unexpected reply from the server.",
+      "error.transport.bad_reply",
+    );
   }
 }
 
@@ -1790,7 +1859,8 @@ async function throwIfFailed(response: Response, path: string): Promise<void> {
   if (response.ok) return;
   const body: unknown = await response.json().catch(() => null);
   noteAuthFailure(response.status, path);
-  throw new ApiError(response.status, reason(response.status, body));
+  const failure = parseFailure(response.status, body);
+  throw new ApiError(response.status, failure.message, failure.code, failure.params, failure.items);
 }
 
 /** EVERY request the app makes goes through here: the CSRF header, the session hook, and the
@@ -1895,7 +1965,13 @@ export const api = {
     // failure on the queue's own error branch. The old hand-assembly defaulted the body to
     // `[]`, which did not crash and was worse: it drew "nothing to review" over a read that
     // never landed.
-    if (!page) throw new ApiError(502, "Reaper got an unexpected reply from the server.");
+    if (!page) {
+      throw new ApiError(
+        502,
+        "Reaper got an unexpected reply from the server.",
+        "error.transport.bad_reply",
+      );
+    }
     return page;
   },
   candidate: (id: number) => request<CandidateDetail>(`/api/candidates/${id}`),

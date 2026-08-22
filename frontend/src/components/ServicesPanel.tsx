@@ -15,6 +15,7 @@ import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
 import { api, type InstanceKind, type Instance, type InstanceTest } from "../api";
 import { useBackGuard } from "../backnav";
+import { describeError } from "../errors";
 import { KINDS, kindLabel, ServiceModal, TestBadge, testSentence } from "./ServiceModal";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
@@ -123,8 +124,10 @@ function ServiceCard({
         {(remove.error ?? testSaved.error) && (
           <Notice tone="error" inline>
             {remove.error
-              ? t("services.panel.card.removeFailed", { message: remove.error.message })
-              : t("services.panel.card.testFailed", { message: testSaved.error?.message })}
+              ? t("services.panel.card.removeFailed", { message: describeError(remove.error) })
+              : t("services.panel.card.testFailed", {
+                  message: testSaved.error ? describeError(testSaved.error) : "",
+                })}
           </Notice>
         )}
       </div>

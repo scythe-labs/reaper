@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api } from "../api";
+import { describeError } from "../errors";
 import { useSafety } from "../useSafety";
 import { Notice } from "./Notice";
 
@@ -79,7 +80,7 @@ export function DeletionToggle() {
       if (vars.enabled) returnToRow.current = true;
       refresh();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   if (isLoading) {

@@ -25,6 +25,7 @@ import { useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type SetupStatus } from "../api";
+import { describeError } from "../errors";
 import i18next from "../i18n";
 import { reapBlockers, type ReapBlocker } from "../reapReadiness";
 import { useScanStatus } from "../useScanStatus";
@@ -246,7 +247,7 @@ export function SetupScanStep({
 
         {start.error && (
           <Notice tone="error">
-            {t("common.scanStartFailed", { message: start.error.message })}
+            {t("common.scanStartFailed", { message: describeError(start.error) })}
           </Notice>
         )}
         {/* `standing`, unlike the Start refusal above it: a scan already running or already

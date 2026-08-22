@@ -21,6 +21,7 @@ import { useState, type ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api } from "../api";
+import { describeError } from "../errors";
 import { Notice } from "./Notice";
 import { MIN_ADMIN_PASSWORD } from "./Settings";
 import { StepCard } from "./SetupStepper";
@@ -75,7 +76,7 @@ export function SetupPasswordStep({
   ) : mismatch ? (
     t("setup.password.mismatchError")
   ) : save.error ? (
-    t("setup.password.saveFailedError", { message: save.error.message })
+    t("setup.password.saveFailedError", { message: describeError(save.error) })
   ) : null;
 
   // Only the box the live complaint is about points at the region; a submit failure is about

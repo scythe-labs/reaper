@@ -19,6 +19,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type InstanceTest } from "../api";
+import { describeError } from "../errors";
 import { composeIn } from "../why";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
@@ -55,7 +56,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
       announce(t("services.discord.savedAnnouncement"));
       onClose();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   const sendTest = useMutation({
@@ -79,7 +80,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
       setTest({ result, of: issued.of });
       announce(testSentence(result));
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   const remove = useMutation({
@@ -89,7 +90,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
       announce(t("services.discord.removedAnnouncement"));
       onClose();
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e) => setError(describeError(e)),
   });
 
   const typed = url.trim().length > 0;

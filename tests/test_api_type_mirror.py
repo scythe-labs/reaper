@@ -125,6 +125,10 @@ CLIENT_ONLY = {
     # A UI-side subset of ScanStatus (phase/done/total/detail) that several components take
     # as a prop; the server has no model of the subset.
     "Progress",
+    # One item of a 422 validation list's `code`/`params`/`msg` triple (phase 8b): the
+    # browser's own name for `api.errors.validation_error_items`'s wire shape, which is a
+    # list of dicts the server builds inline rather than a model with a name to pair against.
+    "ApiErrorItem",
 }
 
 #: Reconciled by hand against the tree (rule 145). ``grep -c '^export interface'`` on api.ts is
@@ -164,7 +168,9 @@ CLIENT_ONLY = {
 # Both +1 again for #868 phase 5: `DiscordTest` pairs with the new `DiscordTestOut` on the
 # suffix rule, split off `TestOut` because the Discord webhook test now sends a typed reason
 # where the *arr/Seerr connection test still sends free English (docs/history/I18N_PLAN.md §5).
-EXPECTED_INTERFACES = 99
+# INTERFACES alone +1 for phase 8b: `ApiErrorItem` is new and sits in CLIENT_ONLY above --
+# the 422 list it describes is a plain list of dicts server-side, not a named model to pair.
+EXPECTED_INTERFACES = 100
 EXPECTED_PAIRS = 97
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -821,18 +827,14 @@ WIDENED: set[str] = {
     "Vocabulary.lane",
 }
 
-#: Members the server moved to a ``ReasonKey`` ahead of the browser on purpose. Phase 8a
-#: (#870-880's continuation) typed the *server* side of every refusal, `PlexPollOut.reason`
-#: and its Settings-link sibling `PlexLinkPollOut.reason` among them; composing the sentence on
-#: the browser needs `ui.json`'s `error.*` namespace, which does not exist yet -- the same gap
-#: `test_repo_hygiene.py`'s `test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose`
-#: is skipped for. Phase 8b adds that namespace, updates `api.ts` to `ReasonKey | null`, and
-#: composes the retrying text from it in the same change, which is what removes this entry --
-#: never widen it to cover a member phase 8b did not touch.
-PENDING_PHASE_8B: set[str] = {
-    "PlexPoll.reason",
-    "PlexLinkPoll.reason",
-}
+#: Phase 8a (#870-880's continuation) typed the *server* side of every refusal,
+#: `PlexPollOut.reason` and its Settings-link sibling `PlexLinkPollOut.reason` among them, ahead
+#: of the browser: composing the sentence needed `ui.json`'s `error.*` namespace, which did not
+#: exist yet. Phase 8b added that namespace, updated `api.ts` to `ReasonKey | null` for both
+#: members, and composed the retrying text from it in the same change, so this is empty now --
+#: kept declared, rather than deleted along with the loop that reads it, so a future conversion
+#: needing the same temporary two-sided-change shape has a named place to add its members.
+PENDING_PHASE_8B: set[str] = set()
 
 
 class TestTheTwoCopiesAgreeOnTypes:
