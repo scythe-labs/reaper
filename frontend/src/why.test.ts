@@ -197,19 +197,18 @@ describe("composeError", () => {
 });
 
 describe("the card helpers", () => {
-  it("prefers the typed key and falls back to legacy prose", () => {
-    expect(cardReason({ reason: null, reason_key: { k: "kept_safe.unmatched" } })).toBe(
+  it("composes the reason from its key: a fresh id, or a legacy sentence verbatim", () => {
+    expect(cardReason({ reason_key: { k: "kept_safe.unmatched" } })).toBe(
       "Kept to be safe: it couldn't be found in Plex.",
     );
-    expect(cardReason({ reason: "an old stored line", reason_key: null })).toBe(
+    expect(cardReason({ reason_key: { k: "legacy", p: { text: "an old stored line" } } })).toBe(
       "an old stored line",
     );
-    expect(cardReason({ reason: null, reason_key: null })).toBeNull();
+    expect(cardReason({ reason_key: null })).toBeNull();
   });
 
-  it("composes the dormancy span from the raw days, or serves the baked legacy span", () => {
-    expect(dormantSpan({ dormant_for: null, dormant_days: 2059 })).toBe("5 years, 7 months");
-    expect(dormantSpan({ dormant_for: "3 years", dormant_days: null })).toBe("3 years");
-    expect(dormantSpan({ dormant_for: null, dormant_days: null })).toBeNull();
+  it("composes the dormancy span from a fresh row's raw days; a legacy row shows no pill", () => {
+    expect(dormantSpan({ dormant_days: 2059 })).toBe("5 years, 7 months");
+    expect(dormantSpan({ dormant_days: null })).toBeNull();
   });
 });

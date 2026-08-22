@@ -257,7 +257,9 @@ describe("the execute gate", () => {
   });
 
   it("a practice run that stopped never unlocks execution", async () => {
-    apiMock.dryRun.mockResolvedValue(report({ state: "aborted", aborted_reason: "over the cap" }));
+    apiMock.dryRun.mockResolvedValue(
+      report({ state: "aborted", aborted_reason: { k: "legacy", p: { text: "over the cap" } } }),
+    );
     renderSheet();
 
     await screen.findByText(/The plan stopped/);
@@ -425,8 +427,17 @@ describe("the execute gate", () => {
                 title: "A Film",
                 kind: "radarr_delete",
                 state: "verified",
-                detail: "deleted",
-                checks: [{ label: "Nobody was watching it right now", ok: true }],
+                detail_reason: { k: "legacy", p: { text: "deleted" } },
+                checks: [
+                  {
+                    label_reason: {
+                      k: "legacy",
+                      p: { text: "Nobody was watching it right now" },
+                    },
+                    ok: true,
+                  },
+                ],
+                is_canary: false,
               },
             ],
           }),
@@ -638,11 +649,21 @@ describe("what a screen reader hears while a reap runs", () => {
             title: "A Film",
             kind: "radarr_delete",
             state: "verified",
-            detail: "deleted",
+            detail_reason: { k: "legacy", p: { text: "deleted" } },
             checks: [
-              { label: "Nobody was watching it right now", ok: true },
-              { label: "It was played since you approved it", ok: false },
+              {
+                label_reason: { k: "legacy", p: { text: "Nobody was watching it right now" } },
+                ok: true,
+              },
+              {
+                label_reason: {
+                  k: "legacy",
+                  p: { text: "It was played since you approved it" },
+                },
+                ok: false,
+              },
             ],
+            is_canary: false,
           },
         ],
       }),

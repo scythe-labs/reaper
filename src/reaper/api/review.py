@@ -58,9 +58,9 @@ from reaper.db.models import (
     Snapshot,
 )
 from reaper.engine import identity
-from reaper.engine.explanation import read_explanation, thaw_reason_key
+from reaper.engine.explanation import absorb_legacy_detail, read_explanation, thaw_reason_key
 from reaper.engine.gates import GateId, thaw_defers_to_owner
-from reaper.engine.reason import Reason, from_wire, legacy, to_wire
+from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.services import (
     app_settings,
     whitelist,
@@ -76,7 +76,6 @@ from reaper.services.condemned import (
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
 from reaper.services.planner import MediaRef, PlanError
-from reaper.services.snapshot import HAND_SPARE_DETAIL
 
 log = structlog.get_logger(__name__)
 
@@ -878,7 +877,7 @@ def _decode_explanation(explanation_json: str) -> dict[str, Any] | None:
     """One guarded parse of a stored explanation, shared by every display extractor.
 
     ``_candidate_out`` decodes each row here ONCE and hands the result to
-    ``_dormant_for``, ``_primary_reason``, ``_chip`` and the reap-override read, instead
+    ``_dormant_days``, ``_primary_reason``, ``_chip`` and the reap-override read, instead
     of each running its own ``json.loads`` over the same multi-KB document (P2-2).
 
     Returns ``None`` for anything that is not a JSON object, so a corrupted or
@@ -920,48 +919,32 @@ def _detail_reason(entry: dict[str, Any]) -> Reason | None:
     """One stored row's typed detail, however old the row is.
 
     A fresh row carries ``detail_key`` and comes back as the reason the engine wrote. A row
-    frozen before details were typed carries prose ``detail`` and comes back as a legacy
-    reason, which every composer renders verbatim -- so the two ages take one code path
-    everywhere downstream. ``None`` when the row carries neither, which is the old
-    "no detail" degrade.
+    frozen before details were typed carries prose ``detail`` and no ``detail_key``;
+    ``absorb_legacy_detail`` folds it into one before this reads it, wrapped as a legacy
+    reason, so the two ages take one code path everywhere downstream -- the same fold
+    ``engine.explanation``'s models apply on their own read (rule 104), for a reader that
+    takes the stored row as a raw dict and never builds those models at all. ``None`` when
+    the row carries neither, which is the old "no detail" degrade.
 
-    Whether a stored ``detail_key`` is legible is ``thaw_reason_key``'s call, the same one
-    the panel's models make (rule 104): a malformed dict here must degrade exactly as it
-    does there, to the prose fallback and never through ``from_wire``'s wrap-anything arm,
-    which would print the dict's repr at the operator (rule 21). That arm is right for
-    ``facts_json``'s single combined field, where a bare string is the only legacy shape;
-    this document splits the ages into two keys, so the legacy shape is only ever the
-    ``detail`` string."""
-    key = entry.get("detail_key")
+    Whether the resulting ``detail_key`` is legible is ``thaw_reason_key``'s call, the same
+    one the panel's models make: a malformed dict here must degrade exactly as it does
+    there, to ``None`` and never through ``from_wire``'s wrap-anything arm, which would
+    print the dict's repr at the operator (rule 21)."""
+    folded = absorb_legacy_detail(entry)
+    key = folded.get("detail_key") if isinstance(folded, dict) else None
     if isinstance(key, dict) and thaw_reason_key(key) is not None:
         return from_wire(key)
-    detail = entry.get("detail")
-    return legacy(str(detail)) if detail else None
-
-
-def _reason_fields(reason: Reason | None) -> tuple[str | None, dict[str, Any] | None]:
-    """Split a card reason into its two wire fields: legacy prose in ``reason``, a typed
-    key in ``reason_key``, never both. The frontend composes the key from the catalog and
-    renders the prose verbatim (``frontend/src/why.ts``)."""
-    if reason is None:
-        return None, None
-    if reason.id == "legacy":
-        text = reason.params.get("text")
-        return (str(text) if text else None), None
-    return None, to_wire(reason)
+    return None
 
 
 def _is_hand_spare(reason: Reason | None) -> bool:
-    """Whether this fired row is the injected hand spare, either age of row.
+    """Whether this fired row is the injected hand spare.
 
-    The typed id on a fresh row, the exact stored sentence on a legacy one
-    (``snapshot.HAND_SPARE_DETAIL``): stored explanations outlive the writer, so the
-    prose comparison stays until no snapshot can carry it."""
-    if reason is None:
-        return False
-    if reason.id == "hand_spare":
-        return True
-    return reason.id == "legacy" and reason.params.get("text") == HAND_SPARE_DETAIL
+    A fresh row carries the typed id. A row frozen before reasons were typed carries the
+    sentence as a ``legacy`` reason instead, and is not matched here: it falls through to
+    the same generic ``kept.whitelisted`` chip any other whitelisted keep takes, which is
+    still true, just not as specific."""
+    return reason is not None and reason.id == "hand_spare"
 
 
 def _contribution(entry: dict[str, Any]) -> float:
@@ -1043,51 +1026,31 @@ def _primary_reason(
     return Reason("below_threshold")
 
 
-def _dormant_for(exp: dict[str, Any] | None) -> tuple[str | None, float | None]:
-    """The card's amber dormancy pill: a raw day count on a fresh row, the stored
-    humanized span ("5 years, 9 months") on a legacy one, never both.
+def _dormant_days(exp: dict[str, Any] | None) -> float | None:
+    """The card's amber dormancy pill: the raw day count off a fresh row's typed detail.
 
     Read from the stored explanation's UNWATCHED signal. A fresh row's detail key carries
-    the day count (``signal_unwatched``) and the frontend composes the span in the active
-    locale; a row frozen before details were typed carries the span baked into its prose,
-    which is served as it stands. Anything else -- the signal unevaluated, a missing
-    block, an unrecognized shape -- degrades to neither and the pill is hidden. Same
+    the day count (``signal_unwatched``) and the frontend composes the humanized span in
+    the active locale. A row frozen before details were typed carried the span baked into
+    its own prose instead; that string is no longer pulled back out of it, so a legacy
+    unwatched signal takes the same degrade the signal being unevaluated, a missing block,
+    or an unrecognized shape already take -- to neither, and the pill hides. Same
     defensive posture as ``_primary_reason``: display extraction must never error a row
     off the queue.
     """
-    prefix = "not watched in "
     if not isinstance(exp, dict):
-        return None, None
+        return None
     for signal in _entries(exp, "signals"):
         if signal.get("id") != "unwatched":
             continue
         if not signal.get("evaluated"):
-            return None, None
+            return None
         reason = _detail_reason(signal)
-        if reason is None:
-            return None, None
-        if reason.id == "signal_unwatched":
+        if reason is not None and reason.id == "signal_unwatched":
             days = reason.params.get("days")
-            return (None, float(days)) if isinstance(days, int | float) else (None, None)
-        text = reason.params.get("text")
-        if reason.id == "legacy" and isinstance(text, str) and text.startswith(prefix):
-            return text[len(prefix) :] or None, None
-        return None, None
-    return None, None
-
-
-#: Parsers over our own gates' closed detail vocabularies (engine/gates.py,
-#: services/season_pruning.py) -- the WhyPanel's CHECK_COPY/CAUSE_COPY precedent.
-#: Anything unrecognized falls back to a static phrase, never an error.
-_RATED_RE = re.compile(r"^well rated: (\d+(?:\.\d+)?) on IMDb")
-_WATCHED_HERE_RE = re.compile(r"^watched here: (\d+) (?:person|people) in the last (.+)$")
-_OTHERS_RE = re.compile(r"^(\d+) other")
-_KEEP_LAST_RE = re.compile(r"^within the last (\d+) seasons")
-#: The countdown out of ``ReturnedGate``'s fired detail, whose two wordings differ only in the
-#: lead ("you removed this before and it came back, 1 year left"). Anchored on the tail rather
-#: than on either lead, so rewording a lead does not silently drop the chip's number to its
-#: static fallback.
-_CAME_BACK_RE = re.compile(r" came back, (.+) left$")
+            return float(days) if isinstance(days, int | float) else None
+        return None
+    return None
 
 
 #: The chip id per fresh season-keep reason id (``season_pruning._protection_reason``).
@@ -1118,7 +1081,6 @@ _CHIP_IDS: frozenset[str] = frozenset(
         "kept.rating",
         "kept.rating_plain",
         "kept.popularity",
-        "kept.popularity_legacy",
         "kept.popularity_plain",
         "kept.others_watching",
         "kept.others_watching_unknown",
@@ -1132,7 +1094,6 @@ _CHIP_IDS: frozenset[str] = frozenset(
         "kept.custom",
         "kept.unknown",
         "came_back",
-        "came_back_legacy",
         "came_back_unknown",
         "match.unmatched",
         "match.ambiguous",
@@ -1159,50 +1120,16 @@ def _kept_season_reason(reason: Reason) -> Reason:
     return Reason(chip_id) if chip_id is not None else Reason("kept.season.rule")
 
 
-def _kept_season_legacy_reason(detail: str) -> Reason:
-    """The chip's typed reason for a LEGACY fired season keep rule, parsed from its stored prose.
-
-    Serves rows frozen before details were typed; a fresh row goes through
-    ``_kept_season_reason`` on its id instead. Three of these reasons were reworded
-    to name what Sonarr actually reported rather than what it usually means (see
-    ``_protection_reason``), so an explanation stored by an older scan carries the retired
-    spelling. Those fall through to the generic id below, which is vague but true --
-    the same degrade every unrecognized detail takes, and the reason this parser has a
-    fallback at all. The next scan restores the specific id.
-    """
-    if detail.startswith("specials"):
-        return Reason("kept.season.specials")
-    if detail.startswith("episodes are missing"):
-        return Reason("kept.season.incomplete")
-    if detail.startswith("the newest season of a show"):
-        return Reason("kept.season.airing")
-    if detail.startswith("the earliest season"):
-        return Reason("kept.season.first")
-    if keep_last := _KEEP_LAST_RE.match(detail):
-        return Reason("kept.season.keep_last", {"keep_last": int(keep_last.group(1))})
-    if detail.startswith("this show has only"):
-        return Reason("kept.season.keep_all")
-    if detail.startswith("a viewer is part-way"):
-        return Reason("kept.season.midbinge")
-    if detail.startswith("your watch history is too short"):
-        # NOT a keep rule, so it must not fall to the generic id below: the lever is the
-        # depth of the watch history (or the hold set against it), and naming a season rule
-        # sends the operator to edit a control that will not move it.
-        return Reason("kept.season.progress_history_short")
-    return Reason("kept.season.rule")
-
-
 def _kept_reason(gate: str, reason: Reason | None) -> Reason:
     """The green chip's typed reason for the protection that fired.
 
-    A fresh row's numbers come off the reason's params; a legacy row's come out of its
-    stored prose through the regex parsers above, which serve only rows frozen before
-    details were typed and never gain a pattern. Either way an unrecognized shape costs
-    the number and keeps the id.
+    A fresh row's numbers come off the reason's params. A legacy row's id is ``"legacy"``,
+    which matches none of the ids or gates checked below, so it falls through to whichever
+    static id its gate returns -- the same generic-but-true degrade every unrecognized shape
+    takes here. The why panel beneath the chip still shows the row's actual stored sentence,
+    verbatim, through ``detail_key`` (rule 96's direction: display extraction never invents,
+    it degrades).
     """
-    detail = ""
-    if reason is not None and reason.id == "legacy":
-        detail = str(reason.params.get("text") or "")
     if _is_hand_spare(reason):
         return Reason("kept.hand_spare")
     if gate == "whitelisted":
@@ -1217,10 +1144,6 @@ def _kept_reason(gate: str, reason: Reason | None) -> Reason:
                     value = clause.params.get("value")
                     if clause.params.get("source") == "imdb" and isinstance(value, int | float):
                         return Reason("kept.rating", {"value": value, "source": "imdb"})
-            return Reason("kept.rating_plain")
-        rated = _RATED_RE.match(detail)
-        if rated:
-            return Reason("kept.rating", {"value": float(rated.group(1)), "source": "imdb"})
         return Reason("kept.rating_plain")
     if gate == "server_popularity":
         if reason is not None and reason.id == "popularity_watched":
@@ -1230,28 +1153,15 @@ def _kept_reason(gate: str, reason: Reason | None) -> Reason:
                 return Reason(
                     "kept.popularity", {"count": int(count), "window_days": int(window_days)}
                 )
-            return Reason("kept.popularity_plain")
-        watched = _WATCHED_HERE_RE.match(detail)
-        if watched:
-            count, window = int(watched.group(1)), watched.group(2)
-            # A legacy row's window is already the English text it froze ("year", "90
-            # days"), not a raw day count, so this is a separate id rather than the fresh
-            # path's number: composing that text into a translated sentence would leak
-            # English into every language under an id a translator cannot tell apart from
-            # the numeric one (rule 92).
-            return Reason("kept.popularity_legacy", {"count": count, "window_text": window})
         return Reason("kept.popularity_plain")
     if gate == "others_watching":
-        others = _OTHERS_RE.match(detail)
-        if others:
-            return Reason("kept.others_watching", {"count": int(others.group(1))})
+        # Retired gate (``engine.gates``): no fact builder ever gathered the count, fresh
+        # or frozen, so no producer can carry it typed. Kept for stored explanations only.
         return Reason("kept.others_watching_unknown")
     if gate == "curated_list":
         return Reason("kept.curated_list")
     if gate == "min_dormancy":
-        if (reason is not None and reason.id == "dormancy_unestablished") or detail.startswith(
-            "no watch history"
-        ):
+        if reason is not None and reason.id == "dormancy_unestablished":
             return Reason("kept.no_history")
         # "Untouched", never "watched": this gate's clock runs from the last play only when
         # there IS one, and otherwise from the day the file arrived
@@ -1267,9 +1177,7 @@ def _kept_reason(gate: str, reason: Reason | None) -> Reason:
         # produces it (``engine.gates``, and the same reasoning as ``others_watching`` above).
         return Reason("kept.unmanaged")
     if gate == "season_progression":
-        if reason is not None and reason.id != "legacy":
-            return _kept_season_reason(reason)
-        return _kept_season_legacy_reason(detail)
+        return _kept_season_reason(reason) if reason is not None else Reason("kept.season.rule")
     if gate == "returned":
         # **Not reached today, and that is stated rather than implied** (rule 7/24). The one
         # caller asks `_came_back_chip` first, and that never returns None for a `returned`
@@ -1304,25 +1212,17 @@ def _came_back_chip(fired: list[dict[str, Any]]) -> ChipOut | None:
     if entry is None:
         return None
     reason = _detail_reason(entry)
-    if reason is not None and reason.id in {"returned_came_back", "returned_came_back_ours"}:
-        days_left = reason.params.get("days_left")
-        chip_reason = (
-            Reason("came_back", {"days_left": int(days_left)})
-            if isinstance(days_left, int | float)
-            else Reason("came_back_unknown")
-        )
-    else:
-        match = _CAME_BACK_RE.search(str(entry.get("detail") or ""))
-        # The static fallback every parser here has: an unrecognized detail costs the
-        # number, never the chip, and the next scan restores it. The matched span is
-        # already English text a legacy row froze ("1 year"), so it is a separate id from
-        # the fresh path's numeric one (see ``_kept_reason``'s popularity split for the
-        # same move, and why: rule 92).
-        chip_reason = (
-            Reason("came_back_legacy", {"days_left_text": match.group(1)})
-            if match
-            else Reason("came_back_unknown")
-        )
+    days_left = reason.params.get("days_left") if reason is not None else None
+    # A legacy row's id is "legacy", matching neither id below, so it takes the same
+    # unknown-countdown fallback any unrecognized shape does: the number is lost, never the
+    # chip, and the next scan restores it.
+    chip_reason = (
+        Reason("came_back", {"days_left": int(days_left)})
+        if reason is not None
+        and reason.id in {"returned_came_back", "returned_came_back_ours"}
+        and isinstance(days_left, int | float)
+        else Reason("came_back_unknown")
+    )
     return ChipOut(tone="held", reason=to_wire(chip_reason))
 
 
@@ -1337,7 +1237,7 @@ def _chip(
     Pure display extraction from the DECODED stored explanation
     (``_decode_explanation``): never a re-decision, and never an error that drops a row
     off the queue. Condemned rows get no chip here; their card leads with the amber
-    dormancy pill (``dormant_for``).
+    dormancy pill (``dormant_days``).
 
     Each chip carries a typed ``reason`` (id plus params, see ``ChipOut``) rather than
     rendered English, so the frontend composes both the chip and its standalone sentence
@@ -1519,10 +1419,9 @@ def _candidate_out(
     # and the reap-override read below. Each used to run its own json.loads over the same
     # multi-KB document, three or four times per row and up to 500 rows per page (P2-2).
     explanation = _decode_explanation(r.explanation_json)
-    dormant_for, dormant_days = _dormant_for(explanation)
-    reason_text, reason_key = _reason_fields(
-        _primary_reason(explanation, r.verdict, r.score, r.media_type)
-    )
+    dormant_days = _dormant_days(explanation)
+    primary_reason = _primary_reason(explanation, r.verdict, r.score, r.media_type)
+    reason_key = to_wire(primary_reason) if primary_reason is not None else None
     return CandidateOut(
         id=r.id,
         media_key=r.media_key,
@@ -1548,9 +1447,7 @@ def _candidate_out(
         group_title=r.group_title,
         video_resolution=r.video_resolution,
         library=r.library_title,
-        dormant_for=dormant_for,
         dormant_days=dormant_days,
-        reason=reason_text,
         reason_key=reason_key,
         override=override,
         override_own=override_own,
@@ -1810,7 +1707,6 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             summary=next((r.summary for r in rows if r.summary), None),
             size_bytes=sum(c.size_bytes for c in seasons if c.size_bytes is not None),
             unknown_size_seasons=sum(1 for c in seasons if c.size_bytes is None),
-            reason=lead.reason,
             reason_key=lead.reason_key,
             # A show-level fact: every season shares the show's library, so the first row
             # that carries one answers for the whole show (None if none do).

@@ -113,22 +113,16 @@ export function blockedParts(key: ReasonKey): { check: string; cause: string } |
   return { check: composeReason(check), cause: composeReason(cause) };
 }
 
-/** The card's amber-pill span: composed from the raw day count on a fresh row, the baked
- *  span on a legacy one. Null when the row carries neither and the pill is hidden. */
-export function dormantSpan(item: {
-  dormant_for: string | null;
-  dormant_days?: number | null;
-}): string | null {
-  if (item.dormant_days != null) return humanDays(item.dormant_days);
-  return item.dormant_for;
+/** The card's amber-pill span: composed from a fresh row's raw day count. Null on a
+ *  legacy row -- and when the signal was not evaluated, or the row carries neither -- and
+ *  the pill hides (#899). */
+export function dormantSpan(item: { dormant_days?: number | null }): string | null {
+  return item.dormant_days != null ? humanDays(item.dormant_days) : null;
 }
 
-/** The card's one-line "why": composed from its key on a fresh row, the stored prose on
- *  a legacy one. Null when the row carries neither and the line is hidden. */
-export function cardReason(item: {
-  reason: string | null;
-  reason_key?: ReasonKey | null;
-}): string | null {
-  if (item.reason_key) return composeReason(item.reason_key);
-  return item.reason;
+/** The card's one-line "why", composed from its key. A row frozen before typed reasons
+ *  carries a `legacy` key wrapping its stored sentence, composed verbatim. Null when the
+ *  row carries no reason at all and the line is hidden. */
+export function cardReason(item: { reason_key?: ReasonKey | null }): string | null {
+  return item.reason_key ? composeReason(item.reason_key) : null;
 }

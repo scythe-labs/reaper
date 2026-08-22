@@ -20,6 +20,7 @@ before -- pre-conversion rows must still render (§5), they just stop being tran
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -98,3 +99,30 @@ def from_wire(data: Any, *, _depth: int = 0) -> Reason:
             else:
                 params[str(key)] = str(value)
     return Reason(str(data["k"]), params)
+
+
+def to_stored(reason: Reason) -> str:
+    """The text a journal column stores for a reason (``ReapRun.aborted_reason``,
+    ``ActionStep.error``, since #899): ``to_wire`` of the reason, dumped as JSON.
+    :func:`from_stored` is the one place that reads it back."""
+    return json.dumps(to_wire(reason))
+
+
+def from_stored(text: str | None) -> Reason | None:
+    """The reason a journal column's stored text thaws as. ``None`` for ``None`` or empty
+    text -- a step that never failed or skipped, a run that never aborted.
+
+    A row written since #899 holds :func:`to_stored`'s JSON and decodes through
+    :func:`from_wire`. A row written before it holds a bare English sentence and comes back
+    as ``legacy(text)`` (rule 96), the same fallback a malformed blob gets: neither degrades
+    to ``None``, which would raise the row off the queue's why-panel instead of just
+    rendering it un-translated."""
+    if not text:
+        return None
+    try:
+        decoded = json.loads(text)
+    except (ValueError, TypeError):
+        return legacy(text)
+    if isinstance(decoded, dict) and isinstance(decoded.get("k"), str):
+        return from_wire(decoded)
+    return legacy(text)

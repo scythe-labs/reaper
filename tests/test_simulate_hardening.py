@@ -409,7 +409,10 @@ class TestTheQueueSurvivesAMixedSignalBlock:
         response = client.get("/api/candidates", params={"verdict": "condemn"})
         assert response.status_code == 200
         rows = {str(r["media_key"]): r for r in response.json()["items"]}
-        assert rows["radarr:1:9"]["reason"] == "poorly rated where it is rated"
+        assert rows["radarr:1:9"]["reason_key"] == {
+            "k": "legacy",
+            "p": {"text": "poorly rated where it is rated"},
+        }
 
 
 class TestTheHelpersThemselves:

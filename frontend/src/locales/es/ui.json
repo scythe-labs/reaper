@@ -410,7 +410,6 @@
             "no_tmdb_request_id": "",
             "no_tvdb_request_id": "",
             "no_series_status": "",
-            "no_season_rank": "",
             "imdb_unreadable": "",
             "no_imdb_id": "",
             "no_file_size": "",
@@ -588,7 +587,6 @@
                 "rating": "",
                 "rating_plain": "",
                 "popularity": "",
-                "popularity_legacy": "",
                 "popularity_plain": "",
                 "others_watching": "",
                 "others_watching_unknown": "",
@@ -612,7 +610,6 @@
                 "unknown": ""
             },
             "came_back": "",
-            "came_back_legacy": "",
             "came_back_unknown": "",
             "match": {
                 "unmatched": "",
@@ -638,7 +635,6 @@
                 "rating": "",
                 "rating_plain": "",
                 "popularity": "",
-                "popularity_legacy": "",
                 "popularity_plain": "",
                 "others_watching": "",
                 "others_watching_unknown": "",
@@ -662,7 +658,6 @@
                 "unknown": ""
             },
             "came_back": "",
-            "came_back_legacy": "",
             "came_back_unknown": "",
             "match": {
                 "unmatched": "",

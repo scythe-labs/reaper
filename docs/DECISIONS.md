@@ -852,11 +852,11 @@ The simulator's stale notice can still appear at an operator who changed nothing
 that adds a field to the hashed body leaves the recorded hash unmatchable until the next scan —
 so it goes on stating the condition rather than telling them they changed something.
 
-`GateId.UNMANAGED` and the four surfaces that decode a stored explanation stay
-(`STRUCTURAL_GATES`, the chip phrase, the why-panel line, and `WhyPanel.tsx`'s `CHECK_COPY`
-entry for the gate's blocked branch). `Facts.is_managed` stays too: it is a true observation and
-the evidence any re-wiring would need, which is a Plex-first scan path, not a change to the
-gate.
+`GateId.UNMANAGED` and the three surfaces that decode a stored explanation stay
+(`STRUCTURAL_GATES`, the chip phrase, and the why-panel's held-reap line). A stored row naming
+the gate's own blocked branch renders through the panel's generic legacy fallback now, not
+through copy of its own (#899). `Facts.is_managed` stays too: it is a true observation and the
+evidence any re-wiring would need, which is a Plex-first scan path, not a change to the gate.
 
 ## Plex index retirement
 
@@ -1034,10 +1034,13 @@ Two corollaries hold. **No string surgery on translated text.** A sentence that 
 and a period is its own catalog entry (`chip.sentence.*` beside `chip.text.*`), so
 `ReviewQueue`'s `capitalizeSentence` went. **A catalog entry is a whole thing a translator can
 read.** A fragment exists only where a frame nests it through ICU, and its note names the frame.
-A legacy row whose stored prose already holds an English span gets its own id
-(`kept.popularity_legacy`, `came_back_legacy`) rather than riding a translated sentence, so the
-leak is visible and scoped to rows a rescan replaces. A rule name the operator typed travels as a
-param. It is their data in their language.
+A row frozen before typed reasons renders its stored sentence as it is, through the one legacy
+rule (`Reason("legacy", {"text": ...})`, composed verbatim). The parsers that used to dress that
+sentence back up, one per gate, guessing numbers and ids out of its wording, were deleted in
+#899: they were debt that never left, and every one of them either matched the exact wording a
+gate happened to freeze that day or silently fell back to the same plain line this rule always
+had. A rescan replaces the row and restores the typed id. A rule name the operator typed travels
+as a param. It is their data in their language.
 
 What stays English on purpose: log lines, the confirmation phrase, the `reaper-admin` CLI
 and the launcher's console lines, OpenAPI tag descriptions and the API-key auth box.
@@ -1067,7 +1070,8 @@ refusal: it is worded once, by whichever branch of `scheduler._record_run` or
 run. So it has no English on the server at all, and the catalog under `jobs.result.*` and
 `shell.scanBar.step.*` is its only home, the same move phase 8a made for the leaving-soon
 skip reason. Every `*_result`, `detail` and `error` field this phase touches is replaced by its
-typed `*_reason` twin rather than kept alongside it. The run journal (phase 11b) keeps its
-English beside a typed key instead, because it is the audit record: an operator reads a past
-run's steps without the catalog that composed them, on a build that may since have changed
-its wording.
+typed `*_reason` twin rather than kept alongside it. The run journal (phase 11b) does the same:
+`ReapRun.aborted_reason` and `ActionStep.error` store the reason's code, through
+`to_stored`/`from_stored` (`engine/reason.py`), in the same column that used to hold the
+sentence. A row written before #899 still holds a bare English sentence, and `from_stored`
+reads it back as a `legacy` reason (rule 96), so a past run's steps keep reading correctly.

@@ -37,9 +37,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from reaper.engine.gates import thaw_defers_to_owner
+from reaper.engine.reason import legacy, to_wire
 from reaper.engine.signals import SignalState
 
 
@@ -73,16 +74,42 @@ def thaw_reason_key(value: object) -> ReasonKey | None:
     return None
 
 
+def absorb_legacy_detail(data: object) -> object:
+    """Fold a pre-conversion prose ``detail`` into ``detail_key``, one derivation for both
+    readers of a stored entry (rule 104).
+
+    A row frozen before details were typed carries prose ``detail`` and no ``detail_key``;
+    a fresh row carries the reverse. Wrapping the prose as a ``legacy`` reason here, once,
+    means every reader downstream takes one field rather than two ages of one -- the
+    sentence still reaches the panel, through the key. Two callers: the three models below,
+    each as its own ``model_validator(mode="before")`` since pydantic validators are
+    declared per model, and ``api.review._detail_reason``, which reads a stored entry as a
+    raw dict and never builds these models at all.
+
+    Folds whenever the stored ``detail_key`` is missing OR illegible, read by
+    ``thaw_reason_key`` rather than by presence alone: a hand-edited or corrupted row can
+    carry a ``detail_key`` that will not thaw to anything (rule 96's fallback posture),
+    and the prose beside it is the only legible byte such a row has left.
+    """
+    if not isinstance(data, dict) or thaw_reason_key(data.get("detail_key")) is not None:
+        return data
+    detail = data.get("detail")
+    if not isinstance(detail, str) or not detail:
+        return data
+    thawed = dict(data)
+    thawed["detail_key"] = to_wire(legacy(detail))
+    thawed.pop("detail", None)
+    return thawed
+
+
 class SignalContribution(BaseModel):
     id: str
     contribution: float
     weight: int
-    detail: str | None = None
-    """The prose line of a row frozen before details were typed, rendered verbatim.
-    ``None`` on every row written since; ``detail_key`` carries the sentence instead."""
-
     detail_key: ReasonKey | None = None
-    """The typed detail the panel composes from the catalog. ``None`` on a legacy row."""
+    """The typed detail the panel composes from the catalog. A row frozen before details
+    were typed carries prose ``detail`` instead; ``absorb_legacy_detail`` folds it into
+    this field, wrapped as a ``legacy`` reason, before validation runs."""
 
     evaluated: bool
     """False means the input was Unknown. Its weight still counts in the denominator,
@@ -110,6 +137,11 @@ class SignalContribution(BaseModel):
     Both mean "no line to state", so both render the plain row the panel showed before
     (rule 142's three-state -- a `0` default would assert a line about every legacy row)."""
     saturate_at: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_detail(cls, data: object) -> object:
+        return absorb_legacy_detail(data)
 
     @field_validator("detail_key", mode="before")
     @classmethod
@@ -142,12 +174,10 @@ class GateOutcomeOut(BaseModel):
     """
 
     gate: str
-    detail: str | None = None
-    """The prose line of a row frozen before details were typed, rendered verbatim.
-    ``None`` on every row written since; ``detail_key`` carries the sentence instead."""
-
     detail_key: ReasonKey | None = None
-    """The typed detail the panel composes from the catalog. ``None`` on a legacy row."""
+    """The typed detail the panel composes from the catalog. A row frozen before details
+    were typed carries prose ``detail`` instead; ``absorb_legacy_detail`` folds it into
+    this field, wrapped as a ``legacy`` reason, before validation runs."""
 
     defers_to_owner: bool | None = None
     """Whether the comparison behind this hold is one Reaper actually made.
@@ -197,6 +227,11 @@ class GateOutcomeOut(BaseModel):
     omitted when ``False``, so present-and-``False`` stays distinguishable from absent on
     disk. Declared here because a wire schema must name every key the UI reads
     (``WhyPanel.keepRuleConflict``)."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_detail(cls, data: object) -> object:
+        return absorb_legacy_detail(data)
 
     @field_validator("detail_key", mode="before")
     @classmethod
@@ -251,10 +286,16 @@ class KeepContributionOut(BaseModel):
     name: str
     discount: float
     max_discount: float
-    detail: str | None = None
-    """Legacy prose, exactly as the two detail pairs above."""
     detail_key: ReasonKey | None = None
+    """The typed detail the panel composes from the catalog. A row frozen before details
+    were typed carries prose ``detail`` instead; ``absorb_legacy_detail`` folds it into
+    this field, wrapped as a ``legacy`` reason, before validation runs."""
     evaluated: bool
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_detail(cls, data: object) -> object:
+        return absorb_legacy_detail(data)
 
     @field_validator("detail_key", mode="before")
     @classmethod

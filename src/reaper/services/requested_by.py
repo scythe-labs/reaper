@@ -246,11 +246,11 @@ async def build_map(
     return result
 
 
-#: Why a "was this requested?" lookup came back unreadable. Each is a KEY into ``WhyPanel``'s
-#: ``CAUSE_COPY``, which turns it into the sentence the owner reads; a key with no entry
-#: there prints raw, and ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one.
-#: Named here rather than typed at each of the six sites below, so that test can see them
-#: (rule 144).
+#: Why a "was this requested?" lookup came back unreadable. Each is a KEY into the catalog's
+#: ``why.cause.*`` entries, which turn it into the sentence the owner reads; a key with no
+#: entry there prints raw, and ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails
+#: on one. Named here rather than typed at each of the six sites below, so that test can see
+#: them (rule 144).
 NO_TMDB_REQUEST_REASON = "no_tmdb_request_id"
 NO_TVDB_REQUEST_REASON = "no_tvdb_request_id"
 REQUESTS_UNREACHABLE_REASON = "requests_unreachable"

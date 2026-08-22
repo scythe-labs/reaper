@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from reaper.api.review import (
     _chip,
     _decode_explanation,
-    _dormant_for,
+    _dormant_days,
     _explanation_out,
     _primary_reason,
 )
@@ -35,6 +35,7 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot, WhitelistEntry
+from reaper.engine.reason import legacy, to_wire
 from reaper.main import create_app
 from reaper.services.condemned import reap_override_verdict
 from reaper.services.snapshot import HAND_SPARE_DETAIL
@@ -188,9 +189,9 @@ class TestTheQueueSurvivesABrokenRow:
         rows = client.get("/api/candidates", params={"verdict": "protect"}).json()["items"]
         by_key = {str(r["media_key"]): r for r in rows}
         # Nothing readable to lead with, so the card leads with nothing.
-        assert by_key["radarr:1:2"]["reason"] is None
-        assert by_key["radarr:1:4"]["reason"] is None
-        assert by_key["radarr:1:5"]["reason"] is None
+        assert by_key["radarr:1:2"]["reason_key"] is None
+        assert by_key["radarr:1:4"]["reason_key"] is None
+        assert by_key["radarr:1:5"]["reason_key"] is None
         assert by_key["radarr:1:2"]["chip"] is None
         assert by_key["radarr:1:4"]["chip"] is None
 
@@ -231,7 +232,9 @@ class TestTheWhyPanelSurvivesABrokenRow:
         body = client.get(f"/api/candidates/{row['id']}").json()
         assert body["explanation_unreadable"] is False
         assert body["explanation"]["threshold"] == 70
-        assert body["explanation"]["protections_fired"][0]["detail"] == HAND_SPARE_DETAIL
+        assert body["explanation"]["protections_fired"][0]["detail_key"] == to_wire(
+            legacy(HAND_SPARE_DETAIL)
+        )
 
 
 class TestThePanelAndTheReapAgreeOnUnreadable:
@@ -324,7 +327,7 @@ class TestTheExtractorsThemselves:
             assert exp is None
             assert _primary_reason(exp, verdict, 50) is None
             assert _chip(exp, verdict, 50) is None
-            assert _dormant_for(exp) == (None, None)
+            assert _dormant_days(exp) is None
 
     def test_entries_that_are_not_objects_are_dropped(self) -> None:
         exp = _decode_explanation(MALFORMED["radarr:1:4"])
@@ -373,7 +376,7 @@ class TestTheExtractorsThemselves:
     def test_a_signals_block_that_is_not_a_list_hides_the_pill(self) -> None:
         exp = _decode_explanation(json.dumps({"signals": "nope"}))
         assert exp is not None
-        assert _dormant_for(exp) == (None, None)
+        assert _dormant_days(exp) is None
 
 
 class TestTheReapOverrideReadKeepsTheFile:

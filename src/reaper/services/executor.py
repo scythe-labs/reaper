@@ -129,7 +129,8 @@ from reaper.db.models import (
     StepState,
 )
 from reaper.engine.policy import ProfileSettings
-from reaper.refusal import MESSAGES, Refusal
+from reaper.engine.reason import Reason, to_stored
+from reaper.refusal import MESSAGES, Refusal, english
 from reaper.services import list_config, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
@@ -152,8 +153,8 @@ _PLEX_SETTLE_ATTEMPTS = 10
 
 #: The two live interlocks every real send passes before it deletes -- shared labels so the
 #: movie and season checklists read the same. Reaching a send means both of these are True.
-_CHECK_NOT_WATCHING = "Nobody was watching it right now"
-_CHECK_NOT_PLAYED_SINCE = "Not played since you approved it"
+_CHECK_NOT_WATCHING = Reason("error.reap.check.not_watching")
+_CHECK_NOT_PLAYED_SINCE = Reason("error.reap.check.not_played_since")
 
 #: The size re-read's allowance floor. A file may read a little larger than the frozen
 #: candidate (a rescan rounding differently, a subtitle landing beside a season) without
@@ -200,11 +201,8 @@ def _payload_size(value: object) -> int | None:
 
 #: What the operator is told when the scan never got a size for an item. Plain, and it
 #: says what happened to the file, because this is the only place the refusal surfaces.
-_NO_APPROVED_SIZE_REASON = (
-    "Reaper never got a size for this when it was scanned, so it cannot confirm this is "
-    "what you approved. Kept."
-)
-_NO_APPROVED_SIZE_CHECK = "No size was recorded for it at scan time. Kept."
+_NO_APPROVED_SIZE_REASON = Reason("error.reap.step.no_approved_size")
+_NO_APPROVED_SIZE_CHECK = Reason("error.reap.check.no_approved_size")
 
 #: The size re-read's two checklist lines. Both send paths reach both, and the sentence an
 #: operator reads must not depend on which one they are looking at, so each is written once
@@ -213,8 +211,8 @@ _NO_APPROVED_SIZE_CHECK = "No size was recorded for it at scan time. Kept."
 #: nothing about a size being wrong there. The *reason* beside each stays per-path and
 #: inline, naming the item and its numbers, which is what a checklist line this short cannot
 #: carry (rule 21).
-_CHECK_SIZE_UNCONFIRMED = "Couldn't confirm its current size. Kept."
-_CHECK_GREW_SINCE_APPROVED = "It grew since you approved it. Kept."
+_CHECK_SIZE_UNCONFIRMED = Reason("error.reap.check.size_unconfirmed")
+_CHECK_GREW_SINCE_APPROVED = Reason("error.reap.check.grew_since_approved")
 
 
 def size_confirmed(candidate: Candidate) -> bool:
@@ -266,8 +264,11 @@ def _season_number(obj: dict[str, Any]) -> int:
         return -1
 
 
-def _gb(value: int) -> str:
-    return f"{value / 1024**3:.1f} GB"
+def _reason_column(reason: Reason | None) -> str | None:
+    """The text a journal row's reason column stores: ``to_stored(reason)``, one
+    derivation (rule 104) for ``ReapRun.aborted_reason`` and ``ActionStep.error`` alike.
+    ``None`` in means ``None`` out, for a step or a run that never failed."""
+    return None if reason is None else to_stored(reason)
 
 
 def _planned_add_exclusion(step: ActionStep) -> bool:
@@ -411,7 +412,7 @@ class StepCheck:
     whether it passed. Rendered like the why-panel's ticks -- ``✓`` when ``ok``, ``✗`` when
     not -- so the owner sees every step and exactly which one failed."""
 
-    label: str
+    label: Reason
     ok: bool
 
 
@@ -420,9 +421,19 @@ class StepOutcome:
     media_key: str
     kind: str
     state: StepState
-    detail: str
+    detail: Reason
     title: str = ""
     checks: list[StepCheck] = field(default_factory=list)
+
+    is_canary: bool = False
+    """True when this item is the run's canary -- the smallest item, executed (or, in a dry
+    run, proven) first.
+
+    A fact about the item, not English: it used to be baked into three catalog sentences as a
+    server-composed ``" [canary]"`` fragment, which a translated sentence must never carry, and
+    "canary" is internal vocabulary the product calls the "test item" (rule 21). The frontend
+    renders its own tag beside the outcome from this flag, the same way the step table already
+    does from ``ActionStep.is_canary``."""
 
     file_removed: bool = False
     """Set on a FAILED outcome whose file is nonetheless really off disk.
@@ -476,7 +487,7 @@ class RunReport:
     them is confirmed) but they DID change the library, so the post-run rescan has to fire
     on them or the queue keeps offering files that no longer exist."""
 
-    aborted_reason: str | None = None
+    aborted_reason: Reason | None = None
 
     @property
     def library_changed(self) -> bool:
@@ -544,8 +555,12 @@ class _Delete:
 #: Derived from the catalog rather than restated: the two ``raise ExecutionError`` sites below
 #: pass the literal ``"error.reap.journal_halt"`` code (so the refusal walk can see it), and
 #: this constant reads the same English back out for the report/step fields that carry the
-#: sentence directly rather than through an exception (rule 144).
+#: sentence directly rather than through an exception (rule 144). ``_JOURNAL_HALT`` stays a
+#: plain string for the one caller that wants a bare message (``_JournalWriteError``, an
+#: internal exception with no operator-facing wire shape); ``_JOURNAL_HALT_REASON`` is the
+#: same sentence as the typed key every report/step field now carries.
 _JOURNAL_HALT = MESSAGES["error.reap.journal_halt"]
+_JOURNAL_HALT_REASON = Reason("error.reap.journal_halt")
 
 
 class _JournalWriteError(RuntimeError):
@@ -571,6 +586,11 @@ class _Terminal:
     already died, and recovering from that means ``rollback()`` -- which expires every ORM
     object in the session. So these travel where a rollback cannot reach them; see
     :meth:`Executor._commit_journal`.
+
+    ``aborted_reason`` is already the stored text :func:`_reason_column` derives from the
+    run's :class:`Reason`, computed once at construction -- the same derivation
+    :class:`_JournalRow` carries for a step's ``error``, so both mirrors classify one to one
+    against their model's columns (rule 103, ``TestARecoveredWriteCarriesEveryColumn``).
     """
 
     state: RunState
@@ -1124,8 +1144,8 @@ class Executor:
             terminal = _Terminal(RunState.COMPLETED, None, utcnow())
         except ExecutionError as exc:
             report.state = RunState.ABORTED
-            report.aborted_reason = str(exc)
-            terminal = _Terminal(RunState.ABORTED, str(exc), utcnow())
+            report.aborted_reason = exc.as_reason()
+            terminal = _Terminal(RunState.ABORTED, _reason_column(report.aborted_reason), utcnow())
         except _JournalWriteError:
             # A step's own journal write did not land even after the retry, so the run stopped
             # where it stood. Handled apart from the catch-all below only for the copy: this
@@ -1134,8 +1154,8 @@ class Executor:
             # being healthy, which is why it goes through _commit_journal.
             log.warning("reap.journal_halt", run_id=run_id)
             report.state = RunState.ABORTED
-            report.aborted_reason = _JOURNAL_HALT
-            terminal = _Terminal(RunState.ABORTED, _JOURNAL_HALT, utcnow())
+            report.aborted_reason = _JOURNAL_HALT_REASON
+            terminal = _Terminal(RunState.ABORTED, _reason_column(report.aborted_reason), utcnow())
             return report
         except asyncio.CancelledError:
             # A hard cancel -- the app shutting down, or a force-stop that did not go
@@ -1146,8 +1166,8 @@ class Executor:
             # deliberately NOT run: see _commit_and_finalize.
             canceled = True
             report.state = RunState.ABORTED
-            report.aborted_reason = "The run was stopped before it finished."
-            terminal = _Terminal(RunState.ABORTED, report.aborted_reason, utcnow())
+            report.aborted_reason = Reason("error.reap.canceled")
+            terminal = _Terminal(RunState.ABORTED, _reason_column(report.aborted_reason), utcnow())
             raise
         except Exception as exc:
             # The catch-all, and the last thing standing between a surprise and a wedged
@@ -1165,8 +1185,8 @@ class Executor:
             # logged here. Files already deleted keep their committed marks.
             log.warning("reap.unexpected_error", run_id=run_id, error=str(exc), exc_info=True)
             report.state = RunState.ABORTED
-            report.aborted_reason = f"The run stopped on an unexpected error: {exc}"
-            terminal = _Terminal(RunState.ABORTED, report.aborted_reason, utcnow())
+            report.aborted_reason = Reason("error.reap.unexpected", {"error": str(exc)})
+            terminal = _Terminal(RunState.ABORTED, _reason_column(report.aborted_reason), utcnow())
             return report
         finally:
             # Runs on EVERY exit -- COMPLETED, a graceful abort, and a hard cancel alike --
@@ -1547,9 +1567,10 @@ class Executor:
                         media_key=media_key,
                         kind=kind,
                         state=StepState.FAILED,
-                        detail=_JOURNAL_HALT,
+                        detail=_JOURNAL_HALT_REASON,
                         title=title,
-                        checks=[StepCheck(_JOURNAL_HALT, False)],
+                        checks=[StepCheck(_JOURNAL_HALT_REASON, False)],
+                        is_canary=index == 0,
                         file_removed=self._file_is_gone,
                     )
                 )
@@ -1639,14 +1660,15 @@ class Executor:
                 # The canary -- the first real deletion -- misbehaved. Halt the whole run:
                 # a plan whose first, smallest, safest delete does not behave as predicted
                 # is a plan we do not understand.
+                canary_detail = english(outcome.detail)
                 log.warning(
                     "reap.canary_failed",
                     media_key=outcome.media_key,
                     title=outcome.title,
-                    detail=outcome.detail,
+                    detail=canary_detail,
                 )
                 raise ExecutionError(
-                    "error.reap.canary_failed", title=outcome.title, detail=outcome.detail
+                    "error.reap.canary_failed", title=outcome.title, detail=canary_detail
                 )
             # A later item failing is recorded and survivable: one stubborn item is not a
             # reason to abandon the rest, and the canary already proved the mechanism works.
@@ -1660,7 +1682,7 @@ class Executor:
                     "reap.unclassified_item_failure",
                     media_key=outcome.media_key,
                     title=outcome.title,
-                    detail=outcome.detail,
+                    detail=english(outcome.detail),
                 )
                 raise ExecutionError("error.reap.item_failed_unexplained", title=outcome.title)
 
@@ -1710,8 +1732,9 @@ class Executor:
         if whitelist.effective_override(candidate.media_key, self._decisions) == "spare":
             return self._mark_skipped(
                 delete,
-                "you spared this by hand, so it is kept even though it was in the plan",
-                check="You spared this by hand. Kept.",
+                Reason("error.reap.step.spared_by_hand"),
+                check=Reason("error.reap.check.spared_by_hand"),
+                is_canary=is_canary,
             )
 
         # An item must pass BOTH halves, and each half is a different fact, so each gets its
@@ -1726,8 +1749,9 @@ class Executor:
         if candidate.media_key not in self._effective_keys:
             return self._mark_skipped(
                 delete,
-                "this was not part of the run you confirmed, so it is kept",
-                check="Not part of the run you confirmed. Kept.",
+                Reason("error.reap.step.not_in_confirmed_run"),
+                check=Reason("error.reap.check.not_in_confirmed_run"),
+                is_canary=is_canary,
             )
 
         # The mirror case: an item that was in the plan only because of a hand reap, whose
@@ -1739,8 +1763,9 @@ class Executor:
         if effective_verdict(candidate, self._decisions) != "condemn":
             return self._mark_skipped(
                 delete,
-                "the hand reap on this was removed, so it is kept",
-                check="No longer marked to reap by hand. Kept.",
+                Reason("error.reap.step.hand_reap_removed"),
+                check=Reason("error.reap.check.hand_reap_removed"),
+                is_canary=is_canary,
             )
 
         if not self._dry_run:
@@ -1750,37 +1775,42 @@ class Executor:
             if candidate.plex_rating_key is None:
                 return self._mark_skipped(
                     delete,
-                    "Plex has no rating key for this item, so Reaper cannot confirm nobody "
-                    "is watching it. Spared.",
-                    check="No Plex match, so we can't confirm it's idle. Kept.",
+                    Reason("error.reap.step.no_plex_match"),
+                    check=Reason("error.reap.check.no_plex_match"),
+                    is_canary=is_canary,
                 )
             if await self._being_watched_now(candidate):
                 return self._mark_skipped(
                     delete,
-                    "someone is watching it right now",
-                    check="Someone is watching it right now. Kept.",
+                    Reason("error.reap.step.being_watched"),
+                    check=Reason("error.reap.check.being_watched"),
+                    is_canary=is_canary,
                 )
             if await self._watched_since_approval(candidate, approved_at):
                 return self._mark_skipped(
                     delete,
-                    "played since the plan was approved",
-                    check="It was played since you approved the plan. Kept.",
+                    Reason("error.reap.step.played_since_approval"),
+                    check=Reason("error.reap.check.played_since_approval"),
+                    is_canary=is_canary,
                 )
 
         if self._dry_run:
             # The heart of the dry run: prove everything, send nothing, mutate nothing. The
             # full sequence is shown in the detail, but the step rows are left PENDING so the
-            # plan is still runnable for real afterwards.
+            # plan is still runnable for real afterwards. The plan text is the raw request
+            # sequence, never the word "would" -- that belongs to the catalog sentence
+            # wrapping it (``error.reap.step.dry_run``), so a translated build says it once.
             parts: list[str] = []
             for step in delete.steps:
                 body = json.loads(step.body_json) if step.body_json else {}
-                parts.append(f"would {step.method} {step.path} {body}".rstrip())
+                parts.append(f"{step.method} {step.path} {body}".rstrip())
             return StepOutcome(
                 media_key=delete.terminal.media_key,
                 kind=delete.terminal.kind,
                 state=StepState.SKIPPED,
-                detail=" -> ".join(parts) + (" [canary]" if is_canary else ""),
+                detail=Reason("error.reap.step.dry_run", {"plan": " -> ".join(parts)}),
                 title=candidate.title,
+                is_canary=is_canary,
             )
 
         # A real send. Each step is marked SENT and COMMITTED *before* its guarded call,
@@ -2004,9 +2034,16 @@ class Executor:
         try:
             ref = MediaRef.parse(candidate.media_key)
         except Exception as exc:  # a key that parsed at plan time should still parse now
-            return self._fail(delete, f'could not route "{candidate.media_key}": {exc}')
+            return self._fail(
+                delete,
+                Reason(
+                    "error.reap.step.route_failed",
+                    {"media_key": candidate.media_key, "error": str(exc)},
+                ),
+                is_canary=is_canary,
+            )
 
-        def failed(reason: str, *, halts_run: bool = False) -> StepOutcome:
+        def failed(reason: Reason, *, halts_run: bool = False) -> StepOutcome:
             """Fail this item, reading whether its file is already gone off the journal.
 
             The ``file_removed_at`` stamp is committed the moment a delete is confirmed
@@ -2019,6 +2056,7 @@ class Executor:
             return self._fail(
                 delete,
                 reason,
+                is_canary=is_canary,
                 file_removed=delete.terminal.file_removed_at is not None,
                 halts_run=halts_run,
             )
@@ -2031,17 +2069,17 @@ class Executor:
         except IntegrationError as exc:
             # A hard client/transport error on this item. Recorded and (unless it is the
             # canary) survivable -- the run continues with the others.
-            return failed(f"the *arr call failed: {exc}")
+            return failed(Reason("error.reap.step.arr_call_failed", {"error": str(exc)}))
         except SafetyViolationError as exc:
             # The transport guard refused the mutation mid-send. The execute route hands
             # its own RuntimeSafety snapshot to build_reap_gateway, so the guard and this
             # executor decide from one switch state -- but if they ever disagreed, a clean
             # failed item (the canary aborts the run) is far better than a crash that
             # leaves the run in an unknown state.
-            return failed(f"the transport guard blocked the delete: {exc}")
+            return failed(Reason("error.reap.step.transport_guard_blocked", {"error": str(exc)}))
         except ExecutionError as exc:
             # A missing instance route. Same treatment: fail this item, not the world.
-            return failed(str(exc))
+            return failed(exc.as_reason())
         except _JournalWriteError:
             # Straight past every handler here, including the catch-all below. See the class:
             # they all answer by recording an outcome, and this is the failure to record.
@@ -2061,9 +2099,16 @@ class Executor:
             # stay survivable; this one is by definition a shape Reaper does not recognize,
             # and on the deletion path that resolves toward stopping.
             log.warning("reap.item_unexpected_error", media_key=candidate.media_key, error=str(exc))
-            return failed(f"an unexpected error stopped this item: {exc}", halts_run=True)
+            return failed(
+                Reason("error.reap.step.item_unexpected", {"error": str(exc)}), halts_run=True
+            )
 
-        return failed(f'no live delete path for "{candidate.media_key}" ({candidate.media_type})')
+        return failed(
+            Reason(
+                "error.reap.step.no_delete_path",
+                {"media_key": candidate.media_key, "media_type": candidate.media_type},
+            )
+        )
 
     async def _send_movie(self, delete: _Delete, ref: MediaRef, *, is_canary: bool) -> StepOutcome:
         """Delete a movie and, when the operator armed it, PROVE the import exclusion landed.
@@ -2095,7 +2140,7 @@ class Executor:
         approved_size = candidate.size_bytes
         if not self._may_send_unmeasured(candidate, _MOVIE_COMPARABLE):
             return self._mark_skipped(
-                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
+                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK, is_canary=is_canary
             )
 
         # Read the tmdbId now, while the movie still exists, for the exclusion re-read.
@@ -2114,9 +2159,9 @@ class Executor:
         if live_size is None and approved_size is not None:
             return self._mark_skipped(
                 delete,
-                "Radarr did not report this movie's current size, so Reaper cannot "
-                "confirm it is still the file that was approved. Kept.",
+                Reason("error.reap.step.size_unconfirmed_movie"),
                 check=_CHECK_SIZE_UNCONFIRMED,
+                is_canary=is_canary,
             )
         if (
             approved_size is not None
@@ -2125,10 +2170,12 @@ class Executor:
         ):
             return self._mark_skipped(
                 delete,
-                f"the file is bigger now ({_gb(live_size)}) than when it was approved "
-                f"({_gb(approved_size)}), so it was likely upgraded since the "
-                "scan. Kept. Run a new scan to review it at its current size.",
+                Reason(
+                    "error.reap.step.grew_since_approved_movie",
+                    {"live": live_size, "approved": approved_size},
+                ),
                 check=_CHECK_GREW_SINCE_APPROVED,
+                is_canary=is_canary,
             )
 
         # The exclusion decision was frozen into the plan the operator approved
@@ -2146,10 +2193,9 @@ class Executor:
             # to verify, so a missing id does not block the delete.
             return self._fail(
                 delete,
-                "Radarr lists no TMDB id for this movie, so the import exclusion could "
-                "never be verified after deleting. The file was kept. Fix the movie's "
-                "identification in Radarr, then plan again.",
+                Reason("error.reap.step.no_tmdb_id"),
                 checks=checks,
+                is_canary=is_canary,
             )
 
         await self._mark_sent(step)
@@ -2165,7 +2211,7 @@ class Executor:
         # for the budget it is the opposite: an uncharged delete buys the next run more
         # room. So "not proven still present" is what charges, not "proven gone".
         assume_removed = gone is not False
-        checks.append(StepCheck("Removed the file through Radarr", proven_gone))
+        checks.append(StepCheck(Reason("error.reap.check.movie_removed"), proven_gone))
 
         # Stamp the removal the moment it is proven, and BEFORE anything else that could
         # fail. Everything below -- the exclusion poll, the Plex refresh -- can end this item
@@ -2184,12 +2230,10 @@ class Executor:
         # by the operator's own choice rather than leaving a silent gap.
         if add_exclusion:
             excluded = await self._exclusion_landed(radarr, tmdb_id)
-            checks.append(StepCheck("Import exclusion confirmed. It won't re-download", excluded))
+            checks.append(StepCheck(Reason("error.reap.check.exclusion_confirmed"), excluded))
         else:
             excluded = True
-            checks.append(
-                StepCheck("Import exclusion off for this Radarr, so none was added", True)
-            )
+            checks.append(StepCheck(Reason("error.reap.check.exclusion_off"), True))
 
         # Once the file is gone, tell Plex -- whatever the exclusion result. This is what
         # stops a stale entry lingering, and it must fire even when the exclusion check
@@ -2210,41 +2254,39 @@ class Executor:
             # internal flags. With the exclusion off ``excluded`` is always True, so the
             # first branch only fires on a movie that would not delete.
             if gone is False:
-                reason = (
-                    "Radarr accepted the delete but the movie is still there. Nothing was removed."
-                )
+                reason = Reason("error.reap.step.movie_not_removed")
             elif gone is None:
-                reason = (
-                    "Radarr accepted the delete, but Reaper could not reach it again to "
-                    "confirm the file is gone. It is counted against your limits as removed."
-                )
+                reason = Reason("error.reap.step.movie_removal_unconfirmed")
             else:
-                reason = (
-                    "The file was removed, but Reaper could not confirm the import "
-                    "exclusion, so a re-request could download it again."
-                )
+                reason = Reason("error.reap.step.exclusion_unconfirmed")
             return self._fail(
                 delete,
                 reason,
                 checks=checks,
+                is_canary=is_canary,
                 # The file is gone even though this item failed, so the library changed and
                 # the queue is now stale: the post-run rescan has to fire.
                 file_removed=assume_removed,
             )
 
         await self._mark_verified(step, {"tmdb_id": tmdb_id, "excluded": excluded, "gone": True})
+        # Two literal call sites, not one call behind a variable code: the refusal walk
+        # (`tests/test_repo_hygiene.py::_refusal_code_sites`) only sees a `Reason(...)` whose
+        # first argument is a string constant, so a code chosen at runtime would read as a
+        # catalog entry with no raiser.
         detail = (
-            "deleted; import exclusion verified present"
+            Reason("error.reap.step.movie_deleted_verified")
             if add_exclusion
-            else "deleted; import exclusion off for this Radarr"
+            else Reason("error.reap.step.movie_deleted_no_exclusion")
         )
         return StepOutcome(
             media_key=step.media_key,
             kind=step.kind,
             state=StepState.VERIFIED,
-            detail=detail + (" [canary]" if is_canary else ""),
+            detail=detail,
             title=delete.candidate.title,
             checks=checks,
+            is_canary=is_canary,
         )
 
     async def _movie_is_gone(self, radarr: MovieDeleter, movie_id: int) -> bool | None:
@@ -2324,7 +2366,7 @@ class Executor:
         approved_size = candidate.size_bytes
         if not self._may_send_unmeasured(candidate, _SEASON_COMPARABLE):
             return self._mark_skipped(
-                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
+                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK, is_canary=is_canary
             )
 
         # Keyed by file id, never a bare list of sizes. The delete below re-resolves this
@@ -2355,27 +2397,29 @@ class Executor:
         if not live_sizes:
             return self._mark_skipped(
                 delete,
-                f"Sonarr lists no files for season {ref.season}, so there is nothing to "
-                "delete. Kept.",
-                check="No files left to remove. Kept.",
+                Reason("error.reap.step.season_no_files", {"season": ref.season}),
+                check=Reason("error.reap.check.season_no_files_kept"),
+                is_canary=is_canary,
             )
         # Sonarr listed files and would not size one of them. Only reachable with a frozen
         # size to compare against, the allowance's items having no comparison to make.
         if approved_size is not None and any(s is None for s in live_sizes):
             return self._mark_skipped(
                 delete,
-                "Sonarr did not report a size for every file in this season, so Reaper "
-                "cannot confirm it is still what was approved. Kept.",
+                Reason("error.reap.step.size_unconfirmed_season"),
                 check=_CHECK_SIZE_UNCONFIRMED,
+                is_canary=is_canary,
             )
         live_total = sum(size for size in live_sizes if size is not None)
         if approved_size is not None and _grew_materially(approved_size, live_total):
             return self._mark_skipped(
                 delete,
-                f"this season is bigger now ({_gb(live_total)}) than when it was approved "
-                f"({_gb(approved_size)}), so its files likely changed since "
-                "the scan. Kept. Run a new scan to review it at its current size.",
+                Reason(
+                    "error.reap.step.grew_since_approved_season",
+                    {"live": live_total, "approved": approved_size},
+                ),
                 check=_CHECK_GREW_SINCE_APPROVED,
+                is_canary=is_canary,
             )
 
         # 1. Unmonitor (reversible), then VERIFY it actually took before any file is touched.
@@ -2383,8 +2427,12 @@ class Executor:
         await sonarr.unmonitor_season(ref.arr_id, ref.season)
         series = await sonarr.series_by_id(ref.arr_id)
         monitored_off = self._season_monitored(series, ref.season) is False
-        checks.append(StepCheck(f"Unmonitored season {ref.season} in Sonarr", True))
-        checks.append(StepCheck("Confirmed the season is no longer monitored", monitored_off))
+        checks.append(
+            StepCheck(Reason("error.reap.check.season_unmonitored", {"season": ref.season}), True)
+        )
+        checks.append(
+            StepCheck(Reason("error.reap.check.season_unmonitor_confirmed"), monitored_off)
+        )
         if not monitored_off:
             # Do NOT proceed to the delete: the dangerous half-state is files-gone-while-
             # -monitored. Mark the unmonitor sent, the verify failed, the delete un-run.
@@ -2398,23 +2446,24 @@ class Executor:
                 season=ref.season,
             )
             await self._mark_verified(unmonitor, {"unmonitor_sent": True})
-            self._stage_step_failed(
-                verify, "the season is still monitored after the unmonitor; not deleting files"
+            self._stage_step_failed(verify, Reason("error.reap.step.unmonitor_verify_failed"))
+            self._stage_step_skipped(
+                delete_step, Reason("error.reap.step.delete_skipped_unmonitor_unverified")
             )
-            self._stage_step_skipped(delete_step, "unmonitor unverified")
             # The two staged writes above are left to ``_run_deletes``'s per-item commit,
             # which runs before the next item is attempted and can recover a failed one.
             # A bare commit here could not: nothing was deleted on this path, but a raise
             # out of it still killed the session's transaction and took the run's terminal
             # write with it.
-            checks.append(StepCheck("Deleted the season's episode files", False))
+            checks.append(StepCheck(Reason("error.reap.check.season_files_not_deleted"), False))
             return StepOutcome(
                 media_key=delete_step.media_key,
                 kind=delete_step.kind,
                 state=StepState.FAILED,
-                detail="unmonitor did not take; refused to delete files while still monitored",
+                detail=Reason("error.reap.step.unmonitor_not_verified"),
                 title=delete.candidate.title,
                 checks=checks,
+                is_canary=is_canary,
             )
         await self._mark_verified(unmonitor, {"unmonitor_sent": True})
         await self._mark_verified(verify, {"monitored": False})
@@ -2451,10 +2500,12 @@ class Executor:
             # the checklist as one line, so the verified unmonitor is not visible there either.
             return self._mark_skipped(
                 delete,
-                f"{len(unmeasured)} more file(s) landed in season {ref.season} while Reaper "
-                "was working, so it is no longer what was approved. Nothing was deleted, and "
-                "the season was left unmonitored. Run a new scan to review it as it is now.",
-                check="It changed while Reaper was working. The season was left unmonitored.",
+                Reason(
+                    "error.reap.step.season_files_arrived",
+                    {"count": len(unmeasured), "season": ref.season},
+                ),
+                check=Reason("error.reap.check.season_changed_unmonitored"),
+                is_canary=is_canary,
             )
         file_ids = resolved
         if not file_ids:
@@ -2477,9 +2528,9 @@ class Executor:
             )
             return self._mark_skipped(
                 delete,
-                f"Sonarr no longer lists any file for season {ref.season}, so nothing was "
-                "deleted. The season was left unmonitored.",
-                check="No files left to remove. The season was left unmonitored.",
+                Reason("error.reap.step.season_files_vanished", {"season": ref.season}),
+                check=Reason("error.reap.check.season_no_files_unmonitored"),
+                is_canary=is_canary,
             )
         await self._mark_sent(delete_step)
         await sonarr.delete_episode_files(file_ids)
@@ -2497,15 +2548,17 @@ class Executor:
             await self._mark_file_removed(delete_step)
             return self._fail(
                 delete,
-                f"Sonarr accepted the delete for season {ref.season}, but Reaper could not "
-                "reach it again to confirm the files are gone. They are counted against "
-                "your limits as removed.",
+                Reason("error.reap.step.season_removal_unconfirmed", {"season": ref.season}),
                 checks=checks,
+                is_canary=is_canary,
                 file_removed=True,
             )
         still_there = [f for f in remaining if _season_number(f) == ref.season]
         checks.append(
-            StepCheck(f"Deleted the season's {len(file_ids)} episode file(s)", not still_there)
+            StepCheck(
+                Reason("error.reap.check.season_files_deleted", {"count": len(file_ids)}),
+                not still_there,
+            )
         )
         if len(still_there) < len(file_ids):
             # At least one file really went, so the bytes are reclaimed and the rolling
@@ -2515,9 +2568,12 @@ class Executor:
         if still_there:
             return self._fail(
                 delete,
-                f"{len(still_there)} episode file(s) for season {ref.season} remain after "
-                "the delete; not confirmed.",
+                Reason(
+                    "error.reap.step.season_files_remain",
+                    {"count": len(still_there), "season": ref.season},
+                ),
                 checks=checks,
+                is_canary=is_canary,
                 file_removed=len(still_there) < len(file_ids),
             )
 
@@ -2568,10 +2624,13 @@ class Executor:
             media_key=delete_step.media_key,
             kind=delete_step.kind,
             state=StepState.VERIFIED,
-            detail=f"season {ref.season} pruned: {len(file_ids)} file(s) deleted, unmonitor "
-            "verified" + (" [canary]" if is_canary else ""),
+            detail=Reason(
+                "error.reap.step.season_pruned",
+                {"season": ref.season, "count": len(file_ids)},
+            ),
             title=delete.candidate.title,
             checks=checks,
+            is_canary=is_canary,
         )
 
     @staticmethod
@@ -2912,22 +2971,23 @@ class Executor:
         self._file_is_gone = True
         await self._mark(step, "file removed", file_removed_at=utcnow())
 
-    def _stage_step_failed(self, step: ActionStep, reason: str) -> None:
+    def _stage_step_failed(self, step: ActionStep, reason: Reason) -> None:
         """In memory only. Durable once ``_run_deletes`` commits this item's journal."""
         step.state = StepState.FAILED
-        step.error = reason
+        step.error = _reason_column(reason)
 
-    def _stage_step_skipped(self, step: ActionStep, reason: str) -> None:
+    def _stage_step_skipped(self, step: ActionStep, reason: Reason) -> None:
         """In memory only. Durable once ``_run_deletes`` commits this item's journal."""
         step.state = StepState.SKIPPED
-        step.error = reason
+        step.error = _reason_column(reason)
 
     def _fail(
         self,
         delete: _Delete,
-        reason: str,
+        reason: Reason,
         checks: list[StepCheck] | None = None,
         *,
+        is_canary: bool = False,
         file_removed: bool = False,
         halts_run: bool = False,
     ) -> StepOutcome:
@@ -2962,12 +3022,12 @@ class Executor:
             "reap.item_failed",
             media_key=delete.candidate.media_key,
             title=delete.candidate.title,
-            detail=reason,
+            detail=english(reason),
         )
         for step in delete.steps:
             if step.state not in (StepState.VERIFIED, StepState.SKIPPED):
                 step.state = StepState.FAILED
-                step.error = reason
+                step.error = _reason_column(reason)
         return StepOutcome(
             media_key=delete.terminal.media_key,
             kind=delete.terminal.kind,
@@ -2975,6 +3035,7 @@ class Executor:
             detail=reason,
             title=delete.candidate.title,
             checks=checks if checks is not None else [StepCheck(reason, False)],
+            is_canary=is_canary,
             file_removed=file_removed,
             halts_run=halts_run,
         )
@@ -3007,7 +3068,14 @@ class Executor:
         log.warning("executor.skipped_unmeasured", media_key=candidate.media_key)
         return False
 
-    def _mark_skipped(self, delete: _Delete, reason: str, check: str | None = None) -> StepOutcome:
+    def _mark_skipped(
+        self,
+        delete: _Delete,
+        reason: Reason,
+        check: Reason | None = None,
+        *,
+        is_canary: bool = False,
+    ) -> StepOutcome:
         """Spare the whole item. In a REAL run, set every one of its not-yet-terminal steps
         SKIPPED (not just the last) -- in memory, durable at the per-item commit, exactly as
         in ``_fail``: a season sparing that left its unmonitor step PENDING
@@ -3029,7 +3097,7 @@ class Executor:
                 if step.state == StepState.VERIFIED:
                     continue
                 step.state = StepState.SKIPPED
-                step.error = reason
+                step.error = _reason_column(reason)
         return StepOutcome(
             media_key=delete.terminal.media_key,
             kind=delete.terminal.kind,
@@ -3037,6 +3105,7 @@ class Executor:
             detail=reason,
             title=delete.candidate.title,
             checks=[StepCheck(check or reason, True)],
+            is_canary=is_canary,
         )
 
 

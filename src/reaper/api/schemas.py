@@ -149,7 +149,7 @@ class ChipOut(BaseModel):
     ``frontend/src/locales/en/ui.json`` via ``why.ts``'s ``composeIn``. Derived server-side
     from the stored explanation (never a re-decision): a Sanctuary card's chip names the
     protection that fired, a Limbo card's names what stopped Reaper short. Condemned cards
-    carry no chip here -- their amber dormancy pill is built from ``dormant_for``.
+    carry no chip here -- their amber dormancy pill is built from ``dormant_days``.
 
     Every id ``api.review._chip`` can emit has a ``chip.text`` entry and a ``chip.sentence``
     entry, checked by the two-way walk in ``tests/test_review_chips.py`` (rule 145): there is
@@ -237,24 +237,18 @@ class CandidateOut(BaseModel):
     """The Plex library (section) this item lives in, as the operator named it -- the
     show's for a season row. Powers the card/panel library chip and the library filter.
     None when unknown (unmatched, or a row from before this shipped); the chip is hidden."""
-    dormant_for: str | None = None
-    """How long the item has sat unwatched, as the humanized span from the dormancy
-    signal ("5 years, 9 months") -- the card's amber pill, on a row whose snapshot predates
-    typed reasons. None on every fresh row, where ``dormant_days`` carries the number and
-    the frontend composes the span in the active locale. The pill hides when both are
-    missing."""
     dormant_days: float | None = None
-    """The raw dormancy day count on a fresh row, or ``None`` on a legacy one (see
-    ``dormant_for``)."""
-    reason: str | None = None
-    """The one-line "why", drawn from the explanation: the protection that keeps a spared
-    item, or the top reason a reaped one scored. It is what the card shows in place of a plot
-    synopsis -- on the review queue you want to know why Reaper judged it, not what it is.
-    Set only for a row whose snapshot predates typed reasons; a fresh row serves
-    ``reason_key`` instead, never both."""
+    """The raw dormancy day count on a fresh row; the frontend composes the span in the
+    active locale. ``None`` on a row frozen before typed reasons, which shows no amber
+    pill."""
     reason_key: ReasonKey | None = None
-    """The typed "why" of a fresh row, composed from the catalog by the frontend
-    (``frontend/src/why.ts``). ``None`` on a legacy row."""
+    """The one-line "why", drawn from the explanation: the protection that keeps a spared
+    item, or the top reason a reaped one scored. It is what the card shows in place of a
+    plot synopsis -- on the review queue you want to know why Reaper judged it, not what it
+    is. Composed from the catalog by the frontend (``frontend/src/why.ts``). A row whose
+    snapshot predates typed reasons carries a ``legacy`` key wrapping its stored sentence,
+    which composes to that sentence verbatim; ``None`` only where the row has no reason to
+    show at all."""
     override: str | None = None
     """The owner's manual decision *in effect* on this item -- ``"spare"``, ``"reap"``, or
     ``None``. Set the moment they click, so the card can show the pending intent before the
@@ -424,10 +418,8 @@ class GroupOut(BaseModel):
     unknown_size_seasons: int = 0
     """How many season rows have no size, and are therefore left out of the total above.
     Hidden at zero."""
-    reason: str | None = None
-    """The lead season's ``reason`` -- legacy rows only, exactly as on the candidate."""
     reason_key: ReasonKey | None = None
-    """The lead season's ``reason_key`` -- fresh rows only, exactly as on the candidate."""
+    """The lead season's ``reason_key``, exactly as on the candidate."""
     library: str | None = None
     """The show's Plex library (section), taken from its season rows (they all share it).
     None when no row carries one. Drives the show panel's library chip."""
@@ -535,16 +527,16 @@ class ActionStepOut(BaseModel):
     state: str
     is_canary: bool
 
-    error: str | None = None
-    """Why this step failed or was skipped, as the executor recorded it. ``None`` on a step
-    that has not run or that succeeded.
+    error_reason: ReasonKey | None = None
+    """Why this step failed or was skipped, as a typed reason the browser composes.
+    ``None`` on a step that has not run or that succeeded.
 
-    Already operator copy: ``_fail`` and ``_skip`` write ONE sentence and use it for both this
-    column and ``StepOutcome.detail``, which the after-action report already shows. The
-    difference is only that this one is durable -- the report lives in memory on ``app.state``,
-    so before this a restart left the table saying a step failed with nothing saying why, while
-    the reason sat in the row the whole time (#260). Never add a message here that is not
-    already fit for the operator to read (rule 21)."""
+    Durable, not just the live report's: the report lives in memory on ``app.state``, so
+    before this a restart left the table saying a step failed with nothing saying why,
+    while the reason sat in the row the whole time (#260). Read off ``ActionStep.error``
+    through ``engine.reason.from_stored`` -- a row written before #899 holds a bare
+    English sentence and thaws as a ``legacy`` reason (rule 96) rather than come back
+    empty."""
 
 
 class RunOut(BaseModel):
@@ -617,14 +609,20 @@ class RunSummaryOut(BaseModel):
     id: int
     state: str
     approved_at: str
-    aborted_reason: str | None = None
+    aborted_reason: ReasonKey | None = None
+    """Why the run stopped early, as a typed reason the browser composes. Thawed off
+    ``ReapRun.aborted_reason`` through ``engine.reason.from_stored``: a row written before
+    #899 holds a bare English sentence and thaws as a ``legacy`` reason (rule 96)."""
 
 
 class RunCheckOut(BaseModel):
     """One line in an item's after-action checklist: a step the reap did or verified, and
     whether it passed. Rendered as a ``✓``/``✗`` tick, like the why-panel's checks."""
 
-    label: str
+    label_reason: ReasonKey
+    """The live :class:`~reaper.engine.reason.Reason` the executor recorded this checklist
+    line with, as a typed reason the browser composes. Always present -- a check without one
+    would have nothing to render."""
     ok: bool
 
 
@@ -635,8 +633,16 @@ class RunOutcomeOut(BaseModel):
     title: str
     kind: str
     state: str  # verified | failed | skipped
-    detail: str
+    detail_reason: ReasonKey
+    """The live :class:`~reaper.engine.reason.Reason` the executor recorded for this
+    outcome, as a typed reason the browser composes. Always present, the same way
+    ``RunCheckOut.label_reason`` is."""
     checks: list[RunCheckOut]
+    is_canary: bool
+    """True when this item was the run's canary -- the smallest item, executed (or, in a dry
+    run, proven) first. The same fact ``ActionStepOut.is_canary`` carries for the journal's
+    step table, carried here too so the report and result lists can mark it without a
+    server-composed English fragment in ``detail_reason`` (rule 21)."""
 
 
 class RunReportOut(BaseModel):
@@ -646,7 +652,9 @@ class RunReportOut(BaseModel):
     run_id: int
     dry_run: bool
     state: str
-    aborted_reason: str | None = None
+    aborted_reason: ReasonKey | None = None
+    """Why the run stopped early: the live :class:`~reaper.engine.reason.Reason` the
+    executor recorded on ``RunReport``, as a typed reason the browser composes."""
 
     would_delete_items: int
     """The count of items removed. In a real run this is what was actually deleted; in a
@@ -665,8 +673,8 @@ class RunReportOut(BaseModel):
 
     skipped: int
     outcomes: list[RunOutcomeOut]
-    """Per item: what happened, with a plain-English checklist of the steps performed and
-    which (if any) failed."""
+    """Per item: what happened, with a typed-reason checklist of the steps performed and
+    which (if any) failed, for the browser to compose."""
 
 
 #: A media_key's storage bound (``ActionStep.media_key`` / ``WhitelistEntry.media_key`` are

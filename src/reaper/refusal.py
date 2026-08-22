@@ -23,6 +23,8 @@ params, formatted through this same catalog.
 
 from __future__ import annotations
 
+from typing import Any
+
 from reaper.engine.reason import Reason
 
 #: Every code an API response, a stored explanation, or the engine's own ``str()`` can
@@ -686,6 +688,131 @@ MESSAGES: dict[str, str] = {
     ),
     "error.scan.source_unreachable": "Reaper couldn't reach one of your sources: {error}",
     "error.scan.unexpected": "The scan hit a problem it didn't expect: {error}",
+    # -----------------------------------------------------------------------------
+    # Phase 11b (#885, #894): the run journal's per-item detail and checklist, and the
+    # run-level abort reason -- reaper.services.executor, every ``StepOutcome.detail``,
+    # ``StepCheck.label`` and ``RunReport.aborted_reason`` site. The prose column
+    # (``ActionStep.error``, ``ReapRun.aborted_reason``) and the report's own JSON field keep
+    # their English rendered from these same entries through ``english()`` below, so the two
+    # can never drift (rule 104). A ``{live}``/``{approved}`` param is raw bytes; the
+    # ``{name}_gb`` placeholder is the browser's own derivation (``why.ts``'s ``composeIn``)
+    # and ``english()`` mirrors it for the stored prose and the log line.
+    # -----------------------------------------------------------------------------
+    "error.reap.canceled": "The run was stopped before it finished.",
+    "error.reap.step.route_failed": 'Could not route "{media_key}": {error}',
+    "error.reap.step.no_delete_path": ('No live delete path for "{media_key}" ({media_type}).'),
+    "error.reap.step.arr_call_failed": "The *arr call failed: {error}",
+    "error.reap.step.transport_guard_blocked": "The transport guard blocked the delete: {error}",
+    "error.reap.step.item_unexpected": "An unexpected error stopped this item: {error}",
+    "error.reap.step.spared_by_hand": (
+        "You spared this by hand, so it is kept even though it was in the plan."
+    ),
+    "error.reap.step.not_in_confirmed_run": (
+        "This was not part of the run you confirmed, so it is kept."
+    ),
+    "error.reap.step.hand_reap_removed": "The hand reap on this was removed, so it is kept.",
+    "error.reap.step.no_plex_match": (
+        "Plex has no rating key for this item, so Reaper cannot confirm nobody is "
+        "watching it. Spared."
+    ),
+    "error.reap.step.being_watched": "Someone is watching it right now.",
+    "error.reap.step.played_since_approval": "Played since the plan was approved.",
+    "error.reap.step.dry_run": "Would send: {plan}",
+    "error.reap.step.no_approved_size": (
+        "Reaper never got a size for this when it was scanned, so it cannot confirm this "
+        "is what you approved. Kept."
+    ),
+    "error.reap.step.size_unconfirmed_movie": (
+        "Radarr did not report this movie's current size, so Reaper cannot confirm it is "
+        "still the file that was approved. Kept."
+    ),
+    "error.reap.step.grew_since_approved_movie": (
+        "The file is bigger now ({live_gb} GB) than when it was approved ({approved_gb} "
+        "GB), so it was likely upgraded since the scan. Kept. Run a new scan to review it "
+        "at its current size."
+    ),
+    "error.reap.step.no_tmdb_id": (
+        "Radarr lists no TMDB id for this movie, so the import exclusion could never be "
+        "verified after deleting. The file was kept. Fix the movie's identification in "
+        "Radarr, then plan again."
+    ),
+    "error.reap.step.movie_not_removed": (
+        "Radarr accepted the delete but the movie is still there. Nothing was removed."
+    ),
+    "error.reap.step.movie_removal_unconfirmed": (
+        "Radarr accepted the delete, but Reaper could not reach it again to confirm the "
+        "file is gone. It is counted against your limits as removed."
+    ),
+    "error.reap.step.exclusion_unconfirmed": (
+        "The file was removed, but Reaper could not confirm the import exclusion, so a "
+        "re-request could download it again."
+    ),
+    "error.reap.step.movie_deleted_verified": "Deleted. Import exclusion verified present.",
+    "error.reap.step.movie_deleted_no_exclusion": "Deleted. Import exclusion off for this Radarr.",
+    "error.reap.step.season_no_files": (
+        "Sonarr lists no files for season {season}, so there is nothing to delete. Kept."
+    ),
+    "error.reap.step.size_unconfirmed_season": (
+        "Sonarr did not report a size for every file in this season, so Reaper cannot "
+        "confirm it is still what was approved. Kept."
+    ),
+    "error.reap.step.grew_since_approved_season": (
+        "This season is bigger now ({live_gb} GB) than when it was approved ({approved_gb} "
+        "GB), so its files likely changed since the scan. Kept. Run a new scan to review "
+        "it at its current size."
+    ),
+    "error.reap.step.unmonitor_verify_failed": (
+        "The season is still monitored after the unmonitor. Not deleting files."
+    ),
+    "error.reap.step.delete_skipped_unmonitor_unverified": "Unmonitor unverified.",
+    "error.reap.step.unmonitor_not_verified": (
+        "Unmonitor did not take. Refused to delete files while still monitored."
+    ),
+    "error.reap.step.season_files_arrived": (
+        "{count} more file(s) landed in season {season} while Reaper was working, so it "
+        "is no longer what was approved. Nothing was deleted, and the season was left "
+        "unmonitored. Run a new scan to review it as it is now."
+    ),
+    "error.reap.step.season_files_vanished": (
+        "Sonarr no longer lists any file for season {season}, so nothing was deleted. The "
+        "season was left unmonitored."
+    ),
+    "error.reap.step.season_removal_unconfirmed": (
+        "Sonarr accepted the delete for season {season}, but Reaper could not reach it "
+        "again to confirm the files are gone. They are counted against your limits as "
+        "removed."
+    ),
+    "error.reap.step.season_files_remain": (
+        "{count} episode file(s) for season {season} remain after the delete. Not confirmed."
+    ),
+    "error.reap.step.season_pruned": (
+        "Season {season} pruned: {count} file(s) deleted, unmonitor verified."
+    ),
+    "error.reap.check.not_watching": "Nobody was watching it right now",
+    "error.reap.check.not_played_since": "Not played since you approved it",
+    "error.reap.check.no_approved_size": "No size was recorded for it at scan time. Kept.",
+    "error.reap.check.size_unconfirmed": "Couldn't confirm its current size. Kept.",
+    "error.reap.check.grew_since_approved": "It grew since you approved it. Kept.",
+    "error.reap.check.spared_by_hand": "You spared this by hand. Kept.",
+    "error.reap.check.not_in_confirmed_run": "Not part of the run you confirmed. Kept.",
+    "error.reap.check.hand_reap_removed": "No longer marked to reap by hand. Kept.",
+    "error.reap.check.no_plex_match": "No Plex match, so we can't confirm it's idle. Kept.",
+    "error.reap.check.being_watched": "Someone is watching it right now. Kept.",
+    "error.reap.check.played_since_approval": "It was played since you approved the plan. Kept.",
+    "error.reap.check.movie_removed": "Removed the file through Radarr",
+    "error.reap.check.exclusion_confirmed": "Import exclusion confirmed. It won't re-download",
+    "error.reap.check.exclusion_off": "Import exclusion off for this Radarr, so none was added",
+    "error.reap.check.season_unmonitored": "Unmonitored season {season} in Sonarr",
+    "error.reap.check.season_unmonitor_confirmed": "Confirmed the season is no longer monitored",
+    "error.reap.check.season_files_not_deleted": "Deleted the season's episode files",
+    "error.reap.check.season_files_deleted": "Deleted the season's {count} episode file(s)",
+    "error.reap.check.season_no_files_kept": "No files left to remove. Kept.",
+    "error.reap.check.season_no_files_unmonitored": (
+        "No files left to remove. The season was left unmonitored."
+    ),
+    "error.reap.check.season_changed_unmonitored": (
+        "It changed while Reaper was working. The season was left unmonitored."
+    ),
 }
 
 
@@ -728,3 +855,31 @@ class Refusal(ValueError):  # noqa: N818 -- "Refusal" is the domain noun the pla
         second English rendering.
         """
         return Reason(self.code, dict(self.params))
+
+
+def english(reason: Reason) -> str:
+    """A stored :class:`Reason` rendered as English -- the one place that happens, so a
+    prose column, a log line and an API client with no catalog entry all read the same
+    sentence a translated build's catalog was written from (rule 104).
+
+    A ``legacy`` reason (a sentence frozen before its condition got a code) renders its
+    stored text verbatim, never looked up. Anything else formats ``MESSAGES[reason.id]``
+    against ``reason.params`` -- with one addition ``str.format`` cannot do on its own: a
+    numeric param gets a ``{name}_gb`` companion, the same derivation the browser's
+    ``composeIn`` (``frontend/src/why.ts``) applies to every numeric param, so a template
+    can show a byte count in gigabytes without the raise site pre-rounding it. An id with
+    no catalog entry, or params that do not match its placeholders, renders as the id
+    itself -- the same fallback :meth:`Refusal.__str__` uses, and for the same reason:
+    never raise out of a report or a log line over a formatting slip.
+    """
+    if reason.id == "legacy":
+        return str(reason.params.get("text", ""))
+    template = MESSAGES.get(reason.id, reason.id)
+    params: dict[str, Any] = dict(reason.params)
+    for key, value in reason.params.items():
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            params[f"{key}_gb"] = f"{value / 1_000_000_000:.1f}"
+    try:
+        return template.format(**params)
+    except (KeyError, IndexError):
+        return template

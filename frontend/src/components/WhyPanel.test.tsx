@@ -15,6 +15,7 @@ import {
   type CandidateDetail,
   type GateOutcome,
   type Match,
+  type ReasonKey,
   REWATCH_KEEP,
   type SignalContribution,
 } from "../api";
@@ -53,8 +54,14 @@ beforeEach(() => {
   vi.mocked(api.forgetWatchEvidenceFor).mockResolvedValue({ removed: true });
 });
 
+/** A row frozen before details were typed: the stored sentence wrapped as the one legacy
+ *  reason, composed verbatim (docs/history/I18N_PLAN.md §5, #899). */
+function legacy(text: string): ReasonKey {
+  return { k: "legacy", p: { text } };
+}
+
 function signal(over: Partial<SignalContribution> & { id: string }): SignalContribution {
-  return { contribution: 0, weight: 10, detail: "a reason", evaluated: true, ...over };
+  return { contribution: 0, weight: 10, detail_key: legacy("a reason"), evaluated: true, ...over };
 }
 
 /** The six rows the operator was looking at: 75/75, 30/80, 20/20, 20/20, 10/60, 0/25.
@@ -64,26 +71,43 @@ const WORKED_ROWS: SignalContribution[] = [
     id: "unwatched",
     contribution: 75,
     weight: 75,
-    detail: "not watched in 5 years",
+    detail_key: legacy("not watched in 5 years"),
     state: "adds",
   }),
   signal({
     id: "season_rank",
     contribution: 30,
     weight: 80,
-    detail: "a later season",
+    detail_key: legacy("a later season"),
     state: "adds",
   }),
   signal({
     id: "few_watchers",
     contribution: 20,
     weight: 20,
-    detail: "1 person watched it",
+    detail_key: legacy("1 person watched it"),
     state: "adds",
   }),
-  signal({ id: "size", contribution: 20, weight: 20, detail: "takes 40 GiB", state: "adds" }),
-  signal({ id: "low_rating", contribution: 10, weight: 60, detail: "rated 6.4", state: "adds" }),
-  signal({ id: "my rule", weight: 25, detail: "not on the shelf", state: "not_applicable" }),
+  signal({
+    id: "size",
+    contribution: 20,
+    weight: 20,
+    detail_key: legacy("takes 40 GiB"),
+    state: "adds",
+  }),
+  signal({
+    id: "low_rating",
+    contribution: 10,
+    weight: 60,
+    detail_key: legacy("rated 6.4"),
+    state: "adds",
+  }),
+  signal({
+    id: "my rule",
+    weight: 25,
+    detail_key: legacy("not on the shelf"),
+    state: "not_applicable",
+  }),
 ];
 
 function detail(
@@ -108,8 +132,6 @@ function detail(
     group_title: null,
     video_resolution: null,
     library: null,
-    dormant_for: null,
-    reason: null,
     override: null,
     override_own: null,
     show_override: null,
@@ -189,7 +211,7 @@ function pushRows(n: number, weight = 10): SignalContribution[] {
       id: `rule ${String(i).padStart(2, "0")}`,
       contribution: weight,
       weight,
-      detail: `reason ${i}`,
+      detail_key: legacy(`reason ${i}`),
       state: "adds",
     }),
   );
@@ -260,23 +282,28 @@ describe("the scoring receipt", () => {
           id: "unwatched",
           contribution: 40,
           weight: 40,
-          detail: "not watched in 5 years",
+          detail_key: legacy("not watched in 5 years"),
           state: "adds",
         }),
         signal({
           id: "few_watchers",
           weight: 30,
-          detail: "4 people watched it",
+          detail_key: legacy("4 people watched it"),
           state: "argues_keep",
         }),
         signal({
           id: "low_rating",
           weight: 20,
-          detail: "could not read its rating",
+          detail_key: legacy("could not read its rating"),
           evaluated: false,
           state: "unreadable",
         }),
-        signal({ id: "my rule", weight: 10, detail: "not on the shelf", state: "not_applicable" }),
+        signal({
+          id: "my rule",
+          weight: 10,
+          detail_key: legacy("not on the shelf"),
+          state: "not_applicable",
+        }),
       ]),
     );
 
@@ -297,12 +324,17 @@ describe("the scoring receipt", () => {
     // keeping would overstate the case for keeping the file.
     show(
       detail([
-        signal({ id: "unwatched", contribution: 40, weight: 40, detail: "not watched in 5 years" }),
-        signal({ id: "few_watchers", weight: 30, detail: "5 people watched it" }),
+        signal({
+          id: "unwatched",
+          contribution: 40,
+          weight: 40,
+          detail_key: legacy("not watched in 5 years"),
+        }),
+        signal({ id: "few_watchers", weight: 30, detail_key: legacy("5 people watched it") }),
         signal({
           id: "low_rating",
           weight: 20,
-          detail: "could not read its rating",
+          detail_key: legacy("could not read its rating"),
           evaluated: false,
         }),
       ]),
@@ -329,7 +361,7 @@ describe("the scoring receipt", () => {
               name: "asked for lately",
               discount: 15,
               max_discount: 20,
-              detail: "requested 30 days ago",
+              detail_key: legacy("requested 30 days ago"),
               evaluated: true,
             },
           ],
@@ -386,7 +418,7 @@ describe("the scoring receipt", () => {
       signal({
         id: `unread ${i}`,
         weight: 20,
-        detail: `could not read reason ${i}`,
+        detail_key: legacy(`could not read reason ${i}`),
         evaluated: false,
         state: "unreadable" as const,
       }),
@@ -434,7 +466,7 @@ describe("the scoring receipt", () => {
         id: "unwatched",
         contribution: 1000,
         weight: 1000,
-        detail: "the reason",
+        detail_key: legacy("the reason"),
         state: "adds",
       }),
       ...pushRows(11, 1),
@@ -451,7 +483,7 @@ describe("the scoring receipt", () => {
       signal({
         id: `unread ${String(i).padStart(2, "0")}`,
         weight: 20,
-        detail: `could not read reason ${i}`,
+        detail_key: legacy(`could not read reason ${i}`),
         evaluated: false,
         state: "unreadable" as const,
       }),
@@ -490,14 +522,16 @@ describe("the built-in rewatch keep", () => {
             name: REWATCH_KEEP,
             discount: 15,
             max_discount: 20,
-            detail: "Watched 14 times, most recently 3 weeks ago. Likely to be watched again.",
+            detail_key: legacy(
+              "Watched 14 times, most recently 3 weeks ago. Likely to be watched again.",
+            ),
             evaluated: true,
           },
           {
             name: "asked for lately",
             discount: 8,
             max_discount: 15,
-            detail: "requested 30 days ago",
+            detail_key: legacy("requested 30 days ago"),
             evaluated: true,
           },
         ],
@@ -595,12 +629,14 @@ describe("the rewatch-probability block (#554 stage 2)", () => {
               name: "asked for lately",
               discount: 15,
               max_discount: 20,
-              detail: "requested 30 days ago",
+              detail_key: legacy("requested 30 days ago"),
               evaluated: true,
             },
           ],
           rewatch_odds: { n: 10, k: 3, lo_days: 0, hi_days: 365, state: "measured" },
-          protections_fired: [{ gate: "whitelisted", detail: "on your keep list, never reaped" }],
+          protections_fired: [
+            { gate: "whitelisted", detail_key: legacy("on your keep list, never reaped") },
+          ],
         },
       }),
     );
@@ -623,9 +659,9 @@ describe("the protection blocks", () => {
   // branches (src/reaper/engine/gates.py). The third row used to be a "Managed by Sonarr
   // or Radarr." line on a gate id ("arr") that has never existed.
   const CHECKED = [
-    { gate: "whitelisted", detail: "Not on your keep list." },
-    { gate: "streaming_now", detail: "Nobody is watching it right now." },
-    { gate: "curated_list", detail: "Not on any protected list." },
+    { gate: "whitelisted", detail_key: legacy("Not on your keep list.") },
+    { gate: "streaming_now", detail_key: legacy("Nobody is watching it right now.") },
+    { gate: "curated_list", detail_key: legacy("Not on any protected list.") },
   ];
 
   it("rests the cleared list folded, and opens it on click", async () => {
@@ -653,7 +689,9 @@ describe("the protection blocks", () => {
       detail(WORKED_ROWS, {
         explanation: {
           ...base.explanation,
-          protections_fired: [{ gate: "whitelisted", detail: "on your keep list, never reaped" }],
+          protections_fired: [
+            { gate: "whitelisted", detail_key: legacy("on your keep list, never reaped") },
+          ],
         },
       }),
     );
@@ -675,7 +713,7 @@ describe("the protection blocks", () => {
 // protection actually fired. This is the exact confusion the change fixes: a reaped item that
 // the old panel labeled a protected Sanctuary.
 describe("the verdict headline", () => {
-  const fired = (gate: string, d = "a reason") => ({ gate, detail: d });
+  const fired = (gate: string, d = "a reason") => ({ gate, detail_key: legacy(d) });
 
   it("labels an honored hand reap a removal, never a Sanctuary", () => {
     show(detail(WORKED_ROWS, { verdict: "protect", override: "reap", override_effective: true }));
@@ -1072,7 +1110,11 @@ describe("the verdict headline", () => {
         ...detail(WORKED_ROWS).explanation,
         protections_unknown: [
           ...others,
-          { gate: "season_progression", detail: message, defers_to_owner: defersToOwner },
+          {
+            gate: "season_progression",
+            detail_key: legacy(message),
+            defers_to_owner: defersToOwner,
+          },
         ],
       },
     });
@@ -1151,15 +1193,19 @@ describe("the verdict headline", () => {
 
   it("does not read a mid-binge check that never ran as a conflict (#486)", () => {
     // A show Plex never resolved: no season carries a rating key, so the guard answered
-    // "is anyone part-way through this" having asked nobody. Both details are verbatim
+    // "is anyone part-way through this" having asked nobody. Both rows carry the SAME
+    // composed cause on purpose, which is what makes them one box (rule 119): verbatim
     // producer output -- `season_evidence.guard_result`'s unestablishable arm and
-    // `engine.gates._blocked` -- and they carry the SAME cause on purpose, which is what
-    // makes them one box (rule 119).
+    // `engine.gates._blocked` -- each wrapped as the typed `blocked` shape a fresh scan
+    // writes today.
     //
     // Without the typed flag this row satisfied `keepRuleConflict`, and the headline offered
     // to settle a comparison nobody attempted: "Reaper couldn't check who watched these
     // seasons, so it left the call to you."
-    const cause = "Plex has not matched this season";
+    const blocked = (check: string) => ({
+      k: "blocked",
+      p: { check: { k: `check.${check}` }, cause: { k: "cause.plex_season_unmatched" } },
+    });
     show(
       detail(WORKED_ROWS, {
         verdict: "abstain",
@@ -1168,13 +1214,13 @@ describe("the verdict headline", () => {
           protections_unknown: [
             {
               gate: "season_progression",
-              detail: `could not check who is part-way through it: ${cause}`,
+              detail_key: blocked("season_progress"),
               defers_to_owner: false,
               unestablishable: true,
             },
             {
               gate: "min_dormancy",
-              detail: `could not check when it was last watched: ${cause}`,
+              detail_key: blocked("last_watched"),
               defers_to_owner: false,
               unestablishable: false,
             },
@@ -1571,7 +1617,7 @@ describe("what a signal row was measured against", () => {
     id: "low_rating",
     contribution: 0,
     weight: 10,
-    detail: "IMDb 6.4",
+    detail_key: legacy("IMDb 6.4"),
     state: "argues_keep",
     floor: 0,
     saturate_at: 60,
@@ -1606,7 +1652,9 @@ describe("what a signal row was measured against", () => {
     // A row frozen before the ramp shipped, and a yes/no rule of your own, both arrive as
     // null and both mean the same thing: there is no line to state. Inventing one would put
     // a ramp on a rule that provably has none.
-    show(detail([signal({ id: "low_rating", detail: "IMDb 6.4", state: "argues_keep" })]));
+    show(
+      detail([signal({ id: "low_rating", detail_key: legacy("IMDb 6.4"), state: "argues_keep" })]),
+    );
 
     expect(screen.queryByRole("button", { name: /IMDb 6.4/ })).toBeNull();
     expect(screen.queryByText(/Nothing at IMDb/)).toBeNull();
@@ -1619,7 +1667,7 @@ describe("what a signal row was measured against", () => {
       detail([
         signal({
           id: "low_rating",
-          detail: "could not read the IMDb rating",
+          detail_key: legacy("could not read the IMDb rating"),
           evaluated: false,
           state: "unreadable",
           floor: 0,
@@ -1750,18 +1798,14 @@ describe("a fresh explanation composes from the catalog", () => {
               id: "unwatched",
               contribution: 55,
               weight: 60,
-              detail: null,
               detail_key: { k: "signal_unwatched", p: { days: 830 } },
               state: "adds",
             }),
           ],
-          protections_fired: [
-            { gate: "streaming_now", detail: null, detail_key: { k: "streaming_now" } },
-          ],
+          protections_fired: [{ gate: "streaming_now", detail_key: { k: "streaming_now" } }],
           protections_checked: [
             {
               gate: "custom",
-              detail: null,
               detail_key: {
                 k: "custom_checked",
                 p: {
@@ -1788,7 +1832,6 @@ describe("a fresh explanation composes from the catalog", () => {
   it("groups fresh blocked rows by their composed cause, once", () => {
     const blocked = (check: string) => ({
       gate: "min_dormancy",
-      detail: null,
       detail_key: {
         k: "blocked",
         p: { check: { k: `check.${check}` }, cause: { k: "cause.plex_unmatched" } },
@@ -1810,7 +1853,6 @@ describe("a fresh explanation composes from the catalog", () => {
             blocked("watch_horizon"),
             {
               gate: "season_progression",
-              detail: null,
               detail_key: {
                 k: "conflict.counted",
                 p: {

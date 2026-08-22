@@ -115,18 +115,14 @@ export interface Candidate {
    *  for a season. Drives the card/panel library chip and the library filter. Null when
    *  unknown (unmatched, or a row from before this shipped); the chip is then hidden. */
   library: string | null;
-  /** How long the item has sat unwatched ("5 years, 9 months"), for the amber pill.
-   *  Null hides the pill. */
-  dormant_for: string | null;
-  /** The raw dormancy day count of a fresh row; the frontend composes the span. Null on
-   *  a legacy row, whose `dormant_for` carries the baked span instead. Optional so a
-   *  fixture built before the field existed still typechecks (the server always sends it). */
+  /** The raw dormancy day count of a fresh row; the frontend composes the span. Null on a
+   *  legacy row, which shows no amber pill. Optional so a fixture built before the field
+   *  existed still typechecks (the server always sends it). */
   dormant_days?: number | null;
   /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
-   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis.
-   *  Legacy rows only; a fresh row serves `reason_key` and the card composes it. */
-  reason: string | null;
-  /** The typed "why" of a fresh row, composed via `why.ts`; null on a legacy row. */
+   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis,
+   *  composed via `why.ts`. A row frozen before typed reasons carries a `legacy` key that
+   *  composes to its stored sentence verbatim; null only where the row has no reason at all. */
   reason_key?: ReasonKey | null;
   /** The manual decision *in effect* -- "spare", "reap", or null -- own or inherited from
    *  the show. It colors the row's chip and score (the item's real fate). Set the moment they
@@ -206,9 +202,8 @@ export interface Group {
   size_bytes: number;
   unknown_size_seasons: number;
   /** The show-level status line and chip: those of the season that most wants the
-   *  owner's attention, else the highest-scoring one. */
-  reason: string | null;
-  /** The lead season's typed "why", exactly as on the candidate; null on a legacy row. */
+   *  owner's attention, else the highest-scoring one. The lead season's typed "why",
+   *  exactly as on the candidate. */
   reason_key?: ReasonKey | null;
   /** The show's Plex library (section), shared by all its seasons. Null when unknown.
    *  Drives the show panel's library chip. */
@@ -304,8 +299,9 @@ export type SignalState = "adds" | "argues_keep" | "not_applicable" | "unreadabl
 
 /** A typed detail on the wire: the catalog key under `why.*` plus its raw params.
  *  `frontend/src/why.ts` composes it; params may nest further keys (a blocked check's
- *  cause, the rating gate's per-bar clauses). Rows frozen before the conversion carry
- *  prose `detail` instead, rendered verbatim (docs/history/I18N_PLAN.md §5). */
+ *  cause, the rating gate's per-bar clauses). A row frozen before the conversion carries
+ *  a `legacy` key wrapping its stored sentence, which composes to that sentence verbatim
+ *  (docs/history/I18N_PLAN.md §5, #899). */
 export interface ReasonKey {
   k: string;
   p?: Record<string, unknown> | null;
@@ -315,9 +311,8 @@ export interface SignalContribution {
   id: string;
   contribution: number;
   weight: number;
-  /** Legacy prose, on rows frozen before details were typed; null on fresh rows. */
-  detail: string | null;
-  /** The typed detail of a fresh row; null on a legacy one. */
+  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
+   *  before details were typed. Null only where the row has no detail to show at all. */
   detail_key?: ReasonKey | null;
   /** False means the input was Unknown. Its weight still counts in the denominator, so
    *  an unevaluated signal drags the score DOWN, never up. */
@@ -340,9 +335,8 @@ export interface SignalContribution {
 
 export interface GateOutcome {
   gate: string;
-  /** Legacy prose, on rows frozen before details were typed; null on fresh rows. */
-  detail: string | null;
-  /** The typed detail of a fresh row; null on a legacy one. */
+  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
+   *  before details were typed. Null only where the row has no detail to show at all. */
   detail_key?: ReasonKey | null;
   /** Whether the comparison behind a hold is one Reaper actually made. Only the season
    *  keep-rule guard sets it, where a conflict can also mean "a count nobody could read"
@@ -406,8 +400,8 @@ export interface KeepContribution {
   name: string;
   discount: number;
   max_discount: number;
-  /** Legacy prose / typed detail, the same pair every explanation row carries. */
-  detail: string | null;
+  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
+   *  before details were typed, the same shape every explanation row carries. */
   detail_key?: ReasonKey | null;
   evaluated: boolean;
 }
@@ -837,11 +831,10 @@ export interface ActionStep {
   body: Record<string, unknown> | null;
   state: string;
   is_canary: boolean;
-  /** Why this step failed or was skipped, as the executor recorded it. Null on a step that
-   *  has not run or that succeeded. Already operator copy: the executor writes one sentence
-   *  and uses it both here and in the after-action report, and the report is the half that
-   *  does not survive a restart. */
-  error: string | null;
+  /** Why this step failed or was skipped, as a typed reason: `null` on a step that has not
+   *  run or that succeeded. Compose with `composeError` (`why.ts`); a `legacy` key composes
+   *  to the sentence a row written before #899 stored verbatim (rule 96). */
+  error_reason: ReasonKey | null;
 }
 
 export interface Run {
@@ -881,11 +874,15 @@ export interface RunSummary {
   id: number;
   state: string;
   approved_at: string;
-  aborted_reason: string | null;
+  /** Why the run stopped early, as a typed reason: `null` on a run that did not abort.
+   *  Thawed the same way `ActionStep.error_reason` is. */
+  aborted_reason: ReasonKey | null;
 }
 
 export interface RunCheck {
-  label: string;
+  /** The live reason the executor recorded this checklist line with, as a typed reason.
+   *  Always present -- a check without one would have nothing to render. */
+  label_reason: ReasonKey;
   ok: boolean;
 }
 
@@ -894,15 +891,22 @@ export interface RunOutcome {
   title: string;
   kind: string;
   state: string; // verified | failed | skipped
-  detail: string;
+  /** The live reason the executor recorded for this outcome, as a typed reason. Always
+   *  present, the same way `RunCheck.label_reason` is. */
+  detail_reason: ReasonKey;
   checks: RunCheck[];
+  /** True when this item was the run's canary -- the smallest item, executed (or, in a dry
+   *  run, proven) first. The same fact `ActionStep.is_canary` carries for the step table. */
+  is_canary: boolean;
 }
 
 export interface RunReport {
   run_id: number;
   dry_run: boolean;
   state: string;
-  aborted_reason: string | null;
+  /** Why the run stopped early: the live reason the executor recorded on the run report, as
+   *  a typed reason. `null` on a run that did not abort. */
+  aborted_reason: ReasonKey | null;
   would_delete_items: number;
   deleted_bytes: number;
   /** How many deleted items had no size, so are absent from `deleted_bytes`. Above zero

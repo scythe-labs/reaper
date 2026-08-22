@@ -60,7 +60,7 @@ const run = {
     // A planned step has not run, so it has nothing to explain. The failure shape is driven
     // separately below rather than from here, so this fixture keeps covering the ordinary
     // plan where no row carries a reason.
-    error: null,
+    error_reason: null,
   })),
 } as Run;
 
@@ -250,7 +250,10 @@ describe("the plan the page is showing", () => {
     const failed = {
       ...run,
       state: "completed",
-      steps: [{ ...run.steps[0]!, state: "failed", error: reason }, run.steps[1]!],
+      steps: [
+        { ...run.steps[0]!, state: "failed", error_reason: { k: "legacy", p: { text: reason } } },
+        run.steps[1]!,
+      ],
     } as Run;
     apiMock.createRun.mockResolvedValue(failed);
     apiMock.run.mockResolvedValue(failed);
@@ -262,7 +265,7 @@ describe("the plan the page is showing", () => {
 
   it("leaves the reason out of a step that has not run", async () => {
     // The other direction, so the assertion above cannot pass by rendering a reason on every
-    // row: the ordinary planned fixture carries `error: null` and draws nothing.
+    // row: the ordinary planned fixture carries `error_reason: null` and draws nothing.
     const { container } = await buildPlan();
     expect(container.querySelector(".step-why")).toBeNull();
   });
@@ -271,7 +274,9 @@ describe("the plan the page is showing", () => {
     // The durable reason's only surface. The report panel is dry-run state and the reap
     // sheet reads the in-memory status, so a reload leaves this row holding it alone (#342).
     const reason = "Over the size cap for one run. Nothing was sent.";
-    apiMock.runs.mockResolvedValue([{ ...run, state: "aborted", aborted_reason: reason }]);
+    apiMock.runs.mockResolvedValue([
+      { ...run, state: "aborted", aborted_reason: { k: "legacy", p: { text: reason } } },
+    ]);
     const { container } = await buildPlan();
     const history = container.querySelector(".run-history") as HTMLElement;
     expect(within(history).getByText(reason)).toBeInTheDocument();
@@ -377,8 +382,24 @@ describe("what a practice run reports", () => {
     deleted_unmeasured: 0,
     skipped: 0,
     outcomes: [
-      { media_key: "a", kind: "movie", state: "verified", detail: "one", title: "", checks: [] },
-      { media_key: "b", kind: "movie", state: "verified", detail: "two", title: "", checks: [] },
+      {
+        media_key: "a",
+        kind: "movie",
+        state: "verified",
+        detail_reason: { k: "legacy", p: { text: "one" } },
+        title: "",
+        checks: [],
+        is_canary: false,
+      },
+      {
+        media_key: "b",
+        kind: "movie",
+        state: "verified",
+        detail_reason: { k: "legacy", p: { text: "two" } },
+        title: "",
+        checks: [],
+        is_canary: false,
+      },
     ],
     ...patch,
   });

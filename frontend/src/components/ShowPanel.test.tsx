@@ -7,7 +7,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Candidate, Group, Links, Verdict } from "../api";
+import type { Candidate, Group, Links, ReasonKey, Verdict } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
@@ -36,6 +36,12 @@ const NO_LINKS: Links = {
   match_candidates: [],
 };
 
+/** A row frozen before details were typed: the stored sentence wrapped as the one legacy
+ *  reason, composed verbatim (docs/history/I18N_PLAN.md §5, #899). */
+function legacy(text: string): ReasonKey {
+  return { k: "legacy", p: { text } };
+}
+
 function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Candidate {
   const c: Candidate = {
     id: n,
@@ -55,8 +61,6 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     group_title: "Example Show",
     video_resolution: null,
     library: null,
-    dormant_for: null,
-    reason: null,
     override: null,
     override_own: null,
     show_override: null,
@@ -82,7 +86,6 @@ function group(seasons: Candidate[]): Group {
     summary: null,
     size_bytes: seasons.reduce((sum, s) => sum + (s.size_bytes ?? 0), 0),
     unknown_size_seasons: 0,
-    reason: null,
     library: null,
     chip: null,
     show_override: null,
@@ -213,7 +216,7 @@ describe("the show panel's candidate Plex rows", () => {
   it("offers a way into each Plex row it could not choose between", () => {
     renderPanel({
       ...group([season(1, "abstain")]),
-      reason: "Kept to be safe: Plex and Sonarr describe this show differently.",
+      reason_key: legacy("Kept to be safe: Plex and Sonarr describe this show differently."),
       links: {
         ...NO_LINKS,
         match_candidates: [

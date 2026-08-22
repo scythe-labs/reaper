@@ -312,7 +312,7 @@ export function ReapConfirm({
             <div className="sim sim-info">
               {/* "stopped", the one word the product uses for this (U-15). */}
               <strong>{t("reapConfirm.practiceRun.stopped")}</strong>
-              <p>{dryReport.aborted_reason}</p>
+              <p>{dryReport.aborted_reason && composeError(dryReport.aborted_reason)}</p>
             </div>
           )}
           {dryClean && (
@@ -512,14 +512,19 @@ export function ReapConfirm({
           </div>
           {report.state === "aborted" && (
             <p className="reap-halt">
-              {report.aborted_reason}
+              {report.aborted_reason && composeError(report.aborted_reason)}
               {report.would_delete_items > 0 && t("reapConfirm.result.refreshedNote")}
             </p>
           )}
           <ul className="reap-checklist">
             {report.outcomes.map((o) => (
               <li key={o.media_key} className={`reap-item state-${o.state}`}>
-                <span className="reap-item-title">{o.title || o.media_key}</span>
+                <span className="reap-item-title">
+                  {o.title || o.media_key}
+                  {o.is_canary && (
+                    <span className="canary-tag">{t("reapPlan.steps.testItem")}</span>
+                  )}
+                </span>
                 <ul className="reap-checks">
                   {/* Pass and fail were a glyph and a color, and NVDA at its default symbol
                       level speaks neither ✓ nor ✗ -- so the two lines read out identically, in
@@ -535,7 +540,7 @@ export function ReapConfirm({
                           ? t("reapConfirm.result.checkPassed")
                           : t("reapConfirm.result.checkFailed")}
                       </span>
-                      {c.label}
+                      {composeError(c.label_reason)}
                     </li>
                   ))}
                 </ul>
