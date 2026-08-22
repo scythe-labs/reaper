@@ -8030,7 +8030,7 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned for rule 145's reason: a flag-shaped assertion cannot tell
 #: a revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 29
+_EXPECTED_REVISION_FILES = 28
 _EXPECTED_UNRECOVERABLE_REVISIONS = 4
 
 

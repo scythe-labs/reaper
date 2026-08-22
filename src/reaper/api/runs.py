@@ -49,7 +49,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import ActionStep, Candidate, ReapRun, RunState
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
-from reaper.engine.reason import Reason, from_wire, legacy, to_wire
+from reaper.engine.reason import Reason, from_stored, to_wire
 from reaper.refusal import english
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import effective_condemned
@@ -88,28 +88,21 @@ STEP_PAGE = 50
 
 
 def _reason_key(reason: Reason | None) -> ReasonKey | None:
-    """A typed reason as the wire shape a response model carries. One conversion (rule
-    104): used directly for a live :class:`~reaper.engine.reason.Reason` still in memory
-    (``_report_out``'s ``RunReportOut``/``RunOutcomeOut``/``RunCheckOut``), and through
-    :func:`_thaw_reason` for one recovered from a stored prose/json column pair."""
+    """A typed reason as the wire shape an optional response field carries. One conversion
+    (rule 104): used directly for a live, possibly-absent :class:`~reaper.engine.reason.Reason`
+    (``_report_out``'s ``RunReportOut.aborted_reason``), and through :func:`_thaw_reason` for
+    one recovered from a stored journal column. ``RunOutcomeOut.detail_reason`` and
+    ``RunCheckOut.label_reason`` are never absent, so ``_report_out`` wires those two
+    straight through ``ReasonKey.model_validate(to_wire(...))`` instead."""
     return None if reason is None else ReasonKey.model_validate(to_wire(reason))
 
 
-def _thaw_reason(json_col: str | None, prose: str | None) -> ReasonKey | None:
-    """The typed key beside a stored journal prose column (``ActionStep.error``,
-    ``ReapRun.aborted_reason``): the ``_json`` twin when it parses, a ``legacy`` wrap of
-    the prose when it does not or there is none, ``None`` when neither column holds
-    anything. A malformed ``_json`` blob degrades to the ``legacy`` reading rather than
-    raising a row off the queue (rule 96) -- ``from_wire`` already does the same for a
-    malformed nested shape, so only the outer ``json.loads`` needs its own guard here."""
-    if json_col:
-        try:
-            decoded = json.loads(json_col)
-        except (ValueError, TypeError):
-            decoded = None
-        if decoded is not None:
-            return _reason_key(from_wire(decoded))
-    return _reason_key(legacy(prose)) if prose else None
+def _thaw_reason(stored: str | None) -> ReasonKey | None:
+    """The typed key for a stored journal reason column (``ActionStep.error``,
+    ``ReapRun.aborted_reason``): ``engine.reason.from_stored`` -- a row written since #899
+    decodes its JSON, one written before it thaws as a ``legacy`` reason (rule 96) -- as the
+    wire shape :func:`_reason_key` gives a live one."""
+    return _reason_key(from_stored(stored))
 
 
 async def _run_steps(session: AsyncSession, run: ReapRun) -> list[ActionStep]:
@@ -283,8 +276,7 @@ async def _run_out(
                 body=json.loads(s.body_json) if s.body_json else None,
                 state=s.state.value,
                 is_canary=s.ordinal == 0,
-                error=s.error,
-                error_key=_thaw_reason(s.error_json, s.error),
+                error_reason=_thaw_reason(s.error),
             )
             for s in steps[:STEP_PAGE]
         ],
@@ -362,8 +354,7 @@ async def list_runs(
                 id=r.id,
                 state=r.state.value,
                 approved_at=r.approved_at.isoformat(),
-                aborted_reason=r.aborted_reason,
-                aborted_reason_key=_thaw_reason(r.aborted_reason_json, r.aborted_reason),
+                aborted_reason=_thaw_reason(r.aborted_reason),
             )
             for r in runs
         ]
@@ -413,8 +404,7 @@ async def get_run_steps(
                     body=json.loads(s.body_json) if s.body_json else None,
                     state=s.state.value,
                     is_canary=s.ordinal == 0,
-                    error=s.error,
-                    error_key=_thaw_reason(s.error_json, s.error),
+                    error_reason=_thaw_reason(s.error),
                 )
                 for s in steps[offset : offset + limit]
             ],
@@ -794,8 +784,7 @@ def _report_out(report: RunReport) -> RunReportOut:
         run_id=report.run_id,
         dry_run=report.dry_run,
         state=report.state.value,
-        aborted_reason=english(report.aborted_reason) if report.aborted_reason else None,
-        aborted_reason_key=_reason_key(report.aborted_reason),
+        aborted_reason=_reason_key(report.aborted_reason),
         would_delete_items=report.deleted_items,
         deleted_bytes=report.deleted_bytes,
         deleted_unmeasured=report.deleted_unmeasured,
@@ -806,10 +795,13 @@ def _report_out(report: RunReport) -> RunReportOut:
                 title=o.title,
                 kind=o.kind,
                 state=o.state.value,
-                detail=english(o.detail),
-                detail_key=_reason_key(o.detail),
+                # Not `_reason_key`: `o.detail`/`c.label` are never `None` (`StepOutcome.detail`
+                # and `StepCheck.label` carry no `| None`), and the field they fill is
+                # required, so this stays the non-optional wire shape rather than widening to
+                # `_reason_key`'s `ReasonKey | None`.
+                detail_reason=ReasonKey.model_validate(to_wire(o.detail)),
                 checks=[
-                    RunCheckOut(label=english(c.label), label_key=_reason_key(c.label), ok=c.ok)
+                    RunCheckOut(label_reason=ReasonKey.model_validate(to_wire(c.label)), ok=c.ok)
                     for c in o.checks
                 ],
                 is_canary=o.is_canary,

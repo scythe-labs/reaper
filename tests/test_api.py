@@ -39,6 +39,7 @@ from reaper.db.models import (
     ListConfig,
     PlexServer,
     Profile,
+    ReapRun,
     Snapshot,
     StepState,
 )
@@ -53,7 +54,7 @@ from reaper.engine.policy import (
     SignalSetting,
     combine_hashes,
 )
-from reaper.engine.reason import from_wire
+from reaper.engine.reason import Reason, from_wire, to_stored
 from reaper.main import create_app
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import retention
@@ -437,47 +438,68 @@ class TestTheRunsApi:
         # No credential is ever in a journalled step.
         assert "api_key" not in json.dumps(step).lower()
 
-    def test_a_failed_step_reads_back_why_it_failed(
+    def test_a_stored_reason_thaws_as_legacy_prose_or_as_its_code(
         self, client: TestClient, tmp_path: Path
     ) -> None:
-        """The journal's reason survives the process that wrote it (#260).
-
-        `action_step.error` was durable and on no response schema, so the live reason lived
-        only in memory on `app.state`: a restart left the plan table saying a step failed and
-        nothing saying why, while the row held the sentence the whole time. This drives that
-        exact shape -- the state and the reason are written straight to the row, then read
-        back over HTTP through a response built from nothing but the database.
-
-        The reason is already operator copy; the executor writes one sentence and uses it for
-        this column and for the live report both.
-
-        This row carries prose with no `error_json` twin -- a snapshot frozen before phase
-        11b, or any row written straight to the column the way this test does -- so
-        `error_key` has to thaw it as a `legacy` reason rather than come back empty (rule 96).
+        """The journal's reason survives the process that wrote it (#260), decoded by
+        `engine.reason.from_stored`. A step's `error` and a run's `aborted_reason` are the
+        same shape: a row written before #899 holds a bare English sentence and thaws as a
+        `legacy` reason (rule 96); one written since holds `to_stored`'s JSON and thaws its
+        code and params. This drives both shapes straight to the row -- the way a snapshot
+        frozen before #899, and every write since, actually reach it -- then reads them back
+        over HTTP through a response built from nothing but the database.
         """
         run = client.post("/api/runs").json()
-        reason = "Radarr accepted the delete, not confirmed. Reaper could not reach it again."
+        legacy_text = "Radarr accepted the delete, not confirmed. Reaper could not reach it again."
 
-        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
-        with Session(engine) as session:
+        def _write(session: Session, *, step_value: str, run_value: str) -> None:
             step = session.execute(
                 select(ActionStep).where(ActionStep.run_id == run["id"])
             ).scalar_one()
+            run_row = session.get(ReapRun, run["id"])
+            assert run_row is not None
             step.state = StepState.FAILED
-            step.error = reason
+            step.error = step_value
+            run_row.aborted_reason = run_value
             session.commit()
+
+        db_url = Settings(data_dir=tmp_path, secret_key="k").sync_database_url
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            _write(session, step_value=legacy_text, run_value=legacy_text)
         engine.dispose()
 
-        read_back = client.get(f"/api/runs/{run['id']}").json()["steps"][0]
-        assert read_back["state"] == "failed"
-        assert read_back["error"] == reason
-        assert read_back["error_key"] == {"k": "legacy", "p": {"text": reason}}
+        read_back = client.get(f"/api/runs/{run['id']}").json()
+        assert read_back["steps"][0]["state"] == "failed"
+        assert read_back["steps"][0]["error_reason"] == {
+            "k": "legacy",
+            "p": {"text": legacy_text},
+        }
+        summary = next(r for r in client.get("/api/runs").json() if r["id"] == run["id"])
+        assert summary["aborted_reason"] == {"k": "legacy", "p": {"text": legacy_text}}
+
+        engine = sa_create_engine(db_url)
+        with Session(engine) as session:
+            _write(
+                session,
+                step_value=to_stored(Reason("error.reap.step.no_plex_match")),
+                run_value=to_stored(Reason("error.reap.canceled")),
+            )
+        engine.dispose()
+
+        read_back = client.get(f"/api/runs/{run['id']}").json()
+        assert read_back["steps"][0]["error_reason"] == {
+            "k": "error.reap.step.no_plex_match",
+            "p": None,
+        }
+        summary = next(r for r in client.get("/api/runs").json() if r["id"] == run["id"])
+        assert summary["aborted_reason"] == {"k": "error.reap.canceled", "p": None}
 
     def test_a_step_that_has_not_run_carries_no_reason(self, client: TestClient) -> None:
         """The other direction, so the field above cannot pass by always being populated:
         a freshly planned step has nothing to explain and says nothing."""
         run = client.post("/api/runs").json()
-        assert run["steps"][0]["error"] is None
+        assert run["steps"][0]["error_reason"] is None
 
     def test_a_dry_run_walks_the_plan_and_deletes_nothing(self, client: TestClient) -> None:
         run = client.post("/api/runs").json()
@@ -489,8 +511,9 @@ class TestTheRunsApi:
         assert report["would_delete_items"] == 0  # nothing actually deleted
         assert report["outcomes"][0]["state"] == "skipped"
         assert report["outcomes"][0]["is_canary"] is True  # the sole item is ordinal 0
-        assert report["outcomes"][0]["detail"].startswith("Would send: ")
-        assert "DELETE /api/v3/movie/10" in report["outcomes"][0]["detail"]
+        detail = report["outcomes"][0]["detail_reason"]
+        assert detail["k"] == "error.reap.step.dry_run"
+        assert "DELETE /api/v3/movie/10" in detail["p"]["plan"]
 
     def test_a_plan_appears_in_the_run_list(self, client: TestClient) -> None:
         created = client.post("/api/runs").json()
@@ -523,7 +546,7 @@ class TestTheRunsApi:
         """
         client.post("/api/runs")
         row = client.get("/api/runs").json()[0]
-        assert set(row) == {"id", "state", "approved_at", "aborted_reason", "aborted_reason_key"}
+        assert set(row) == {"id", "state", "approved_at", "aborted_reason"}
         # ...and the detail route still answers with the whole thing.
         full = client.get(f"/api/runs/{row['id']}").json()
         assert full["confirmation_phrase"].startswith("REAP ")

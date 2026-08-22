@@ -837,15 +837,10 @@ export interface ActionStep {
   body: Record<string, unknown> | null;
   state: string;
   is_canary: boolean;
-  /** Why this step failed or was skipped, as the executor recorded it. Null on a step that
-   *  has not run or that succeeded. Already operator copy: the executor writes one sentence
-   *  and uses it both here and in the after-action report, and the report is the half that
-   *  does not survive a restart. */
-  error: string | null;
-  /** The typed twin of `error`: the stored `error_json` column when the row carries one,
-   *  a `legacy` wrap of `error` when it does not, null when neither does. Compose this and
-   *  fall back to `error` when it is absent. */
-  error_key: ReasonKey | null;
+  /** Why this step failed or was skipped, as a typed reason: `null` on a step that has not
+   *  run or that succeeded. Compose with `composeError` (`why.ts`); a `legacy` key composes
+   *  to the sentence a row written before #899 stored verbatim (rule 96). */
+  error_reason: ReasonKey | null;
 }
 
 export interface Run {
@@ -885,16 +880,15 @@ export interface RunSummary {
   id: number;
   state: string;
   approved_at: string;
-  aborted_reason: string | null;
-  /** The typed twin of `aborted_reason`, thawed the same way `ActionStep.error_key` is. */
-  aborted_reason_key: ReasonKey | null;
+  /** Why the run stopped early, as a typed reason: `null` on a run that did not abort.
+   *  Thawed the same way `ActionStep.error_reason` is. */
+  aborted_reason: ReasonKey | null;
 }
 
 export interface RunCheck {
-  label: string;
-  /** The typed twin of `label`: the live reason the executor recorded this checklist line
-   *  with. */
-  label_key: ReasonKey | null;
+  /** The live reason the executor recorded this checklist line with, as a typed reason.
+   *  Always present -- a check without one would have nothing to render. */
+  label_reason: ReasonKey;
   ok: boolean;
 }
 
@@ -903,9 +897,9 @@ export interface RunOutcome {
   title: string;
   kind: string;
   state: string; // verified | failed | skipped
-  detail: string;
-  /** The typed twin of `detail`, the same way `RunCheck.label_key` is. */
-  detail_key: ReasonKey | null;
+  /** The live reason the executor recorded for this outcome, as a typed reason. Always
+   *  present, the same way `RunCheck.label_reason` is. */
+  detail_reason: ReasonKey;
   checks: RunCheck[];
   /** True when this item was the run's canary -- the smallest item, executed (or, in a dry
    *  run, proven) first. The same fact `ActionStep.is_canary` carries for the step table. */
@@ -916,10 +910,9 @@ export interface RunReport {
   run_id: number;
   dry_run: boolean;
   state: string;
-  aborted_reason: string | null;
-  /** The typed twin of `aborted_reason`: the live reason the executor recorded on the run
-   *  report. */
-  aborted_reason_key: ReasonKey | null;
+  /** Why the run stopped early: the live reason the executor recorded on the run report, as
+   *  a typed reason. `null` on a run that did not abort. */
+  aborted_reason: ReasonKey | null;
   would_delete_items: number;
   deleted_bytes: number;
   /** How many deleted items had no size, so are absent from `deleted_bytes`. Above zero

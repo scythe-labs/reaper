@@ -129,7 +129,7 @@ from reaper.db.models import (
     StepState,
 )
 from reaper.engine.policy import ProfileSettings
-from reaper.engine.reason import Reason, to_wire
+from reaper.engine.reason import Reason, to_stored
 from reaper.refusal import MESSAGES, Refusal, english
 from reaper.services import list_config, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
@@ -264,16 +264,11 @@ def _season_number(obj: dict[str, Any]) -> int:
         return -1
 
 
-def _reason_columns(reason: Reason | None) -> tuple[str | None, str | None]:
-    """The (prose, json) pair a journal row's typed-and-English column pair stores for a
-    reason: ``english(reason)`` for the column every SQL reader and older client already
-    reads, ``json.dumps(to_wire(reason))`` for the twin the browser composes. One
-    derivation (rule 104) for ``ReapRun.aborted_reason``/``aborted_reason_json`` and
-    ``ActionStep.error``/``error_json`` alike; ``None`` in means ``None`` out, for a step
-    or a run that never failed."""
-    if reason is None:
-        return None, None
-    return english(reason), json.dumps(to_wire(reason))
+def _reason_column(reason: Reason | None) -> str | None:
+    """The text a journal row's reason column stores: ``to_stored(reason)``, one
+    derivation (rule 104) for ``ReapRun.aborted_reason`` and ``ActionStep.error`` alike.
+    ``None`` in means ``None`` out, for a step or a run that never failed."""
+    return None if reason is None else to_stored(reason)
 
 
 def _planned_add_exclusion(step: ActionStep) -> bool:
@@ -592,16 +587,14 @@ class _Terminal:
     object in the session. So these travel where a rollback cannot reach them; see
     :meth:`Executor._commit_journal`.
 
-    ``aborted_reason``/``aborted_reason_json`` are already the (prose, json) pair
-    :func:`_reason_columns` derives from the run's :class:`Reason`, computed once at
-    construction -- the same split :class:`_JournalRow` carries for a step's ``error``, so
-    both mirrors classify one to one against their model's columns (rule 103,
-    ``TestARecoveredWriteCarriesEveryColumn``).
+    ``aborted_reason`` is already the stored text :func:`_reason_column` derives from the
+    run's :class:`Reason`, computed once at construction -- the same derivation
+    :class:`_JournalRow` carries for a step's ``error``, so both mirrors classify one to one
+    against their model's columns (rule 103, ``TestARecoveredWriteCarriesEveryColumn``).
     """
 
     state: RunState
     aborted_reason: str | None
-    aborted_reason_json: str | None
     finished_at: datetime
 
 
@@ -625,7 +618,6 @@ class _JournalRow:
     id: int
     state: StepState
     error: str | None
-    error_json: str | None
     sent_at: datetime | None
     verified_at: datetime | None
     verification_json: str | None
@@ -637,7 +629,6 @@ class _JournalRow:
             id=step.id,
             state=step.state,
             error=step.error,
-            error_json=step.error_json,
             sent_at=step.sent_at,
             verified_at=step.verified_at,
             verification_json=step.verification_json,
@@ -651,7 +642,6 @@ class _JournalRow:
             .values(
                 state=self.state,
                 error=self.error,
-                error_json=self.error_json,
                 sent_at=self.sent_at,
                 verified_at=self.verified_at,
                 verification_json=self.verification_json,
@@ -1151,13 +1141,11 @@ class Executor:
             await self._check_rolling_caps(deletes)
             await self._run_deletes(deletes, report, run.approved_at)
             report.state = RunState.COMPLETED
-            terminal = _Terminal(RunState.COMPLETED, None, None, utcnow())
+            terminal = _Terminal(RunState.COMPLETED, None, utcnow())
         except ExecutionError as exc:
             report.state = RunState.ABORTED
             report.aborted_reason = exc.as_reason()
-            terminal = _Terminal(
-                RunState.ABORTED, *_reason_columns(report.aborted_reason), utcnow()
-            )
+            terminal = _Terminal(RunState.ABORTED, _reason_column(report.aborted_reason), utcnow())
         except _JournalWriteError:
             # A step's own journal write did not land even after the retry, so the run stopped
             # where it stood. Handled apart from the catch-all below only for the copy: this
@@ -1167,9 +1155,7 @@ class Executor:
             log.warning("reap.journal_halt", run_id=run_id)
             report.state = RunState.ABORTED
             report.aborted_reason = _JOURNAL_HALT_REASON
-            terminal = _Terminal(
-                RunState.ABORTED, *_reason_columns(report.aborted_reason), utcnow()
-            )
+            terminal = _Terminal(RunState.ABORTED, _reason_column(report.aborted_reason), utcnow())
             return report
         except asyncio.CancelledError:
             # A hard cancel -- the app shutting down, or a force-stop that did not go
@@ -1181,9 +1167,7 @@ class Executor:
             canceled = True
             report.state = RunState.ABORTED
             report.aborted_reason = Reason("error.reap.canceled")
-            terminal = _Terminal(
-                RunState.ABORTED, *_reason_columns(report.aborted_reason), utcnow()
-            )
+            terminal = _Terminal(RunState.ABORTED, _reason_column(report.aborted_reason), utcnow())
             raise
         except Exception as exc:
             # The catch-all, and the last thing standing between a surprise and a wedged
@@ -1202,9 +1186,7 @@ class Executor:
             log.warning("reap.unexpected_error", run_id=run_id, error=str(exc), exc_info=True)
             report.state = RunState.ABORTED
             report.aborted_reason = Reason("error.reap.unexpected", {"error": str(exc)})
-            terminal = _Terminal(
-                RunState.ABORTED, *_reason_columns(report.aborted_reason), utcnow()
-            )
+            terminal = _Terminal(RunState.ABORTED, _reason_column(report.aborted_reason), utcnow())
             return report
         finally:
             # Runs on EVERY exit -- COMPLETED, a graceful abort, and a hard cancel alike --
@@ -1229,7 +1211,6 @@ class Executor:
                     # loads nothing, so this is safe even after a recovery rollback.
                     run.state = terminal.state
                     run.aborted_reason = terminal.aborted_reason
-                    run.aborted_reason_json = terminal.aborted_reason_json
                     run.finished_at = terminal.finished_at
 
         return report
@@ -1392,7 +1373,6 @@ class Executor:
                 .values(
                     state=terminal.state,
                     aborted_reason=terminal.aborted_reason,
-                    aborted_reason_json=terminal.aborted_reason_json,
                     finished_at=terminal.finished_at,
                 )
                 .execution_options(synchronize_session=False)
@@ -2994,12 +2974,12 @@ class Executor:
     def _stage_step_failed(self, step: ActionStep, reason: Reason) -> None:
         """In memory only. Durable once ``_run_deletes`` commits this item's journal."""
         step.state = StepState.FAILED
-        step.error, step.error_json = _reason_columns(reason)
+        step.error = _reason_column(reason)
 
     def _stage_step_skipped(self, step: ActionStep, reason: Reason) -> None:
         """In memory only. Durable once ``_run_deletes`` commits this item's journal."""
         step.state = StepState.SKIPPED
-        step.error, step.error_json = _reason_columns(reason)
+        step.error = _reason_column(reason)
 
     def _fail(
         self,
@@ -3047,7 +3027,7 @@ class Executor:
         for step in delete.steps:
             if step.state not in (StepState.VERIFIED, StepState.SKIPPED):
                 step.state = StepState.FAILED
-                step.error, step.error_json = _reason_columns(reason)
+                step.error = _reason_column(reason)
         return StepOutcome(
             media_key=delete.terminal.media_key,
             kind=delete.terminal.kind,
@@ -3117,7 +3097,7 @@ class Executor:
                 if step.state == StepState.VERIFIED:
                     continue
                 step.state = StepState.SKIPPED
-                step.error, step.error_json = _reason_columns(reason)
+                step.error = _reason_column(reason)
         return StepOutcome(
             media_key=delete.terminal.media_key,
             kind=delete.terminal.kind,

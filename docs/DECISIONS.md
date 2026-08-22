@@ -1067,7 +1067,8 @@ refusal: it is worded once, by whichever branch of `scheduler._record_run` or
 run. So it has no English on the server at all, and the catalog under `jobs.result.*` and
 `shell.scanBar.step.*` is its only home, the same move phase 8a made for the leaving-soon
 skip reason. Every `*_result`, `detail` and `error` field this phase touches is replaced by its
-typed `*_reason` twin rather than kept alongside it. The run journal (phase 11b) keeps its
-English beside a typed key instead, because it is the audit record: an operator reads a past
-run's steps without the catalog that composed them, on a build that may since have changed
-its wording.
+typed `*_reason` twin rather than kept alongside it. The run journal (phase 11b) does the same:
+`ReapRun.aborted_reason` and `ActionStep.error` store the reason's code, through
+`to_stored`/`from_stored` (`engine/reason.py`), in the same column that used to hold the
+sentence. A row written before #899 still holds a bare English sentence, and `from_stored`
+reads it back as a `legacy` reason (rule 96), so a past run's steps keep reading correctly.

@@ -50,6 +50,7 @@ from reaper.db.models import (
 )
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
+from reaper.engine.reason import from_stored
 from reaper.services import list_config, whitelist
 from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
@@ -4068,7 +4069,12 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
 
         await _real(session, run, _gateway(radarr={1: UnreachableAfterDelete()}))
 
-        error = ((await _steps(session, run.id))[0].error or "").lower()
+        # `error` now stores the reason's code, not its English (rule 104), so decode it
+        # through the real function before composing -- the same `from_stored` the API
+        # route reads the column with.
+        reason = from_stored((await _steps(session, run.id))[0].error)
+        assert reason is not None
+        error = refusal_text(reason.id, **reason.params).lower()
         assert "could not reach it again" in error
         assert "still there" not in error
 
@@ -4100,17 +4106,18 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
 
-        # Planned and not yet sent: nothing has failed, so every step says nothing at all,
-        # rather than an empty string the browser would have to tell apart from a reason.
+        # Planned and not yet sent: nothing has failed, so every step carries no reason at
+        # all, rather than one the browser would have to tell apart from a real one.
         planned = await _run_out(session, run)
-        assert planned.steps and all(s.error is None for s in planned.steps)
+        assert planned.steps and all(s.error_reason is None for s in planned.steps)
 
         await _real(session, run, _gateway(radarr={1: UnreachableAfterDelete()}))
 
         out = await _run_out(session, run)
         failed = [s for s in out.steps if s.state == StepState.FAILED.value]
         assert failed, "the scenario stopped failing a step, so this proves nothing"
-        assert "could not reach it again" in (failed[0].error or "").lower()
+        assert failed[0].error_reason is not None
+        assert failed[0].error_reason.k == "error.reap.step.movie_removal_unconfirmed"
 
     async def test_a_season_delete_that_cannot_be_re_read_is_charged_too(
         self, session: AsyncSession
@@ -4139,7 +4146,9 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         assert delete_step.state is StepState.FAILED  # nothing confirmed it
         assert delete_step.file_removed_at is not None  # but the bytes are charged
         assert report.library_changed is True
-        assert "could not reach it again" in (delete_step.error or "").lower()
+        reason = from_stored(delete_step.error)
+        assert reason is not None
+        assert "could not reach it again" in refusal_text(reason.id, **reason.params).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -4829,7 +4838,9 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                 stored = await fresh.get(ReapRun, run_id)
                 assert stored is not None
                 assert stored.state is RunState.ABORTED, "the run was left wedged in EXECUTING"
-                assert stored.aborted_reason == reason
+                # `aborted_reason` stores the reason's code, not its English (rule 104), so
+                # decode it through the real function rather than a transcribed comparison.
+                assert from_stored(stored.aborted_reason) == report.aborted_reason
                 assert stored.finished_at is not None
         finally:
             await engine.dispose()
@@ -5087,7 +5098,7 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     await run_session.commit()
 
                 await executor._commit_and_finalize(
-                    run_id, _Terminal(RunState.ABORTED, "the run stopped early", None, utcnow())
+                    run_id, _Terminal(RunState.ABORTED, "the run stopped early", utcnow())
                 )
 
             async with async_factory() as fresh:
@@ -5219,7 +5230,6 @@ _SENTINEL_INSTANT = datetime(2021, 3, 4, 5, 6, 7, tzinfo=UTC)
 _REPLAYED_STEP_COLUMNS: dict[str, Any] = {
     "state": StepState.FAILED,
     "error": "sentinel: the error a recovered write has to carry",
-    "error_json": '{"k": "sentinel: the error a recovered write has to carry"}',
     "sent_at": _SENTINEL_INSTANT,
     "verified_at": _SENTINEL_INSTANT + timedelta(seconds=1),
     "verification_json": '{"sentinel": "the verification a recovered write has to carry"}',
@@ -5246,7 +5256,7 @@ _WRITE_ONCE_STEP_COLUMNS = frozenset(
 
 #: ``ReapRun``'s half of the same split: the columns ``_Terminal`` carries and
 #: ``_commit_and_finalize`` writes as plain values.
-_TERMINAL_RUN_COLUMNS = frozenset({"state", "aborted_reason", "aborted_reason_json", "finished_at"})
+_TERMINAL_RUN_COLUMNS = frozenset({"state", "aborted_reason", "finished_at"})
 
 #: Everything else on the run row is durable before the first file is touched. ``started_at``
 #: belongs here rather than above: it is committed with the EXECUTING claim, which sits ahead

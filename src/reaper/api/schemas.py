@@ -535,21 +535,16 @@ class ActionStepOut(BaseModel):
     state: str
     is_canary: bool
 
-    error: str | None = None
-    """Why this step failed or was skipped, as the executor recorded it. ``None`` on a step
-    that has not run or that succeeded.
+    error_reason: ReasonKey | None = None
+    """Why this step failed or was skipped, as a typed reason the browser composes.
+    ``None`` on a step that has not run or that succeeded.
 
-    Already operator copy: ``_fail`` and ``_skip`` write ONE sentence and use it for both this
-    column and ``StepOutcome.detail``, which the after-action report already shows. The
-    difference is only that this one is durable -- the report lives in memory on ``app.state``,
-    so before this a restart left the table saying a step failed with nothing saying why, while
-    the reason sat in the row the whole time (#260). Never add a message here that is not
-    already fit for the operator to read (rule 21)."""
-
-    error_key: ReasonKey | None = None
-    """The typed twin of ``error`` (phase 11b): the stored ``error_json`` column when the row
-    carries one, a ``legacy`` wrap of ``error`` when it does not, ``None`` when neither does.
-    The browser composes this and falls back to the prose above when it is absent."""
+    Durable, not just the live report's: the report lives in memory on ``app.state``, so
+    before this a restart left the table saying a step failed with nothing saying why,
+    while the reason sat in the row the whole time (#260). Read off ``ActionStep.error``
+    through ``engine.reason.from_stored`` -- a row written before #899 holds a bare
+    English sentence and thaws as a ``legacy`` reason (rule 96) rather than come back
+    empty."""
 
 
 class RunOut(BaseModel):
@@ -622,22 +617,20 @@ class RunSummaryOut(BaseModel):
     id: int
     state: str
     approved_at: str
-    aborted_reason: str | None = None
-    aborted_reason_key: ReasonKey | None = None
-    """The typed twin of ``aborted_reason`` (phase 11b), thawed the same way
-    ``ActionStepOut.error_key`` is: the stored ``aborted_reason_json`` when present, else a
-    ``legacy`` wrap of the prose, else ``None``."""
+    aborted_reason: ReasonKey | None = None
+    """Why the run stopped early, as a typed reason the browser composes. Thawed off
+    ``ReapRun.aborted_reason`` through ``engine.reason.from_stored``: a row written before
+    #899 holds a bare English sentence and thaws as a ``legacy`` reason (rule 96)."""
 
 
 class RunCheckOut(BaseModel):
     """One line in an item's after-action checklist: a step the reap did or verified, and
     whether it passed. Rendered as a ``✓``/``✗`` tick, like the why-panel's checks."""
 
-    label: str
-    label_key: ReasonKey | None = None
-    """The typed twin of ``label`` (phase 11b): the live :class:`~reaper.engine.reason.Reason`
-    the executor recorded this checklist line with. Always present for a check built this
-    run; ``None`` only if a future reader constructs one with no reason at all."""
+    label_reason: ReasonKey
+    """The live :class:`~reaper.engine.reason.Reason` the executor recorded this checklist
+    line with, as a typed reason the browser composes. Always present -- a check without one
+    would have nothing to render."""
     ok: bool
 
 
@@ -648,15 +641,16 @@ class RunOutcomeOut(BaseModel):
     title: str
     kind: str
     state: str  # verified | failed | skipped
-    detail: str
-    detail_key: ReasonKey | None = None
-    """The typed twin of ``detail`` (phase 11b), the same way ``RunCheckOut.label_key`` is."""
+    detail_reason: ReasonKey
+    """The live :class:`~reaper.engine.reason.Reason` the executor recorded for this
+    outcome, as a typed reason the browser composes. Always present, the same way
+    ``RunCheckOut.label_reason`` is."""
     checks: list[RunCheckOut]
     is_canary: bool
     """True when this item was the run's canary -- the smallest item, executed (or, in a dry
     run, proven) first. The same fact ``ActionStepOut.is_canary`` carries for the journal's
     step table, carried here too so the report and result lists can mark it without a
-    server-composed English fragment in ``detail`` (rule 21)."""
+    server-composed English fragment in ``detail_reason`` (rule 21)."""
 
 
 class RunReportOut(BaseModel):
@@ -666,10 +660,9 @@ class RunReportOut(BaseModel):
     run_id: int
     dry_run: bool
     state: str
-    aborted_reason: str | None = None
-    aborted_reason_key: ReasonKey | None = None
-    """The typed twin of ``aborted_reason`` (phase 11b): the live
-    :class:`~reaper.engine.reason.Reason` the executor recorded on ``RunReport``."""
+    aborted_reason: ReasonKey | None = None
+    """Why the run stopped early: the live :class:`~reaper.engine.reason.Reason` the
+    executor recorded on ``RunReport``, as a typed reason the browser composes."""
 
     would_delete_items: int
     """The count of items removed. In a real run this is what was actually deleted; in a
@@ -688,8 +681,8 @@ class RunReportOut(BaseModel):
 
     skipped: int
     outcomes: list[RunOutcomeOut]
-    """Per item: what happened, with a plain-English checklist of the steps performed and
-    which (if any) failed."""
+    """Per item: what happened, with a typed-reason checklist of the steps performed and
+    which (if any) failed, for the browser to compose."""
 
 
 #: A media_key's storage bound (``ActionStep.media_key`` / ``WhitelistEntry.media_key`` are

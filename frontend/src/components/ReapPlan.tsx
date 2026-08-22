@@ -148,10 +148,8 @@ function Steps({ run }: { run: Run }) {
                   and the table used to say "failed" and nothing else (#260). */}
               <td className="muted">
                 {stepState(step.state)}
-                {step.error && (
-                  <span className="step-why">
-                    {step.error_key ? composeError(step.error_key) : step.error}
-                  </span>
+                {step.error_reason && (
+                  <span className="step-why">{composeError(step.error_reason)}</span>
                 )}
               </td>
             </tr>
@@ -174,11 +172,7 @@ function Report({ report }: { report: RunReport }) {
     return (
       <div className="sim sim-info">
         <h3>{t("reapPlan.report.stoppedTitle")}</h3>
-        <p>
-          {report.aborted_reason_key
-            ? composeError(report.aborted_reason_key)
-            : report.aborted_reason}
-        </p>
+        <p>{report.aborted_reason && composeError(report.aborted_reason)}</p>
       </div>
     );
   }
@@ -225,7 +219,7 @@ function Report({ report }: { report: RunReport }) {
             <span className="gate-mark" aria-hidden="true">
               ✓
             </span>
-            <code>{o.detail_key ? composeError(o.detail_key) : o.detail}</code>
+            <code>{composeError(o.detail_reason)}</code>
             {o.is_canary && <span className="canary-tag">{t("reapPlan.steps.testItem")}</span>}
           </li>
         ))}
@@ -563,11 +557,7 @@ export function ReapPlan({
                         and the reap sheet reads the in-memory status, so a reload leaves
                         "stopped" and nothing else (#342). */}
                     {r.aborted_reason && (
-                      <span className="step-why">
-                        {r.aborted_reason_key
-                          ? composeError(r.aborted_reason_key)
-                          : r.aborted_reason}
-                      </span>
+                      <span className="step-why">{composeError(r.aborted_reason)}</span>
                     )}
                   </span>
                 </li>

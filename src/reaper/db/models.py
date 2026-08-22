@@ -1076,13 +1076,12 @@ class ReapRun(Base):
 
     aborted_reason: Mapped[str | None] = mapped_column(Text, default=None)
     """Why the run stopped early. A cap is an ABORT, never a truncation: truncating makes
-    what gets deleted depend on sort order, so Reaper stops the whole run instead."""
+    what gets deleted depend on sort order, so Reaper stops the whole run instead.
 
-    aborted_reason_json: Mapped[str | None] = mapped_column(Text, default=None)
-    """The typed twin of ``aborted_reason``: ``engine.reason.to_wire`` of the same
-    :class:`~reaper.engine.reason.Reason`, so the browser can translate it. NULL on every
-    row written before this column existed and on a run that never aborted; a stored
-    prose with no JSON twin thaws as a ``legacy`` reason (rule 96), never as an error."""
+    JSON since #899 -- ``engine.reason.to_stored`` of the run's
+    :class:`~reaper.engine.reason.Reason`, so the browser can translate it. A row written
+    before #899 holds a bare English sentence instead. ``engine.reason.from_stored`` reads
+    both shapes back, the bare sentence as a ``legacy`` reason (rule 96)."""
 
     held_back_unknown_size: Mapped[int] = mapped_column(Integer, default=0)
     """How many condemned items this plan left out because nothing would report their
@@ -1154,12 +1153,13 @@ class ActionStep(Base):
     not evidence -- the re-read is."""
 
     error: Mapped[str | None] = mapped_column(Text, default=None)
+    """Why this step failed or was skipped. NULL on a step that has not run or that
+    succeeded.
 
-    error_json: Mapped[str | None] = mapped_column(Text, default=None)
-    """The typed twin of ``error``: ``engine.reason.to_wire`` of the same
-    :class:`~reaper.engine.reason.Reason`, so the browser can translate it. NULL on every
-    row written before this column existed and on a step that never failed or skipped; a
-    stored prose with no JSON twin thaws as a ``legacy`` reason (rule 96)."""
+    JSON since #899 -- ``engine.reason.to_stored`` of the step's
+    :class:`~reaper.engine.reason.Reason`, so the browser can translate it. A row written
+    before #899 holds a bare English sentence instead. ``engine.reason.from_stored`` reads
+    both shapes back, the bare sentence as a ``legacy`` reason (rule 96)."""
 
     created_at: Mapped[UtcTimestamp]
     sent_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
