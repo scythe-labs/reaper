@@ -1284,7 +1284,7 @@
     },
     "heading": "General",
     "language": {
-      "help": "The language Reaper is shown in. Anything not translated yet stays in English. Applies to this browser only.",
+      "help": "The language Reaper is shown in. Applies to this browser only.",
       "label": "Language",
       "optionBrowser": "Match my browser"
     },
