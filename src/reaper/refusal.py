@@ -717,6 +717,7 @@ MESSAGES: dict[str, str] = {
     ),
     "error.reap.step.being_watched": "Someone is watching it right now.",
     "error.reap.step.played_since_approval": "Played since the plan was approved.",
+    "error.reap.step.dry_run": "Would send: {plan}",
     "error.reap.step.no_approved_size": (
         "Reaper never got a size for this when it was scanned, so it cannot confirm this "
         "is what you approved. Kept."
@@ -746,10 +747,8 @@ MESSAGES: dict[str, str] = {
         "The file was removed, but Reaper could not confirm the import exclusion, so a "
         "re-request could download it again."
     ),
-    "error.reap.step.movie_deleted_verified": "Deleted. Import exclusion verified present{canary}.",
-    "error.reap.step.movie_deleted_no_exclusion": (
-        "Deleted. Import exclusion off for this Radarr{canary}."
-    ),
+    "error.reap.step.movie_deleted_verified": "Deleted. Import exclusion verified present.",
+    "error.reap.step.movie_deleted_no_exclusion": "Deleted. Import exclusion off for this Radarr.",
     "error.reap.step.season_no_files": (
         "Sonarr lists no files for season {season}, so there is nothing to delete. Kept."
     ),
@@ -787,7 +786,7 @@ MESSAGES: dict[str, str] = {
         "{count} episode file(s) for season {season} remain after the delete. Not confirmed."
     ),
     "error.reap.step.season_pruned": (
-        "Season {season} pruned: {count} file(s) deleted, unmonitor verified{canary}."
+        "Season {season} pruned: {count} file(s) deleted, unmonitor verified."
     ),
     "error.reap.check.not_watching": "Nobody was watching it right now",
     "error.reap.check.not_played_since": "Not played since you approved it",

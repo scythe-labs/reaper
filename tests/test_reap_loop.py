@@ -80,7 +80,6 @@ from reaper.services.planner import (
 from reaper.services.profiles import live_policy_hash, save_profile_settings
 
 from ._reasons import refusal_text
-from ._reasons import text as reason_text
 
 GB = 1024**3
 
@@ -418,9 +417,13 @@ class TestDryRunProvesEverythingAndDeletesNothing:
         assert report.state is RunState.COMPLETED
         assert report.dry_run is True
         assert report.deleted_items == 0  # nothing was actually deleted
-        # every step is recorded as what it WOULD have done
+        # every step is recorded as what it WOULD have done, typed as the raw request
+        # sequence rather than an English "would" sentence (phase 11b)
         assert all(o.state is StepState.SKIPPED for o in report.outcomes)
-        assert any("would DELETE /api/v3/movie/1" in reason_text(o.detail) for o in report.outcomes)
+        assert all(o.detail.id == "error.reap.step.dry_run" for o in report.outcomes)
+        assert any(
+            "DELETE /api/v3/movie/1" in str(o.detail.params["plan"]) for o in report.outcomes
+        )
 
     async def test_the_first_outcome_is_flagged_as_the_canary(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_with(
@@ -433,7 +436,7 @@ class TestDryRunProvesEverythingAndDeletesNothing:
         ).execute(run.id)
 
         # The canary is the smallest (1 GB, movie 2) and it is executed first.
-        assert "[canary]" in reason_text(report.outcomes[0].detail)
+        assert report.outcomes[0].is_canary
         assert report.outcomes[0].media_key == "radarr:1:2"
 
 
@@ -462,11 +465,12 @@ class TestASeasonDryRunsAsAWholeSequence:
         # listing the whole ordered sequence it would have sent.
         outcome = report.outcomes[0]
         assert outcome.kind == "sonarr_delete_files"
-        detail = reason_text(outcome.detail)
-        assert "would POST /api/v3/seasonpass" in detail
-        assert "would GET /api/v3/series/42" in detail
-        assert "would DELETE /api/v3/episodefile/bulk" in detail
-        assert "[canary]" in detail  # the sole item is ordinal 0
+        assert outcome.detail.id == "error.reap.step.dry_run"
+        plan = str(outcome.detail.params["plan"])
+        assert "POST /api/v3/seasonpass" in plan
+        assert "GET /api/v3/series/42" in plan
+        assert "DELETE /api/v3/episodefile/bulk" in plan
+        assert outcome.is_canary  # the sole item is ordinal 0
 
         # A dry run consumes nothing: the run stays PLANNED and every step stays PENDING, so
         # the plan can still be dry-run again and, crucially, executed for real afterwards.

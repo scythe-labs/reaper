@@ -226,6 +226,7 @@ function Report({ report }: { report: RunReport }) {
               ✓
             </span>
             <code>{o.detail_key ? composeError(o.detail_key) : o.detail}</code>
+            {o.is_canary && <span className="canary-tag">{t("reapPlan.steps.testItem")}</span>}
           </li>
         ))}
       </ul>

@@ -129,7 +129,7 @@ from reaper.db.models import (
     StepState,
 )
 from reaper.engine.policy import ProfileSettings
-from reaper.engine.reason import Reason, legacy, to_wire
+from reaper.engine.reason import Reason, to_wire
 from reaper.refusal import MESSAGES, Refusal, english
 from reaper.services import list_config, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
@@ -262,13 +262,6 @@ def _season_number(obj: dict[str, Any]) -> int:
         return int(value)
     except (TypeError, ValueError):
         return -1
-
-
-def _canary_suffix(is_canary: bool) -> str:
-    """The bracketed marker a canary's own outcome carries, appended by every VERIFIED
-    detail's catalog entry through its ``{canary}`` param -- one derivation (rule 104) for
-    the three sites that used to each concatenate ``" [canary]"`` by hand."""
-    return " [canary]" if is_canary else ""
 
 
 def _reason_columns(reason: Reason | None) -> tuple[str | None, str | None]:
@@ -436,6 +429,16 @@ class StepOutcome:
     detail: Reason
     title: str = ""
     checks: list[StepCheck] = field(default_factory=list)
+
+    is_canary: bool = False
+    """True when this item is the run's canary -- the smallest item, executed (or, in a dry
+    run, proven) first.
+
+    A fact about the item, not English: it used to be baked into three catalog sentences as a
+    server-composed ``" [canary]"`` fragment, which a translated sentence must never carry, and
+    "canary" is internal vocabulary the product calls the "test item" (rule 21). The frontend
+    renders its own tag beside the outcome from this flag, the same way the step table already
+    does from ``ActionStep.is_canary``."""
 
     file_removed: bool = False
     """Set on a FAILED outcome whose file is nonetheless really off disk.
@@ -1587,6 +1590,7 @@ class Executor:
                         detail=_JOURNAL_HALT_REASON,
                         title=title,
                         checks=[StepCheck(_JOURNAL_HALT_REASON, False)],
+                        is_canary=index == 0,
                         file_removed=self._file_is_gone,
                     )
                 )
@@ -1750,6 +1754,7 @@ class Executor:
                 delete,
                 Reason("error.reap.step.spared_by_hand"),
                 check=Reason("error.reap.check.spared_by_hand"),
+                is_canary=is_canary,
             )
 
         # An item must pass BOTH halves, and each half is a different fact, so each gets its
@@ -1766,6 +1771,7 @@ class Executor:
                 delete,
                 Reason("error.reap.step.not_in_confirmed_run"),
                 check=Reason("error.reap.check.not_in_confirmed_run"),
+                is_canary=is_canary,
             )
 
         # The mirror case: an item that was in the plan only because of a hand reap, whose
@@ -1779,6 +1785,7 @@ class Executor:
                 delete,
                 Reason("error.reap.step.hand_reap_removed"),
                 check=Reason("error.reap.check.hand_reap_removed"),
+                is_canary=is_canary,
             )
 
         if not self._dry_run:
@@ -1790,34 +1797,40 @@ class Executor:
                     delete,
                     Reason("error.reap.step.no_plex_match"),
                     check=Reason("error.reap.check.no_plex_match"),
+                    is_canary=is_canary,
                 )
             if await self._being_watched_now(candidate):
                 return self._mark_skipped(
                     delete,
                     Reason("error.reap.step.being_watched"),
                     check=Reason("error.reap.check.being_watched"),
+                    is_canary=is_canary,
                 )
             if await self._watched_since_approval(candidate, approved_at):
                 return self._mark_skipped(
                     delete,
                     Reason("error.reap.step.played_since_approval"),
                     check=Reason("error.reap.check.played_since_approval"),
+                    is_canary=is_canary,
                 )
 
         if self._dry_run:
             # The heart of the dry run: prove everything, send nothing, mutate nothing. The
             # full sequence is shown in the detail, but the step rows are left PENDING so the
-            # plan is still runnable for real afterwards.
+            # plan is still runnable for real afterwards. The plan text is the raw request
+            # sequence, never the word "would" -- that belongs to the catalog sentence
+            # wrapping it (``error.reap.step.dry_run``), so a translated build says it once.
             parts: list[str] = []
             for step in delete.steps:
                 body = json.loads(step.body_json) if step.body_json else {}
-                parts.append(f"would {step.method} {step.path} {body}".rstrip())
+                parts.append(f"{step.method} {step.path} {body}".rstrip())
             return StepOutcome(
                 media_key=delete.terminal.media_key,
                 kind=delete.terminal.kind,
                 state=StepState.SKIPPED,
-                detail=legacy(" -> ".join(parts) + _canary_suffix(is_canary)),
+                detail=Reason("error.reap.step.dry_run", {"plan": " -> ".join(parts)}),
                 title=candidate.title,
+                is_canary=is_canary,
             )
 
         # A real send. Each step is marked SENT and COMMITTED *before* its guarded call,
@@ -2047,6 +2060,7 @@ class Executor:
                     "error.reap.step.route_failed",
                     {"media_key": candidate.media_key, "error": str(exc)},
                 ),
+                is_canary=is_canary,
             )
 
         def failed(reason: Reason, *, halts_run: bool = False) -> StepOutcome:
@@ -2062,6 +2076,7 @@ class Executor:
             return self._fail(
                 delete,
                 reason,
+                is_canary=is_canary,
                 file_removed=delete.terminal.file_removed_at is not None,
                 halts_run=halts_run,
             )
@@ -2145,7 +2160,7 @@ class Executor:
         approved_size = candidate.size_bytes
         if not self._may_send_unmeasured(candidate, _MOVIE_COMPARABLE):
             return self._mark_skipped(
-                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
+                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK, is_canary=is_canary
             )
 
         # Read the tmdbId now, while the movie still exists, for the exclusion re-read.
@@ -2166,6 +2181,7 @@ class Executor:
                 delete,
                 Reason("error.reap.step.size_unconfirmed_movie"),
                 check=_CHECK_SIZE_UNCONFIRMED,
+                is_canary=is_canary,
             )
         if (
             approved_size is not None
@@ -2179,6 +2195,7 @@ class Executor:
                     {"live": live_size, "approved": approved_size},
                 ),
                 check=_CHECK_GREW_SINCE_APPROVED,
+                is_canary=is_canary,
             )
 
         # The exclusion decision was frozen into the plan the operator approved
@@ -2198,6 +2215,7 @@ class Executor:
                 delete,
                 Reason("error.reap.step.no_tmdb_id"),
                 checks=checks,
+                is_canary=is_canary,
             )
 
         await self._mark_sent(step)
@@ -2265,6 +2283,7 @@ class Executor:
                 delete,
                 reason,
                 checks=checks,
+                is_canary=is_canary,
                 # The file is gone even though this item failed, so the library changed and
                 # the queue is now stale: the post-run rescan has to fire.
                 file_removed=assume_removed,
@@ -2275,11 +2294,10 @@ class Executor:
         # (`tests/test_repo_hygiene.py::_refusal_code_sites`) only sees a `Reason(...)` whose
         # first argument is a string constant, so a code chosen at runtime would read as a
         # catalog entry with no raiser.
-        canary = _canary_suffix(is_canary)
         detail = (
-            Reason("error.reap.step.movie_deleted_verified", {"canary": canary})
+            Reason("error.reap.step.movie_deleted_verified")
             if add_exclusion
-            else Reason("error.reap.step.movie_deleted_no_exclusion", {"canary": canary})
+            else Reason("error.reap.step.movie_deleted_no_exclusion")
         )
         return StepOutcome(
             media_key=step.media_key,
@@ -2288,6 +2306,7 @@ class Executor:
             detail=detail,
             title=delete.candidate.title,
             checks=checks,
+            is_canary=is_canary,
         )
 
     async def _movie_is_gone(self, radarr: MovieDeleter, movie_id: int) -> bool | None:
@@ -2367,7 +2386,7 @@ class Executor:
         approved_size = candidate.size_bytes
         if not self._may_send_unmeasured(candidate, _SEASON_COMPARABLE):
             return self._mark_skipped(
-                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
+                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK, is_canary=is_canary
             )
 
         # Keyed by file id, never a bare list of sizes. The delete below re-resolves this
@@ -2400,6 +2419,7 @@ class Executor:
                 delete,
                 Reason("error.reap.step.season_no_files", {"season": ref.season}),
                 check=Reason("error.reap.check.season_no_files_kept"),
+                is_canary=is_canary,
             )
         # Sonarr listed files and would not size one of them. Only reachable with a frozen
         # size to compare against, the allowance's items having no comparison to make.
@@ -2408,6 +2428,7 @@ class Executor:
                 delete,
                 Reason("error.reap.step.size_unconfirmed_season"),
                 check=_CHECK_SIZE_UNCONFIRMED,
+                is_canary=is_canary,
             )
         live_total = sum(size for size in live_sizes if size is not None)
         if approved_size is not None and _grew_materially(approved_size, live_total):
@@ -2418,6 +2439,7 @@ class Executor:
                     {"live": live_total, "approved": approved_size},
                 ),
                 check=_CHECK_GREW_SINCE_APPROVED,
+                is_canary=is_canary,
             )
 
         # 1. Unmonitor (reversible), then VERIFY it actually took before any file is touched.
@@ -2461,6 +2483,7 @@ class Executor:
                 detail=Reason("error.reap.step.unmonitor_not_verified"),
                 title=delete.candidate.title,
                 checks=checks,
+                is_canary=is_canary,
             )
         await self._mark_verified(unmonitor, {"unmonitor_sent": True})
         await self._mark_verified(verify, {"monitored": False})
@@ -2502,6 +2525,7 @@ class Executor:
                     {"count": len(unmeasured), "season": ref.season},
                 ),
                 check=Reason("error.reap.check.season_changed_unmonitored"),
+                is_canary=is_canary,
             )
         file_ids = resolved
         if not file_ids:
@@ -2526,6 +2550,7 @@ class Executor:
                 delete,
                 Reason("error.reap.step.season_files_vanished", {"season": ref.season}),
                 check=Reason("error.reap.check.season_no_files_unmonitored"),
+                is_canary=is_canary,
             )
         await self._mark_sent(delete_step)
         await sonarr.delete_episode_files(file_ids)
@@ -2545,6 +2570,7 @@ class Executor:
                 delete,
                 Reason("error.reap.step.season_removal_unconfirmed", {"season": ref.season}),
                 checks=checks,
+                is_canary=is_canary,
                 file_removed=True,
             )
         still_there = [f for f in remaining if _season_number(f) == ref.season]
@@ -2567,6 +2593,7 @@ class Executor:
                     {"count": len(still_there), "season": ref.season},
                 ),
                 checks=checks,
+                is_canary=is_canary,
                 file_removed=len(still_there) < len(file_ids),
             )
 
@@ -2619,14 +2646,11 @@ class Executor:
             state=StepState.VERIFIED,
             detail=Reason(
                 "error.reap.step.season_pruned",
-                {
-                    "season": ref.season,
-                    "count": len(file_ids),
-                    "canary": _canary_suffix(is_canary),
-                },
+                {"season": ref.season, "count": len(file_ids)},
             ),
             title=delete.candidate.title,
             checks=checks,
+            is_canary=is_canary,
         )
 
     @staticmethod
@@ -2983,6 +3007,7 @@ class Executor:
         reason: Reason,
         checks: list[StepCheck] | None = None,
         *,
+        is_canary: bool = False,
         file_removed: bool = False,
         halts_run: bool = False,
     ) -> StepOutcome:
@@ -3030,6 +3055,7 @@ class Executor:
             detail=reason,
             title=delete.candidate.title,
             checks=checks if checks is not None else [StepCheck(reason, False)],
+            is_canary=is_canary,
             file_removed=file_removed,
             halts_run=halts_run,
         )
@@ -3063,7 +3089,12 @@ class Executor:
         return False
 
     def _mark_skipped(
-        self, delete: _Delete, reason: Reason, check: Reason | None = None
+        self,
+        delete: _Delete,
+        reason: Reason,
+        check: Reason | None = None,
+        *,
+        is_canary: bool = False,
     ) -> StepOutcome:
         """Spare the whole item. In a REAL run, set every one of its not-yet-terminal steps
         SKIPPED (not just the last) -- in memory, durable at the per-item commit, exactly as
@@ -3094,6 +3125,7 @@ class Executor:
             detail=reason,
             title=delete.candidate.title,
             checks=[StepCheck(check or reason, True)],
+            is_canary=is_canary,
         )
 
 

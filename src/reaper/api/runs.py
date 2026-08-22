@@ -812,6 +812,7 @@ def _report_out(report: RunReport) -> RunReportOut:
                     RunCheckOut(label=english(c.label), label_key=_reason_key(c.label), ok=c.ok)
                     for c in o.checks
                 ],
+                is_canary=o.is_canary,
             )
             for o in report.outcomes
         ],

@@ -907,6 +907,9 @@ export interface RunOutcome {
   /** The typed twin of `detail`, the same way `RunCheck.label_key` is. */
   detail_key: ReasonKey | null;
   checks: RunCheck[];
+  /** True when this item was the run's canary -- the smallest item, executed (or, in a dry
+   *  run, proven) first. The same fact `ActionStep.is_canary` carries for the step table. */
+  is_canary: boolean;
 }
 
 export interface RunReport {

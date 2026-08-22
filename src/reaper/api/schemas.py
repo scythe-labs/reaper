@@ -652,6 +652,11 @@ class RunOutcomeOut(BaseModel):
     detail_key: ReasonKey | None = None
     """The typed twin of ``detail`` (phase 11b), the same way ``RunCheckOut.label_key`` is."""
     checks: list[RunCheckOut]
+    is_canary: bool
+    """True when this item was the run's canary -- the smallest item, executed (or, in a dry
+    run, proven) first. The same fact ``ActionStepOut.is_canary`` carries for the journal's
+    step table, carried here too so the report and result lists can mark it without a
+    server-composed English fragment in ``detail`` (rule 21)."""
 
 
 class RunReportOut(BaseModel):

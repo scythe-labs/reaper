@@ -488,7 +488,9 @@ class TestTheRunsApi:
         assert report["state"] == "completed"
         assert report["would_delete_items"] == 0  # nothing actually deleted
         assert report["outcomes"][0]["state"] == "skipped"
-        assert "would DELETE /api/v3/movie/10" in report["outcomes"][0]["detail"]
+        assert report["outcomes"][0]["is_canary"] is True  # the sole item is ordinal 0
+        assert report["outcomes"][0]["detail"].startswith("Would send: ")
+        assert "DELETE /api/v3/movie/10" in report["outcomes"][0]["detail"]
 
     def test_a_plan_appears_in_the_run_list(self, client: TestClient) -> None:
         created = client.post("/api/runs").json()

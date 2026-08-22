@@ -525,7 +525,12 @@ export function ReapConfirm({
           <ul className="reap-checklist">
             {report.outcomes.map((o) => (
               <li key={o.media_key} className={`reap-item state-${o.state}`}>
-                <span className="reap-item-title">{o.title || o.media_key}</span>
+                <span className="reap-item-title">
+                  {o.title || o.media_key}
+                  {o.is_canary && (
+                    <span className="canary-tag">{t("reapPlan.steps.testItem")}</span>
+                  )}
+                </span>
                 <ul className="reap-checks">
                   {/* Pass and fail were a glyph and a color, and NVDA at its default symbol
                       level speaks neither ✓ nor ✗ -- so the two lines read out identically, in

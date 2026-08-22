@@ -378,8 +378,24 @@ describe("what a practice run reports", () => {
     deleted_unmeasured: 0,
     skipped: 0,
     outcomes: [
-      { media_key: "a", kind: "movie", state: "verified", detail: "one", title: "", checks: [] },
-      { media_key: "b", kind: "movie", state: "verified", detail: "two", title: "", checks: [] },
+      {
+        media_key: "a",
+        kind: "movie",
+        state: "verified",
+        detail: "one",
+        title: "",
+        checks: [],
+        is_canary: false,
+      },
+      {
+        media_key: "b",
+        kind: "movie",
+        state: "verified",
+        detail: "two",
+        title: "",
+        checks: [],
+        is_canary: false,
+      },
     ],
     ...patch,
   });
