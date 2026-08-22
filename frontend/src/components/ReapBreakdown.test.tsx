@@ -27,8 +27,8 @@ const idleScan: ScanStatus = {
   done: 0,
   total: 0,
   percent: 0,
-  detail: "",
-  error: null,
+  detail_reason: null,
+  error_reason: null,
   snapshot_id: 1,
   followup_queued: false,
 };

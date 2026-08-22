@@ -20,6 +20,7 @@ import { invalidateAllPlex as invalidateAllPlexQueries } from "../plexServerQuer
 import { shelfSkipIsCurrent } from "../shelfStatus";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { useSafety } from "../useSafety";
+import { jobResultText } from "./JobStatus";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
 import { StaleReadSlot, collapseStaleReads } from "./StaleReadNotice";
 import { Switch } from "./Switch";
@@ -519,7 +520,7 @@ export function PlexPanel({
         ? t("plex.leavingSoon.status.neverRanSkipped")
         : t("plex.leavingSoon.status.neverRan");
     }
-    // Not `count` -- `last.result` below is the service's own sentence and already carries
+    // Not `count` -- `resultText` below is the service's own sentence and already carries
     // comma-grouped numbers, so a browser-locale count beside it puts two thousands
     // separators in one line. `countBesideServerText` is that rule; its docstring holds why.
     const movies = t("plex.leavingSoon.status.moviesCount", {
@@ -530,15 +531,16 @@ export function PlexPanel({
       count: countBesideServerText(last.seasons),
       n: last.seasons,
     });
-    // How the pass went is the pass's own sentence (rule 104), never one worded here. This
-    // line used to read `applied` and word the caveat itself, which called a pass with no
-    // libraries turned on a preview, on the very screen those libraries are turned on (#555).
-    // A row stored before that field existed thaws as "" and is left out, rather than opening
-    // the line with a stray period.
+    // How the pass went is the pass's own reason, composed under `jobs.result.*` (rule 104),
+    // never worded here. This line used to read `applied` and word the caveat itself, which
+    // called a pass with no libraries turned on a preview, on the very screen those libraries
+    // are turned on (#555). A row stored before that field existed thaws as "" and is left
+    // out, rather than opening the line with a stray period.
+    const resultText = jobResultText(last.result_reason);
     const went = skipped
       ? `${t("plex.leavingSoon.status.laterScanSkipped")} `
-      : last.result
-        ? `${last.result}. `
+      : resultText
+        ? `${resultText}. `
         : "";
     // The counts survive a skip -- nothing was written, so the shelves still hold them -- and
     // past tense is the whole correction, exactly as the Jobs row's counts line puts it.

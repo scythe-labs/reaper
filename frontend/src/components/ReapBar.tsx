@@ -6,6 +6,7 @@ import { announce } from "../announce";
 import { api } from "../api";
 import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
+import { composeError } from "../why";
 import { Notice } from "./Notice";
 
 /** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
@@ -116,7 +117,9 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
               souls: souls(status.deleted_items),
               bytes: bytes(status.deleted_bytes),
             })}
-            {errored && status.error && t("reapConfirm.bar.errorSuffix", { error: status.error })}
+            {errored &&
+              status.error_reason &&
+              t("reapConfirm.bar.errorSuffix", { error: composeError(status.error_reason) })}
           </span>
         </span>
         <span className="reap-bar-actions">

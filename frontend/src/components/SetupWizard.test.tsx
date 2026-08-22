@@ -74,12 +74,18 @@ const IDLE = {
   done: 0,
   total: 0,
   percent: 0,
-  detail: "",
-  error: null,
+  detail_reason: null,
+  error_reason: null,
   snapshot_id: null,
   followup_queued: false,
 };
-const RUNNING = { ...IDLE, running: true, phase: "history", percent: 3, detail: "syncing" };
+const RUNNING = {
+  ...IDLE,
+  running: true,
+  phase: "history",
+  percent: 3,
+  detail_reason: { k: "history_sync", p: null },
+};
 
 function renderWizard(onSkip: () => void = () => {}) {
   return renderWithProviders(<SetupWizard onSkip={onSkip} />);
@@ -283,7 +289,13 @@ describe("the first scan finishing", () => {
       renderWizard();
       expect(await screen.findByText(/your first scan is running/i)).toBeTruthy();
 
-      apiMock.scanStatus.mockResolvedValue({ ...IDLE, error: "Tautulli timed out" });
+      apiMock.scanStatus.mockResolvedValue({
+        ...IDLE,
+        error_reason: {
+          k: "error.scan.source_unreachable",
+          p: { error: "Tautulli timed out" },
+        },
+      });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2500);
       });

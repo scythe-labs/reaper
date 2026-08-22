@@ -46,7 +46,7 @@ const SCHEDULE: Schedule = {
       running: false,
       last_run_at: null,
       last_ok: null,
-      last_result: null,
+      last_result_reason: null,
     },
     {
       id: "refresh_ratings",
@@ -56,7 +56,7 @@ const SCHEDULE: Schedule = {
       running: false,
       last_run_at: null,
       last_ok: null,
-      last_result: null,
+      last_result_reason: null,
     },
   ],
 };

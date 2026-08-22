@@ -29,6 +29,7 @@ import { describeError } from "../errors";
 import i18next from "../i18n";
 import { reapBlockers, type ReapBlocker } from "../reapReadiness";
 import { useScanStatus } from "../useScanStatus";
+import { composeError, composeIn } from "../why";
 import { DiscordModal } from "./DiscordModal";
 import { Notice } from "./Notice";
 import { SafetyBanner } from "./SafetyBanner";
@@ -68,8 +69,8 @@ export function SetupScanStep({
   // Read at the transition rather than depended on: the message lands in the same poll that
   // turns `running` off, and a later change to it must not re-fire the effect.
   const wasRunning = useRef(false);
-  const latestError = useRef(scan?.error ?? null);
-  latestError.current = scan?.error ?? null;
+  const latestError = useRef(scan?.error_reason ?? null);
+  latestError.current = scan?.error_reason ?? null;
   // Held the same way, and additionally because `blockers` is freshly allocated every render,
   // which must never be an effect dependency (rule 19).
   const latestBlockers = useRef<ReapBlocker[]>(blockers);
@@ -116,7 +117,9 @@ export function SetupScanStep({
   // error notice leading with the outcome. The phase goes through ScanBar's shared table, so
   // this can never print a raw phase id (rule 66).
   const phase = running
-    ? `${phaseLabel(scan!.phase)}${scan!.detail ? `, ${scan!.detail}` : ""}`
+    ? `${phaseLabel(scan!.phase)}${
+        scan!.detail_reason ? `, ${composeIn("shell.scanBar.step", scan!.detail_reason)}` : ""
+      }`
     : null;
 
   return (
@@ -254,9 +257,9 @@ export function SetupScanStep({
             crashed server-side is on this step the moment it mounts, and once one is running the
             1s poll delivers the failure with nothing pressed. `ScanBar` says the same thing about
             the same field and moves with it (rule 72). */}
-        {scan?.error && (
+        {scan?.error_reason && (
           <Notice tone="error" standing>
-            {t("setup.scan.scanErrorNotice", { message: scan.error })}
+            {t("setup.scan.scanErrorNotice", { message: composeError(scan.error_reason) })}
           </Notice>
         )}
       </StepCard>

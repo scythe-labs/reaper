@@ -66,7 +66,7 @@ function status(overrides: Partial<ReapStatus> = {}): ReapStatus {
     deleted_bytes: 0,
     skipped: 0,
     title: "",
-    error: null,
+    error_reason: null,
     report: null,
     ...overrides,
   };
@@ -377,7 +377,10 @@ describe("the execute gate", () => {
     const failed = status({
       run_id: run.id,
       phase: "error",
-      error: "Deletion was switched off mid-run.",
+      error_reason: {
+        k: "error.reap.unexpected",
+        p: { error: "Deletion was switched off mid-run." },
+      },
     });
     apiMock.reapStatus.mockResolvedValue(failed);
     apiMock.dryRun.mockClear();
@@ -608,7 +611,10 @@ describe("what a screen reader hears while a reap runs", () => {
           status({
             run_id: run.id,
             phase: "error",
-            error: "Deletion was switched off mid-run.",
+            error_reason: {
+              k: "error.reap.unexpected",
+              p: { error: "Deletion was switched off mid-run." },
+            },
           }),
         ),
     );

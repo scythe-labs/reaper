@@ -44,6 +44,12 @@ const REQUIRED_NAMESPACES = [
   "policyRules.fieldUnit.",
   "policySim.staleReason.",
   "services.discord.testResult.",
+  // Phase 11a: a background job's outcome (jobs.result.*) and a scan's live step
+  // (shell.scanBar.step.*) are both typed reasons composed on the browser, the same shape
+  // as error. -- a plain-sentence entry with no param still needs the translator told which
+  // row or bar it fires on.
+  "jobs.result.",
+  "shell.scanBar.step.",
 ];
 
 /** One-off leaves outside those namespaces that carry a raw server `error`/reason param and
@@ -81,16 +87,17 @@ export function requiredKeysOf(catalog: Catalog): Set<string> {
 
 const HOW_TO_UPDATE =
   "A required key is: every key under why., chip., warning., error., policyRules.fieldHelp., " +
-  "policyRules.fieldUnit., policySim.staleReason. or services.discord.testResult., plus the " +
-  "two exact keys services.modal.mapError and lists.plexError, plus any OTHER catalog message " +
-  "carrying an ICU argument or a tag. Write (or remove) the note in " +
-  "frontend/src/locales/en/ui.notes.json to match, then update EXPECTED_REQUIRED_COUNT below.";
+  "policyRules.fieldUnit., policySim.staleReason., services.discord.testResult., " +
+  "jobs.result. or shell.scanBar.step., plus the two exact keys services.modal.mapError and " +
+  "lists.plexError, plus any OTHER catalog message carrying an ICU argument or a tag. Write " +
+  "(or remove) the note in frontend/src/locales/en/ui.notes.json to match, then update " +
+  "EXPECTED_REQUIRED_COUNT below.";
 
 //: Pinned so a change to the required set is a diff here, not a silent pass (rule 145) -- the
 //: three assertions below already name every individual key that moved, but a set that shrank
 //: by exactly as much as it grew would leave them empty while this population changed under
 //: everyone's feet.
-const EXPECTED_REQUIRED_COUNT = 1057;
+const EXPECTED_REQUIRED_COUNT = 1095;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {
@@ -107,11 +114,12 @@ describe("translator notes (locales/en/ui.notes.json)", () => {
   });
 
   it("the required-set rule catches a namespaced key and an argued/tagged one alike, and only those (rule 145)", () => {
-    // Seven of the eight required namespaces are exercised here; the eighth
-    // (services.discord.testResult.) is proven the same way by the full-catalog tests below,
-    // since a literal "services.*.*" fixture string here reads as a Python symbol citation to
-    // the repo's own hygiene gate (test_a_dotted_symbol_citation_resolves_to_a_real_symbol) --
-    // the membership check itself is namespace-value-agnostic, so this loses no coverage.
+    // Seven of the ten required namespaces are exercised here; the other three
+    // (services.discord.testResult., jobs.result., shell.scanBar.step.) are proven the same
+    // way by the full-catalog tests below, since a literal "services.*.*" fixture string here
+    // reads as a Python symbol citation to the repo's own hygiene gate
+    // (test_a_dotted_symbol_citation_resolves_to_a_real_symbol) -- the membership check itself
+    // is namespace-value-agnostic, so this loses no coverage.
     const fixture: Catalog = {
       "why.anything": "Plain sentence.",
       "chip.anything": "Plain sentence.",

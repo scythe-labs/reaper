@@ -20,7 +20,7 @@ import i18next from "../i18n";
 import { shelfSkipIsCurrent } from "../shelfStatus";
 import { useGeneralSettings } from "../useGeneralSettings";
 import { composeError } from "../why";
-import { JobStatus, useJobFlash } from "./JobStatus";
+import { JobStatus, jobResultText, useJobFlash } from "./JobStatus";
 import { ModalShell } from "./ModalShell";
 import { ScanRow } from "./ScanBar";
 import { type StaleReadPlan, StaleReadSlot, collapseStaleReads } from "./StaleReadNotice";
@@ -354,9 +354,10 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
   // never on `run.isPending` -- that would fire a stale flash the instant the POST returns,
   // before the job has even run. Compared with `!== null`, not truthiness: an empty (but
   // present) result must still flash, unlike a job that has simply never run.
+  const lastResultText = jobResultText(job.last_result_reason);
   const flash = useJobFlash(
     job.running,
-    job.last_result !== null ? { ok: job.last_ok !== false, text: job.last_result } : null,
+    lastResultText !== null ? { ok: job.last_ok !== false, text: lastResultText } : null,
   );
 
   // A finished update check has replaced the answer `["update"]` holds, and that query is
@@ -383,7 +384,7 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
           runningLabel={t("jobs.row.runningLabel")}
           lastRunAt={job.last_run_at}
           lastOk={job.last_ok}
-          lastResult={job.last_result}
+          lastResult={lastResultText}
           flash={flash}
         />
         <div className="jobrow-sched">{maintenanceScheduleText(job)}</div>
@@ -456,7 +457,7 @@ function LeavingSoonRow({
   // counts, and the flash then contradicted the row it sat on: with no libraries turned on it
   // said the shelves had failed while the row rested green (#555).
   const syncResult = runSync.data
-    ? { ok: runSync.data.ok, text: runSync.data.result }
+    ? { ok: runSync.data.ok, text: jobResultText(runSync.data.result_reason) ?? "" }
     : runSync.error
       ? { ok: false, text: t("jobs.leavingSoon.didNotUpdate") }
       : null;
@@ -554,7 +555,9 @@ function LeavingSoonRow({
           lastRunAt={currentSkip ? currentSkip.at : (last?.at ?? null)}
           lastOk={currentSkip ? false : last ? last.ok : null}
           lastResult={
-            currentSkip ? composeError(currentSkip.result_reason) : (last?.result ?? null)
+            currentSkip
+              ? composeError(currentSkip.result_reason)
+              : jobResultText(last?.result_reason ?? null)
           }
           flash={flash}
         />

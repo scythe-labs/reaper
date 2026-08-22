@@ -7,6 +7,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { About, Update } from "../api";
+import en from "../locales/en/ui.json";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_UPDATE } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
@@ -173,5 +174,23 @@ describe("the About update row", () => {
     renderAbout();
     expect(await screen.findByText("You are on the newest release.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("Update available")).not.toBeInTheDocument());
+  });
+});
+
+describe("jobs.result.update_* says the same thing as this row's about.update.* (rule 144)", () => {
+  // Two people wrote these: this file's `about.update.*` and the Jobs page's
+  // `jobs.result.update_*` (phase 11a, `services.scheduler.check_for_updates`'s own
+  // docstring names the twin). Deriving one from the code makes the other MORE dangerous to
+  // leave unchecked, not less -- so this pins the pair by name rather than trusting the two
+  // authors agreed. Compared with the trailing period and the param name stripped, since
+  // `about.update.*` is a standalone sentence and `jobs.result.update_*` is a resting-line
+  // fragment (`jobs.status.lastRunOk`/`lastRunFailedReason` supply their own punctuation).
+  const strip = (s: string) => s.replace(/\.$/, "").replace(/\{[^}]+\}/g, "{}");
+
+  it("matches every one of the four states", () => {
+    expect(strip(en.jobs.result.update_dev_behind)).toBe(strip(en.about.update.devMoved));
+    expect(strip(en.jobs.result.update_dev_current)).toBe(strip(en.about.update.devCurrent));
+    expect(strip(en.jobs.result.update_available)).toBe(strip(en.about.update.newRelease));
+    expect(strip(en.jobs.result.update_up_to_date)).toBe(strip(en.about.update.releaseCurrent));
   });
 });

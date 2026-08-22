@@ -129,6 +129,32 @@
       "scanOff": "Off (scan by hand)",
       "scanWeekly": "Every Sunday at 3 AM"
     },
+    "result": {
+      "history_no_source": "No history source",
+      "history_partial": "History updated, but Tautulli couldn't return {unservable} plays",
+      "history_update_failed": "Couldn't update history",
+      "history_updated": "History updated",
+      "lists_partial": "Refreshed {checked} lists, {failed} couldn't be checked",
+      "lists_plex_not_connected": "Plex isn't connected, so its lists weren't checked",
+      "lists_plex_unreachable": "Couldn't reach Plex, so its lists weren't checked",
+      "lists_refresh_failed": "Couldn't refresh lists",
+      "lists_refreshed": "Lists refreshed",
+      "ratings_refresh_failed": "Couldn't refresh ratings",
+      "ratings_refreshed": "Ratings refreshed",
+      "ratings_refreshed_partial": "Ratings refreshed, but a lot of the file could not be read. Fewer titles now have a rating to protect them.",
+      "ratings_up_to_date": "Already up to date",
+      "scan_failed": "Scan failed",
+      "shelf_failed": "These shelves didn't update: {libraries}",
+      "shelf_no_libraries": "No libraries are turned on, so no shelf was updated",
+      "shelf_preview": "Preview only, nothing written",
+      "shelf_updated": "{added, number} added, {removed, number} cleared",
+      "update_available": "Reaper {latest} is out",
+      "update_check_failed": "Couldn't check for updates",
+      "update_checks_off": "Update checks are off",
+      "update_dev_behind": "The dev branch has moved since this build",
+      "update_dev_current": "This build matches the dev branch",
+      "update_up_to_date": "You are on the newest release"
+    },
     "row": {
       "editAria": "Edit {title}",
       "runNow": "Run now",
@@ -933,6 +959,7 @@
       "radarr_instance_missing": "No Radarr instance {instance_id} is configured, but the plan targets it. Refusing to guess which server to delete from.",
       "sonarr_instance_missing": "No Sonarr instance {instance_id} is configured, but the plan targets it. Refusing to guess which server to delete from.",
       "stopped_by_operator": "You stopped this run, so it halted here. Anything already removed stays removed; nothing further was sent.",
+      "unexpected": "The reap hit a problem it didn't expect: {error}",
       "unmeasured_for_caps": "Reaper couldn't measure the size of these items, so it can't check the run against your limits: {keys}. The run is aborted.",
       "unmeasured_over_limit": "This run would delete {unmeasured, plural, one {# item} other {# items}} Reaper couldn't measure, over your limit of {limit, plural, one {# item} other {# items}} per run. It stops rather than deleting just part. Raise the unknown-size allowance in Policy, under Pace and limits."
     },
@@ -973,9 +1000,12 @@
       "recovery_mode_active": "Recovery mode is on, so Reaper can look but can't remove anything. Turn it off and restart."
     },
     "scan": {
+      "already_running": "A scan is already running. Wait for it to finish, then start another.",
       "gate_unimplemented": "Policy enables the \"{gate}\" protection, but Reaper has no implementation for it. Refusing to scan rather than silently skipping a protection you asked for.",
       "list_gate_missing_list": "A protection you set up is pointing at a list that is no longer there, so the scan stopped instead of leaving titles unprotected. Add the list back on Settings, Lists, then open Policy and save. Turning that protection off instead drops it for good.",
-      "missing_sources": "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. Add them in Settings first."
+      "missing_sources": "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. Add them in Settings first.",
+      "source_unreachable": "Reaper couldn't reach one of your sources: {error}",
+      "unexpected": "The scan hit a problem it didn't expect: {error}"
     },
     "settings": {
       "accent_color_invalid": "The accent color must be a hex code like #25c3ff.",
@@ -3092,7 +3122,19 @@
       "scanLibrary": "Scan library",
       "scanOnlyReads": "A scan only reads. It cannot delete.",
       "scanProblem": "The scan hit a problem: {error}",
-      "snapshotSummary": "{itemCount} items, <condemned>{condemnedCount}</condemned> would be removed, freeing <freed>{freedAmount}</freed>"
+      "snapshotSummary": "{itemCount} items, <condemned>{condemnedCount}</condemned> would be removed, freeing <freed>{freedAmount}</freed>",
+      "step": {
+        "active_streams": "active streams",
+        "done": "{count} candidates",
+        "history_sync": "syncing watch history",
+        "libraries": "movie and TV libraries",
+        "lists": "refreshing protection lists",
+        "ratings": "IMDb ratings",
+        "scoring": "{title}",
+        "seasons": "TV seasons from Sonarr",
+        "shelves": "updating shelves",
+        "watch_history": "watch history"
+      }
     },
     "scanFreshness": {
       "degradedNotice": "The last scan came back incomplete, so Reaper won't act on it. <btn>Go to Settings → Jobs</btn> and rescan.",

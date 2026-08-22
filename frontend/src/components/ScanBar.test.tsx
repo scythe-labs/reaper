@@ -37,12 +37,12 @@ const IDLE = {
   done: 0,
   total: 0,
   percent: 0,
-  detail: "",
-  error: null,
+  detail_reason: null,
+  error_reason: null,
   snapshot_id: null,
   followup_queued: false,
 };
-const RUNNING = { ...IDLE, running: true, phase: "history", percent: 4, detail: "" };
+const RUNNING = { ...IDLE, running: true, phase: "history", percent: 4, detail_reason: null };
 
 const DEGRADED: Snapshot = {
   id: 7,
@@ -266,7 +266,14 @@ describe("starting a library scan", () => {
     renderRow(DEGRADED, client);
     await screen.findByRole("progressbar");
 
-    const failed = { ...IDLE, phase: "error", error: "Sonarr is unreachable" };
+    const failed = {
+      ...IDLE,
+      phase: "error",
+      error_reason: {
+        k: "error.scan.source_unreachable",
+        p: { error: "Sonarr is unreachable" },
+      },
+    };
     apiMock.scanStatus.mockResolvedValue(failed);
     await act(async () => {
       client.setQueryData(["scanStatus"], failed);

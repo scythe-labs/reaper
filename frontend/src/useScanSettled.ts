@@ -12,6 +12,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { announce } from "./announce";
+import type { ReasonKey } from "./api";
 import i18next from "./i18n";
 
 /** The caches a new snapshot actually changes, each with the surface it feeds.
@@ -72,13 +73,14 @@ export const SCAN_SETTLED_KEYS: string[][] = [
  *  invalidation triggers an async refetch and leaves the cached data in place meanwhile, so
  *  a synchronous `getQueryData` in the same tick still sees the old snapshot whichever
  *  effect ran first. */
-export function useScanSettled(scanning: boolean, error: string | null = null): void {
+export function useScanSettled(scanning: boolean, error: ReasonKey | null = null): void {
   const queryClient = useQueryClient();
   const wasScanning = useRef(false);
   // Read at the transition, never as a dependency: `error` arrives in the same poll that turns
-  // `running` off (api/scan.py sets both, the message before `running = False` in its `finally`),
-  // and a later change to it must not re-fire the effect. `useJobFlash` reads its result through
-  // a ref for the same reason.
+  // `running` off (api/scan.py sets both, the reason before `running = False` in its
+  // `finally`), and a later change to it must not re-fire the effect. `useJobFlash` reads its
+  // result through a ref for the same reason. Only its presence matters here, never its
+  // words: this hook picks between two sentences of its own, it never renders the reason.
   const latestError = useRef(error);
   latestError.current = error;
   useEffect(() => {
@@ -105,7 +107,8 @@ export function useScanSettled(scanning: boolean, error: string | null = null): 
       // `finally`, so a scan that CRASHED reaches this same edge, where the sentence above then
       // reported a finish and an update that never happened -- on every page except the one
       // mounting the scan bar, which is the only surface rendering the error. `ScanBar` already
-      // withholds its own "Finished" chip on `status.error`; this is that guard at its sibling
+      // withholds its own "Finished" chip on `status.error_reason`; this is that guard at its
+      // sibling
       // (rule 72). A crashed scan writes no snapshot, which is what lets the second sentence say
       // the numbers are unchanged rather than only declining to claim they moved.
       announce(
