@@ -38,7 +38,6 @@ from reaper.db.models import Candidate, Snapshot, WhitelistEntry
 from reaper.engine.reason import legacy, to_wire
 from reaper.main import create_app
 from reaper.services.condemned import reap_override_verdict
-from reaper.services.snapshot import HAND_SPARE_DETAIL
 from tests._reasons import text
 
 from ._auth import login
@@ -103,7 +102,7 @@ HEALTHY = json.dumps(
         "threshold": 70,
         "coverage": 1.0,
         "signals": [],
-        "protections_fired": [{"gate": "whitelisted", "detail": HAND_SPARE_DETAIL}],
+        "protections_fired": [{"gate": "whitelisted", "detail": "you spared this by hand"}],
         "protections_checked": [],
         "protections_unknown": [],
     }
@@ -233,7 +232,7 @@ class TestTheWhyPanelSurvivesABrokenRow:
         assert body["explanation_unreadable"] is False
         assert body["explanation"]["threshold"] == 70
         assert body["explanation"]["protections_fired"][0]["detail_key"] == to_wire(
-            legacy(HAND_SPARE_DETAIL)
+            legacy("you spared this by hand")
         )
 
 

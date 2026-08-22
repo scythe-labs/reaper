@@ -471,6 +471,7 @@ function showSeason(): Candidate {
     group_title: "Example Show",
     video_resolution: null,
     library: null,
+    dormant_days: null,
     override: null,
     override_own: null,
     show_override: null,

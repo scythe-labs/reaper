@@ -1083,11 +1083,9 @@ _CHIP_IDS: frozenset[str] = frozenset(
         "kept.popularity",
         "kept.popularity_plain",
         "kept.others_watching",
-        "kept.others_watching_unknown",
         "kept.curated_list",
         "kept.no_history",
         "kept.dormancy",
-        "kept.unmanaged",
         "kept.season.keep_last",
         "kept.season.rule",
         "kept.returned",
@@ -1154,10 +1152,6 @@ def _kept_reason(gate: str, reason: Reason | None) -> Reason:
                     "kept.popularity", {"count": int(count), "window_days": int(window_days)}
                 )
         return Reason("kept.popularity_plain")
-    if gate == "others_watching":
-        # Retired gate (``engine.gates``): no fact builder ever gathered the count, fresh
-        # or frozen, so no producer can carry it typed. Kept for stored explanations only.
-        return Reason("kept.others_watching_unknown")
     if gate == "curated_list":
         return Reason("kept.curated_list")
     if gate == "min_dormancy":
@@ -1171,11 +1165,6 @@ def _kept_reason(gate: str, reason: Reason | None) -> Reason:
         # "nobody watched it in the last year" three lines above. ``MinDormancyGate`` words
         # its own detail "untouched" for exactly this reason; the id beside it now does too.
         return Reason("kept.dormancy")
-    if gate == "unmanaged":
-        # Retired gate, kept for stored explanations only -- a snapshot taken before the
-        # retirement can still be read back, and this is what renders its chip. No new scan
-        # produces it (``engine.gates``, and the same reasoning as ``others_watching`` above).
-        return Reason("kept.unmanaged")
     if gate == "season_progression":
         return _kept_season_reason(reason) if reason is not None else Reason("kept.season.rule")
     if gate == "returned":
@@ -1275,11 +1264,7 @@ def _chip(
     unknown = _entries(exp, "protections_unknown")
     for entry in unknown:
         entry_reason = _detail_reason(entry)
-        deliberate = entry_reason is not None and (
-            entry_reason.id != "blocked"
-            if entry_reason.id != "legacy"
-            else not str(entry_reason.params.get("text") or "").startswith("could not check")
-        )
+        deliberate = entry_reason is not None and entry_reason.id not in ("blocked", "legacy")
         if deliberate:
             # A deliberate "decide this yourself" flag -- today, the season keep-rule
             # conflict -- not a plumbing failure. The one blocked case that wants eyes.

@@ -116,9 +116,8 @@ export interface Candidate {
    *  unknown (unmatched, or a row from before this shipped); the chip is then hidden. */
   library: string | null;
   /** The raw dormancy day count of a fresh row; the frontend composes the span. Null on a
-   *  legacy row, which shows no amber pill. Optional so a fixture built before the field
-   *  existed still typechecks (the server always sends it). */
-  dormant_days?: number | null;
+   *  legacy row, which shows no amber pill. */
+  dormant_days: number | null;
   /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
    *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis,
    *  composed via `why.ts`. A row frozen before typed reasons carries a `legacy` key that
@@ -463,10 +462,9 @@ export interface Explanation {
   /** Protections that could not be checked. "We could not look" is not "we looked and
    *  it was fine", and rendering them alike is the entire Deleterr failure class. */
   protections_unknown: GateOutcome[];
-  /** How it was tied to Plex. Optional so a candidate scored before this shipped still
-   *  parses (its explanation JSON has no match block), and nullable because a row that was
-   *  never matched arrives as an explicit `null`. Both consumers already guard it. */
-  match?: Match | null;
+  /** How it was tied to Plex. `null` when the row was never matched, or was scanned before
+   *  this field shipped -- both consumers already guard it, and mean nothing to show. */
+  match: Match | null;
   /** The Stage 2 rewatch-probability context (#554), movie lane only. `null` for a season
    *  row (the fit is movie-only) and for a row stored before this field existed -- both
    *  read as nothing to show. */
@@ -1438,13 +1436,6 @@ export interface FairnessReport {
   /** How far back the watch history reaches; older plays are invisible to this view. */
   horizon_at: string | null;
   rows: RequesterRow[];
-}
-
-export interface Progress {
-  phase: string;
-  done: number;
-  total: number;
-  detail: ReasonKey | null;
 }
 
 export interface ScanStatus {

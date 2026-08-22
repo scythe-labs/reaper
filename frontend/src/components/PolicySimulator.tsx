@@ -110,8 +110,8 @@ export function StaleNotice({
   onScan: () => void;
   percent: number;
   detail: string;
-  /** Which refusal this is, from the server. Null on a snapshot answered by an older build
-   *  that did not send one, which lands on the general heading. */
+  /** Which refusal this is, from the server. Null exactly when the counts are exact --
+   *  nothing is stale, so there is no refusal to name. */
   staleKind: SimStale | null;
   /** The server's typed reason for that refusal, composed here into the body paragraph. */
   staleReason: ReasonKey | null;

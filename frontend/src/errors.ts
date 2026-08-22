@@ -20,30 +20,27 @@
 
 import type { ApiErrorItem } from "./api";
 import { ApiError } from "./api";
-import i18next from "./i18n";
 import { composeError } from "./why";
 
-/** One code composed through the catalog, or `fallback` when this build's catalog has no
- *  entry for it -- an older server's code, or a build that predates a newly added one. */
-function composeCode(code: string, params: Record<string, unknown>, fallback: string): string {
-  const key = code.replace(/^error\./, "");
-  if (!i18next.exists(`error.${key}`)) return fallback;
+/** One code composed through the catalog. A code this build's catalog has no entry for
+ *  composes to its own bare code, the same fallback every other reason takes
+ *  (`why.ts`'s `composeIn`), never the server's English `message`. */
+function composeCode(code: string, params: Record<string, unknown>): string {
   return composeError({ k: code, p: params });
 }
 
 function composeItem(item: ApiErrorItem): string {
-  return item.code ? composeCode(item.code, item.params, item.msg) : item.msg;
+  return item.code ? composeCode(item.code, item.params) : item.msg;
 }
 
 /** The operator's sentence for a failed request, in the active locale: an `ApiError` with a
- *  code (or several, for a 422) composes through the catalog; anything else -- a coded
- *  refusal this catalog doesn't carry, a plain `Error`, a thrown non-error -- falls back to
- *  its own English `message`. Every render of a caught error's `.message` goes through this
- *  instead now (rule 147's gate holds that). */
+ *  code (or several, for a 422) composes through the catalog; anything else -- a plain
+ *  `Error`, a thrown non-error -- falls back to its own English `message`. Every render of a
+ *  caught error's `.message` goes through this instead now (rule 147's gate holds that). */
 export function describeError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.items && err.items.length > 0) return err.items.map(composeItem).join(" ");
-    if (err.code) return composeCode(err.code, err.params, err.message);
+    if (err.code) return composeCode(err.code, err.params);
     return err.message;
   }
   return err instanceof Error ? err.message : String(err);

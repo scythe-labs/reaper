@@ -1791,11 +1791,6 @@ _NO_DISPLAY = Display()
 #: producer and reader imports the constant; never re-type the literal.
 HAND_SPARE_REASON = Reason("hand_spare")
 
-#: The sentence the same row carried before reasons were typed (docs/history/I18N_PLAN.md §5).
-#: Nothing writes or reads it any more (#899); kept as the canonical example of a stored
-#: pre-conversion sentence for tests proving a legacy row still renders.
-HAND_SPARE_DETAIL = "you spared this by hand"
-
 
 @dataclass(frozen=True, slots=True)
 class PolicyJudgment:

@@ -132,6 +132,7 @@ function detail(
     group_title: null,
     video_resolution: null,
     library: null,
+    dormant_days: null,
     override: null,
     override_own: null,
     show_override: null,
@@ -168,6 +169,7 @@ function detail(
       protections_fired: [],
       protections_checked: [],
       protections_unknown: [],
+      match: null,
     },
     ...over,
   };
@@ -1818,6 +1820,7 @@ describe("a fresh explanation composes from the catalog", () => {
             },
           ],
           protections_unknown: [],
+          match: null,
         },
       }),
     );
@@ -1865,6 +1868,7 @@ describe("a fresh explanation composes from the catalog", () => {
               defers_to_owner: true,
             },
           ],
+          match: null,
         },
       }),
     );

@@ -73,6 +73,7 @@ function item(links: Links): CandidateDetail {
     group_title: null,
     video_resolution: null,
     library: null,
+    dormant_days: null,
     override: null,
     override_own: null,
     show_override: null,
@@ -98,6 +99,7 @@ function item(links: Links): CandidateDetail {
       protections_fired: [],
       protections_checked: [],
       protections_unknown: [],
+      match: null,
     },
   };
 }
