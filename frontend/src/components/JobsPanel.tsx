@@ -17,7 +17,7 @@ import { useBackCloseMirror, useBackGuard } from "../backnav";
 import { describeError } from "../errors";
 import { count, weekday } from "../format";
 import i18next from "../i18n";
-import { shelfSkipIsCurrent } from "../shelfStatus";
+import { shelfRenamePending, shelfSkipIsCurrent } from "../shelfStatus";
 import { useGeneralSettings } from "../useGeneralSettings";
 import { composeError } from "../why";
 import { JobStatus, jobResultText, useJobFlash } from "./JobStatus";
@@ -590,6 +590,14 @@ function LeavingSoonRow({
                 components={{ movieNum: <strong />, seasonNum: <strong /> }}
               />
             )}
+          </div>
+        )}
+        {/* A rename the operator saved that no pass has carried across yet. Here, beside the
+            button that would carry it, because this row is where they can do something about
+            it -- the Plex panel says the same thing where they typed it (rule 104). */}
+        {shelfRenamePending(ls.data) && (
+          <div className="jobrow-sched">
+            {t("jobs.leavingSoon.renaming", { was: ls.data.applied_name })}
           </div>
         )}
         <div className="jobrow-sched">{t("jobs.leavingSoon.runsAfterScan")}</div>

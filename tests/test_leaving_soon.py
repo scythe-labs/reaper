@@ -12,13 +12,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from reaper.clients.plex import normalize_label
 from reaper.clock import utcnow
 from reaper.engine.reason import Reason
+from reaper.services.app_settings import DEFAULT_LEAVING_SOON_NAME
 from reaper.services.grace import GraceItem, GraceReport
 from reaper.services.leaving_soon import (
-    LEAVING_SOON_COLLECTION,
-    LEAVING_SOON_LABEL,
     LeavingSoonResult,
+    ShelfName,
     ShelfOutcome,
     announce_new,
     reconcile,
@@ -27,6 +28,8 @@ from reaper.services.leaving_soon import (
 )
 
 NOW = utcnow()
+#: What every test that is not about renaming holds: the shipped name, already on the server.
+SHELF = ShelfName(DEFAULT_LEAVING_SOON_NAME, DEFAULT_LEAVING_SOON_NAME)
 
 
 def _item(rating_key: int | None, *, title: str = "Film", media_type: str = "movie") -> GraceItem:
@@ -68,29 +71,45 @@ class _FakePlex:
         section_items: dict[int, set[int]],
         collections: dict[int, set[int]] | None = None,
         labeled: dict[int, set[int]] | None = None,
+        name: str = DEFAULT_LEAVING_SOON_NAME,
+        other: dict[int, tuple[str, set[int]]] | None = None,
     ) -> None:
         self._section_items = section_items
+        #: What the collection and the labels on this server are CALLED. One name for the
+        #: whole server, as in the real thing. A reconcile looking under any other name finds
+        #: nothing, which is what makes a rename test mean something.
+        self.name = name
         # collection state per section key; a section absent has no collection yet.
         self.collections = dict(collections or {})
         self.labeled = {k: set(v) for k, v in (labeled or {}).items()}
         self.calls: list[tuple[str, object]] = []
+        #: A collection in the section that is NOT Reaper's shelf: the operator's own, under
+        #: a name of its own. Only a rename onto that name can see it.
+        self.other = {k: (n, set(v)) for k, (n, v) in (other or {}).items()}
         # collection rating keys are distinct from section keys to catch conflation:
-        # collection key = section key + 9000.
+        # collection key = section key + 9000, and a non-shelf collection + 8000.
         self._ckey = {k: k + 9000 for k in section_items}
 
     async def section_rating_keys(self, section_key: int, *, kind: str) -> set[int]:
         return set(self._section_items[section_key])
 
     async def find_collection(self, section_key: int, name: str) -> int | None:
-        assert name == LEAVING_SOON_COLLECTION
+        found = self.other.get(section_key)
+        if found is not None and normalize_label(name) == normalize_label(found[0]):
+            return section_key + 8000
+        if normalize_label(name) != normalize_label(self.name):
+            return None
         return self._ckey[section_key] if section_key in self.collections else None
 
     async def collection_children(self, collection_key: int) -> set[int]:
+        if collection_key < 9000:
+            return set(self.other[collection_key - 8000][1])
         section_key = collection_key - 9000
         return set(self.collections[section_key])
 
     async def labeled_in_section(self, section_key: int, *, kind: str, label: str) -> set[int]:
-        assert label == LEAVING_SOON_LABEL
+        if normalize_label(label) != normalize_label(self.name):
+            return set()
         return set(self.labeled.get(section_key, set()))
 
     async def create_collection(
@@ -102,28 +121,41 @@ class _FakePlex:
 
     async def add_to_collection(self, collection_key: int, rating_keys: list[int]) -> None:
         self.calls.append(("collection_add", tuple(rating_keys)))
+        if collection_key < 9000:
+            self.other[collection_key - 8000][1].update(rating_keys)
+            return
         self.collections[collection_key - 9000].update(rating_keys)
 
     async def remove_collection_members(
         self, section_key: int, *, name: str, rating_keys: list[int]
     ) -> None:
-        assert name == LEAVING_SOON_COLLECTION
+        assert normalize_label(name) == normalize_label(self.name)
         self.calls.append(("collection_remove", tuple(rating_keys)))
         # The real client resolves the section by key; here we detach the keys from whichever
         # section's collection holds them.
         for members in self.collections.values():
             members -= set(rating_keys)
 
+    async def rename_collection(self, collection_key: int, name: str) -> None:
+        self.calls.append(("collection_rename", (collection_key, name)))
+        # In place, so the members ride along untouched -- the property the real client's
+        # editTitle buys and the reason the shelf is not dropped and rebuilt.
+        self.name = name
+
     async def delete_collection(self, collection_key: int) -> None:
         self.calls.append(("collection_delete", collection_key))
+        if collection_key < 9000:
+            self.other.pop(collection_key - 8000, None)
+            return
         self.collections.pop(collection_key - 9000, None)
 
     async def add_label(self, section_key: int, rating_keys: list[int], label: str) -> None:
-        self.calls.append(("label_add", tuple(rating_keys)))
+        self.calls.append(("label_add", (tuple(rating_keys), label)))
         self.labeled.setdefault(section_key, set()).update(rating_keys)
 
     async def remove_label(self, section_key: int, rating_keys: list[int], label: str) -> None:
-        self.calls.append(("label_remove", tuple(rating_keys)))
+        self.calls.append(("label_remove", (tuple(rating_keys), label)))
+        self.labeled.get(section_key, set()).difference_update(rating_keys)
 
 
 class _FakeNotifier:
@@ -263,6 +295,7 @@ class TestSyncSection:
             kind="movie",
             in_grace={1, 2, 700},  # 700 lives elsewhere
             apply=True,
+            shelf=SHELF,
         )
         assert outcome.on_shelf == 2
         assert plex.collections[10] == {1, 2}
@@ -276,6 +309,7 @@ class TestSyncSection:
             kind="movie",
             in_grace={1},
             apply=False,
+            shelf=SHELF,
         )
         assert outcome.added == 1
         assert outcome.applied is False
@@ -297,6 +331,7 @@ class TestSyncSection:
             kind="movie",
             in_grace={1, 8},
             apply=True,
+            shelf=SHELF,
         )
         kinds = [name for name, _ in plex.calls]
         assert kinds.index("collection_remove") < kinds.index("collection_add")
@@ -318,6 +353,7 @@ class TestSyncSection:
             kind="movie",
             in_grace=set(),
             apply=True,
+            shelf=SHELF,
         )
         kinds = [name for name, _ in plex.calls]
         assert "collection_delete" in kinds
@@ -340,6 +376,7 @@ class TestSyncSection:
             kind="movie",
             in_grace={1, 2},  # the real grace set, disjoint from what was on the shelf
             apply=True,
+            shelf=SHELF,
         )
         kinds = [name for name, _ in plex.calls]
         assert kinds.index("collection_delete") < kinds.index("create")
@@ -357,6 +394,7 @@ class TestSyncSection:
             kind="movie",
             in_grace={1, 2},
             apply=True,
+            shelf=SHELF,
         )
         assert ("create", (10, (1, 2))) in plex.calls
 
@@ -376,6 +414,7 @@ class TestSyncSection:
             kind="movie",
             in_grace={1},
             apply=True,
+            shelf=SHELF,
         )
         assert plex.calls == []
         assert outcome.added == 0 and outcome.removed == 0
@@ -395,8 +434,166 @@ class TestSyncSection:
             movie_keys={1},
             season_keys=set(),
             apply=True,
+            shelf=SHELF,
         )
         assert all(o.applied for o in outcomes)
+
+
+class TestRenamingTheShelf:
+    """The operator names the shelf, so a rename has to move what is already in the library.
+
+    Plex still holds the shelf under the old name until a pass carries it across, which is
+    what ``ShelfName.previous`` is. Getting this wrong strands a collection and a label in
+    somebody's library under a name nothing will ever look for again.
+    """
+
+    async def test_the_collection_is_retitled_and_keeps_its_members(self) -> None:
+        """Re-titled, never dropped and rebuilt: the rating key survives, so a poster or a
+        pin on the Plex Home screen survives with it. Nothing is added or detached here --
+        the same three titles are on the shelf before and after."""
+        plex = _FakePlex(
+            section_items={10: {1, 2, 3}},
+            collections={10: {1, 2, 3}},
+            labeled={10: {1, 2, 3}},
+        )
+        await sync_section(
+            plex,  # type: ignore[arg-type]
+            section_key=10,
+            section_title="Movies",
+            kind="movie",
+            in_grace={1, 2, 3},
+            apply=True,
+            shelf=ShelfName(current="Last chance", previous=DEFAULT_LEAVING_SOON_NAME),
+        )
+        assert ("collection_rename", (9010, "Last chance")) in plex.calls
+        assert ("collection_delete", 9010) not in plex.calls
+        assert plex.collections[10] == {1, 2, 3}
+        assert plex.name == "Last chance"
+
+    async def test_the_old_label_comes_off_and_the_new_one_goes_on(self) -> None:
+        """A label is a tag on each item and Plex offers no rename for one, so carrying it
+        across is a removal under the old name plus an add under the new. Leaving the old
+        one behind would keep every Plex user's smart collections and overlays marking
+        titles Reaper no longer tracks."""
+        plex = _FakePlex(
+            section_items={10: {1, 2}},
+            collections={10: {1, 2}},
+            labeled={10: {1, 2}},
+        )
+        await sync_section(
+            plex,  # type: ignore[arg-type]
+            section_key=10,
+            section_title="Movies",
+            kind="movie",
+            in_grace={1, 2},
+            apply=True,
+            shelf=ShelfName(current="Last chance", previous=DEFAULT_LEAVING_SOON_NAME),
+        )
+        assert ("label_remove", ((1, 2), DEFAULT_LEAVING_SOON_NAME)) in plex.calls
+        assert ("label_add", ((1, 2), "Last chance")) in plex.calls
+
+    async def test_an_empty_shelf_still_loses_the_old_label(self) -> None:
+        """Nothing is in grace, so every plan is a no-op under the new name and the write
+        block used to be skipped outright. The old label is still on two titles, and only a
+        pass that reads the OLD name can see them."""
+        plex = _FakePlex(section_items={10: {1, 2}}, labeled={10: {1, 2}})
+        await sync_section(
+            plex,  # type: ignore[arg-type]
+            section_key=10,
+            section_title="Movies",
+            kind="movie",
+            in_grace=set(),
+            apply=True,
+            shelf=ShelfName(current="Last chance", previous=DEFAULT_LEAVING_SOON_NAME),
+        )
+        assert ("label_remove", ((1, 2), DEFAULT_LEAVING_SOON_NAME)) in plex.calls
+        assert plex.labeled[10] == set()
+
+    async def test_renaming_onto_a_name_the_library_already_uses_merges_rather_than_splits(
+        self,
+    ) -> None:
+        """The operator renames the shelf to a title their library already has. Re-titling
+        would leave two collections under one name, and Plex hands a lookup only one of
+        them, so half the shelf would sit somewhere nothing ever takes titles back off.
+        Reaper's old shelf is dropped and the collection that already carries the name takes
+        the whole set."""
+        plex = _FakePlex(
+            section_items={10: {1, 2}},
+            collections={10: {2}},
+            labeled={10: {2}},
+            other={10: ("Last chance", {1})},
+        )
+        await sync_section(
+            plex,  # type: ignore[arg-type]
+            section_key=10,
+            section_title="Movies",
+            kind="movie",
+            in_grace={1, 2},
+            apply=True,
+            shelf=ShelfName(current="Last chance", previous=DEFAULT_LEAVING_SOON_NAME),
+        )
+        assert ("collection_rename", (9010, "Last chance")) not in plex.calls
+        assert ("collection_delete", 9010) in plex.calls
+        # The collection that already carried the name survives, and the shelf lands in it.
+        assert plex.other[10][1] == {1, 2}
+        assert ("label_remove", ((2,), DEFAULT_LEAVING_SOON_NAME)) in plex.calls
+        assert ("label_add", ((1, 2), "Last chance")) in plex.calls
+
+    async def test_a_capitalization_change_is_not_a_rename(self) -> None:
+        """Plex title-cases what it is given, so "leaving soon" and "Leaving Soon" name one
+        shelf. Treating them as different would re-title a collection to a name it already
+        answers to, and strip every label to add the same label back."""
+        shelf = ShelfName(current="leaving soon", previous="Leaving Soon")
+        assert shelf.renaming is False
+
+        plex = _FakePlex(section_items={10: {1}}, collections={10: {1}}, labeled={10: {1}})
+        await sync_section(
+            plex,  # type: ignore[arg-type]
+            section_key=10,
+            section_title="Movies",
+            kind="movie",
+            in_grace={1},
+            apply=True,
+            shelf=shelf,
+        )
+        assert plex.calls == []
+
+    async def test_a_preview_moves_nothing(self) -> None:
+        """Read-only, so the rename waits with everything else. The old shelf stays exactly
+        as it is until Reaper is allowed to write."""
+        plex = _FakePlex(section_items={10: {1}}, collections={10: {1}}, labeled={10: {1}})
+        await sync_section(
+            plex,  # type: ignore[arg-type]
+            section_key=10,
+            section_title="Movies",
+            kind="movie",
+            in_grace={1},
+            apply=False,
+            shelf=ShelfName(current="Last chance", previous=DEFAULT_LEAVING_SOON_NAME),
+        )
+        assert plex.calls == []
+        assert plex.name == DEFAULT_LEAVING_SOON_NAME
+
+    async def test_clearing_the_shelf_drops_it_instead_of_renaming_it(self) -> None:
+        """Turning the shelf off during an outstanding rename. Every member is leaving, so
+        the collection goes in one request. Re-titling something this pass is about to
+        delete is a wasted round trip, and the label still has to come off under the OLD
+        name or it stays on every title forever."""
+        plex = _FakePlex(section_items={10: {1, 2}}, collections={10: {1, 2}}, labeled={10: {1, 2}})
+        await sync_section(
+            plex,  # type: ignore[arg-type]
+            section_key=10,
+            section_title="Movies",
+            kind="movie",
+            in_grace=set(),
+            apply=True,
+            shelf=ShelfName(current="Last chance", previous=DEFAULT_LEAVING_SOON_NAME),
+        )
+        kinds = [name for name, _ in plex.calls]
+        assert "collection_rename" not in kinds
+        assert ("collection_delete", 9010) in plex.calls
+        assert ("label_remove", ((1, 2), DEFAULT_LEAVING_SOON_NAME)) in plex.calls
+        assert plex.labeled[10] == set()
 
 
 class TestSyncShelves:
@@ -413,6 +610,7 @@ class TestSyncShelves:
             movie_keys={1},
             season_keys={700},
             apply=True,
+            shelf=SHELF,
         )
         assert plex.collections[10] == {1}
         assert plex.collections[20] == {700}
@@ -438,6 +636,7 @@ class TestSyncShelves:
             movie_keys={1},
             season_keys={700},
             apply=True,
+            shelf=SHELF,
         )
         assert outcomes[0].error is not None
         assert outcomes[1].error is None

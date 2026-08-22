@@ -270,6 +270,13 @@ class LeavingSoonLastSkipOut(BaseModel):
 class LeavingSoonSettingsOut(BaseModel):
     enabled: bool
     allow_unarmed: bool
+    #: What the operator calls the shelf: one name for the Plex collection and the label.
+    name: str
+    #: What Plex still shows. Equal to ``name`` except between saving a rename and the pass
+    #: that carries it across, which is the window the panel and the Jobs row report. Sent
+    #: as the name rather than a "pending" flag so both surfaces can say WHICH name is still
+    #: standing without a second round trip.
+    applied_name: str
     last: LeavingSoonLastOut | None = None
     #: Present whenever a skip has ever been recorded. It is the READER that decides
     #: whether it still governs, by preferring it only while it is newer than ``last`` --
@@ -283,6 +290,9 @@ class LeavingSoonSettingsOut(BaseModel):
 class LeavingSoonSettingsIn(BaseModel):
     enabled: bool | None = None
     allow_unarmed: bool | None = None
+    #: A new shelf name, or an empty string to go back to the default. Bounded by the same
+    #: constant the service trims to, so the two cannot drift (rule 131).
+    name: str | None = Field(default=None, max_length=app_settings.LEAVING_SOON_NAME_MAX)
 
 
 class ScheduledJobOut(BaseModel):
@@ -683,6 +693,8 @@ async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> Leavin
     return LeavingSoonSettingsOut(
         enabled=await app_settings.leaving_soon_enabled(session),
         allow_unarmed=await app_settings.leaving_soon_unarmed(session, settings),
+        name=await app_settings.get_leaving_soon_name(session),
+        applied_name=await app_settings.get_leaving_soon_applied_name(session),
         last_skip=LeavingSoonLastSkipOut(
             at=skip[0],
             result_reason=ReasonKey.model_validate(to_wire(skip[1])),
@@ -712,11 +724,16 @@ async def get_leaving_soon_settings(request: Request) -> LeavingSoonSettingsOut:
 async def set_leaving_soon_settings(
     request: Request, payload: LeavingSoonSettingsIn
 ) -> LeavingSoonSettingsOut:
-    """Flip the Leaving Soon switches. No password: these can only touch the shelf --
-    a collection and a label -- never a file.
+    """Flip the Leaving Soon switches, or rename the shelf. No password: these can only
+    touch the shelf -- a collection and a label -- never a file.
 
     Turning the shelf OFF runs one last pass that takes everything off it (when Reaper
     is allowed to write), so nothing stale lingers in the library.
+
+    A rename is stored and nothing else. Moving the shelf means a whole-library reconcile
+    per library, minutes of Plex I/O, and this route answers a text box: the next pass
+    carries it across, and until then the response says which name Plex still shows so the
+    panel can too.
     """
     async with session_factory(request)() as session:
         was_enabled = await app_settings.leaving_soon_enabled(session)
@@ -724,6 +741,8 @@ async def set_leaving_soon_settings(
             await app_settings.set_leaving_soon_enabled(session, enabled=payload.enabled)
         if payload.allow_unarmed is not None:
             await app_settings.set_leaving_soon_unarmed(session, allowed=payload.allow_unarmed)
+        if payload.name is not None:
+            await app_settings.set_leaving_soon_name(session, payload.name)
         await session.commit()
 
     if was_enabled and payload.enabled is False:
@@ -739,6 +758,7 @@ async def set_leaving_soon_settings(
         "leaving_soon.settings_saved",
         enabled=payload.enabled,
         allow_unarmed=payload.allow_unarmed,
+        renamed=payload.name is not None,
     )
     return result
 

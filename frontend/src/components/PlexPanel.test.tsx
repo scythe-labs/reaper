@@ -124,6 +124,8 @@ beforeEach(() => {
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
     allow_unarmed: false,
+    name: "Leaving Soon",
+    applied_name: "Leaving Soon",
     last: null,
   });
   apiMock.setPlexSettings.mockResolvedValue(status());
@@ -210,6 +212,7 @@ describe("every control on this panel", () => {
       ["Check the server's certificate", "input"],
       ["Plex web address", "input"],
       ["Let Reaper touch Movies", "input"],
+      ["Shelf name", "input"],
       ['Show "Leaving Soon" in Plex', "input"],
       ["Update while read-only", "input"],
     ];
@@ -1212,6 +1215,79 @@ describe("saving the Plex web address", () => {
   });
 });
 
+describe("naming the shelf", () => {
+  /** The saved answer, so the row re-seeds from the response rather than the effect (rule 39). */
+  function savesAs(name: string) {
+    apiMock.setLeavingSoonSettings.mockResolvedValue({
+      enabled: false,
+      allow_unarmed: false,
+      name,
+      applied_name: "Leaving Soon",
+      last: null,
+      last_skip: null,
+    });
+  }
+
+  it("sends the typed name, and reports it as a draft until it is saved", async () => {
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    savesAs("Last chance");
+    renderPanel([discovered(LOCAL)], dirty);
+
+    const box = await screen.findByLabelText("Shelf name");
+    expect(box).toHaveValue("Leaving Soon");
+    // No Save at rest: the button exists only while the row holds something to save.
+    expect(within(box.parentElement as HTMLElement).queryByRole("button")).toBeNull();
+
+    await fill(user, box, "Last chance");
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+
+    await user.click(
+      within(box.parentElement as HTMLElement).getByRole("button", { name: "Save" }),
+    );
+    expect(apiMock.setLeavingSoonSettings.mock.calls[0]?.[0]).toEqual({ name: "Last chance" });
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+  });
+
+  it("stops reporting a draft once an emptied box is saved back to the default", async () => {
+    // Clearing the box is how the help says to go back to the default, and it saves the empty
+    // string. The route stores that as unset and answers with the SAME default name it was
+    // already returning, so `savedShelfName` never changes identity and the re-seed effect
+    // never fires: the box would sit empty against a name it now matches, with a Save that
+    // never goes away and a section-switch confirm nothing on this panel can satisfy. The web
+    // address row above had exactly this (rule 39, rule 72).
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    savesAs("Leaving Soon");
+    renderPanel([discovered(LOCAL)], dirty);
+
+    const box = await screen.findByLabelText("Shelf name");
+    await user.clear(box);
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+
+    await user.click(
+      within(box.parentElement as HTMLElement).getByRole("button", { name: "Save" }),
+    );
+    expect(apiMock.setLeavingSoonSettings.mock.calls[0]?.[0]).toEqual({ name: "" });
+    await waitFor(() => expect(box).toHaveValue("Leaving Soon"));
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+    expect(within(box.parentElement as HTMLElement).queryByRole("button")).toBeNull();
+  });
+
+  it("names the shelf in the switch beside it, from the STORED name", async () => {
+    // The switch says what it does to a shelf that exists. Until Save lands, the name in the
+    // box is not what the switch would do anything to.
+    const user = userEvent.setup();
+    savesAs("Last chance");
+    renderPanel();
+
+    const box = await screen.findByLabelText("Shelf name");
+    await fill(user, box, "Last chance");
+
+    expect(screen.getByRole("switch", { name: 'Show "Leaving Soon" in Plex' })).toBeInTheDocument();
+  });
+});
+
 describe("the shelf status line", () => {
   // The one sentence on this screen that says how the Leaving Soon shelf is doing, and until
   // now the only one of the four copies of that answer with no test on it -- which is how it
@@ -1240,6 +1316,8 @@ describe("the shelf status line", () => {
     apiMock.leavingSoonSettings.mockResolvedValue({
       enabled: true,
       allow_unarmed: false,
+      name: "Leaving Soon",
+      applied_name: "Leaving Soon",
       last: PASS,
       last_skip: null,
       ...over,
@@ -1275,6 +1353,8 @@ describe("the shelf status line", () => {
     apiMock.leavingSoonSettings.mockResolvedValue({
       enabled: false,
       allow_unarmed: false,
+      name: "Leaving Soon",
+      applied_name: "Leaving Soon",
       last: PASS,
       last_skip: null,
     });
@@ -1312,6 +1392,23 @@ describe("the shelf status line", () => {
 
     expect(line).toContain("4 added, 1 cleared.");
     expect(line).not.toContain("didn't update the shelves");
+  });
+
+  it("opens with the shelf Plex still shows, when a rename has not been carried across", async () => {
+    // The one fact on this screen that contradicts what the operator is looking at: the box
+    // two rows up says one name and their library still shows another, and the counts after
+    // it are about the shelf under the OLD name. So it leads.
+    const line = await statusLine({ name: "Last chance", applied_name: "Leaving Soon" });
+
+    expect(line).toMatch(
+      /^Plex still shows "Leaving Soon"\. The next update renames it\. 4 added, 1 cleared\./,
+    );
+  });
+
+  it("stops saying it once a pass has carried the rename across", async () => {
+    const line = await statusLine({ name: "Last chance", applied_name: "Last chance" });
+
+    expect(line).not.toContain("Plex still shows");
   });
 
   it("opens with the date, not a stray period, for a row stored before summaries existed", async () => {

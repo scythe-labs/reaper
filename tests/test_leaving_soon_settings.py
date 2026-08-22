@@ -114,6 +114,8 @@ class TestTheSettingsRoutes:
         assert body == {
             "enabled": False,
             "allow_unarmed": False,
+            "name": "Leaving Soon",
+            "applied_name": "Leaving Soon",
             "last": None,
             "last_skip": None,
         }
@@ -223,6 +225,52 @@ class TestTheSettingsRoutes:
         body = client.put("/api/settings/leaving-soon", json={"enabled": False}).json()
         assert body["enabled"] is False
         assert body["allow_unarmed"] is True
+
+    def test_the_name_saves_and_says_which_one_plex_still_shows(self, client: TestClient) -> None:
+        """Saving a name stores it and nothing else. Moving the shelf is a whole-library
+        reconcile per library, so the next pass does it, and until then `applied_name` is
+        what an operator will actually find in their library."""
+        body = client.put("/api/settings/leaving-soon", json={"name": "Last chance"}).json()
+        assert body["name"] == "Last chance"
+        assert body["applied_name"] == "Leaving Soon"
+
+        # It sticks, and the switches beside it are untouched by a name-only save.
+        body = client.get("/api/settings/leaving-soon").json()
+        assert body["name"] == "Last chance"
+        assert body["enabled"] is False
+
+    def test_an_empty_name_goes_back_to_the_default(self, client: TestClient) -> None:
+        """Clearing the box is how the help says to reset it, so the empty string has to
+        mean the default rather than an unnamed shelf. Whitespace is the same answer: Plex
+        would take " " as a title and nobody could find it again."""
+        client.put("/api/settings/leaving-soon", json={"name": "Last chance"})
+        assert client.put("/api/settings/leaving-soon", json={"name": ""}).json()["name"] == (
+            "Leaving Soon"
+        )
+        client.put("/api/settings/leaving-soon", json={"name": "Last chance"})
+        assert client.put("/api/settings/leaving-soon", json={"name": "   "}).json()["name"] == (
+            "Leaving Soon"
+        )
+
+    def test_a_name_past_the_bound_is_refused_rather_than_quietly_cut(
+        self, client: TestClient
+    ) -> None:
+        """A truncated name is a shelf the operator did not ask for, and they would only
+        find out by looking in Plex."""
+        over = "x" * (app_settings.LEAVING_SOON_NAME_MAX + 1)
+        assert client.put("/api/settings/leaving-soon", json={"name": over}).status_code == 422
+
+    async def test_a_clean_pass_records_the_name_it_wrote(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """What Plex shows is only true once every library has actually been written. Until
+        then the old name is still the one the next pass has to look under."""
+        async with factory() as session:
+            assert await app_settings.get_leaving_soon_applied_name(session) == "Leaving Soon"
+            await app_settings.set_leaving_soon_applied_name(session, "Last chance")
+            await session.commit()
+        async with factory() as session:
+            assert await app_settings.get_leaving_soon_applied_name(session) == "Last chance"
 
     async def test_library_choices_apply_to_the_stored_list(
         self, client: TestClient, tmp_path: Path
