@@ -4215,6 +4215,15 @@ _RELOAD_ADVICE = {
     # about is already stale; nothing else on that page is a draft, a staged file, a secret or
     # a selection.
     "frontend/src/locales/en/ui.json": 13,
+    # Not advice: `setLanguage`'s own `location.reload()`. Picking a display language reloads,
+    # because eleven module-scope tables across the tree read their labels from the catalog when
+    # their chunk is first imported, and switching in place would freeze each in whatever
+    # language its chunk loaded in (the reasoning is written out over that function). The draft
+    # this walk exists to protect is the only one that can be on screen when it fires -- the
+    # General panel's own save bar, since Settings shows one panel at a time -- and the select
+    # is `disabled` while that bar holds anything, so there is nothing to lose by the time the
+    # reload can happen.
+    "frontend/src/i18n.ts": 1,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -4692,7 +4701,7 @@ def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -
 # a rule that matches on the name, so it is a picker rather than a box (rule 108's separator half).
 # +1 for `NotificationsPanel`'s language picker (phase 10b): which BCP 47 tag the Discord
 # Leaving Soon embed is written in, offered from `reaper.i18n.shipped_tags()`.
-_EXPECTED_SELECTS = 24
+_EXPECTED_SELECTS = 25
 
 
 #: A ``//`` that starts a comment, which is any ``//`` not preceded by a colon. Splitting on the

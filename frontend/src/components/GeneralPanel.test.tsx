@@ -25,6 +25,15 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
+// `setLanguage` reloads the page, which jsdom cannot do and which would take the test's own
+// tree with it. Everything else in the module stays real: the option list and the names on it
+// come from `LANGUAGES` and `languageName`, which is what the first test below is about.
+const setLanguageMock = vi.hoisted(() => vi.fn());
+vi.mock("../i18n", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../i18n")>()),
+  setLanguage: setLanguageMock,
+}));
+
 const STORED: GeneralSettings = {
   application_name: "Reaper",
   application_url: null,
@@ -618,6 +627,46 @@ describe("what the panel reports to the section rail", () => {
 // The button proves the absence now instead of assuming it, so all three answers to "is there a
 // key" are pinned here. Only the first one generates on one press: the other two are the states
 // where the page cannot show that nothing is about to be destroyed.
+describe("the display language picker", () => {
+  it("names each shipped language in that language, and hands the pick to i18n", async () => {
+    const person = renderPanel();
+    const select = await screen.findByLabelText<HTMLSelectElement>("Language");
+
+    // "Espanol", not "Spanish": an operator scanning for their language looks for the name they
+    // call it (rule 21). The tag comes from the same glob the loader reads, so a translation
+    // that ships is choosable with no edit here (rule 66) -- which is also why this asserts on
+    // the two that ship rather than on the whole list.
+    expect(select.textContent).toContain("Match my browser");
+    expect(select.textContent).toContain("English");
+    expect(select.textContent).toContain("Espa\u00f1ol");
+    expect(select.textContent).not.toContain("Spanish");
+
+    await person.selectOptions(select, "es");
+    expect(setLanguageMock).toHaveBeenCalledWith("es");
+
+    // Back to no choice at all, which is a different answer from picking English: it is what
+    // lets the browser decide again.
+    await person.selectOptions(select, "");
+    expect(setLanguageMock).toHaveBeenCalledWith(undefined);
+  });
+
+  it("cannot be reached while the save bar is holding a draft", async () => {
+    const person = renderPanel();
+    const name = await screen.findByLabelText("Application name");
+    await waitFor(() => expect(name).toHaveValue(STORED.application_name));
+    const select = screen.getByLabelText("Language");
+    expect(select).toBeEnabled();
+
+    await fill(person, name, "Second install");
+
+    // Picking a language reloads the page (`setLanguage`), and this panel's bar is the one draft
+    // that can be on screen when it fires, since Settings shows one panel at a time. The gate in
+    // `test_repo_hygiene.py` that pins every reload in the tree rests on exactly this.
+    await waitFor(() => expect(bar()).not.toBeNull());
+    expect(select).toBeDisabled();
+  });
+});
+
 describe("the Generate API key button", () => {
   const generate = () => screen.findByRole("button", { name: "Generate API key" });
 

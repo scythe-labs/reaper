@@ -7,9 +7,10 @@
 //
 //   * Init pins `en-US`, for the app and for every test, so dates and numbers in a test stay
 //     US-formatted instead of following the machine they run on. The app then moves to the
-//     browser's language in `applyBrowserLanguage`, before its first paint, and only to a
-//     language whose catalog shipped: `format.ts` formats through whatever tag i18next serves,
-//     so a German browser with no German catalog keeps English numbers under English strings.
+//     operator's chosen language, or the browser's when they have not chosen one, in
+//     `applyStoredLanguage`, before its first paint, and only to a language whose catalog
+//     shipped: `format.ts` formats through whatever tag i18next serves, so a German browser
+//     with no German catalog keeps English numbers under English strings.
 //   * Messages are ICU MessageFormat (i18next-icu), not i18next's own format, so the
 //     catalog stays portable to any translation platform and any future library.
 //   * An empty message serves the English one. A translator can leave a string blank, and a
@@ -77,19 +78,88 @@ export function shippedTag(
   return undefined;
 }
 
-/** Move the app onto the browser's language once its catalog has loaded, or stay English.
- *  Run before the first render, so no screen paints in one language and repaints in another.
- *  A catalog that fails to load serves English, the same answer a missing one gives. */
-export async function applyBrowserLanguage(): Promise<void> {
-  const tag = shippedTag(navigator.languages);
-  if (tag === undefined) return;
+/** Where Settings -> General keeps the operator's own choice of language. localStorage, beside
+ *  the theme and for the same reason: it is a preference for the screen in front of them, not a
+ *  server setting every other browser signed into Reaper would inherit. Absent means no choice
+ *  has been made and the browser decides. */
+const LANGUAGE_KEY = "reaper-language";
+
+/** This browser's stored choice, or `undefined` when none was made. */
+export function storedLanguage(): string | undefined {
   try {
-    const { default: catalog } = await (LOCALE_MODULES[modulePath(tag)] as Loader)();
-    i18next.addResourceBundle(tag, "ui", catalog);
-    await i18next.changeLanguage(tag);
+    return localStorage.getItem(LANGUAGE_KEY) ?? undefined;
+  } catch {
+    // Storage can be unavailable (private windows); the browser's own language decides.
+    return undefined;
+  }
+}
+
+/** Every language Reaper can be served in, for the Settings picker: English, then each shipped
+ *  catalog's tag. Read from the same glob the loader uses, so a translation becomes choosable
+ *  the moment its catalog ships and stops being offered if one is ever dropped (rule 66). */
+export const LANGUAGES: readonly string[] = ["en", ...[...SHIPPED_TAGS].sort()];
+
+/** A BCP 47 tag's name in its own language ("de" -> "Deutsch"), which is what an operator
+ *  scanning a language list looks for. `inLanguage` writes the name in that language instead.
+ *  From the browser's own list rather than a hand-kept map that would need an entry added every
+ *  time a translation ships (rule 66). */
+export function languageName(tag: string, inLanguage: string = tag): string {
+  try {
+    const name = new Intl.DisplayNames([inLanguage], { type: "language" }).of(tag) ?? tag;
+    // Spanish writes "espanol" lowercase in running text; as a menu entry beside "English" it
+    // reads as a stray. Raising the first letter is a no-op in a script that has no case.
+    return name.charAt(0).toLocaleUpperCase(inLanguage) + name.slice(1);
+  } catch {
+    return tag;
+  }
+}
+
+/** Serve `tag`, loading its catalog first. A tag with no shipped catalog is English, which the
+ *  init above already holds, so every "en" variant lands here too. */
+async function serve(tag: string): Promise<void> {
+  if (!SHIPPED_TAGS.has(tag)) {
+    await i18next.changeLanguage("en-US");
+    return;
+  }
+  const { default: catalog } = await (LOCALE_MODULES[modulePath(tag)] as Loader)();
+  i18next.addResourceBundle(tag, "ui", catalog);
+  await i18next.changeLanguage(tag);
+}
+
+/** Move the app onto the operator's chosen language, the browser's when they have not chosen,
+ *  or English when neither ships a catalog. Run before the first render, so no screen paints in
+ *  one language and repaints in another. A catalog that fails to load serves English, the same
+ *  answer a missing one gives. */
+export async function applyStoredLanguage(): Promise<void> {
+  const tag = storedLanguage() ?? shippedTag(navigator.languages) ?? "en-US";
+  try {
+    await serve(tag);
   } catch {
     // The init's English is still in place.
   }
+}
+
+/** Remember `tag` for this browser and reload onto it. `undefined` forgets the choice, so the
+ *  browser's language decides again.
+ *
+ *  It reloads rather than switching in place because eleven module-scope tables across the tree
+ *  read their labels from the catalog when their chunk is first imported (`Settings.tsx`'s
+ *  `PANELS`, `policyMeta.ts`'s `GATE_META`, `ReviewQueue.tsx`'s `TABS`, and so on). Those are
+ *  correct today only because `applyStoredLanguage` resolves before the first paint and before
+ *  any lazy chunk loads. Switching in place would leave each of them frozen in whatever language
+ *  its chunk happened to load in, so the settings rail and the queue tabs would keep the old
+ *  language while everything around them changed. A reload re-evaluates all of them. */
+export async function setLanguage(tag: string | undefined): Promise<void> {
+  try {
+    if (tag === undefined) localStorage.removeItem(LANGUAGE_KEY);
+    else localStorage.setItem(LANGUAGE_KEY, tag);
+  } catch {
+    // Storage can be unavailable (private windows); nothing to reload onto, so switch in place
+    // and accept the frozen tables for this page.
+    await serve(tag ?? "en-US");
+    return;
+  }
+  location.reload();
 }
 
 // index.html ships `lang="en"` as the pre-JS default; from here on the attribute follows
