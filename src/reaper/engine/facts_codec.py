@@ -84,60 +84,18 @@ def _obs_to_dict(obs: Observation[Any]) -> dict[str, Any]:
     return {"k": "unknown", "r": obs.reason, "s": obs.source}
 
 
-#: Stored prose reasons mapped to the stable ids that replaced them (docs/history/I18N_PLAN.md §5).
-#: ``Unknown.reason`` values were operator-facing sentences until the i18n conversion made
-#: them catalog ids; snapshots frozen before that carry the sentences, and this thaw is the
-#: one place they are translated forward, so a replay composes the same "could not check"
-#: rows a fresh scan would. A reason in neither column passes through verbatim: the panel
-#: renders an unrecognized cause raw rather than dropping the row (rule 96's direction).
-LEGACY_REASON_IDS: dict[str, str] = {
-    "the IMDb ratings data could not be read": "imdb_unreadable",
-    "no IMDb id to look up": "no_imdb_id",
-    "this scan did not record it": "not_recorded",
-    "Reaper has not seen this title in your library before": "no_return_record",
-    "not part of this preview": "not_probed",
-    "no TMDb id to match a request": "no_tmdb_request_id",
-    "no TVDb id to match a request": "no_tvdb_request_id",
-    "requests not loaded": "requests_not_loaded",
-    "could not reach the requests app": "requests_unreachable",
-    "no rewatch estimate for this dormancy": "no_rewatch_estimate",
-    "your watch history is too short to tell who is part-way through": "progress_history_short",
-    "some plays are no longer readable, so who is part-way through is unknown": (
-        "progress_plays_unreadable"
-    ),
-    "a season of this show is not matched in Plex, so who is part-way through is unknown": (
-        "progress_season_unmatched"
-    ),
-    "this show is not matched in Plex, so who is part-way through is unknown": (
-        "progress_show_unmatched"
-    ),
-    "no added-at date for this season": "no_season_added_at",
-    "the season's size was not reported": "no_season_size",
-    "Sonarr did not report series status": "no_series_status",
-    "no added-at date": "no_added_at",
-    "the file's size was not reported": "no_file_size",
-    "plays recorded on an earlier scan are no longer readable": "plays_unreadable",
-    "could not read active sessions": "sessions_unreadable",
-    "Plex has not matched this item": "plex_unmatched",
-    "more than one Plex item matches this title": "plex_ambiguous",
-    "Plex and Radarr describe this file differently": "radarr_plex_disagree",
-    "Plex has not matched this season": "plex_season_unmatched",
-    "more than one Plex item matches this show": "plex_show_ambiguous",
-    "Plex and Sonarr describe this show differently": "sonarr_plex_disagree",
-    # Dead before the conversion: season_scan records a rankless season as Absent now, so
-    # only a frozen snapshot can carry it (the entry #282 kept, moved here with the rest).
-    "season has no rank": "no_season_rank",
-}
-
-
 def _obs_from_dict(d: dict[str, Any]) -> Observation[Any]:
     kind = d["k"]
     if kind == "known":
         return Known(value=d["v"], source=d["s"])
     if kind == "absent":
         return Absent(source=d["s"])
-    reason = d["r"]
-    return Unknown(reason=LEGACY_REASON_IDS.get(reason, reason), source=d["s"])
+    # A reason frozen before the i18n conversion is the English sentence itself, not a
+    # catalog id. It stays that string: a re-decision wraps it as a cause via
+    # ``gates.blocked_reason``, which a consumer keyed on catalog ids simply will not
+    # match, and the frontend's missing-entry fallback (``why.ts`` composeIn) renders it
+    # raw -- the same "not translated" reading it had before the conversion.
+    return Unknown(reason=d["r"], source=d["s"])
 
 
 def _rating_to_dict(r: Rating) -> dict[str, Any]:
@@ -223,15 +181,15 @@ def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -
 
 #: Why a field is unreadable on a snapshot written before that field existed.
 #:
-#: One of seven reasons in ``src/`` with NO ``CAUSE_COPY`` entry, and the reasoning here is
-#: about where it can be READ: ``facts_from_dict`` has a single caller, the
-#: policy simulator (``api.simulate``), which reads a re-decided score and verdict and never
-#: builds or stores an ``Explanation``. So this string reaches a reader only through a stored
-#: explanation that does not exist, and giving it panel copy would claim a route it cannot
-#: take (rule 25). Named anyway, so the ban on hand-typed reasons has no exception and the
-#: exemption is a line in ``test_review_chips.py`` rather than a silence. If a route ever
-#: renders a thawed Facts, it wants a ``CAUSE_COPY`` entry and this comment is the wrong
-#: answer.
+#: One of seven reasons in ``src/`` with NO ``why.cause.*`` catalog entry, and the
+#: reasoning here is about where it can be READ: ``facts_from_dict`` has a single caller,
+#: the policy simulator (``api.simulate``), which reads a re-decided score and verdict and
+#: never builds or stores an ``Explanation``. So this string reaches a reader only through
+#: a stored explanation that does not exist, and giving it panel copy would claim a route
+#: it cannot take (rule 25). Named anyway, so the ban on hand-typed reasons has no
+#: exception and the exemption is a line in ``test_review_chips.py`` rather than a
+#: silence. If a route ever renders a thawed Facts, it wants a catalog entry and this
+#: comment is the wrong answer.
 NOT_RECORDED_REASON = "not_recorded"
 
 

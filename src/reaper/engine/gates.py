@@ -1173,11 +1173,12 @@ class DataHorizonGate:
 # it is exactly what a re-wiring would need. Bringing the gate back means giving Reaper a scan
 # path that can find media NO *arr manages -- reading Plex directly rather than the *arrs --
 # so that the fact can be something other than True. Gate, builders and tests return together.
-# ``GateId.UNMANAGED`` survives so a stored explanation still decodes. Four surfaces read one
-# back, and all four stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.review`' chip
-# phrasing, `WhyPanel.tsx`'s held-reap line, and `WhyPanel.tsx`'s ``CHECK_COPY`` entry for
-# "which *arr owns this", which was this gate's blocked branch and whose only producer was the
-# code deleted here.
+# ``GateId.UNMANAGED`` survives so a stored explanation still decodes. Three surfaces read one
+# back, and all three stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.review`'s chip
+# phrasing, and `WhyPanel.tsx`'s held-reap line. A stored blocked detail naming "which *arr owns
+# this" (this gate's own blocked branch, whose only producer was the code deleted here) is a
+# legacy sentence now: no typed check id ever backed it, so it renders through the panel's
+# generic legacy fallback rather than through copy of its own (#899).
 
 
 # An `OthersWatchingGate` ("the requester ignored it, but other people did not") lived here.

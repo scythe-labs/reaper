@@ -7,7 +7,8 @@
 //   - "select everything matching" that cannot reach the end of the list selects nothing
 //     and says so, rather than quietly meaning "the first page";
 //   - nothing else can be pressed while a bulk write is in flight.
-// The compact dormancy span is pinned here too: it rewrites a string the server writes.
+// The compact dormancy span is pinned here too: it rewrites the humanized string the
+// frontend composes from a fresh row's raw day count.
 import { useQuery } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -19,6 +20,7 @@ import {
   type CandidatePage,
   type GroupRollup,
   type GroupSeasonMark,
+  type ReasonKey,
   type Snapshot,
   type Verdict,
 } from "../api";
@@ -47,6 +49,12 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
+/** A row frozen before details were typed: the stored sentence wrapped as the one legacy
+ *  reason, composed verbatim (docs/history/I18N_PLAN.md §5, #899). */
+function legacy(text: string): ReasonKey {
+  return { k: "legacy", p: { text } };
+}
+
 function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
   const c: Candidate = {
     id: n,
@@ -67,7 +75,6 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     video_resolution: null,
     library: null,
     dormant_for: null,
-    reason: null,
     override: null,
     override_own: null,
     show_override: null,
@@ -968,7 +975,7 @@ describe("the dormancy span", () => {
   });
 
   it("renders the sub-day phrase whole on the card", async () => {
-    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_for: "less than a day" })]));
+    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_days: 0 })]));
     renderQueue();
     expect(await screen.findByText(/Not watched in less than a day/)).toBeInTheDocument();
   });
@@ -977,7 +984,7 @@ describe("the dormancy span", () => {
     // No plan will include it, which outranks every other reason the card could show:
     // an owner reading "Not watched in 5 years" would reasonably expect it to go.
     apiMock.candidates.mockResolvedValue(
-      page([movie(1, { size_bytes: null, dormant_for: "5 years" })]),
+      page([movie(1, { size_bytes: null, dormant_days: 1825 })]),
     );
     renderQueue();
 
@@ -988,7 +995,7 @@ describe("the dormancy span", () => {
   it("shows the ordinary reason when the size is known", async () => {
     // The hold-back line must not become permanent furniture: it appears only for the
     // items it is about.
-    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_for: "less than a day" })]));
+    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_days: 0 })]));
     renderQueue();
 
     await screen.findByText(/Not watched in less than a day/);
@@ -1480,7 +1487,7 @@ describe("what a screen reader hears on a queue card", () => {
           library: "Films",
           video_resolution: "1080",
           requested_by: "someone",
-          reason: "Nobody has watched it since it arrived",
+          reason_key: legacy("Nobody has watched it since it arrived"),
           chip: { tone: "look", reason: { k: "look.unsettled" } },
         }),
       ]),
@@ -1526,7 +1533,6 @@ describe("what a screen reader hears on a queue card", () => {
       summary: null,
       size_bytes: 2 * 1024 ** 3,
       unknown_size_seasons: 0,
-      reason: null,
       library: null,
       chip: null,
       show_override: null,
@@ -1906,7 +1912,7 @@ describe("what a card says after a hand decision", () => {
   it("keeps the dormancy line when a condemned movie is spared", async () => {
     // A condemned row carries no chip by construction, so the spare flipped the card to the
     // chip branch and it lost a line and reflowed under the cursor (B-24).
-    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_for: "3 years 2 months" })]));
+    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_days: 1155 })]));
     apiMock.override.mockResolvedValue({});
     const user = userEvent.setup();
     renderQueue("condemn");
@@ -2264,7 +2270,6 @@ describe("one row's write does not disable another row's controls", () => {
       summary: null,
       size_bytes: 2 * 1024 ** 3,
       unknown_size_seasons: 0,
-      reason: null,
       library: null,
       chip: null,
       show_override: null,

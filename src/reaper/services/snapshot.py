@@ -269,10 +269,11 @@ class RawItem:
 
 
 #: Why this item has no Plex rating key, one entry per non-matched resolver outcome. Each
-#: value is a KEY into ``WhyPanel``'s ``CAUSE_COPY``, which turns it into the sentence the
-#: owner reads; a key with no entry there falls back to printing this string raw, so
-#: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one. ``None`` (a record
-#: from before the field shipped) takes the unmatched wording, which it has always read as.
+#: value is a KEY into the catalog's ``why.cause.*`` entries, which turn it into the
+#: sentence the owner reads; a key with no entry there falls back to printing this string
+#: raw, so ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one. ``None`` (a
+#: record from before the field shipped) takes the unmatched wording, which it has always
+#: read as.
 _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
     identity.MatchStatus.UNMATCHED: "plex_unmatched",
     identity.MatchStatus.AMBIGUOUS: "plex_ambiguous",
@@ -280,15 +281,16 @@ _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
 }
 
 #: Why dormancy could not be measured: matched to Plex, but no arrival date AND no play, so
-#: there is no instant to measure from. A KEY into ``CAUSE_COPY`` exactly as the reasons
-#: above are, and named here rather than typed at each site so the same drift test covers it
-#: (rule 144) -- it was written twice by hand, on both sides of the tree, and nothing failed.
+#: there is no instant to measure from. A KEY into the catalog's ``why.cause.*`` entries
+#: exactly as the reasons above are, and named here rather than typed at each site so the
+#: same drift test covers it (rule 144) -- it was written twice by hand, on both sides of
+#: the tree, and nothing failed.
 NO_ADDED_AT_REASON = "no_added_at"
 
-#: Why a movie's size is unreadable: Radarr reported no size for the file. A KEY into
-#: ``CAUSE_COPY`` like the rest -- it reaches the panel through a keep rule on "Size on
-#: disk", the same route the request reasons take (rule 144). The season lane says this in
-#: its own words, so the two are named apart rather than shared.
+#: Why a movie's size is unreadable: Radarr reported no size for the file. A KEY into the
+#: catalog's ``why.cause.*`` entries like the rest -- it reaches the panel through a keep
+#: rule on "Size on disk", the same route the request reasons take (rule 144). The season
+#: lane says this in its own words, so the two are named apart rather than shared.
 NO_SIZE_REASON = "no_file_size"
 
 
@@ -334,7 +336,7 @@ def build_facts(
     # found ONE row and they were different rows, which is the two apps describing one file
     # differently and is not a statement that Plex holds several copies. All three keep the
     # file; only the words shown to the owner differ, and the wrong words send them to fix
-    # the wrong thing. Each string is a key into WhyPanel's CAUSE_COPY (rule 144);
+    # the wrong thing. Each string is a key into the catalog's why.cause.* entries (rule 144);
     # test_review_chips.py::TestTheMatchStatusVocabulary fails when one has no entry there.
     no_key_reason = _NO_KEY_REASONS.get(item.match_status, "plex_unmatched")
 
@@ -1790,8 +1792,8 @@ _NO_DISPLAY = Display()
 HAND_SPARE_REASON = Reason("hand_spare")
 
 #: The sentence the same row carried before reasons were typed (docs/history/I18N_PLAN.md §5).
-#: Read-side comparisons accept it beside ``HAND_SPARE_REASON`` because stored explanations
-#: outlive the writer; nothing writes it any more.
+#: Nothing writes or reads it any more (#899); kept as the canonical example of a stored
+#: pre-conversion sentence for tests proving a legacy row still renders.
 HAND_SPARE_DETAIL = "you spared this by hand"
 
 

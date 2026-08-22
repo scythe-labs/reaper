@@ -115,18 +115,18 @@ export interface Candidate {
    *  for a season. Drives the card/panel library chip and the library filter. Null when
    *  unknown (unmatched, or a row from before this shipped); the chip is then hidden. */
   library: string | null;
-  /** How long the item has sat unwatched ("5 years, 9 months"), for the amber pill.
-   *  Null hides the pill. */
+  /** Always null (#899): kept on the wire for schema stability, but nothing populates it
+   *  any more. `dormant_days` is the amber pill's only source now, on a fresh row; a
+   *  legacy row shows no pill. */
   dormant_for: string | null;
-  /** The raw dormancy day count of a fresh row; the frontend composes the span. Null on
-   *  a legacy row, whose `dormant_for` carries the baked span instead. Optional so a
-   *  fixture built before the field existed still typechecks (the server always sends it). */
+  /** The raw dormancy day count of a fresh row; the frontend composes the span. Null on a
+   *  legacy row, which shows no amber pill. Optional so a fixture built before the field
+   *  existed still typechecks (the server always sends it). */
   dormant_days?: number | null;
   /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
-   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis.
-   *  Legacy rows only; a fresh row serves `reason_key` and the card composes it. */
-  reason: string | null;
-  /** The typed "why" of a fresh row, composed via `why.ts`; null on a legacy row. */
+   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis,
+   *  composed via `why.ts`. A row frozen before typed reasons carries a `legacy` key that
+   *  composes to its stored sentence verbatim; null only where the row has no reason at all. */
   reason_key?: ReasonKey | null;
   /** The manual decision *in effect* -- "spare", "reap", or null -- own or inherited from
    *  the show. It colors the row's chip and score (the item's real fate). Set the moment they
@@ -206,9 +206,8 @@ export interface Group {
   size_bytes: number;
   unknown_size_seasons: number;
   /** The show-level status line and chip: those of the season that most wants the
-   *  owner's attention, else the highest-scoring one. */
-  reason: string | null;
-  /** The lead season's typed "why", exactly as on the candidate; null on a legacy row. */
+   *  owner's attention, else the highest-scoring one. The lead season's typed "why",
+   *  exactly as on the candidate. */
   reason_key?: ReasonKey | null;
   /** The show's Plex library (section), shared by all its seasons. Null when unknown.
    *  Drives the show panel's library chip. */
@@ -304,8 +303,9 @@ export type SignalState = "adds" | "argues_keep" | "not_applicable" | "unreadabl
 
 /** A typed detail on the wire: the catalog key under `why.*` plus its raw params.
  *  `frontend/src/why.ts` composes it; params may nest further keys (a blocked check's
- *  cause, the rating gate's per-bar clauses). Rows frozen before the conversion carry
- *  prose `detail` instead, rendered verbatim (docs/history/I18N_PLAN.md §5). */
+ *  cause, the rating gate's per-bar clauses). A row frozen before the conversion carries
+ *  a `legacy` key wrapping its stored sentence, which composes to that sentence verbatim
+ *  (docs/history/I18N_PLAN.md §5, #899). */
 export interface ReasonKey {
   k: string;
   p?: Record<string, unknown> | null;
@@ -315,9 +315,8 @@ export interface SignalContribution {
   id: string;
   contribution: number;
   weight: number;
-  /** Legacy prose, on rows frozen before details were typed; null on fresh rows. */
-  detail: string | null;
-  /** The typed detail of a fresh row; null on a legacy one. */
+  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
+   *  before details were typed. Null only where the row has no detail to show at all. */
   detail_key?: ReasonKey | null;
   /** False means the input was Unknown. Its weight still counts in the denominator, so
    *  an unevaluated signal drags the score DOWN, never up. */
@@ -340,9 +339,8 @@ export interface SignalContribution {
 
 export interface GateOutcome {
   gate: string;
-  /** Legacy prose, on rows frozen before details were typed; null on fresh rows. */
-  detail: string | null;
-  /** The typed detail of a fresh row; null on a legacy one. */
+  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
+   *  before details were typed. Null only where the row has no detail to show at all. */
   detail_key?: ReasonKey | null;
   /** Whether the comparison behind a hold is one Reaper actually made. Only the season
    *  keep-rule guard sets it, where a conflict can also mean "a count nobody could read"
@@ -406,8 +404,8 @@ export interface KeepContribution {
   name: string;
   discount: number;
   max_discount: number;
-  /** Legacy prose / typed detail, the same pair every explanation row carries. */
-  detail: string | null;
+  /** The row's detail, typed on a fresh row and a `legacy`-wrapped sentence on one frozen
+   *  before details were typed, the same shape every explanation row carries. */
   detail_key?: ReasonKey | null;
   evaluated: boolean;
 }

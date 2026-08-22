@@ -143,7 +143,6 @@ const CARD: Candidate = {
   video_resolution: null,
   library: null,
   dormant_for: null,
-  reason: null,
   override: null,
   override_own: null,
   show_override: null,

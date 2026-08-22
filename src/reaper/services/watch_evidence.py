@@ -89,8 +89,9 @@ _CHUNK = 200
 #: What the operator is told when the check fires. One string for both branches, because
 #: they mean one thing: we measured plays for this title before and cannot see them now.
 #: Says the outcome, names no internal machinery (rule 21). Being a constant is not what
-#: makes it safe: it reaches the panel through the dormancy and popularity gates and had no
-#: ``CAUSE_COPY`` entry either, so the drift test now walks it with the rest (rule 144).
+#: makes it safe: it reaches the panel through the dormancy and popularity gates and needs
+#: its own catalog ``why.cause.*`` entry too, so the drift test walks it with the rest
+#: (rule 144).
 BLIND_REASON = "plays_unreadable"
 
 #: What the operator is told when the activity read failed, so nobody knows what is playing

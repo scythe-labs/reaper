@@ -472,9 +472,9 @@ def series_genres(series: Mapping[str, Any]) -> Observation[str]:
 
 
 #: The season twin of ``snapshot.NO_ADDED_AT_REASON``, and the same contract: a key into
-#: ``CAUSE_COPY``, named so the drift test covers it (rule 144). Its own wording, for the
-#: reason ``season_evidence._NO_KEY_REASONS`` keeps its own -- the subject is "this
-#: season", not "this item".
+#: the catalog's ``why.cause.*`` entries, named so the drift test covers it (rule 144).
+#: Its own wording, for the reason ``season_evidence._NO_KEY_REASONS`` keeps its own --
+#: the subject is "this season", not "this item".
 NO_ADDED_AT_REASON = "no_season_added_at"
 
 #: Why a season's size is unreadable: Sonarr reported no size on disk. Reaches the panel

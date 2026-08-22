@@ -238,23 +238,21 @@ class CandidateOut(BaseModel):
     show's for a season row. Powers the card/panel library chip and the library filter.
     None when unknown (unmatched, or a row from before this shipped); the chip is hidden."""
     dormant_for: str | None = None
-    """How long the item has sat unwatched, as the humanized span from the dormancy
-    signal ("5 years, 9 months") -- the card's amber pill, on a row whose snapshot predates
-    typed reasons. None on every fresh row, where ``dormant_days`` carries the number and
-    the frontend composes the span in the active locale. The pill hides when both are
-    missing."""
+    """Always ``None`` (#899): kept on the wire for schema stability, but nothing writes it
+    any more. ``dormant_days`` is the amber pill's only source now, on a fresh row; a row
+    whose snapshot predates typed reasons shows no pill."""
     dormant_days: float | None = None
-    """The raw dormancy day count on a fresh row, or ``None`` on a legacy one (see
+    """The raw dormancy day count on a fresh row; the frontend composes the span in the
+    active locale. ``None`` on a legacy row, which shows no amber pill (see
     ``dormant_for``)."""
-    reason: str | None = None
-    """The one-line "why", drawn from the explanation: the protection that keeps a spared
-    item, or the top reason a reaped one scored. It is what the card shows in place of a plot
-    synopsis -- on the review queue you want to know why Reaper judged it, not what it is.
-    Set only for a row whose snapshot predates typed reasons; a fresh row serves
-    ``reason_key`` instead, never both."""
     reason_key: ReasonKey | None = None
-    """The typed "why" of a fresh row, composed from the catalog by the frontend
-    (``frontend/src/why.ts``). ``None`` on a legacy row."""
+    """The one-line "why", drawn from the explanation: the protection that keeps a spared
+    item, or the top reason a reaped one scored. It is what the card shows in place of a
+    plot synopsis -- on the review queue you want to know why Reaper judged it, not what it
+    is. Composed from the catalog by the frontend (``frontend/src/why.ts``). A row whose
+    snapshot predates typed reasons carries a ``legacy`` key wrapping its stored sentence,
+    which composes to that sentence verbatim; ``None`` only where the row has no reason to
+    show at all."""
     override: str | None = None
     """The owner's manual decision *in effect* on this item -- ``"spare"``, ``"reap"``, or
     ``None``. Set the moment they click, so the card can show the pending intent before the
@@ -424,10 +422,8 @@ class GroupOut(BaseModel):
     unknown_size_seasons: int = 0
     """How many season rows have no size, and are therefore left out of the total above.
     Hidden at zero."""
-    reason: str | None = None
-    """The lead season's ``reason`` -- legacy rows only, exactly as on the candidate."""
     reason_key: ReasonKey | None = None
-    """The lead season's ``reason_key`` -- fresh rows only, exactly as on the candidate."""
+    """The lead season's ``reason_key``, exactly as on the candidate."""
     library: str | None = None
     """The show's Plex library (section), taken from its season rows (they all share it).
     None when no row carries one. Drives the show panel's library chip."""

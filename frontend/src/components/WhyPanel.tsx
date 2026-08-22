@@ -1124,30 +1124,12 @@ function Signals({ item }: { item: CandidateDetail }) {
   );
 }
 
-/** One row's sentence, either age of row: composed from the catalog when the row carries
- *  a typed `detail_key`, the stored prose verbatim when it predates typed details
- *  (docs/history/I18N_PLAN.md §5). Callers with a legacy-only rewording pass it as `onLegacy`. */
-function rowText(
-  row: { detail: string | null; detail_key?: import("../api").ReasonKey | null },
-  onLegacy: (detail: string) => string = (detail) => detail,
-): string {
-  if (row.detail_key) return composeReason(row.detail_key);
-  return row.detail ? onLegacy(row.detail) : "";
-}
-
-/** LEGACY rows only: the backend used to word a custom-rule outcome as
- *  "your rule: {condition}" (fired) or "checked your rule: {condition}" (checked, didn't
- *  fire), and this rewords the stored prose for the panel. A fresh row's catalog entry
- *  (`why.custom_fired` / `why.custom_checked`) says it directly, so nothing new parses
- *  a sentence (rule 92); this parser serves frozen snapshots and never gains a pattern. */
-function customGateDetail(detail: string): string {
-  if (detail.startsWith("your rule: ")) {
-    return `Kept by your rule: ${detail.slice("your rule: ".length)}`;
-  }
-  if (detail.startsWith("checked your rule: ")) {
-    return `Your rule didn't match: ${detail.slice("checked your rule: ".length)}`;
-  }
-  return detail;
+/** One row's sentence, composed from the catalog: a typed `detail_key` on a fresh row, a
+ *  `legacy` key wrapping the stored sentence on one that predates typed details, rendered
+ *  verbatim either way (docs/history/I18N_PLAN.md §5, #899). Empty where the row carries
+ *  no detail at all. */
+function rowText(row: { detail_key?: import("../api").ReasonKey | null }): string {
+  return row.detail_key ? composeReason(row.detail_key) : "";
 }
 
 function Gates({
@@ -1174,7 +1156,7 @@ function Gates({
             and duplicate keys would make React drop rows. */}
         {outcomes.map((outcome) => {
           const custom = outcome.gate === "custom";
-          const text = rowText(outcome, custom ? customGateDetail : undefined);
+          const text = rowText(outcome);
           return (
             <li key={`${outcome.gate}:${text}`} className={custom ? "gate-custom" : ""}>
               {/* Decoration: every row in this list is a pass, so the tick adds nothing a
@@ -1222,73 +1204,15 @@ function Gates({
   );
 }
 
-/** LEGACY rows only. The backend used to word each unchecked protection as
- *  "could not check {check}: {cause}" (the retired prose forms of `engine/gates._blocked`
- *  and the custom-rule evaluator); a row frozen before typed details still carries that
- *  sentence, and these two maps turn its halves into the operator's copy exactly as they
- *  always did. A fresh row carries the halves structurally (`why.blockedParts`) and its
- *  copy lives in the catalog (`why.check.*` / `why.cause.*`), so NEITHER MAP EVER GAINS
- *  AN ENTRY: they are frozen with the snapshots they serve. Anything that doesn't parse
- *  keeps its own row with the raw sentence, exactly as before. */
-const CHECK_COPY: Record<string, string> = {
-  "the watch horizon": "how far back its history goes",
-  "active streams": "whether anyone is watching",
-  "the IMDb rating": "its IMDb rating",
-  "the IMDb vote count": "its IMDb vote count",
-  "the whitelist": "your keep list",
-  "curated lists": "protected lists",
-  "which *arr owns this": "which app manages it",
-  // The season guard, where it could not run at all. Its other outcomes are whole sentences
-  // that do not parse as `could not check {what}: {cause}` and keep their own row.
-  "who is part-way through it": "who's part-way through it",
-};
-
-const CAUSE_COPY: Record<string, string> = {
-  "Plex has not matched this item": "This title couldn't be found in Plex.",
-  "Plex has not matched this season": "This season couldn't be found in Plex.",
-  "more than one Plex item matches this title": "This looks like more than one thing in Plex.",
-  "more than one Plex item matches this show": "This show looks like more than one thing in Plex.",
-  // The disagreement pair. Generated nowhere: these are the exact strings snapshot.py and
-  // season_evidence.py put in `_NO_KEY_REASONS`, and
-  // tests/test_review_chips.py::TestTheMatchStatusVocabulary fails when one of those has no
-  // entry here -- without which the box prints the backend's raw phrasing (rule 144).
-  "Plex and Radarr describe this file differently":
-    "Plex and Radarr describe this file differently.",
-  "Plex and Sonarr describe this show differently":
-    "Plex and Sonarr describe this show differently.",
-  "no added-at date": "Plex didn't say when this was added.",
-  "no added-at date for this season": "Plex didn't say when this season was added.",
-  "could not read active sessions": "Reaper couldn't see what's playing right now.",
-  "could not reach the requests app": "The requests app couldn't be reached.",
-  "requests not loaded": "Requests weren't loaded for this scan.",
-  "no TMDb id to match a request": "It couldn't be matched to a request.",
-  "no TVDb id to match a request": "It couldn't be matched to a request.",
-  "Sonarr did not report series status": "Sonarr didn't say whether the show has ended.",
-  // Serves STORED rows only: nothing writes this reason any more. A season with no rank is
-  // a special, and season_scan.py now records that as Absent (it genuinely has no rank slot)
-  // rather than Unknown, so no fresh scan can compose the detail this translates. It stays
-  // because a snapshot frozen before that fix survives an upgrade -- migrations only add --
-  // and the queue renders the latest snapshot until the next scan replaces it, so an owner
-  // who upgrades before re-scanning can still open a row carrying it. Dropping the entry
-  // would print the backend's raw phrase at exactly that owner, which is what #282 closed.
-  // tests/test_review_chips.py::test_every_panel_cause_has_a_live_producer holds the pair.
-  "season has no rank": "Reaper couldn't tell which season this is.",
-  // The five that used to fall through and print the backend's own words here. Two arrive
-  // through built-in gates (an IMDb rating bar, and the dormancy and popularity gates); the
-  // size pair arrives through a keep rule on "Size on disk", the same route the request
-  // reasons above already take.
-  "the IMDb ratings data could not be read": "Reaper couldn't read the IMDb ratings data.",
-  "no IMDb id to look up": "Reaper couldn't look this title up on IMDb.",
-  "the file's size was not reported": "Radarr didn't report this file's size.",
-  "the season's size was not reported": "Sonarr didn't report this season's size.",
-  "plays recorded on an earlier scan are no longer readable":
-    "Reaper can no longer read the plays it recorded earlier.",
-};
-
-/** "Left for you to decide", grouped by cause. Three rows all ending in "Plex has not
- *  matched this item" told the owner the same thing three times; one box states the cause
- *  once and lists what it blocked. Causes keep first-appearance order; unparseable details
- *  render verbatim as their own box. */
+/** "Left for you to decide", grouped by cause. Three rows all ending in "This title
+ *  couldn't be found in Plex" told the owner the same thing three times; one box states
+ *  the cause once and lists what it blocked. Causes keep first-appearance order.
+ *
+ *  A fresh row carries the check/cause halves structurally (`why.blockedParts`) and its
+ *  copy lives in the catalog (`why.check.*` / `why.cause.*`). A row frozen before typed
+ *  details, or a deliberate left-for-you sentence that is not the "could not check"
+ *  shape (a season conflict, an unanswerable season hold), keeps its own row instead,
+ *  rendered verbatim (#899). */
 function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
   const { t } = useTranslation();
   if (outcomes.length === 0) return null;
@@ -1305,20 +1229,9 @@ function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
     }
   };
   for (const outcome of outcomes) {
-    if (outcome.detail_key) {
-      const parts = blockedParts(outcome.detail_key);
-      if (parts) add(parts.check, parts.cause);
-      // A deliberate left-for-you sentence -- a season conflict, an unanswerable season
-      // hold -- keeps its own row, composed like every other fresh row.
-      else rows.push({ kind: "raw", outcome });
-      continue;
-    }
-    const parsed = /^could not check (.+?): (.+)$/.exec(outcome.detail ?? "");
-    if (!parsed || !parsed[1] || !parsed[2]) {
-      rows.push({ kind: "raw", outcome });
-      continue;
-    }
-    add(CHECK_COPY[parsed[1]] ?? parsed[1], CAUSE_COPY[parsed[2]] ?? `${parsed[2]}.`);
+    const parts = outcome.detail_key ? blockedParts(outcome.detail_key) : null;
+    if (parts) add(parts.check, parts.cause);
+    else rows.push({ kind: "raw", outcome });
   }
 
   return (

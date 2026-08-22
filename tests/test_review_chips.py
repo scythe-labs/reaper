@@ -68,7 +68,7 @@ from reaper.services.season_evidence import _NO_KEY_REASONS as SEASON_NO_KEY_REA
 from reaper.services.season_evidence import guard_result
 from reaper.services.season_pruning import PruneConflict, SeriesPrunePlan
 from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
-from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
+from reaper.services.snapshot import HAND_SPARE_DETAIL, HAND_SPARE_REASON, _explain
 
 from ._auth import login
 from ._reasons import catalog
@@ -105,22 +105,15 @@ _NO_PANEL_ROUTE = {
     ),
 }
 
-#: Catalog cause entries whose backend producer is gone, and why each stays. The panel
-#: composes STORED evidence too -- ``facts_codec.LEGACY_REASON_IDS`` maps a frozen prose
-#: reason forward to its id on thaw -- so an entry outliving its producer is back-compat
-#: rather than dead code, but only while a stored row can still reach it, which is a claim
-#: about wiring and is written down here rather than assumed (rule 103), the same way
+#: Catalog cause entries whose backend producer is gone, and why each stays anyway --
+#: empty today. A frozen row's prose reason no longer thaws forward to a catalog id at all
+#: (#899): it rides through as a ``legacy`` reason and renders raw, so an id with no
+#: current producer has no producer at all any more, fresh or stored, and belongs deleted
+#: rather than exempted (``no_season_rank`` was the one entry this held, on exactly that
+#: reasoning, until the thaw it depended on was removed). An exemption placed here is a
+#: claim about wiring and is written down rather than assumed (rule 103), the same way
 #: ``_NO_PANEL_ROUTE`` above writes down the other direction's excuses.
-_PANEL_COPY_WITHOUT_A_PRODUCER = {
-    "no_season_rank": (
-        "season_scan records a season with no rank as Absent now (a special genuinely has no "
-        "rank slot), so no fresh scan can produce this cause. A snapshot frozen before that "
-        "fix survives an upgrade -- migrations only add -- and its stored prose reason "
-        "('season has no rank') thaws to this id, so an operator who upgrades before "
-        "re-scanning can still open a row carrying it. Deleting the entry would print the "
-        "raw id at exactly that owner, which is the class #282 closed."
-    ),
-}
+_PANEL_COPY_WITHOUT_A_PRODUCER: dict[str, str] = {}
 
 #: Cause ids composed in code rather than named as ``*_REASON`` constants, each with its
 #: producer. The constant walk below cannot discover these -- they are built at the call
@@ -179,9 +172,10 @@ def _catalog_causes() -> dict[str, str]:
 
     Read off the real ``ui.json`` (``tests/_reasons.catalog``), so the walks either side of
     this file's tree boundary see the copy the app really ships. Three tests read it, so it
-    is derived once (rule 119). ``WhyPanel.tsx``'s ``CAUSE_COPY``/``CHECK_COPY`` maps are
-    deliberately NOT walked any more: they are frozen legacy renderers for rows stored
-    before reasons were typed, serve no live producer, and never gain an entry.
+    is derived once (rule 119). ``WhyPanel.tsx`` no longer carries a ``CAUSE_COPY``/
+    ``CHECK_COPY`` pair to walk (#899): a row frozen before reasons were typed renders its
+    stored sentence verbatim now, through the panel's generic legacy fallback, never through
+    copy of its own.
     """
     causes = catalog()["cause"]
     assert isinstance(causes, dict)
@@ -347,116 +341,96 @@ def _leaf_ids(node: dict[str, Any], prefix: str = "") -> set[str]:
 
 
 class TestKeptChipWording:
-    """One typed reason per protection, from the gates' own closed detail vocabulary."""
+    """One typed reason per protection, from the gate's own reason id.
+
+    A fresh row's numbers come off the reason's own params (#899): the parsers that used
+    to pull them back out of a row's stored PROSE are gone, along with the ids they fed
+    (``kept.popularity_legacy``, ``came_back_legacy``). A legacy row's content is no
+    longer read at all -- any sentence, whatever it once said, takes its gate's plain id,
+    proven below once per gate rather than once per sentence that used to parse
+    differently: nothing left in ``_kept_reason`` branches on what a legacy row's prose
+    actually says, so a table of many such sentences could only ever prove the same thing
+    many times over (rule 118). The why panel beneath the chip still shows the row's real
+    stored sentence, verbatim, through ``detail_key``.
+    """
 
     @pytest.mark.parametrize(
-        ("gate", "detail", "expected"),
+        ("gate", "expected"),
         [
-            ("whitelisted", "on your keep list, never reaped", Reason("kept.whitelisted")),
-            # The scan's own constant, not a copy of it: the chip tells a hand spare apart
-            # from a real keep-list entry by exact equality, so a test that retyped the
-            # string would keep passing after one side was reworded.
-            ("whitelisted", HAND_SPARE_DETAIL, Reason("kept.hand_spare")),
-            ("streaming_now", "someone is watching it right now", Reason("kept.streaming_now")),
-            (
-                "rating_floor",
-                "well rated: 6.8 on IMDb from 722,243 votes",
-                Reason("kept.rating", {"value": 6.8, "source": "imdb"}),
-            ),
-            ("rating_floor", "some future wording", Reason("kept.rating_plain")),
-            (
-                "server_popularity",
-                "watched here: 3 people in the last year",
-                Reason("kept.popularity_legacy", {"count": 3, "window_text": "year"}),
-            ),
-            (
-                "server_popularity",
-                "watched here: 1 person in the last 90 days",
-                Reason("kept.popularity_legacy", {"count": 1, "window_text": "90 days"}),
-            ),
-            ("server_popularity", "some future wording", Reason("kept.popularity_plain")),
-            ("curated_list", "on a protected list: A Curated List", Reason("kept.curated_list")),
-            (
-                "min_dormancy",
-                "unwatched for 1 year, 2 months, less than the 3 years Reaper waits",
-                Reason("kept.dormancy"),
-            ),
-            (
-                "min_dormancy",
-                "no watch history, so its dormancy cannot be established",
-                Reason("kept.no_history"),
-            ),
-            (
-                "unmanaged",
-                "no Sonarr or Radarr manages this file, so Reaper cannot remove it",
-                Reason("kept.unmanaged"),
-            ),
-            (
-                "season_progression",
-                "specials are never auto-pruned",
-                Reason("kept.season.specials"),
-            ),
-            (
-                "season_progression",
-                "episodes are missing from this season",
-                Reason("kept.season.incomplete"),
-            ),
-            (
-                "season_progression",
-                "the newest season of a show that is still running",
-                Reason("kept.season.airing"),
-            ),
-            (
-                "season_progression",
-                "the earliest season on disk, so there is somewhere to start",
-                Reason("kept.season.first"),
-            ),
-            # A snapshot stored before these three were reworded carries the retired
-            # spelling, and degrades to the generic id rather than to a wrong one.
-            (
-                "season_progression",
-                "Sonarr is still downloading this season",
-                Reason("kept.season.rule"),
-            ),
-            ("season_progression", "currently airing", Reason("kept.season.rule")),
-            (
-                "season_progression",
-                "the first season is kept so the show can still be started",
-                Reason("kept.season.rule"),
-            ),
-            (
-                "season_progression",
-                "within the last 2 seasons (rank 1)",
-                Reason("kept.season.keep_last", {"keep_last": 2}),
-            ),
-            (
-                "season_progression",
-                "this show has only 2 seasons on disk, so your keep-last-3 rule keeps all of them",
-                Reason("kept.season.keep_all"),
-            ),
-            (
-                "season_progression",
-                "a viewer is part-way through the show",
-                Reason("kept.season.midbinge"),
-            ),
-            # Not a keep rule at all: the mirror is too short to answer who is mid-binge.
-            # The generic id would name a control the operator can edit and that will
-            # not move it, sending them to lower keep-last while the real lever is the
-            # depth of their watch history (or the hold set against it).
-            (
-                "season_progression",
-                "your watch history is too short to tell who is part-way through",
-                Reason("kept.season.progress_history_short"),
-            ),
-            ("season_progression", "some future wording", Reason("kept.season.rule")),
-            ("custom", "your rule: genre is Documentary", Reason("kept.custom")),
-            ("brand_new_gate", "whatever it says", Reason("kept.unknown")),
+            ("whitelisted", Reason("kept.whitelisted")),
+            ("streaming_now", Reason("kept.streaming_now")),
+            ("rating_floor", Reason("kept.rating_plain")),
+            ("server_popularity", Reason("kept.popularity_plain")),
+            ("curated_list", Reason("kept.curated_list")),
+            ("min_dormancy", Reason("kept.dormancy")),
+            ("unmanaged", Reason("kept.unmanaged")),
+            ("season_progression", Reason("kept.season.rule")),
+            ("custom", Reason("kept.custom")),
+            ("brand_new_gate", Reason("kept.unknown")),
         ],
     )
-    def test_reason(self, gate: str, detail: str, expected: Reason) -> None:
-        # The prose column drives the LEGACY arm -- rows frozen before reasons were typed.
-        # Fresh rows take the id arm, driven by the writer-connected tests below.
-        assert _kept_reason(gate, legacy(detail)) == expected
+    def test_a_legacy_row_takes_its_gates_plain_id(self, gate: str, expected: Reason) -> None:
+        assert _kept_reason(gate, legacy("whatever this old row happened to say")) == expected
+
+    def test_a_legacy_hand_spare_is_not_matched_by_text_any_more(self) -> None:
+        # The exact sentence snapshot.py once froze for a hand spare no longer stands out
+        # from any other legacy whitelisted keep: only the typed id is matched now, proven
+        # below on the shape a live scan actually freezes.
+        assert _kept_reason("whitelisted", legacy(HAND_SPARE_DETAIL)) == Reason("kept.whitelisted")
+
+    def test_a_fresh_hand_spare_still_gets_its_own_id(self) -> None:
+        assert _kept_reason("whitelisted", HAND_SPARE_REASON) == Reason("kept.hand_spare")
+
+    def test_a_fresh_rating_row_carries_its_own_number(self) -> None:
+        reason = Reason(
+            "rating_cleared",
+            {
+                "clauses": (
+                    Reason(
+                        "rating_value_votes", {"source": "imdb", "value": 6.8, "votes": 722_243}
+                    ),
+                ),
+            },
+        )
+        assert _kept_reason("rating_floor", reason) == Reason(
+            "kept.rating", {"value": 6.8, "source": "imdb"}
+        )
+
+    def test_a_fresh_popularity_row_carries_its_own_number(self) -> None:
+        reason = Reason("popularity_watched", {"count": 3, "window_days": 365})
+        assert _kept_reason("server_popularity", reason) == Reason(
+            "kept.popularity", {"count": 3, "window_days": 365}
+        )
+
+    def test_a_fresh_no_history_dormancy_row_gets_its_own_id(self) -> None:
+        assert _kept_reason("min_dormancy", Reason("dormancy_unestablished")) == Reason(
+            "kept.no_history"
+        )
+
+    @pytest.mark.parametrize(
+        ("fresh_id", "expected"),
+        [
+            ("season_keep.specials", Reason("kept.season.specials")),
+            ("season_keep.incomplete", Reason("kept.season.incomplete")),
+            ("season_keep.airing", Reason("kept.season.airing")),
+            ("season_keep.first", Reason("kept.season.first")),
+            ("season_keep.keep_all", Reason("kept.season.keep_all")),
+            ("season_keep.midbinge", Reason("kept.season.midbinge")),
+            # NOT a keep rule: the lever is the depth of the watch history, and the
+            # generic id would send the operator to edit a control that will not move it.
+            ("cause.progress_history_short", Reason("kept.season.progress_history_short")),
+        ],
+    )
+    def test_a_fresh_season_keep_row_carries_its_specific_id(
+        self, fresh_id: str, expected: Reason
+    ) -> None:
+        assert _kept_reason("season_progression", Reason(fresh_id)) == expected
+
+    def test_a_fresh_keep_last_row_carries_the_count(self) -> None:
+        reason = Reason("season_keep.keep_last", {"keep_last": 2, "rank": 1})
+        assert _kept_reason("season_progression", reason) == Reason(
+            "kept.season.keep_last", {"keep_last": 2}
+        )
 
 
 class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
@@ -532,7 +506,9 @@ class TestChip:
         )
         assert chip is not None
         assert chip.tone == "kept"
-        assert _chip_reason(chip) == Reason("kept.rating", {"value": 6.8, "source": "imdb"})
+        # A legacy row's number is not read back out of its prose any more (#899): the
+        # plain id is what every rating-floor keep with no typed detail takes.
+        assert _chip_reason(chip) == Reason("kept.rating_plain")
 
     def test_protect_with_nothing_fired_degrades_to_no_chip(self) -> None:
         """A stored row that claims protect but records no protection must not invent
@@ -971,7 +947,6 @@ class TestChip:
         unknown = panel.body.protections_unknown
         assert [o.gate for o in unknown] == ["season_progression"]
         assert unknown[0].unestablishable is True
-        assert unknown[0].detail is None
         assert unknown[0].detail_key is not None
         assert unknown[0].detail_key.model_dump() == to_wire(never_ran.detail)
 
@@ -1239,8 +1214,11 @@ class TestTheCameBackChip:
         assert chip.tone == "held"
 
     def test_a_hand_spare_still_wins(self) -> None:
-        # The owner's own decision, and it carries its own countdown already.
-        spare = {"gate": "whitelisted", "detail": HAND_SPARE_DETAIL}
+        # The owner's own decision, and it carries its own countdown already. Only the
+        # typed id is matched now (#899): a legacy row's frozen hand-spare sentence no
+        # longer stands out from any other legacy whitelisted keep, so this is proven on
+        # the shape every live scan actually freezes.
+        spare = {"gate": "whitelisted", "detail_key": to_wire(HAND_SPARE_REASON)}
         chip = _chip(
             _exp(20, fired=[spare, self._fired(days_ago=35, by_reaper=True)]), "protect", 20
         )
@@ -1270,28 +1248,6 @@ class TestTheCameBackChip:
         assert sentence[0].isupper()
         assert sentence.endswith(".")
         assert sentence == "It left your library and came back."
-
-    def test_a_parseable_legacy_detail_keeps_its_span_as_english_text(self) -> None:
-        # A legacy row's window is already an English phrase it froze ("3 weeks"), not a
-        # raw day count, so it rides under its own id rather than the fresh path's numeric
-        # one: composing that text into a translated sentence would leak English into
-        # every other language under an id a translator cannot tell apart (rule 92).
-        chip = _chip(
-            _exp(
-                20,
-                fired=[
-                    {
-                        "gate": "returned",
-                        "detail": "it left your library and came back, 3 weeks left",
-                    }
-                ],
-            ),
-            "protect",
-            20,
-        )
-        assert chip is not None
-        assert chip.tone == "held"
-        assert _chip_reason(chip) == Reason("came_back_legacy", {"days_left_text": "3 weeks"})
 
     def test_the_reason_helper_words_it_too(self) -> None:
         # Rule 66: a member with no arm falls to "kept.unknown", which is what makes a
@@ -1683,7 +1639,7 @@ class TestGroupDetail:
         show-level status line."""
         group = client.get("/api/groups/sonarr:5:42").json()
         assert group["chip"]["tone"] == "look"
-        assert group["reason"] == CONFLICT_SENTENCE
+        assert group["reason_key"] == {"k": "legacy", "p": {"text": CONFLICT_SENTENCE}}
 
     def test_unknown_show_is_a_404(self, client: TestClient) -> None:
         assert client.get("/api/groups/sonarr:5:999").status_code == 404
@@ -1833,8 +1789,8 @@ class TestTheMatchStatusVocabulary:
         # take a single Unknown arm covering every other reason at once (no fit, dormancy
         # Unknown, past the fitted range, a dropped bucket, withheld by reach), named
         # `NO_REWATCH_ESTIMATE_REASON` -- two new call sites, one new reason constant,
-        # exempted from CAUSE_COPY in `_NO_PANEL_ROUTE` above (it feeds only the
-        # `rewatch_odds` context block's typed `state`, never a gate's blocked detail).
+        # named in `_NO_PANEL_ROUTE` above (it feeds only the `rewatch_odds` context
+        # block's typed `state`, never a gate's blocked detail).
         # 45 -> 47: the rewatch observations on the season lane (#554 TV) in
         # season_scan._judge_series. Both take the unresolved-show arm through the same
         # `season_evidence.no_key_reason` reader the mid-binge hold already reads, so no
@@ -1847,7 +1803,7 @@ class TestTheMatchStatusVocabulary:
         # 49 -> 51: the came-back pair (#553), both in `library_seen.observations` -- the one
         # derivation both fact builders call, so the two lanes cannot disagree about what a
         # missing ledger row means (rules 35, 104). Two call sites, one new reason constant,
-        # exempted from CAUSE_COPY in `_NO_PANEL_ROUTE` above.
+        # named in `_NO_PANEL_ROUTE` above.
         assert walked == 51, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
@@ -1922,11 +1878,11 @@ class TestTheMatchStatusVocabulary:
         )
 
     def test_every_backend_cause_has_operator_copy_in_the_panel(self) -> None:
-        """Rule 144, across the tree boundary. ``CAUSE_COPY`` turns each backend reason into
-        the sentence the owner reads; a key with no entry there renders the backend's raw
-        phrasing instead, which is how internal wording reaches the screen. The failure
-        message names the file to edit, because a comment asking the next author to remember
-        does nothing.
+        """Rule 144, across the tree boundary. A ``why.cause.*`` catalog entry turns each
+        backend reason into the sentence the owner reads; a key with no entry there renders
+        the backend's raw phrasing instead (``why.ts``'s missing-entry fallback), which is
+        how internal wording reaches the screen. The failure message names the file to
+        edit, because a comment asking the next author to remember does nothing.
 
         The two dormancy reasons were named for this in #278. They had been hand-typed five
         times in `src/` and twice more in `WhyPanel.tsx`, with a comment in `snapshot.py`
@@ -1991,7 +1947,7 @@ class TestTheMatchStatusVocabulary:
         """
         keys = set(_catalog_causes())
         # Rule 145: pin what the walk covers, reconciled by hand against the catalog.
-        assert len(keys) == 30, (
+        assert len(keys) == 29, (
             f"why.cause holds {len(keys)} entries. If you added or removed one, bump this\n"
             "count deliberately."
         )
@@ -2052,7 +2008,7 @@ class TestTheChipVocabulary:
     """
 
     def test_the_chip_id_population_is_pinned(self) -> None:
-        assert len(_CHIP_IDS) == 40, (
+        assert len(_CHIP_IDS) == 38, (
             f"_CHIP_IDS holds {len(_CHIP_IDS)}. If you added or removed a chip id, bump "
             "this count deliberately."
         )

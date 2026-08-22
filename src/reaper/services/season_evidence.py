@@ -51,7 +51,6 @@ from typing import Any
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import from_epoch
 from reaper.engine import identity
-from reaper.engine.facts_codec import LEGACY_REASON_IDS
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
 from reaper.engine.gates import GateId, GateResult, blocked_reason, progress_is_establishable
@@ -394,7 +393,7 @@ def guard_result(
 
 #: The show-side twin of ``snapshot._NO_KEY_REASONS``: why this season has no Plex rating
 #: key, one entry per non-matched resolver outcome. Same contract -- each value is a key
-#: into ``WhyPanel``'s ``CAUSE_COPY``, and
+#: into the catalog's ``why.cause.*`` entries, and
 #: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one with no entry
 #: there. Two maps rather than one shared with the movie lane because the subjects differ
 #: ("this season" against "this item", "this show" against "this title").
@@ -598,10 +597,7 @@ def from_dict(d: Mapping[str, Any]) -> SeasonPruneInput:
         progress_unknown_reason=(
             None
             if d[_KEYS["progress_unknown_reason"]] is None
-            else LEGACY_REASON_IDS.get(
-                str(d[_KEYS["progress_unknown_reason"]]),
-                str(d[_KEYS["progress_unknown_reason"]]),
-            )
+            else str(d[_KEYS["progress_unknown_reason"]])
         ),
         requested_known_false=bool(d[_KEYS["requested_known_false"]]),
         reach_days=int(d[_KEYS["reach_days"]]),

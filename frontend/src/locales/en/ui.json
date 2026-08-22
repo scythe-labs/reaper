@@ -480,7 +480,6 @@
       "no_tmdb_request_id": "It couldn't be matched to a request.",
       "no_tvdb_request_id": "It couldn't be matched to a request.",
       "no_series_status": "Sonarr didn't say whether the show has ended.",
-      "no_season_rank": "Reaper couldn't tell which season this is.",
       "imdb_unreadable": "Reaper couldn't read the IMDb ratings data.",
       "no_imdb_id": "Reaper couldn't look this title up on IMDb.",
       "no_file_size": "Radarr didn't report this file's size.",
@@ -658,7 +657,6 @@
         "rating": "Kept, well rated: {value_fixed1} on {source_label}",
         "rating_plain": "Kept, well rated",
         "popularity": "Kept, {count, plural, one {# person} other {# people}} watched it in the last {window_days_window}",
-        "popularity_legacy": "Kept, {count, plural, one {# person} other {# people}} watched it in the last {window_text}",
         "popularity_plain": "Kept, people here still watch it",
         "others_watching": "{count, plural, one {Kept, someone else is watching it} other {Kept, # others are watching it}}",
         "others_watching_unknown": "Kept, others are watching it",
@@ -682,7 +680,6 @@
         "unknown": "Kept, a protection applies"
       },
       "came_back": "Came back, {days_left_span} left",
-      "came_back_legacy": "Came back, {days_left_text} left",
       "came_back_unknown": "Came back",
       "match": {
         "unmatched": "Couldn't be found in Plex",
@@ -708,7 +705,6 @@
         "rating": "It's well rated: {value_fixed1} on {source_label}.",
         "rating_plain": "It's well rated.",
         "popularity": "{count, plural, one {# person} other {# people}} watched it in the last {window_days_window}.",
-        "popularity_legacy": "{count, plural, one {# person} other {# people}} watched it in the last {window_text}.",
         "popularity_plain": "People here still watch it.",
         "others_watching": "{count, plural, one {Someone else is watching it.} other {# others are watching it.}}",
         "others_watching_unknown": "Others are watching it.",
@@ -732,7 +728,6 @@
         "unknown": "A protection applies."
       },
       "came_back": "It left your library and came back.",
-      "came_back_legacy": "It left your library and came back.",
       "came_back_unknown": "It left your library and came back.",
       "match": {
         "unmatched": "It couldn't be found in Plex.",

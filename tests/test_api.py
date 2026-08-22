@@ -140,7 +140,7 @@ def _explanation(score: float) -> str:
                     "id": "unwatched",
                     "contribution": score,
                     "weight": 70,
-                    "detail": "not watched in 5 years, 7 months",
+                    "detail_key": {"k": "signal_unwatched", "p": {"days": 2059}},
                     "evaluated": True,
                 }
             ],
@@ -1132,7 +1132,7 @@ class TestTheWhyPanel:
 
         checked = detail["explanation"]["protections_checked"]
         assert checked
-        assert checked[0]["detail"] == CHECKED_DETAIL
+        assert checked[0]["detail_key"] == {"k": "legacy", "p": {"text": CHECKED_DETAIL}}
 
     def test_a_protected_item_explains_the_keep(self, client: TestClient) -> None:
         """A tool that only explains its deletions cannot be trusted about its keeps.
@@ -1146,7 +1146,7 @@ class TestTheWhyPanel:
         assert detail["score"] == 90  # the score it is overriding
         fired = detail["explanation"]["protections_fired"]
         assert fired
-        assert "well rated: 8.0 on IMDb from 250,000 votes" in fired[0]["detail"]
+        assert "well rated: 8.0 on IMDb from 250,000 votes" in fired[0]["detail_key"]["p"]["text"]
 
     def test_the_grace_clock_is_exposed(self, client: TestClient) -> None:
         candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
@@ -1172,7 +1172,6 @@ class TestTheWhyPanel:
         not the first gate's engineer-speak."""
         abstained = client.get("/api/candidates?verdict=abstain").json()["items"]
 
-        assert abstained[0]["reason"] is None  # fresh rows serve the typed key instead
         assert abstained[0]["reason_key"] == {"k": "kept_safe.unmatched", "p": None}
 
     def test_a_missing_candidate_is_a_404(self, client: TestClient) -> None:
@@ -1190,18 +1189,18 @@ class TestPanelHeadFields:
         row = client.get("/api/candidates?verdict=condemn").json()["items"][0]
 
         assert row["video_resolution"] == "1080"
-        assert row["dormant_for"] == "5 years, 7 months"
+        assert row["dormant_for"] is None  # nothing writes it any more (#899)
+        assert row["dormant_days"] == 2059
 
     def test_a_row_without_the_metadata_hides_both(self, client: TestClient) -> None:
-        """The abstained fixture predates the capture (no columns, and its dormancy came
-        from an unmatched item) -- both fields must be null, not an error."""
+        """The abstained fixture predates the capture (no columns), so the resolution
+        must be null, not an error."""
         row = client.get("/api/candidates?verdict=abstain").json()["items"][0]
 
         assert row["video_resolution"] is None
-        # Its explanation says "not watched in ..." but with evaluated=True from the
-        # shared helper; the unmatched item's dormancy is still the helper's phrasing, so
-        # dormant_for emits. The protect row exercises the same path.
-        assert row["dormant_for"] == "5 years, 7 months"
+        # Its explanation carries the same typed unwatched signal the condemned and
+        # protect rows share, so its dormancy still reads.
+        assert row["dormant_days"] == 2059
 
     def test_the_detail_carries_links_ratings_and_the_meta_line(self, client: TestClient) -> None:
         candidates = client.get("/api/candidates?verdict=condemn").json()["items"]
