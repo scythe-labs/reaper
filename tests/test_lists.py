@@ -1162,7 +1162,7 @@ class TestImdbList:
         httpx2_mock.get(url).mock(
             return_value=httpx.Response(200, json=_top250_payload(count=floor - 1))
         )
-        with pytest.raises(IntegrationError, match="truncated"):
+        with pytest.raises(IntegrationError, match="too short to trust"):
             await sync(engine, ImdbList(variant=variant))
 
         httpx2_mock.get(url).mock(
@@ -1177,7 +1177,7 @@ class TestImdbList:
         operator's to keep, and only an empty answer reads as a broken mirror."""
         url = IMDB_LIST_BASE + "ls005421403"
         httpx2_mock.get(url).mock(return_value=httpx.Response(200, json=[]))
-        with pytest.raises(IntegrationError, match="truncated"):
+        with pytest.raises(IntegrationError, match="too short to trust"):
             await sync(engine, ImdbList(variant="ls005421403"))
 
         httpx2_mock.get(url).mock(return_value=httpx.Response(200, json=_top250_payload(count=1)))

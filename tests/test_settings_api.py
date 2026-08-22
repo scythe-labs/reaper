@@ -36,7 +36,7 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import InstanceKind, PlexServer, Snapshot
-from reaper.engine.reason import from_wire
+from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.services import instances as instances_service
 
 from ._auth import TEST_PASSWORD, clear_admin_password
@@ -551,7 +551,9 @@ class TestTheApiPathIsStoredAndUnreachable:
             api_path_prefix: str | None = None,
         ) -> instances_service.TestResult:
             prefixes.append(api_path_prefix)
-            return instances_service.TestResult(ok=True, detail="Connected.")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
@@ -576,13 +578,19 @@ class TestTheApiPathIsStoredAndUnreachable:
         instance_id = made.json()["id"]
 
         async def fake_test(*_a: object, **_k: object) -> instances_service.TestResult:
-            return instances_service.TestResult(ok=True, detail="Connected.", version="4.0.1")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."}), version="4.0.1"
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
 
         body = client.post(f"/api/settings/instances/{instance_id}/test").json()
 
-        assert body == {"ok": True, "detail": "Connected.", "version": "4.0.1"}
+        assert body == {
+            "ok": True,
+            "detail_reason": {"k": "legacy", "p": {"text": "Connected."}},
+            "version": "4.0.1",
+        }
 
 
 class TestTheStoredTestResultDescribesWhatWasTested:
@@ -604,7 +612,9 @@ class TestTheStoredTestResultDescribesWhatWasTested:
             verify: bool = True,
             api_path_prefix: str | None = None,
         ) -> instances_service.TestResult:
-            return instances_service.TestResult(ok=True, detail="Connected.", version="4.0.1")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."}), version="4.0.1"
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
@@ -695,7 +705,9 @@ class TestTheStoredTestResultDescribesWhatWasTested:
             verify: bool = True,
             api_path_prefix: str | None = None,
         ) -> instances_service.TestResult:
-            return instances_service.TestResult(ok=False, detail="Couldn't reach it.")
+            return instances_service.TestResult(
+                ok=False, detail=Reason("legacy", {"text": "Couldn't reach it."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", failing_test)
         assert client.post(f"/api/settings/instances/{made['id']}/test").status_code == 200
@@ -773,7 +785,9 @@ class TestConnectionTestsHonorTheTlsChoice:
         ) -> instances_service.TestResult:
             seen.append(verify)
             prefixes.append(api_path_prefix)
-            return instances_service.TestResult(ok=True, detail="Connected.")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
         resp = client.post(f"/api/settings/instances/{created['id']}/test")
@@ -792,7 +806,9 @@ class TestConnectionTestsHonorTheTlsChoice:
             kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True
         ) -> instances_service.TestResult:
             seen.append(verify)
-            return instances_service.TestResult(ok=True, detail="Connected.")
+            return instances_service.TestResult(
+                ok=True, detail=Reason("legacy", {"text": "Connected."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
 
@@ -2005,7 +2021,7 @@ class TestConnectionTestCarriesTheMapping:
     def _pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
         async def ok(*_a: object, **_k: object) -> instances_service.TestResult:
             return instances_service.TestResult(
-                ok=True, detail="Connected to Radarr.", version="5.4.6"
+                ok=True, detail=Reason("legacy", {"text": "Connected to Radarr."}), version="5.4.6"
             )
 
         monkeypatch.setattr(instances_service, "test_connection", ok)
@@ -2044,7 +2060,9 @@ class TestConnectionTestCarriesTheMapping:
         """Nothing was reached, so there is nothing to have read -- and no probe is attempted."""
 
         async def bad(*_a: object, **_k: object) -> instances_service.TestResult:
-            return instances_service.TestResult(ok=False, detail="Radarr refused that key.")
+            return instances_service.TestResult(
+                ok=False, detail=Reason("legacy", {"text": "Radarr refused that key."})
+            )
 
         monkeypatch.setattr(instances_service, "test_connection", bad)
 
@@ -2092,8 +2110,8 @@ class TestConnectionTestCarriesTheMapping:
         explained = instances_service.explain_failure(
             InstanceKind.RADARR, IntegrationError("radarr", "connection reset")
         )
-        assert reason["p"] == {"error": explained}
-        assert "connection reset" not in explained
+        assert reason["p"] == {"error": to_wire(explained)}
+        assert "connection reset" not in reaper.refusal.english(explained)
         assert "couldn't read what to map" in reason_text(
             from_wire(reason), namespace="services.modal"
         )

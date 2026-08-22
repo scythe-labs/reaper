@@ -246,7 +246,7 @@ class TestTheStreamedDownloadIsRetried:
             side_effect=httpx2.ConnectError("down")
         )
         async with PublicClient("https://mirror.test") as client:
-            with pytest.raises(IntegrationError, match="unreachable"):
+            with pytest.raises(IntegrationError, match="Couldn't reach it"):
                 await client.stream_to("/data.tsv.gz", tmp_path / "data.tsv.gz")
 
         assert route.call_count == 3

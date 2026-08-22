@@ -252,7 +252,7 @@ class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
             [_row(n, days_ago=n) for n in range(1, 13)], serves=4, error=httpx2.ConnectTimeout
         )
 
-        with pytest.raises(IntegrationError, match=r"timed out \(ConnectTimeout\)"):
+        with pytest.raises(IntegrationError, match="Timed out"):
             await sync(engine, fake, full=True)
 
         assert fake.lengths == [8]  # asked once, never shrank
@@ -268,7 +268,7 @@ class TestASlowSourceShrinksThePageInsteadOfAbortingTheSweep:
             [_row(n, days_ago=n) for n in range(1, 13)], serves=1, error=httpx2.ReadTimeout
         )
 
-        with pytest.raises(IntegrationError, match=r"timed out \(ReadTimeout\)"):
+        with pytest.raises(IntegrationError, match="Timed out"):
             await sync(engine, fake, full=True)
 
         assert fake.lengths == [8, 4, 2]
@@ -357,8 +357,10 @@ class TestARowTheSourceCannotServeIsSteppedOverNotFatal:
         monkeypatch.setattr(history_sync, "MAX_UNSERVABLE_ROWS", 1)
         fake = _RowsTautulliCannotServe([_row(n, days_ago=n) for n in range(1, 13)], bad={10, 11})
 
-        with pytest.raises(IntegrationError, match=r"could not return 2 rows of history"):
+        with pytest.raises(IntegrationError) as exc:
             await sync(engine, fake, full=True)
+        assert exc.value.code == "error.integration.history_rows_unservable"
+        assert exc.value.params == {"count": 2}
 
         assert await _count(engine) == 10
 
@@ -373,8 +375,9 @@ class TestARowTheSourceCannotServeIsSteppedOverNotFatal:
             [_row(n, days_ago=n) for n in range(1, 13)], bad={3}, status=status
         )
 
-        with pytest.raises(IntegrationError, match=rf"HTTP {status} for GET /api/v2"):
+        with pytest.raises(IntegrationError) as exc:
             await sync(engine, fake, full=True)
+        assert exc.value.status == status
 
         assert fake.asked == [(0, 1), (0, 8)]  # the probe, one page, never shrank
 

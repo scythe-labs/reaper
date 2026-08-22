@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from reaper.engine.reason import Reason
+from reaper.engine.reason import Reason, ReasonParam
 
 #: Every code an API response, a stored explanation, or the engine's own ``str()`` can
 #: surface, mapped to its ``str.format`` template. Plain language throughout (rule 21):
@@ -507,6 +507,124 @@ MESSAGES: dict[str, str] = {
         "Only Seerr portals have request services to map to an instance."
     ),
     # -----------------------------------------------------------------------------
+    # A connection test's own verdict (services.instances.explain_failure), all return
+    # sites -- 16 codes. Branch order there is load-bearing (see the function's docstring);
+    # this catalog just holds the words. Reused as a nested `{error}` param inside
+    # `mapError` and inside `TestOut.detail_reason` (api.settings), never composed as a
+    # top-level refusal on its own.
+    # -----------------------------------------------------------------------------
+    "error.instance.cert_unknown_authority": (
+        "The server's certificate is signed by an authority this machine doesn't know. "
+        "Only turn off the certificate check if this is your own server on your own "
+        "network: your API key travels on this connection."
+    ),
+    "error.instance.cert_rejected": (
+        "The server's certificate was rejected. It may have expired, or be for a "
+        "different address, or something may be sitting between Reaper and the server."
+    ),
+    "error.instance.auth_refused": (
+        "{service} refused the API key. Copy it again from its own settings."
+    ),
+    "error.instance.address_empty": (
+        "{service} answered, but there is nothing at this address. Check for a missing "
+        "or extra path at the end of the URL."
+    ),
+    "error.instance.rate_limited": (
+        "{service} asked Reaper to slow down. Wait a moment and test again."
+    ),
+    "error.instance.redirected": (
+        "The server sent Reaper somewhere else, and Reaper won't send your API key to a "
+        "different address. Check the URL and anything proxying it."
+    ),
+    "error.instance.server_error": (
+        "{service} reported a problem of its own (HTTP {status}). Check its log."
+    ),
+    "error.instance.request_refused": "{service} refused the request (HTTP {status}).",
+    "error.instance.connect_timed_out": "Couldn't open a connection to the server in time.",
+    "error.instance.read_timed_out": "The server didn't answer in time.",
+    "error.instance.bad_address": "That isn't an address Reaper can use. Start it with http:// or https://.",
+    "error.instance.unreachable": (
+        "Couldn't reach the server at this address. Check the URL and port, and that the "
+        "service is running."
+    ),
+    "error.instance.connection_broke": "The connection to the server broke before it answered.",
+    "error.instance.bad_body": (
+        "The address answered, but not with data from {service}. Check the URL."
+    ),
+    "error.instance.refused": (
+        "{service} answered, but turned the request down. Check the API key first, then the URL."
+    ),
+    "error.instance.unrecognized": "Couldn't connect. The full reason is in Reaper's log.",
+    # -----------------------------------------------------------------------------
+    # Every integration client's own failures (clients/base.py's IntegrationError, and
+    # every other client that raises one -- seerr.py, tautulli.py, public.py, plextv.py,
+    # services/lists.py, services/update_check.py, services/history_sync.py). Reused
+    # across every service that speaks HTTP, so these stay generic rather than naming one
+    # service; a caller that wants a service-specific sentence nests this under one of its
+    # own (`explain_failure`'s `error.instance.*`, above, is the model). `SafetyViolationError`
+    # (the transport guard's own refusal, same file) shares this namespace too: it is the
+    # same layer's refusal, just for a write rather than a read.
+    # -----------------------------------------------------------------------------
+    "error.integration.timed_out": "Timed out waiting for an answer.",
+    "error.integration.unreachable": "Couldn't reach it: {detail}",
+    "error.integration.refused_redirect": (
+        "The service redirected instead of answering (HTTP {status})."
+    ),
+    "error.integration.too_many_redirects": "The service kept redirecting and never answered.",
+    "error.integration.cross_origin_redirect_refused": (
+        "The service tried to redirect somewhere else. Reaper won't send your credentials there."
+    ),
+    "error.integration.http_failure": "The service answered with an error (HTTP {status}).",
+    "error.integration.unexpected_shape": "{path} sent back something Reaper couldn't read.",
+    "error.integration.seerr_list_incomplete": "Seerr's list stopped partway through.",
+    "error.integration.seerr_list_unbounded": "Seerr's list never finished loading.",
+    "error.integration.redirect_missing_location": (
+        "The download redirected without saying where to."
+    ),
+    "error.integration.tautulli_command_failed": "Tautulli turned the request down: {detail}",
+    "error.integration.imdb_list_truncated": (
+        "That list came back too short to trust, so Reaper left the stored one in place."
+    ),
+    "error.integration.keep_tag_missing": (
+        "The keep tag {names} doesn't exist there anymore, so anything that used to carry "
+        "it is no longer protected. The keep list was left as it was, so add the tag back "
+        "or take it out of your keep tags."
+    ),
+    "error.integration.library_not_found": 'There\'s no library called "{name}" anymore.',
+    "error.integration.update_check_incomplete": (
+        "GitHub's answer didn't include what Reaper needed to check for updates."
+    ),
+    "error.integration.history_rows_unservable": (
+        "{count} watch-history rows couldn't be read, so the sweep stopped."
+    ),
+    "error.integration.write_not_armed": "Blocked {method} {path}. {why}",
+    "error.integration.write_not_declared": (
+        "Blocked {method} {path}: this mutation wasn't declared to the action journal. "
+        "Destructive calls must go through the action executor so that they are recorded "
+        "before they are sent."
+    ),
+    "error.integration.write_shelf_blocked": (
+        "Blocked {method} to Plex (Leaving Soon shelf). Turn deletion on, or turn on "
+        '"Update while read-only" under Settings, Plex, Leaving Soon to allow this '
+        "reversible shelf write while Reaper is read-only."
+    ),
+    "error.integration.tautulli_write_refused": (
+        "Tautulli command {cmd} isn't on Reaper's read-only allow-list. Reaper never writes "
+        "to Tautulli."
+    ),
+    # -----------------------------------------------------------------------------
+    # The Plex client's own failures (clients/plex.py's PlexError). Plex is always "the
+    # server" in these -- there is only ever one -- so no {service} param.
+    # -----------------------------------------------------------------------------
+    "error.plexclient.paging_failed": "Reaper couldn't read all of {what} from Plex.",
+    "error.plexclient.connect_failed": "Could not reach Plex at {base_url}: {detail}",
+    "error.plexclient.call_failed": "Could not {what}: {detail}",
+    "error.plexclient.streams_unreadable": (
+        "Could not read active sessions from Plex ({detail}). Refusing to delete: not "
+        "being able to see who is watching is not the same as nobody watching."
+    ),
+    "error.plexclient.trash_count_failed": "Couldn't count the trash in section {section}.",
+    # -----------------------------------------------------------------------------
     # Planning a run (services.planner.PlanError), all raise sites -- 15 codes.
     # -----------------------------------------------------------------------------
     "error.plan.media_key_unroutable": 'Cannot route media_key "{media_key}" to an instance.',
@@ -829,22 +947,17 @@ class Refusal(ValueError):  # noqa: N818 -- "Refusal" is the domain noun the pla
     subclass or a call site that means something else (a 400, a 409).
     """
 
-    def __init__(
-        self, code: str, /, *, status: int = 422, **params: str | int | float | bool
-    ) -> None:
+    def __init__(self, code: str, /, *, status: int = 422, **params: ReasonParam) -> None:
         self.code = code
-        self.params: dict[str, str | int | float | bool] = params
+        self.params: dict[str, ReasonParam] = params
         self.status = status
         super().__init__(str(self))
 
     def __str__(self) -> str:
-        template = MESSAGES.get(self.code, self.code)
-        try:
-            return template.format(**self.params)
-        except (KeyError, IndexError):
-            # A code with no catalog entry, or params that do not match its placeholders.
-            # Never raise out of __str__: the fallback is the code itself, still readable.
-            return template
+        # Through `english()`, not a bare `str.format`, so a nested `Reason` param (an
+        # `IntegrationError`/`PlexError` carried in via `as_reason()`) composes into its own
+        # sentence instead of printing the dataclass (rule 104: one renderer).
+        return english(self.as_reason())
 
     def as_reason(self) -> Reason:
         """This refusal's code and params, as the typed container a wire field carries.
@@ -864,21 +977,32 @@ def english(reason: Reason) -> str:
 
     A ``legacy`` reason (a sentence frozen before its condition got a code) renders its
     stored text verbatim, never looked up. Anything else formats ``MESSAGES[reason.id]``
-    against ``reason.params`` -- with one addition ``str.format`` cannot do on its own: a
-    numeric param gets a ``{name}_gb`` companion, the same derivation the browser's
+    against ``reason.params`` -- with two additions ``str.format`` cannot do on its own.
+    A numeric param gets a ``{name}_gb`` companion, the same derivation the browser's
     ``composeIn`` (``frontend/src/why.ts``) applies to every numeric param, so a template
-    can show a byte count in gigabytes without the raise site pre-rounding it. An id with
-    no catalog entry, or params that do not match its placeholders, renders as the id
-    itself -- the same fallback :meth:`Refusal.__str__` uses, and for the same reason:
-    never raise out of a report or a log line over a formatting slip.
+    can show a byte count in gigabytes without the raise site pre-rounding it. And a param
+    that is itself a :class:`Reason` (an ``IntegrationError``/``PlexError`` nested via
+    ``as_reason()``, the same shape a stored explanation's own params can carry) recurses
+    through this same function rather than printing the dataclass's ``repr`` -- a tuple of
+    them renders each and joins with ``"; "``, mirroring ``why.ts``'s ``composeIn`` exactly
+    so the two composers can never read a nested reason two different ways. An id with no
+    catalog entry, or params that do not match its placeholders, renders as the id itself
+    -- the same fallback :meth:`Refusal.__str__` uses, and for the same reason: never raise
+    out of a report or a log line over a formatting slip.
     """
     if reason.id == "legacy":
         return str(reason.params.get("text", ""))
     template = MESSAGES.get(reason.id, reason.id)
-    params: dict[str, Any] = dict(reason.params)
+    params: dict[str, Any] = {}
     for key, value in reason.params.items():
-        if isinstance(value, int | float) and not isinstance(value, bool):
-            params[f"{key}_gb"] = f"{value / 1_000_000_000:.1f}"
+        if isinstance(value, Reason):
+            params[key] = english(value)
+        elif isinstance(value, tuple):
+            params[key] = "; ".join(english(v) for v in value if isinstance(v, Reason))
+        else:
+            params[key] = value
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                params[f"{key}_gb"] = f"{value / 1_000_000_000:.1f}"
     try:
         return template.format(**params)
     except (KeyError, IndexError):

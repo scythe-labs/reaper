@@ -2069,14 +2069,16 @@ class Executor:
         except IntegrationError as exc:
             # A hard client/transport error on this item. Recorded and (unless it is the
             # canary) survivable -- the run continues with the others.
-            return failed(Reason("error.reap.step.arr_call_failed", {"error": str(exc)}))
+            return failed(Reason("error.reap.step.arr_call_failed", {"error": exc.as_reason()}))
         except SafetyViolationError as exc:
             # The transport guard refused the mutation mid-send. The execute route hands
             # its own RuntimeSafety snapshot to build_reap_gateway, so the guard and this
             # executor decide from one switch state -- but if they ever disagreed, a clean
             # failed item (the canary aborts the run) is far better than a crash that
             # leaves the run in an unknown state.
-            return failed(Reason("error.reap.step.transport_guard_blocked", {"error": str(exc)}))
+            return failed(
+                Reason("error.reap.step.transport_guard_blocked", {"error": exc.as_reason()})
+            )
         except ExecutionError as exc:
             # A missing instance route. Same treatment: fail this item, not the world.
             return failed(exc.as_reason())

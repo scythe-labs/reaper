@@ -119,7 +119,7 @@ class TestTheLibraryNameIsMatchedCaseFolded:
         with pytest.raises(IntegrationError) as caught:
             await provider.fetch()
 
-        assert "there is no library called 'Movies'" in str(caught.value)
+        assert 'no library called "Movies" anymore' in str(caught.value)
 
     async def test_a_missing_collection_is_still_a_missing_container(self) -> None:
         """The library is there and the collection is not: the case that must stay

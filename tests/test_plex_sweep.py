@@ -599,8 +599,11 @@ class TestASweepThatNeverFinishesIsBounded:
         monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 3)
         server = _NeverAdvancing(limit=4)
 
-        with pytest.raises(PlexError, match="never finished, after 3 items"):
+        with pytest.raises(PlexError) as exc:
             await _client_with(server).section_rating_keys(1, kind="movie")
+        # _call wraps read()'s own PlexError a second time, naming the outer call:
+        # the inner paging_failed sentence survives as this one's own {detail}.
+        assert exc.value.code == "error.plexclient.call_failed"
 
         assert len(server.queries) == 3
 
@@ -611,8 +614,9 @@ class TestASweepThatNeverFinishesIsBounded:
         monkeypatch.setattr("reaper.clients.plex.SWEEP_MAX_PAGES", 2)
         server = _NeverAdvancing(limit=3)
 
-        with pytest.raises(PlexError, match="never finished, after 2 items"):
+        with pytest.raises(PlexError) as exc:
             await _client_with(server).collection_children(9)
+        assert exc.value.code == "error.plexclient.call_failed"
 
         assert len(server.queries) == 2
 
@@ -697,8 +701,9 @@ class TestTrashCount:
         56) would read a zero-sized window as an empty trash and print a fabricated number
         beside the operator's most dangerous button."""
         server = self._server('<MediaContainer size="0"/>')
-        with pytest.raises(PlexError, match="totalSize"):
+        with pytest.raises(PlexError) as exc:
             await _client_with(server).trash_count(7)
+        assert exc.value.code == "error.plexclient.trash_count_failed"
 
     async def test_a_failing_read_surfaces_as_plex_error(self) -> None:
         """Rule 110: the caller catches ``PlexError`` and warns. A raw transport exception

@@ -536,7 +536,8 @@ async def _sync(
             if skipped_unservable > MAX_UNSERVABLE_ROWS:
                 raise IntegrationError(
                     client.service,
-                    f"could not return {skipped_unservable} rows of history (HTTP 500)",
+                    "error.integration.history_rows_unservable",
+                    count=skipped_unservable,
                 ) from exc
             log.warning("history.row_unservable", offset=start, error=str(exc))
             start += 1

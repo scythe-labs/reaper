@@ -93,21 +93,22 @@ class TautulliClient(BaseClient):
             # must never be built. Tautulli's key can delete libraries and restart
             # the service, and its destructive commands are GETs -- so the HTTP-method
             # guard in GuardedTransport cannot catch them.
-            raise SafetyViolationError(
-                f"Tautulli command {cmd!r} is not on Reaper's read-only allow-list. "
-                "Reaper never writes to Tautulli."
-            )
+            raise SafetyViolationError("error.integration.tautulli_write_refused", cmd=cmd)
 
         query: dict[str, Any] = {"apikey": self._api_key, "cmd": cmd}
         query.update({k: v for k, v in params.items() if v is not None})
 
         payload = await self.get_json("/api/v2", params=query, read_timeout=read_timeout)
         if not isinstance(payload, dict):
-            raise IntegrationError(self.service, f"{cmd}: unexpected response shape")
+            raise IntegrationError(self.service, "error.integration.unexpected_shape", path=cmd)
 
         response = payload.get("response") or {}
         if response.get("result") != "success":
-            raise IntegrationError(self.service, f"{cmd}: {response.get('message') or 'error'}")
+            raise IntegrationError(
+                self.service,
+                "error.integration.tautulli_command_failed",
+                detail=str(response.get("message") or "error"),
+            )
         return response.get("data")
 
     # -- connectivity ---------------------------------------------------------

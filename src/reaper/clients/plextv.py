@@ -285,7 +285,9 @@ class PlexTvClient(BaseClient):
         """
         data = await self.get_json("/api/v2/user", headers={"X-Plex-Token": user_token})
         if not isinstance(data, dict):
-            raise IntegrationError(self.service, "could not read the Plex account")
+            raise IntegrationError(
+                self.service, "error.integration.unexpected_shape", path="/api/v2/user"
+            )
         return PlexAccount(
             account_id=int(data["id"]),
             uuid=str(data.get("uuid") or ""),
@@ -312,7 +314,9 @@ class PlexTvClient(BaseClient):
             headers={"X-Plex-Token": user_token},
         )
         if not isinstance(payload, list):
-            raise IntegrationError(self.service, "/resources did not return an array")
+            raise IntegrationError(
+                self.service, "error.integration.unexpected_shape", path="/api/v2/resources"
+            )
         return [_parse_resource(r) for r in payload]
 
     async def owned_servers(self, user_token: str) -> list[PlexResource]:

@@ -45,6 +45,7 @@ from reaper.clock import expiry, utcnow
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import AppSetting, PendingPlexLogin, PlexServer
+from reaper.engine.reason import ReasonParam
 from reaper.refusal import Refusal
 from reaper.services import app_settings
 
@@ -78,9 +79,7 @@ class PlexLinkError(Refusal):
     link, which every route above answers with 400 rather than 422's "content refused."
     """
 
-    def __init__(
-        self, code: str, /, *, status: int = 400, **params: str | int | float | bool
-    ) -> None:
+    def __init__(self, code: str, /, *, status: int = 400, **params: ReasonParam) -> None:
         super().__init__(code, status=status, **params)
 
 
@@ -97,9 +96,7 @@ class PlexLinkRetryableError(PlexLinkError):
     Defaults to 502 (an upstream, Plex-side unreachability) where its parent defaults to 400.
     """
 
-    def __init__(
-        self, code: str, /, *, status: int = 502, **params: str | int | float | bool
-    ) -> None:
+    def __init__(self, code: str, /, *, status: int = 502, **params: ReasonParam) -> None:
         super().__init__(code, status=status, **params)
 
 
@@ -466,7 +463,7 @@ async def switch_server(
             owned = await plextv.owned_servers(token)
         except IntegrationError as exc:
             raise PlexLinkRetryableError(
-                "error.plex.switch_owned_servers_failed", error=str(exc)
+                "error.plex.switch_owned_servers_failed", error=exc.as_reason()
             ) from exc
 
     return await complete_link(

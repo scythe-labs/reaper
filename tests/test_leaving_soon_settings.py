@@ -372,10 +372,11 @@ class TestTheSettingsRoutes:
         behind it, rather than the diagnostic alone under a status that blamed them for it.
         """
         from reaper.clients.plex import PlexError
+        from reaper.engine.reason import to_wire
         from reaper.services import leaving_soon as service
 
         async def _stalled(*args: object, **kwargs: object) -> object:
-            raise PlexError("movie listing for section 3 stalled at 200 of 1000")
+            raise PlexError("error.plexclient.paging_failed", what="movie listing for section 3")
 
         monkeypatch.setattr(service, "_plex_client", _stalled)
         client.put("/api/settings/leaving-soon", json={"enabled": True})
@@ -385,8 +386,15 @@ class TestTheSettingsRoutes:
         assert resp.status_code == 502
         body = resp.json()
         assert body["code"] == "error.plex.unreachable"
-        assert body["params"]["error"] == "movie listing for section 3 stalled at 200 of 1000"
+        # `{error}` is another composed sentence now, not a raw client string: the client's
+        # own coded failure, carried whole rather than flattened at the raise site.
+        assert body["params"]["error"] == to_wire(
+            PlexError(
+                "error.plexclient.paging_failed", what="movie listing for section 3"
+            ).as_reason()
+        )
         assert body["detail"].startswith("Reaper couldn't reach Plex")
+        assert "movie listing for section 3" in body["detail"]
 
     def test_about_reports_the_facts(self, client: TestClient) -> None:
         body = client.get("/api/about").json()

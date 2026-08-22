@@ -50,7 +50,8 @@ from reaper.db.models import (
 )
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
-from reaper.engine.reason import from_stored
+from reaper.engine.reason import Reason, from_stored
+from reaper.refusal import english
 from reaper.services import list_config, whitelist
 from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
@@ -4573,7 +4574,11 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
         hurt = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
         assert hurt.state is StepState.FAILED
         assert hurt.detail.id == "error.reap.step.arr_call_failed"
-        assert "connection reset" in str(hurt.detail.params.get("error", ""))
+        # `{error}` is a nested reason now (the client's own coded failure via `as_reason()`),
+        # not a raw string, so read it through the real composer rather than the dataclass repr.
+        nested = hurt.detail.params.get("error")
+        assert isinstance(nested, Reason)
+        assert "connection reset" in english(nested)
 
     async def test_a_plex_surprise_during_the_refresh_is_swallowed(
         self, session: AsyncSession
