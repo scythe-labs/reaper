@@ -1224,8 +1224,16 @@ describe("the shelf status line", () => {
     ok: true,
     result: "4 added, 1 cleared",
   };
-  /** After `PASS`, since the whole decision is which record is newer (rule 141). */
-  const SKIP = { at: "2026-08-04T20:06:00+00:00", result: "Reaper couldn't reach Plex" };
+  /** After `PASS`, since the whole decision is which record is newer (rule 141).
+   *  `result_reason` is a real catalog code (phase 8b): this panel's own status line never
+   *  reads it (it says only a generic "later scan skipped" sentence; the Jobs row names the
+   *  reason), so the exact code doesn't matter to these assertions -- it just has to be a
+   *  real one, since `shelf()`'s loose `Record<string, unknown>` typing would not catch a
+   *  stale shape. */
+  const SKIP = {
+    at: "2026-08-04T20:06:00+00:00",
+    result_reason: { k: "error.leaving_soon.skip_unreachable", p: {} },
+  };
 
   async function statusLine(over: Record<string, unknown>): Promise<string> {
     apiMock.leavingSoonSettings.mockResolvedValue({
