@@ -60,7 +60,7 @@
   font-variant-numeric: tabular-nums;
   font-weight: var(--weight-semi);
   min-width: 2.6rem;
-  text-align: right;
+  text-align: end;
   color: var(--condemn);
 }
 .sig-detail {
@@ -87,7 +87,7 @@
 .sig-why {
   display: block;
   width: 100%;
-  text-align: left;
+  text-align: start;
   border: none;
   background: none;
   color: inherit;

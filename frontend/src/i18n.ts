@@ -162,12 +162,37 @@ export async function setLanguage(tag: string | undefined): Promise<void> {
   location.reload();
 }
 
+/** Which way `tag` is read, from the browser's own locale data rather than a list kept here
+ *  that would need an entry the day Arabic or Hebrew ships (rule 66).
+ *
+ *  Anything unrecognized reads left to right. That is the safe answer both ways: it is right
+ *  for every language Reaper ships today, and a tag the browser cannot place is far more
+ *  likely to be a typo than to be Persian. */
+export function textDirection(tag: string): "ltr" | "rtl" {
+  try {
+    // Two spellings of one thing: `getTextInfo()` is the current one, `textInfo` the older
+    // getter still shipping in some browsers, and TypeScript's lib carries neither yet. Typed
+    // here as what is actually read, so a browser with neither falls through to the catch.
+    const locale = new Intl.Locale(tag) as Intl.Locale & {
+      getTextInfo?: () => { direction?: string };
+      textInfo?: { direction?: string };
+    };
+    const info = locale.getTextInfo?.() ?? locale.textInfo;
+    return info?.direction === "rtl" ? "rtl" : "ltr";
+  } catch {
+    return "ltr";
+  }
+}
+
 // index.html ships `lang="en"` as the pre-JS default; from here on the attribute follows
-// the locale actually serving strings. Guarded: test/setup.ts imports this file for the
+// the locale actually serving strings, and `dir` follows the language's own reading order so
+// the layout mirrors with it (#861). Guarded: test/setup.ts imports this file for the
 // node-environment test files too, where there is no document at all.
 if (typeof document !== "undefined") {
   const setLang = () => {
-    document.documentElement.lang = i18next.resolvedLanguage ?? i18next.language;
+    const tag = i18next.resolvedLanguage ?? i18next.language;
+    document.documentElement.lang = tag;
+    document.documentElement.dir = textDirection(tag);
   };
   setLang();
   i18next.on("languageChanged", setLang);

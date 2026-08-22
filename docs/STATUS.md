@@ -41,7 +41,7 @@ Last verified against the code: 2026-08-02.
 | **First start** — four steps, password forced, restore door, resume from the server | ✅ done |
 | **Packaged installs** — Win/macOS + tray, snap, winget, CalVer, update check | ✅ done |
 | **Collections** — chip, picker, collection screen, search reaches names | ✅ done, #816 |
-| **i18n** — catalogs, typed reasons, manual, Weblate, picker | ✅ #862, #868, #885, RTL #861 |
+| **i18n** — catalogs, typed reasons, manual, Weblate, picker, RTL | ✅ #862, #868, #885, #861 |
 
 ## Open work
 

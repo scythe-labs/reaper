@@ -38,7 +38,7 @@
    by the card's override chip and the buttons. */
 .override-mark {
   position: absolute;
-  right: 0;
+  inset-inline-end: 0;
   bottom: 0;
   display: inline-flex;
   align-items: center;
@@ -184,8 +184,8 @@
 /* The split's seam: the caret's divider goes dashed with the rest, so the pair reads as one
    expired control rather than a dashed half joined to a solid one. */
 .ov-split .split-caret.expired {
-  border-left-style: dashed;
-  border-left-color: color-mix(in srgb, var(--protect) 55%, transparent);
+  border-inline-start-style: dashed;
+  border-inline-start-color: color-mix(in srgb, var(--protect) 55%, transparent);
 }
 /* A made decision reads at a glance: the solid hand-decision chip, green for spare, red for
    reap -- the same solid-means-yours language the override chips use. */
@@ -230,22 +230,22 @@
 }
 .ov-split .split-main {
   flex: 1 1 auto;
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  border-right-width: 0;
-  padding-left: 0.4rem;
-  padding-right: 0.3rem;
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+  border-inline-end-width: 0;
+  padding-inline-start: 0.4rem;
+  padding-inline-end: 0.3rem;
 }
 .ov-split .split-caret {
   flex: 0 0 auto;
   width: 1.5rem;
   padding: 0.28rem 0;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  border-left: 1px solid color-mix(in srgb, var(--protect) 40%, transparent);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+  border-inline-start: 1px solid color-mix(in srgb, var(--protect) 40%, transparent);
 }
 .ov-split .split-caret.active {
-  border-left-color: color-mix(in srgb, var(--protect-soft) 45%, transparent);
+  border-inline-start-color: color-mix(in srgb, var(--protect-soft) 45%, transparent);
 }
 .ov-split .split-caret svg {
   display: block;
@@ -335,7 +335,7 @@
   align-items: center;
   gap: 0.55rem;
   width: 100%;
-  text-align: left;
+  text-align: start;
   border: none;
   background: none;
   cursor: pointer;

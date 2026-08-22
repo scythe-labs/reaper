@@ -198,7 +198,7 @@ button.link:hover:not(:disabled) {
   font-size: var(--text-sm);
 }
 .segmented.flat .seg + .seg {
-  border-left: 1px solid var(--border-strong);
+  border-inline-start: 1px solid var(--border-strong);
 }
 .segmented.flat .seg:hover:not(:disabled) {
   background: var(--hover);
@@ -223,8 +223,8 @@ button.link:hover:not(:disabled) {
 @media (max-width: 400px) {
   .tab,
   .seg {
-    padding-left: 0.55rem;
-    padding-right: 0.55rem;
+    padding-inline-start: 0.55rem;
+    padding-inline-end: 0.55rem;
   }
 }
 /* So below 340px the pills give up a little more, and the band gives up padding to meet them
@@ -232,7 +232,7 @@ button.link:hover:not(:disabled) {
    card at 320px with room to spare. The lane switcher sits in no card and keeps its width. */
 @media (max-width: 340px) {
   .seg {
-    padding-left: 0.45rem;
-    padding-right: 0.45rem;
+    padding-inline-start: 0.45rem;
+    padding-inline-end: 0.45rem;
   }
 }

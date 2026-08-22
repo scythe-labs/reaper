@@ -95,7 +95,7 @@
    selection bar when its panel is open), so it reads as interactive without a new look. */
 .fair-stat-btn {
   font: inherit;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   width: 100%;
   transition:
@@ -268,7 +268,7 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--space-md);
-  text-align: right;
+  text-align: end;
   min-width: 6.5rem;
 }
 .fair-watched {

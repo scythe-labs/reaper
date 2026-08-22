@@ -100,7 +100,7 @@
   outline-offset: 1px;
 }
 .log-count {
-  margin-left: auto;
+  margin-inline-start: auto;
   font-size: var(--text-sm);
   white-space: nowrap;
 }
@@ -172,7 +172,7 @@
 
 @media (max-width: 640px) {
   .log-count {
-    margin-left: 0;
+    margin-inline-start: 0;
     flex-basis: 100%;
   }
   .log-console {

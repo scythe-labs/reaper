@@ -149,7 +149,7 @@
   border-color: var(--protect);
 }
 .reap-running {
-  margin-right: auto;
+  margin-inline-end: auto;
   display: flex;
   align-items: center;
   gap: var(--space-md);
@@ -255,7 +255,7 @@
   color: var(--muted);
 }
 .reap-bar-actions {
-  margin-left: auto;
+  margin-inline-start: auto;
   display: flex;
   align-items: center;
   gap: var(--space-md);
@@ -273,7 +273,7 @@
 }
 .reap-bar-fill {
   position: absolute;
-  left: 0;
+  inset-inline-start: 0;
   bottom: 0;
   height: 3px;
   background: var(--condemn);
@@ -398,7 +398,7 @@
 .changes-notes ul,
 .changes-notes ol {
   margin: var(--space-sm) 0;
-  padding-left: 1.2rem;
+  padding-inline-start: 1.2rem;
 }
 .changes-notes li {
   margin: 0.15rem 0;
