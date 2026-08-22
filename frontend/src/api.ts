@@ -1559,14 +1559,16 @@ export interface Instance {
   last_error: string | null;
 }
 
-/** The verdict on a saved-instance connection test. An *arr/Seerr integration's own
- *  connectivity text has no fixed vocabulary to catalog, so `detail` stays plain English
- *  here (out of scope for docs/history/I18N_PLAN.md §5); the Discord webhook test is typed
- *  instead, as `DiscordTest` below. What a pre-save probe additionally reads is on
+/** The verdict on a saved-instance connection test. `detail_reason` used to be a bare
+ *  `detail: string`, an *arr/Seerr integration's own connectivity text with no fixed
+ *  vocabulary to catalog -- it has one now, the same move that gave the Discord webhook
+ *  test its own typed `DiscordTest` below. A failure carries `explain_failure`'s own
+ *  `error.instance.*` code; a pass carries a `services.test.*` id `ServiceModal.tsx`'s own
+ *  `testDetailText` composes. What a pre-save probe additionally reads is on
  *  `InstanceProbe`. */
 export interface InstanceTest {
   ok: boolean;
-  detail: string;
+  detail_reason: ReasonKey;
   version: string | null;
 }
 

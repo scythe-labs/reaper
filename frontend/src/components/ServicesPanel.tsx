@@ -108,12 +108,18 @@ function ServiceCard({
           {test && test.of === testedWith() ? (
             <TestBadge result={test.result} />
           ) : instance.last_error ? (
-            <TestBadge result={{ ok: false, detail: instance.last_error, version: null }} />
+            <TestBadge
+              result={{
+                ok: false,
+                detail_reason: { k: "legacy", p: { text: instance.last_error } },
+                version: null,
+              }}
+            />
           ) : instance.last_ok_at ? (
             <TestBadge
               result={{
                 ok: true,
-                detail: t("services.panel.card.reachedDetail"),
+                detail_reason: { k: "legacy", p: { text: t("services.panel.card.reachedDetail") } },
                 version: instance.detected_version,
               }}
             />

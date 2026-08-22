@@ -51,11 +51,16 @@ export function composeIn(namespace: string, key: ReasonKey): string {
   const params: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(key.p ?? {})) {
     if (isReasonKey(value)) {
-      params[name] = composeIn("why", value);
+      // A nested reason whose own id is a full `error.*` catalog code (an
+      // `IntegrationError`/`PlexError`'s own code, carried in via `as_reason()`) composes
+      // through the error namespace, never `why`: `why.error.integration.timed_out` is not
+      // a key this catalog has, and it never should be -- the sentence already lives at
+      // `error.integration.timed_out`, the same entry the backend's own `english()` reads.
+      params[name] = value.k.startsWith("error.") ? composeError(value) : composeIn("why", value);
     } else if (Array.isArray(value)) {
       params[name] = value
         .filter(isReasonKey)
-        .map((v) => composeIn("why", v))
+        .map((v) => (v.k.startsWith("error.") ? composeError(v) : composeIn("why", v)))
         .join("; ");
     } else {
       params[name] = value;

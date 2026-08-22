@@ -31,7 +31,7 @@ import { useBackCloseMirror } from "../backnav";
 import { describeError } from "../errors";
 import i18next from "../i18n";
 import { usePlexLibraries } from "../usePlexLibraries";
-import { composeIn } from "../why";
+import { composeError, composeIn } from "../why";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
@@ -93,15 +93,26 @@ export function serviceKindLabel(kind: SeerrService["kind"]): string {
     : i18next.t("services.serviceKind.movies");
 }
 
+/** A test's own detail, composed from its typed reason. A failure's id is a full `error.*`
+ *  catalog code (`explain_failure`'s own, e.g. `error.instance.auth_refused`) and composes
+ *  through the error namespace; a pass's id is bare (`services.test.connected` and kin,
+ *  `ServiceModal.tsx`'s own namespace) and composes under `services.test`. `ServicesPanel.tsx`
+ *  synthesizes a `{k: "legacy", p: {text}}` reason for the persisted card states (the stored
+ *  `last_error` string, the fixed "Reached" detail), which `composeIn`/`composeError` both
+ *  already render verbatim (the same shape a pre-conversion stored row carries). */
+export function testDetailText(reason: InstanceTest["detail_reason"]): string {
+  return reason.k.startsWith("error.") ? composeError(reason) : composeIn("services.test", reason);
+}
+
 /** What a connection test SAYS, written once because two surfaces state it.
  *
  *  `TestBadge` renders it for whoever navigates onto the badge, and every test mutation
  *  announces it for whoever does not (#192). Deriving both from here is what rule 144 asks
  *  for: one fact, and the copy that is spoken cannot drift away from the copy that is read.
  *
- *  `detail` is already a whole sentence from the server ("Connected to Sonarr.", or an explained
- *  failure), so the lead is the only thing added -- for the reason it was added to the badge in
- *  the first place, that "Couldn't reach it" read as a result rather than as a failure.
+ *  `detail` is already a whole sentence ("Connected to Sonarr.", or an explained failure), so
+ *  the lead is the only thing added -- for the reason it was added to the badge in the first
+ *  place, that "Couldn't reach it" read as a result rather than as a failure.
  *
  *  The one deliberate difference from the badge: the version is spoken as "version 4.0.1" where
  *  the badge shows "(v4.0.1)". A reader voices a bare "v" as a letter. */
@@ -111,7 +122,7 @@ export function testSentence(result: InstanceTest): string {
     : "";
   return i18next.t("services.test.sentence", {
     lead: testLead(result.ok),
-    detail: result.detail,
+    detail: testDetailText(result.detail_reason),
     version,
   });
 }
@@ -137,7 +148,7 @@ export function TestBadge({ result }: { result: InstanceTest | null }) {
           result the operator has already heard. */}
       <span className="sr-only">{testLead(result.ok)}: </span>
       <span aria-hidden="true">{result.ok ? "✓ " : "✗ "}</span>
-      {result.detail}
+      {testDetailText(result.detail_reason)}
       {result.version && i18next.t("services.test.badgeVersion", { version: result.version })}
     </span>
   );

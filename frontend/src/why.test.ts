@@ -176,6 +176,23 @@ describe("composeIn", () => {
       composeIn("error", { k: "policy.field_needs_value", p: { field: "not_a_real_field" } }),
     ).toBe('"not_a_real_field" needs a value.');
   });
+
+  it("composes a nested error.* param through the error namespace, not why", () => {
+    // services.modal.mapError's own `{error}` param is exactly this shape: a non-error
+    // outer key (ServiceModal.tsx's own namespace) carrying an IntegrationError/PlexError's
+    // own code as a nested reason. `why.error.instance.auth_refused` is not a catalog entry
+    // and never should be -- the sentence lives at `error.instance.auth_refused`, the same
+    // entry the backend's own `english()` reads for the identical nested Reason.
+    expect(
+      composeIn("services.modal", {
+        k: "mapError",
+        p: { error: { k: "error.instance.auth_refused", p: { service: "Radarr" } } },
+      }),
+    ).toBe(
+      "Reaper reached this service but couldn't read what to map. Radarr refused the API " +
+        "key. Copy it again from its own settings.",
+    );
+  });
 });
 
 describe("composeError", () => {

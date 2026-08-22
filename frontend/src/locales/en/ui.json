@@ -805,6 +805,24 @@
       "needs_seerr_and_tautulli": "Scales needs a Seerr and a Tautulli instance: Seerr for who requested what, Tautulli for who watched it. Configure them in Settings.",
       "person_not_found": "No one by that id is in the last scan."
     },
+    "instance": {
+      "address_empty": "{service} answered, but there is nothing at this address. Check for a missing or extra path at the end of the URL.",
+      "auth_refused": "{service} refused the API key. Copy it again from its own settings.",
+      "bad_address": "That isn't an address Reaper can use. Start it with http:// or https://.",
+      "bad_body": "The address answered, but not with data from {service}. Check the URL.",
+      "cert_rejected": "The server's certificate was rejected. It may have expired, or be for a different address, or something may be sitting between Reaper and the server.",
+      "cert_unknown_authority": "The server's certificate is signed by an authority this machine doesn't know. Only turn off the certificate check if this is your own server on your own network: your API key travels on this connection.",
+      "connect_timed_out": "Couldn't open a connection to the server in time.",
+      "connection_broke": "The connection to the server broke before it answered.",
+      "rate_limited": "{service} asked Reaper to slow down. Wait a moment and test again.",
+      "read_timed_out": "The server didn't answer in time.",
+      "redirected": "The server sent Reaper somewhere else, and Reaper won't send your API key to a different address. Check the URL and anything proxying it.",
+      "refused": "{service} answered, but turned the request down. Check the API key first, then the URL.",
+      "request_refused": "{service} refused the request (HTTP {status}).",
+      "server_error": "{service} reported a problem of its own (HTTP {status}). Check its log.",
+      "unreachable": "Couldn't reach the server at this address. Check the URL and port, and that the service is running.",
+      "unrecognized": "Couldn't connect. The full reason is in Reaper's log."
+    },
     "instances": {
       "name_exists": "A {kind} connection named \"{name}\" already exists.",
       "not_found": "No such instance.",
@@ -812,6 +830,28 @@
       "singleton_exists": "Reaper uses one {kind}. It reads a single Plex server's watch history, and Reaper connects to one Plex. Edit the one you have, or remove it and add a different one.",
       "wrong_kind_for_root_folders": "Only Sonarr and Radarr have root folders to map to a Plex library.",
       "wrong_kind_for_seerr_services": "Only Seerr portals have request services to map to an instance."
+    },
+    "integration": {
+      "cross_origin_redirect_refused": "The service tried to redirect somewhere else. Reaper won't send your credentials there.",
+      "history_rows_unservable": "{count} watch-history rows couldn't be read, so the sweep stopped.",
+      "http_failure": "The service answered with an error (HTTP {status}).",
+      "imdb_list_truncated": "That list came back too short to trust, so Reaper left the stored one in place.",
+      "keep_tag_missing": "The keep tag {names} doesn't exist there anymore, so anything that used to carry it is no longer protected. The keep list was left as it was, so add the tag back or take it out of your keep tags.",
+      "library_not_found": "There's no library called \"{name}\" anymore.",
+      "redirect_missing_location": "The download redirected without saying where to.",
+      "refused_redirect": "The service redirected instead of answering (HTTP {status}).",
+      "seerr_list_incomplete": "Seerr's list stopped partway through.",
+      "seerr_list_unbounded": "Seerr's list never finished loading.",
+      "tautulli_command_failed": "Tautulli turned the request down: {detail}",
+      "tautulli_write_refused": "Tautulli command {cmd} isn't on Reaper's read-only allow-list. Reaper never writes to Tautulli.",
+      "timed_out": "Timed out waiting for an answer.",
+      "too_many_redirects": "The service kept redirecting and never answered.",
+      "unexpected_shape": "{path} sent back something Reaper couldn't read.",
+      "unreachable": "Couldn't reach it: {detail}",
+      "update_check_incomplete": "GitHub's answer didn't include what Reaper needed to check for updates.",
+      "write_not_armed": "Blocked {method} {path}. {why}",
+      "write_not_declared": "Blocked {method} {path}: this mutation wasn't declared to the action journal. Destructive calls must go through the action executor so that they are recorded before they are sent.",
+      "write_shelf_blocked": "Blocked {method} to Plex (Leaving Soon shelf). Turn deletion on, or turn on \"Update while read-only\" under Settings, Plex, Leaving Soon to allow this reversible shelf write while Reaper is read-only."
     },
     "leaving_soon": {
       "degraded": "The last scan couldn't be trusted, so the shelf wasn't updated. Run a scan that finishes cleanly first.",
@@ -882,6 +922,13 @@
     },
     "plex_trash": {
       "unreadable": "Reaper couldn't read Plex's trash: {error}"
+    },
+    "plexclient": {
+      "call_failed": "Could not {what}: {detail}",
+      "connect_failed": "Could not reach Plex at {base_url}: {detail}",
+      "paging_failed": "Reaper couldn't read all of {what} from Plex.",
+      "streams_unreadable": "Could not read active sessions from Plex ({detail}). Refusing to delete: not being able to see who is watching is not the same as nobody watching.",
+      "trash_count_failed": "Couldn't count the trash in section {section}."
     },
     "policy": {
       "custom_rule_floor_not_below_saturation": "floor ({floor}) must be below saturate_at ({saturate_at}), or the rule is either always off or always at full pressure.",
@@ -1769,6 +1816,8 @@
     },
     "test": {
       "badgeVersion": " (v{version})",
+      "connected": "Connected to {service}.",
+      "connectedWatching": "Connected. Watching {name}.",
       "passed": "Passed",
       "sentence": "{lead}: {detail}{version}",
       "version": " (version {version})"
