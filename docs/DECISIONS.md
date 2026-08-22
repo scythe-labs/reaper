@@ -1059,5 +1059,15 @@ one. `code` and a raw `params` map ride beside it at the top level
 catalog knows. Services raise a `Refusal` with the code, so the English is written once.
 The browser is the first typed reader. `frontend/src/errors.ts`'s `describeError` composes
 `error.*` from `ui.json` the way `why`, `chip` and `warning` are composed, and falls back to
-the carried `detail` when a code has no entry (an older server, a newer build). A job's
-outcome sentence still travels as free text (#885).
+the carried `detail` when a code has no entry (an older server, a newer build).
+
+**Phase 11a types the outcome a background job reports** (#885). A job result is not a
+refusal: it is worded once, by whichever branch of `scheduler._record_run` or
+`LeavingSoonResult.summary` produced it, and read back later by a screen that never saw the
+run. So it has no English on the server at all, and the catalog under `jobs.result.*` and
+`shell.scanBar.step.*` is its only home — the same move phase 8a made for the leaving-soon
+skip reason, and every `*_result`/`detail`/`error` field this phase touches is replaced by its
+typed `*_reason` twin rather than kept alongside it. The run journal (phase 11b) keeps its
+English beside a typed key instead, because it is the audit record: an operator reads a past
+run's steps without the catalog that composed them, on a build that may since have changed
+its wording.
