@@ -27,6 +27,7 @@ import i18next from "../i18n";
 import { reapBlockers } from "../reapReadiness";
 import { usePlexTrash, trashWarning } from "../usePlexTrash";
 import { useSafety } from "../useSafety";
+import { composeError } from "../why";
 import { PlexTrashNotice } from "./PlexTrashNotice";
 import { ReapBreakdown } from "./ReapBreakdown";
 import { ReapConfirm } from "./ReapConfirm";
@@ -147,7 +148,11 @@ function Steps({ run }: { run: Run }) {
                   and the table used to say "failed" and nothing else (#260). */}
               <td className="muted">
                 {stepState(step.state)}
-                {step.error && <span className="step-why">{step.error}</span>}
+                {step.error && (
+                  <span className="step-why">
+                    {step.error_key ? composeError(step.error_key) : step.error}
+                  </span>
+                )}
               </td>
             </tr>
           ))}
@@ -169,7 +174,11 @@ function Report({ report }: { report: RunReport }) {
     return (
       <div className="sim sim-info">
         <h3>{t("reapPlan.report.stoppedTitle")}</h3>
-        <p>{report.aborted_reason}</p>
+        <p>
+          {report.aborted_reason_key
+            ? composeError(report.aborted_reason_key)
+            : report.aborted_reason}
+        </p>
       </div>
     );
   }
@@ -216,7 +225,7 @@ function Report({ report }: { report: RunReport }) {
             <span className="gate-mark" aria-hidden="true">
               ✓
             </span>
-            <code>{o.detail}</code>
+            <code>{o.detail_key ? composeError(o.detail_key) : o.detail}</code>
           </li>
         ))}
       </ul>
@@ -552,7 +561,13 @@ export function ReapPlan({
                         `.step-why` box. Its only surface: the report panel is dry-run state
                         and the reap sheet reads the in-memory status, so a reload leaves
                         "stopped" and nothing else (#342). */}
-                    {r.aborted_reason && <span className="step-why">{r.aborted_reason}</span>}
+                    {r.aborted_reason && (
+                      <span className="step-why">
+                        {r.aborted_reason_key
+                          ? composeError(r.aborted_reason_key)
+                          : r.aborted_reason}
+                      </span>
+                    )}
                   </span>
                 </li>
               );

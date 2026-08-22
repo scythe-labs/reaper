@@ -842,6 +842,10 @@ export interface ActionStep {
    *  and uses it both here and in the after-action report, and the report is the half that
    *  does not survive a restart. */
   error: string | null;
+  /** The typed twin of `error`: the stored `error_json` column when the row carries one,
+   *  a `legacy` wrap of `error` when it does not, null when neither does. Compose this and
+   *  fall back to `error` when it is absent. */
+  error_key: ReasonKey | null;
 }
 
 export interface Run {
@@ -882,10 +886,15 @@ export interface RunSummary {
   state: string;
   approved_at: string;
   aborted_reason: string | null;
+  /** The typed twin of `aborted_reason`, thawed the same way `ActionStep.error_key` is. */
+  aborted_reason_key: ReasonKey | null;
 }
 
 export interface RunCheck {
   label: string;
+  /** The typed twin of `label`: the live reason the executor recorded this checklist line
+   *  with. */
+  label_key: ReasonKey | null;
   ok: boolean;
 }
 
@@ -895,6 +904,8 @@ export interface RunOutcome {
   kind: string;
   state: string; // verified | failed | skipped
   detail: string;
+  /** The typed twin of `detail`, the same way `RunCheck.label_key` is. */
+  detail_key: ReasonKey | null;
   checks: RunCheck[];
 }
 
@@ -903,6 +914,9 @@ export interface RunReport {
   dry_run: boolean;
   state: string;
   aborted_reason: string | null;
+  /** The typed twin of `aborted_reason`: the live reason the executor recorded on the run
+   *  report. */
+  aborted_reason_key: ReasonKey | null;
   would_delete_items: number;
   deleted_bytes: number;
   /** How many deleted items had no size, so are absent from `deleted_bytes`. Above zero

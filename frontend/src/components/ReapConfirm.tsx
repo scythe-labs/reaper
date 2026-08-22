@@ -312,7 +312,11 @@ export function ReapConfirm({
             <div className="sim sim-info">
               {/* "stopped", the one word the product uses for this (U-15). */}
               <strong>{t("reapConfirm.practiceRun.stopped")}</strong>
-              <p>{dryReport.aborted_reason}</p>
+              <p>
+                {dryReport.aborted_reason_key
+                  ? composeError(dryReport.aborted_reason_key)
+                  : dryReport.aborted_reason}
+              </p>
             </div>
           )}
           {dryClean && (
@@ -512,7 +516,9 @@ export function ReapConfirm({
           </div>
           {report.state === "aborted" && (
             <p className="reap-halt">
-              {report.aborted_reason}
+              {report.aborted_reason_key
+                ? composeError(report.aborted_reason_key)
+                : report.aborted_reason}
               {report.would_delete_items > 0 && t("reapConfirm.result.refreshedNote")}
             </p>
           )}
@@ -535,7 +541,7 @@ export function ReapConfirm({
                           ? t("reapConfirm.result.checkPassed")
                           : t("reapConfirm.result.checkFailed")}
                       </span>
-                      {c.label}
+                      {c.label_key ? composeError(c.label_key) : c.label}
                     </li>
                   ))}
                 </ul>
