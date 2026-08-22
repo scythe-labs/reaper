@@ -61,7 +61,6 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     group_title: "Example Show",
     video_resolution: null,
     library: null,
-    dormant_for: null,
     override: null,
     override_own: null,
     show_override: null,

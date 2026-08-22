@@ -115,10 +115,6 @@ export interface Candidate {
    *  for a season. Drives the card/panel library chip and the library filter. Null when
    *  unknown (unmatched, or a row from before this shipped); the chip is then hidden. */
   library: string | null;
-  /** Always null (#899): kept on the wire for schema stability, but nothing populates it
-   *  any more. `dormant_days` is the amber pill's only source now, on a fresh row; a
-   *  legacy row shows no pill. */
-  dormant_for: string | null;
   /** The raw dormancy day count of a fresh row; the frontend composes the span. Null on a
    *  legacy row, which shows no amber pill. Optional so a fixture built before the field
    *  existed still typechecks (the server always sends it). */

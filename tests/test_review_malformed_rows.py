@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from reaper.api.review import (
     _chip,
     _decode_explanation,
-    _dormant_for,
+    _dormant_days,
     _explanation_out,
     _primary_reason,
 )
@@ -327,7 +327,7 @@ class TestTheExtractorsThemselves:
             assert exp is None
             assert _primary_reason(exp, verdict, 50) is None
             assert _chip(exp, verdict, 50) is None
-            assert _dormant_for(exp) == (None, None)
+            assert _dormant_days(exp) is None
 
     def test_entries_that_are_not_objects_are_dropped(self) -> None:
         exp = _decode_explanation(MALFORMED["radarr:1:4"])
@@ -376,7 +376,7 @@ class TestTheExtractorsThemselves:
     def test_a_signals_block_that_is_not_a_list_hides_the_pill(self) -> None:
         exp = _decode_explanation(json.dumps({"signals": "nope"}))
         assert exp is not None
-        assert _dormant_for(exp) == (None, None)
+        assert _dormant_days(exp) is None
 
 
 class TestTheReapOverrideReadKeepsTheFile:

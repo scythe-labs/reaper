@@ -877,7 +877,7 @@ def _decode_explanation(explanation_json: str) -> dict[str, Any] | None:
     """One guarded parse of a stored explanation, shared by every display extractor.
 
     ``_candidate_out`` decodes each row here ONCE and hands the result to
-    ``_dormant_for``, ``_primary_reason``, ``_chip`` and the reap-override read, instead
+    ``_dormant_days``, ``_primary_reason``, ``_chip`` and the reap-override read, instead
     of each running its own ``json.loads`` over the same multi-KB document (P2-2).
 
     Returns ``None`` for anything that is not a JSON object, so a corrupted or
@@ -1026,7 +1026,7 @@ def _primary_reason(
     return Reason("below_threshold")
 
 
-def _dormant_for(exp: dict[str, Any] | None) -> tuple[str | None, float | None]:
+def _dormant_days(exp: dict[str, Any] | None) -> float | None:
     """The card's amber dormancy pill: the raw day count off a fresh row's typed detail.
 
     Read from the stored explanation's UNWATCHED signal. A fresh row's detail key carries
@@ -1039,18 +1039,18 @@ def _dormant_for(exp: dict[str, Any] | None) -> tuple[str | None, float | None]:
     off the queue.
     """
     if not isinstance(exp, dict):
-        return None, None
+        return None
     for signal in _entries(exp, "signals"):
         if signal.get("id") != "unwatched":
             continue
         if not signal.get("evaluated"):
-            return None, None
+            return None
         reason = _detail_reason(signal)
         if reason is not None and reason.id == "signal_unwatched":
             days = reason.params.get("days")
-            return (None, float(days)) if isinstance(days, int | float) else (None, None)
-        return None, None
-    return None, None
+            return float(days) if isinstance(days, int | float) else None
+        return None
+    return None
 
 
 #: The chip id per fresh season-keep reason id (``season_pruning._protection_reason``).
@@ -1237,7 +1237,7 @@ def _chip(
     Pure display extraction from the DECODED stored explanation
     (``_decode_explanation``): never a re-decision, and never an error that drops a row
     off the queue. Condemned rows get no chip here; their card leads with the amber
-    dormancy pill (``dormant_for``).
+    dormancy pill (``dormant_days``).
 
     Each chip carries a typed ``reason`` (id plus params, see ``ChipOut``) rather than
     rendered English, so the frontend composes both the chip and its standalone sentence
@@ -1419,7 +1419,7 @@ def _candidate_out(
     # and the reap-override read below. Each used to run its own json.loads over the same
     # multi-KB document, three or four times per row and up to 500 rows per page (P2-2).
     explanation = _decode_explanation(r.explanation_json)
-    dormant_for, dormant_days = _dormant_for(explanation)
+    dormant_days = _dormant_days(explanation)
     primary_reason = _primary_reason(explanation, r.verdict, r.score, r.media_type)
     reason_key = to_wire(primary_reason) if primary_reason is not None else None
     return CandidateOut(
@@ -1447,7 +1447,6 @@ def _candidate_out(
         group_title=r.group_title,
         video_resolution=r.video_resolution,
         library=r.library_title,
-        dormant_for=dormant_for,
         dormant_days=dormant_days,
         reason_key=reason_key,
         override=override,

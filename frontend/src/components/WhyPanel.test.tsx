@@ -132,7 +132,6 @@ function detail(
     group_title: null,
     video_resolution: null,
     library: null,
-    dormant_for: null,
     override: null,
     override_own: null,
     show_override: null,

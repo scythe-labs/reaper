@@ -1189,7 +1189,6 @@ class TestPanelHeadFields:
         row = client.get("/api/candidates?verdict=condemn").json()["items"][0]
 
         assert row["video_resolution"] == "1080"
-        assert row["dormant_for"] is None  # nothing writes it any more (#899)
         assert row["dormant_days"] == 2059
 
     def test_a_row_without_the_metadata_hides_both(self, client: TestClient) -> None:

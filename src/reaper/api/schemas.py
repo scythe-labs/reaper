@@ -149,7 +149,7 @@ class ChipOut(BaseModel):
     ``frontend/src/locales/en/ui.json`` via ``why.ts``'s ``composeIn``. Derived server-side
     from the stored explanation (never a re-decision): a Sanctuary card's chip names the
     protection that fired, a Limbo card's names what stopped Reaper short. Condemned cards
-    carry no chip here -- their amber dormancy pill is built from ``dormant_for``.
+    carry no chip here -- their amber dormancy pill is built from ``dormant_days``.
 
     Every id ``api.review._chip`` can emit has a ``chip.text`` entry and a ``chip.sentence``
     entry, checked by the two-way walk in ``tests/test_review_chips.py`` (rule 145): there is
@@ -237,14 +237,10 @@ class CandidateOut(BaseModel):
     """The Plex library (section) this item lives in, as the operator named it -- the
     show's for a season row. Powers the card/panel library chip and the library filter.
     None when unknown (unmatched, or a row from before this shipped); the chip is hidden."""
-    dormant_for: str | None = None
-    """Always ``None`` (#899): kept on the wire for schema stability, but nothing writes it
-    any more. ``dormant_days`` is the amber pill's only source now, on a fresh row; a row
-    whose snapshot predates typed reasons shows no pill."""
     dormant_days: float | None = None
     """The raw dormancy day count on a fresh row; the frontend composes the span in the
-    active locale. ``None`` on a legacy row, which shows no amber pill (see
-    ``dormant_for``)."""
+    active locale. ``None`` on a row frozen before typed reasons, which shows no amber
+    pill."""
     reason_key: ReasonKey | None = None
     """The one-line "why", drawn from the explanation: the protection that keeps a spared
     item, or the top reason a reaped one scored. It is what the card shows in place of a
