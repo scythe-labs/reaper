@@ -5766,7 +5766,10 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: Every `.py` file under `src/reaper`, which is the population the cycle walk parses. Pinned
 #: for the reason `_EXPECTED_LAYERED_MODULES` is (rule 145): a walk that stopped reading the
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
-#: A different population from that constant, which counts the 87 under the four packages only.
+#: A different population from that constant, which counts what is under the four packages
+#: only. Its value is not restated here. The two are pinned separately, so a bump to one had no
+#: reason to touch this line, and it sat naming a count the sibling had already moved past
+#: (#882, rule 144). The failure message below names the constant the same way.
 #: 122 adds `api/errors.py` and top-level `refusal.py` (phase 8a's catalog and typed refusal).
 #: 124 adds top-level `i18n.py` and the new `locales` package's `__init__.py` (phase 10a's
 #: Discord/launcher backend catalog; `locales/en/backend.json` carries no `.py` and does not
