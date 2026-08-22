@@ -2953,7 +2953,11 @@ export function PolicyEditor({
               startError={startScan.error ? describeError(startScan.error) : null}
               onScan={() => startScan.mutate()}
               percent={scanState?.percent ?? 0}
-              detail={scanState?.detail ?? ""}
+              detail={
+                scanState?.detail_reason
+                  ? composeIn("shell.scanBar.step", scanState.detail_reason)
+                  : ""
+              }
               staleKind={simulation.stale_kind}
               staleReason={simulation.stale_reason}
             />

@@ -1223,7 +1223,7 @@ describe("the shelf status line", () => {
     seasons: 311,
     applied: true,
     ok: true,
-    result: "4 added, 1 cleared",
+    result_reason: { k: "shelf_updated", p: { added: 4, removed: 1 } },
   };
   /** After `PASS`, since the whole decision is which record is newer (rule 141).
    *  `result_reason` is a real catalog code (phase 8b): this panel's own status line never
@@ -1315,9 +1315,11 @@ describe("the shelf status line", () => {
   });
 
   it("opens with the date, not a stray period, for a row stored before summaries existed", async () => {
-    // `ok` and `result` were added to the stored row after the shelf shipped, and the JSON
-    // is never migrated, so a tester's row can thaw as `result: ""`.
-    expect(await statusLine({ last: { ...PASS, result: "" } })).toMatch(LINE(""));
+    // `ok` and a result reason were added to the stored row after the shelf shipped, and the
+    // JSON is never migrated, so a tester's row can thaw as a legacy reason with empty text.
+    expect(
+      await statusLine({ last: { ...PASS, result_reason: { k: "legacy", p: { text: "" } } } }),
+    ).toMatch(LINE(""));
   });
 
   it("groups every number on the line the one way, whatever the browser's locale", async () => {
@@ -1341,7 +1343,12 @@ describe("the shelf status line", () => {
     });
     try {
       const line = await statusLine({
-        last: { ...PASS, movies: 1234, seasons: 5678, result: "1,234 added, 5,678 cleared" },
+        last: {
+          ...PASS,
+          movies: 1234,
+          seasons: 5678,
+          result_reason: { k: "shelf_updated", p: { added: 1234, removed: 5678 } },
+        },
       });
 
       expect(line).toContain("1,234 added, 5,678 cleared");

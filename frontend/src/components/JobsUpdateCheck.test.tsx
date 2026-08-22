@@ -48,7 +48,7 @@ function schedule(job: Partial<ScheduledJob>): Schedule {
         running: false,
         last_run_at: null,
         last_ok: null,
-        last_result: null,
+        last_result_reason: null,
         ...job,
       },
     ],

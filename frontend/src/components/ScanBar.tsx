@@ -20,7 +20,8 @@ import { describeError } from "../errors";
 import { bytes, count, totalBytes } from "../format";
 import i18next from "../i18n";
 import { useScanStatus } from "../useScanStatus";
-import { JobStatus, useJobFlash } from "./JobStatus";
+import { composeError, composeIn } from "../why";
+import { JobStatus, jobResultText, useJobFlash } from "./JobStatus";
 import { Notice } from "./Notice";
 import { ProgressBar } from "./ProgressBar";
 import { SCANNING_LABEL } from "./ScanLine";
@@ -101,9 +102,9 @@ export function ScanRow({
   canEdit,
 }: {
   snapshot: Snapshot | undefined;
-  /** The scan's own schedule entry. Carries `last_run_at`/`last_ok`/`last_result` only for
-   *  a SCHEDULED scan that crashed outright and wrote no snapshot (see `get_schedule`); a
-   *  successful run is read from `snapshot` below instead. */
+  /** The scan's own schedule entry. Carries `last_run_at`/`last_ok`/`last_result_reason`
+   *  only for a SCHEDULED scan that crashed outright and wrote no snapshot (see
+   *  `get_schedule`); a successful run is read from `snapshot` below instead. */
   scanJob: ScheduledJob | undefined;
   title: string;
   desc: string;
@@ -212,11 +213,17 @@ export function ScanRow({
 
   const supersededSnapshot =
     scanning ||
-    (before !== null && !status?.error && snapshot?.id === before.id && !snapshotReadSettled);
+    (before !== null &&
+      !status?.error_reason &&
+      snapshot?.id === before.id &&
+      !snapshotReadSettled);
 
   // The scan's live phase, shown in the shared status slot while it runs.
+  const stepText = status?.detail_reason
+    ? composeIn("shell.scanBar.step", status.detail_reason)
+    : "";
   const runLabel = status
-    ? `${phaseLabel(status.phase)}${status.detail ? `, ${status.detail}` : ""}${
+    ? `${phaseLabel(status.phase)}${stepText ? `, ${stepText}` : ""}${
         pct !== null ? `, ${pct}%` : ""
       }`
     : t("common.scanning");
@@ -225,7 +232,7 @@ export function ScanRow({
   // and a green "done" chip beside it would contradict.
   const scanFlash = useJobFlash(
     scanning,
-    status?.error ? null : { ok: true, text: t("shell.scanBar.queueRefreshed") },
+    status?.error_reason ? null : { ok: true, text: t("shell.scanBar.queueRefreshed") },
   );
 
   // A degraded scan is not an error, so it takes the success flash above -- and that flash
@@ -272,7 +279,9 @@ export function ScanRow({
           runningLabel={runLabel}
           lastRunAt={lastRunAt}
           lastOk={lastOk}
-          lastResult={failureIsCurrent ? (scanJob?.last_result ?? null) : null}
+          lastResult={jobResultText(
+            failureIsCurrent ? (scanJob?.last_result_reason ?? null) : null,
+          )}
           flash={scanFlash}
         />
 
@@ -313,9 +322,9 @@ export function ScanRow({
             devices, and the shell holds a second observer on `["scanStatus"]` that polls every
             15s while this row is idle (`App.tsx`), so a scheduled scan crashing writes this into
             the shared cache and paints it under a page nobody touched. */}
-        {status?.error && (
+        {status?.error_reason && (
           <Notice tone="error" inline standing>
-            {t("shell.scanBar.scanProblem", { error: status.error })}
+            {t("shell.scanBar.scanProblem", { error: composeError(status.error_reason) })}
           </Notice>
         )}
 

@@ -22,6 +22,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -1260,8 +1261,9 @@ class TestSchedule:
     def test_a_recorded_last_run_surfaces_on_the_job(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Once a job has completed, its stored last run (when, ok, result) shows on the row;
+        """Once a job has completed, its stored last run (when, ok, reason) shows on the row;
         a job with no record stays null so the page can say "hasn't run yet"."""
+        from reaper.engine.reason import Reason
         from reaper.services import app_settings
 
         async def fake_last_runs(session: object) -> dict[str, dict[str, object]]:
@@ -1269,7 +1271,7 @@ class TestSchedule:
                 "refresh_ratings": {
                     "at": "2026-07-24T03:30:00+00:00",
                     "ok": True,
-                    "result": "Ratings refreshed",
+                    "result": Reason("ratings_refreshed"),
                 }
             }
 
@@ -1277,9 +1279,43 @@ class TestSchedule:
         by_id = {j["id"]: j for j in client.get("/api/settings/schedule").json()["jobs"]}
         assert by_id["refresh_ratings"]["last_run_at"] == "2026-07-24T03:30:00+00:00"
         assert by_id["refresh_ratings"]["last_ok"] is True
-        assert by_id["refresh_ratings"]["last_result"] == "Ratings refreshed"
+        assert by_id["refresh_ratings"]["last_result_reason"] == {
+            "k": "ratings_refreshed",
+            "p": None,
+        }
         assert by_id["full_history_sweep"]["last_run_at"] is None
         assert by_id["full_history_sweep"]["last_ok"] is None
+
+    async def test_a_job_row_stored_before_the_typed_conversion_still_reads(
+        self,
+        client: TestClient,
+        async_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A row written before phase 11a carries a bare English phrase under ``"result"``
+        instead of a wire-encoded reason. Rule 96: an old row must still read, thawed as
+        ``Reason("legacy", {"text": ...})`` exactly as ``engine.reason.from_wire`` already
+        does for a bare stored string -- it just stops composing through the catalog. Written
+        straight into storage rather than through ``set_job_last_run``, which only ever
+        writes the new shape now: the point is a value an OLDER build left behind.
+
+        ``async_factory`` shares the same on-disk database as ``client`` (both are built off
+        the same ``settings`` fixture), so a commit through it is visible to the route.
+        """
+        from reaper.services import app_settings
+
+        async with async_factory() as session:
+            await app_settings._set(
+                session,
+                f"{app_settings.JOB_LAST_RUN_PREFIX}refresh_ratings",
+                {"at": "2026-06-01T03:30:00+00:00", "ok": True, "result": "Ratings refreshed"},
+            )
+            await session.commit()
+
+        by_id = {j["id"]: j for j in client.get("/api/settings/schedule").json()["jobs"]}
+        assert by_id["refresh_ratings"]["last_result_reason"] == {
+            "k": "legacy",
+            "p": {"text": "Ratings refreshed"},
+        }
 
     def test_the_scan_cron_is_stored_and_a_bad_one_refused(self, client: TestClient) -> None:
         ok = client.put("/api/settings/jobs/scheduled_scan/schedule", json={"cron": "30 4 * * *"})

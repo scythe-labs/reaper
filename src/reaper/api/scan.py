@@ -28,6 +28,8 @@ from reaper.api.deps import state_singleton
 from reaper.clients.base import IntegrationError
 from reaper.config import Settings
 from reaper.crypto import SecretBox
+from reaper.engine.explanation import ReasonKey
+from reaper.engine.reason import Reason, to_wire
 from reaper.services import scan_runner
 from reaper.services.snapshot import Progress
 
@@ -79,8 +81,14 @@ class ScanStatus(BaseModel):
     """A monotonic 0-100 for the progress bar. Derived from the phase and its fraction so it
     only ever rises; the browser renders this directly instead of dividing done by a total
     whose meaning changes between phases."""
-    detail: str = ""
-    error: str | None = None
+    #: The scan's current live step, as a typed reason under ``shell.scanBar.step.*`` --
+    #: ``null`` between phases (``starting``, ``done``, ``complete``, none of which carry
+    #: a sub-step of their own).
+    detail_reason: ReasonKey | None = None
+    #: Why the scan stopped, as a typed reason -- ``error.*`` on a refusal (a scan already
+    #: running, a misconfigured source, an unreachable one) or ``error.scan.unexpected`` for
+    #: anything else.
+    error_reason: ReasonKey | None = None
     snapshot_id: int | None = None
     followup_queued: bool = False
     """A second scan will start the moment the current one finishes. Set when a start
@@ -119,8 +127,8 @@ def launch_scan(app: FastAPI) -> ScanStatus:
     status.done = 0
     status.total = 0
     status.percent = 0
-    status.detail = ""
-    status.error = None
+    status.detail_reason = None
+    status.error_reason = None
     status.snapshot_id = None
     status.followup_queued = False
 
@@ -133,7 +141,11 @@ def launch_scan(app: FastAPI) -> ScanStatus:
         status.phase = progress.phase
         status.done = progress.done
         status.total = progress.total
-        status.detail = progress.detail
+        status.detail_reason = (
+            ReasonKey.model_validate(to_wire(progress.detail))
+            if progress.detail is not None
+            else None
+        )
         # Monotonic: a phase's band never dips below where the previous one ended, and max()
         # guards against any out-of-order emit, so the bar cannot jump backward.
         status.percent = max(
@@ -154,7 +166,7 @@ def launch_scan(app: FastAPI) -> ScanStatus:
                 if not status.followup_queued:
                     status.phase = "complete"
                     status.percent = 100
-                    status.detail = ""
+                    status.detail_reason = None
                     return
                 # A start request arrived mid-run, so that caller's changes are not in the
                 # snapshot that just landed. Consume the queue and go again -- the next
@@ -165,21 +177,31 @@ def launch_scan(app: FastAPI) -> ScanStatus:
                 status.done = 0
                 status.total = 0
                 status.percent = 0
-                status.detail = ""
+                status.detail_reason = None
         except scan_runner.ScanInProgressError as exc:
             # The scheduler's scan beat this one to the shared claim (the guard above only
             # sees browser-started scans). Nothing is wrong; say what is happening.
-            status.error = str(exc)
+            status.error_reason = ReasonKey.model_validate(to_wire(exc.as_reason()))
             status.phase = "error"
-        except (scan_runner.ScanConfigError, IntegrationError) as exc:
-            # A misconfiguration (no Radarr/Tautulli yet) or an unreachable source is the
-            # owner's to fix -- report it rather than letting the scan die silently and leave
-            # a stale queue looking current.
-            status.error = str(exc)
+        except scan_runner.ScanConfigError as exc:
+            # A misconfiguration (no Radarr/Tautulli yet) is the owner's to fix -- report it
+            # rather than letting the scan die silently and leave a stale queue looking
+            # current. Its own code names the exact fix; the catch-all below cannot.
+            status.error_reason = ReasonKey.model_validate(to_wire(exc.as_reason()))
+            status.phase = "error"
+        except IntegrationError as exc:
+            # An unreachable source is also the owner's to fix, but it carries no catalog
+            # code of its own -- one shared code for every source, with the client's own
+            # plain-language text as its raw param (rule 21).
+            status.error_reason = ReasonKey.model_validate(
+                to_wire(Reason("error.scan.source_unreachable", {"error": str(exc)}))
+            )
             status.phase = "error"
         except Exception as exc:
             # A background task must never crash silently -- surface it as an error the UI shows.
-            status.error = str(exc)
+            status.error_reason = ReasonKey.model_validate(
+                to_wire(Reason("error.scan.unexpected", {"error": str(exc)}))
+            )
             status.phase = "error"
             log.warning("scan.background_failed", error=str(exc))
         finally:

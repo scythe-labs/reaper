@@ -139,4 +139,4 @@ async def test_an_errored_run_drops_the_queued_followup(
     assert finished.running is False
     assert finished.followup_queued is False
     assert finished.phase == "error"
-    assert finished.error is not None
+    assert finished.error_reason is not None

@@ -38,6 +38,7 @@ import { describeError } from "../errors";
 import { bytes, count, souls } from "../format";
 import { usePlexTrash, trashWarning } from "../usePlexTrash";
 import { useSafety } from "../useSafety";
+import { composeError } from "../why";
 import { ModalShell } from "./ModalShell";
 import { PlexTrashNotice } from "./PlexTrashNotice";
 import { Notice } from "./Notice";
@@ -473,7 +474,11 @@ export function ReapConfirm({
           <Notice tone="error">
             <Trans
               i18nKey="reapConfirm.failed.body"
-              values={{ error: status?.error ?? t("reapConfirm.failed.unknownError") }}
+              values={{
+                error: status?.error_reason
+                  ? composeError(status.error_reason)
+                  : t("reapConfirm.failed.unknownError"),
+              }}
               components={{ strong: <strong /> }}
             />
           </Notice>

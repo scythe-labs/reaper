@@ -22,6 +22,8 @@ from reaper.api.schemas import LeavingSoonOut
 from reaper.clients.plex import PlexError
 from reaper.config import Settings
 from reaper.crypto import SecretBox
+from reaper.engine.explanation import ReasonKey
+from reaper.engine.reason import to_wire
 from reaper.services import leaving_soon
 from reaper.services.leaving_soon import (
     LeavingSoonDegradedError,
@@ -52,8 +54,10 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
     except PlexError as exc:
         refuse(502, "error.plex.unreachable", error=str(exc))
 
-    # ``ok`` and ``result`` are the pass's own words, already stored on the Jobs row by the
-    # same derivation (``LeavingSoonResult.summary``). This route used to add the
+    # ``ok`` and ``result_reason`` are the pass's own facts, already stored on the Jobs row by
+    # the same derivation (``LeavingSoonResult.summary``). This route used to add the
     # no-libraries case here instead, after the row had been written, so the row and this
     # response described one pass differently (#555).
-    return LeavingSoonOut(ok=result.ok, result=result.summary)
+    return LeavingSoonOut(
+        ok=result.ok, result_reason=ReasonKey.model_validate(to_wire(result.summary))
+    )

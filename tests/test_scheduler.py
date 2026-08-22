@@ -28,6 +28,7 @@ from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import Instance, InstanceKind, ListConfig
 from reaper.db.session import create_engine, create_session_factory
+from reaper.engine.reason import Reason
 from reaper.main import create_app
 from reaper.secrets import resolve_secret_key
 from reaper.services import app_settings, imdb_dataset, retention, scan_runner, scheduler
@@ -559,7 +560,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
-        assert last == {"at": last["at"], "ok": True, "result": "Lists refreshed"}  # type: ignore[index]
+        assert last == {"at": last["at"], "ok": True, "result": Reason("lists_refreshed")}  # type: ignore[index]
 
     async def test_a_failed_list_refresh_records_not_ok(
         self,
@@ -585,7 +586,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Couldn't refresh lists"
+        assert last["result"] == Reason("lists_refresh_failed")
 
     async def test_one_failing_list_is_counted_beside_the_ones_that_worked(
         self,
@@ -612,7 +613,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Refreshed 2 lists, 1 couldn't be checked"
+        assert last["result"] == Reason("lists_partial", {"checked": 2, "failed": 1})
 
     async def test_a_raise_inside_the_pass_records_not_ok(
         self,
@@ -640,7 +641,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Couldn't refresh lists"
+        assert last["result"] == Reason("lists_refresh_failed")
 
     @staticmethod
     async def _seed_plex_list(factory: async_sessionmaker[AsyncSession]) -> None:
@@ -684,7 +685,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
         assert last["ok"] is False, "a pass that skipped every Plex list read as a clean one"
-        assert "Plex" in str(last["result"])
+        assert last["result"] == Reason("lists_plex_not_connected")
 
     async def test_an_install_with_no_plex_lists_still_records_a_clean_pass(
         self,
@@ -707,7 +708,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
         assert last["ok"] is True
-        assert last["result"] == "Lists refreshed"
+        assert last["result"] == Reason("lists_refreshed")
 
     async def test_a_pass_that_cannot_reach_its_sources_records_not_ok(
         self,
@@ -732,7 +733,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Couldn't refresh lists"
+        assert last["result"] == Reason("lists_refresh_failed")
 
     async def test_an_unreadable_list_registry_records_not_ok(
         self,
@@ -778,7 +779,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Couldn't refresh lists"
+        assert last["result"] == Reason("lists_refresh_failed")
 
     async def test_a_fresh_skip_still_records_a_run(
         self,
@@ -794,7 +795,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_ratings")
         assert last is not None
         assert last["ok"] is True
-        assert last["result"] == "Already up to date"
+        assert last["result"] == Reason("ratings_up_to_date")
 
     async def test_a_successful_ratings_refresh_records_ok(
         self,
@@ -814,7 +815,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_ratings")
         assert last is not None
         assert last["ok"] is True
-        assert last["result"] == "Ratings refreshed"
+        assert last["result"] == Reason("ratings_refreshed")
 
     async def test_the_startup_catch_up_records_nothing(
         self, cache_engine: AsyncEngine, tmp_path: Path
@@ -844,7 +845,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "refresh_ratings")
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Couldn't refresh ratings"
+        assert last["result"] == Reason("ratings_refresh_failed")
 
     async def test_a_history_sweep_instance_lookup_failure_still_records_not_ok(
         self,
@@ -879,13 +880,13 @@ class TestUpkeepJobsRecordTheirLastRun:
         last = await self._last(main_factory, "full_history_sweep")
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Couldn't update history"
+        assert last["result"] == Reason("history_update_failed")
 
     @pytest.mark.parametrize(
         ("unservable", "ok", "result"),
         [
-            (0, True, "History updated"),
-            (2, False, "History updated, but Tautulli couldn't return 2 plays"),
+            (0, True, Reason("history_updated")),
+            (2, False, Reason("history_partial", {"unservable": 2})),
         ],
     )
     async def test_a_sweep_that_stepped_over_rows_records_a_partial_run(
@@ -895,7 +896,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         monkeypatch: pytest.MonkeyPatch,
         unservable: int,
         ok: bool,
-        result: str,
+        result: Reason,
     ) -> None:
         """A row Tautulli could not return is stepped over rather than fatal
         (``history_sync.MAX_UNSERVABLE_ROWS``), and the Jobs page says so with the count, not
@@ -1009,7 +1010,7 @@ class TestTheUpdateCheckJob:
         last = await self._last(main_factory, "check_for_updates")
         assert last is not None
         assert last["ok"] is True
-        assert last["result"] == "Reaper 2026.9.1 is out"
+        assert last["result"] == Reason("update_available", {"latest": "2026.9.1"})
 
     async def test_being_current_records_a_plain_success(
         self, main_factory: async_sessionmaker[AsyncSession]
@@ -1028,7 +1029,7 @@ class TestTheUpdateCheckJob:
         last = await self._last(main_factory, "check_for_updates")
         assert last is not None
         assert last["ok"] is True
-        assert last["result"] == "You are on the newest release"
+        assert last["result"] == Reason("update_up_to_date")
 
     async def test_a_moved_dev_branch_reads_as_the_dev_branch_not_a_release(
         self, main_factory: async_sessionmaker[AsyncSession]
@@ -1048,7 +1049,7 @@ class TestTheUpdateCheckJob:
 
         last = await self._last(main_factory, "check_for_updates")
         assert last is not None
-        assert last["result"] == "The dev branch has moved since this build"
+        assert last["result"] == Reason("update_dev_behind")
 
     async def test_an_unanswerable_check_records_a_failure_not_a_green_tick(
         self, main_factory: async_sessionmaker[AsyncSession]
@@ -1061,7 +1062,7 @@ class TestTheUpdateCheckJob:
         last = await self._last(main_factory, "check_for_updates")
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Couldn't check for updates"
+        assert last["result"] == Reason("update_check_failed")
 
     async def test_the_off_switch_is_recorded_as_off_never_as_a_check_that_ran(
         self, main_factory: async_sessionmaker[AsyncSession]
@@ -1075,7 +1076,7 @@ class TestTheUpdateCheckJob:
         last = await self._last(main_factory, "check_for_updates")
         assert last is not None
         assert last["ok"] is True
-        assert last["result"] == "Update checks are off"
+        assert last["result"] == Reason("update_checks_off")
 
     async def test_an_unexpected_crash_is_recorded_rather_than_stopping_the_scheduler(
         self, main_factory: async_sessionmaker[AsyncSession]
@@ -1089,7 +1090,7 @@ class TestTheUpdateCheckJob:
         last = await self._last(main_factory, "check_for_updates")
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Couldn't check for updates"
+        assert last["result"] == Reason("update_check_failed")
 
 
 class TestScheduledScanRecordsOnlyItsFailure:
@@ -1125,7 +1126,7 @@ class TestScheduledScanRecordsOnlyItsFailure:
         last = await self._last(main_factory, scheduler.SCAN_JOB_ID)
         assert last is not None
         assert last["ok"] is False
-        assert last["result"] == "Scan failed"
+        assert last["result"] == Reason("scan_failed")
 
     async def test_a_misconfigured_skip_records_nothing(
         self,
@@ -1155,7 +1156,7 @@ class TestScheduledScanRecordsOnlyItsFailure:
         from reaper.services import scan_runner
 
         async def in_progress(**kwargs: object) -> object:
-            raise scan_runner.ScanInProgressError("a scan is already running")
+            raise scan_runner.ScanInProgressError()
 
         monkeypatch.setattr(scan_runner, "run_scan", in_progress)
         settings = Settings(data_dir=tmp_path, secret_key="k")

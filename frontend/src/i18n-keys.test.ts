@@ -66,6 +66,12 @@ const DYNAMIC: Record<string, string[]> = {
     "policyRules.fieldUnit.",
   ],
   "components/signalRamp.ts": ["signals.ramp."],
+  // Phase 11a: a background job's outcome and a scan's live step are both typed reasons
+  // composed through why.ts's composeIn, the same mechanism "why.ts" above already owns --
+  // registered under the component that reads the id off the server rather than under
+  // why.ts itself, since that is where each namespace's producer lives.
+  "components/JobStatus.tsx": ["jobs.result."],
+  "components/ScanBar.tsx": ["shell.scanBar.step."],
 };
 
 const T_CALLEES = new Set(["t", "i18next.t", "i18n.t"]);

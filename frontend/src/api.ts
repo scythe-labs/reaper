@@ -929,7 +929,9 @@ export interface ReapStatus {
   skipped: number;
   /** The item last acted on, for the live line. */
   title: string;
-  error: string | null;
+  /** Why the run stopped, composed under `error.*` with `composeError` (`why.ts`). `null`
+   *  while running and on a clean finish. */
+  error_reason: ReasonKey | null;
   /** The after-action report, present once the run has ended (null while running). */
   report: RunReport | null;
 }
@@ -1136,11 +1138,13 @@ export interface LeavingSoonResult {
   /** Whether the pass did what it set out to do. Preview is not a failure; no library
    *  turned on, or one that failed, is. */
   ok: boolean;
-  /** The one plain sentence describing this pass, worded by the server and stored on the
-   *  Jobs row in the same breath. Render it; never compose one here (#555). */
-  result: string;
-  // `problems` was dropped with its server field: nothing here ever rendered it, and `result`
-  // now names the libraries that failed. See `LeavingSoonOut` for the whole reason.
+  /** The typed reason describing this pass, the same one stored on the Jobs row in the
+   *  same breath. Compose it with `jobResultText` (`JobStatus.tsx`); never word one here
+   *  (#555). */
+  result_reason: ReasonKey;
+  // `problems` was dropped with its server field: nothing here ever rendered it, and
+  // `result_reason` now names the libraries that failed. See `LeavingSoonOut` for the whole
+  // reason.
 }
 
 export interface WatchEvidence {
@@ -1169,8 +1173,9 @@ export interface LeavingSoonSettings {
     /** Whether the last sync did what it set out to do: no library failed, and there was
      *  one turned on to update. Never false merely because it ran in preview (unarmed). */
     ok: boolean;
-    /** The pass's own one-line summary. Render it; never compose one here (#555). */
-    result: string;
+    /** The pass's own typed reason, composed under `jobs.result.*` with `jobResultText`
+     *  (`JobStatus.tsx`). Never worded here (#555). */
+    result_reason: ReasonKey;
   } | null;
   /** A scan that finished without updating the shelf, and why. Reported beside `last`
    *  rather than replacing it: a skipped pass writes nothing to Plex, so the last completed
@@ -1430,7 +1435,7 @@ export interface Progress {
   phase: string;
   done: number;
   total: number;
-  detail: string;
+  detail: ReasonKey | null;
 }
 
 export interface ScanStatus {
@@ -1441,8 +1446,12 @@ export interface ScanStatus {
   /** A monotonic 0-100 for the progress bar. Rises smoothly across the scan's phases,
    *  unlike done/total whose denominator changes meaning between them. */
   percent: number;
-  detail: string;
-  error: string | null;
+  /** The scan's current live step, composed under `shell.scanBar.step.*`
+   *  (`why.ts`'s `composeIn`). `null` between phases with no sub-step of their own. */
+  detail_reason: ReasonKey | null;
+  /** Why the scan stopped, composed under `error.*` (`why.ts`'s `composeError`). `null`
+   *  while running and on a clean finish. */
+  error_reason: ReasonKey | null;
   snapshot_id: number | null;
   /** A second scan starts the moment this one finishes. Set when a scan was requested
    *  mid-run (a policy save, usually): the running scan began under the old policies,
@@ -1640,12 +1649,13 @@ export interface ScheduledJob {
   /** Whether the job is executing right this moment. */
   running: boolean;
   /** The last completion of this job: when it finished (ISO), whether it succeeded, and a
-   *  short plain-language result. All `null` for a job that has never run. For the scan, a
-   *  SUCCESSFUL run is read from the latest snapshot instead (see ScanRow); these fields are
-   *  populated for the scan only when a scheduled run crashed outright. */
+   *  typed reason. All `null` for a job that has never run. For the scan, a SUCCESSFUL run
+   *  is read from the latest snapshot instead (see ScanRow); these fields are populated for
+   *  the scan only when a scheduled run crashed outright. */
   last_run_at: string | null;
   last_ok: boolean | null;
-  last_result: string | null;
+  /** Composed under `jobs.result.*` with `jobResultText` (`JobStatus.tsx`). */
+  last_result_reason: ReasonKey | null;
 }
 
 export interface Schedule {

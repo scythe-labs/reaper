@@ -125,12 +125,17 @@ _NO_REWATCH_STATS: Mapping[int, RewatchStats] = MappingProxyType({})
 
 @dataclass(frozen=True, slots=True)
 class Progress:
-    """One step of a scan's progress, polled by the browser via ``GET /api/scan/status``."""
+    """One step of a scan's progress, polled by the browser via ``GET /api/scan/status``.
+
+    ``detail`` is a typed reason under ``shell.scanBar.step.*`` -- a bare id plus raw
+    params (``scoring``'s ``title``, ``done``'s ``count``) -- composed by the browser, never
+    English from here. ``None`` on the final "complete" emit, which the route blanks anyway.
+    """
 
     phase: str
     done: int
     total: int
-    detail: str = ""
+    detail: Reason | None = None
 
 
 ProgressFn = Callable[[Progress], None]
@@ -846,7 +851,7 @@ async def scan(
     context = ScanContext(horizon=utcnow())
 
     # ---- gather ------------------------------------------------------------
-    emit(Progress("gathering", 0, 5, "watch history"))
+    emit(Progress("gathering", 0, 5, Reason("watch_history")))
 
     # One read of the mirror for both questions below: `state` returns the row count and
     # both ends of the window in a single pass, where `horizon`/`latest` are two thin
@@ -918,7 +923,7 @@ async def scan(
     for reason in extra_degrade_reasons or ():
         context.degrade(reason)
 
-    emit(Progress("gathering", 1, 5, "active streams"))
+    emit(Progress("gathering", 1, 5, Reason("active_streams")))
     try:
         activity = await tautulli.activity()
         sessions = activity.get("sessions")
@@ -965,7 +970,7 @@ async def scan(
     # slowest source instead of the sum of all of them. The freeze-then-judge contract is
     # untouched: nothing is scored until every one of these has completed (or degraded),
     # exactly as before; only the waiting overlaps.
-    emit(Progress("gathering", 2, 5, "movie and TV libraries"))
+    emit(Progress("gathering", 2, 5, Reason("libraries")))
 
     # Wall clock of the whole concurrent gather (fan-out to last await). The per-source
     # self-times above tell which source dominates this wall; this is the wall itself.
@@ -1110,7 +1115,7 @@ async def scan(
                 )
             )
 
-        emit(Progress("gathering", 4, 5, "IMDb ratings"))
+        emit(Progress("gathering", 4, 5, Reason("ratings")))
         # Look up by BOTH Radarr's imdbId and the matched Plex item's imdb id, so a film
         # whose Radarr record lacks (or has a wrong) imdbId still gets its rating when
         # Plex knows it.
@@ -1191,7 +1196,7 @@ async def scan(
         ]
         rewatch_curve = fit_blocks(rewatch_pairs)
         if season_task is not None:
-            emit(Progress("gathering", 4, 5, "TV seasons from Sonarr"))
+            emit(Progress("gathering", 4, 5, Reason("seasons")))
             season_judgments = await season_task
     except BaseException:
         # A failure on any branch aborts the scan, exactly as it did sequentially -- but
@@ -1302,7 +1307,7 @@ async def scan(
     movie_absence_days = movie_policy.returned_absence_days()
     for index, item in enumerate(items):
         if index % 100 == 0:
-            emit(Progress("scoring", index, total, item.title))
+            emit(Progress("scoring", index, total, Reason("scoring", {"title": item.title})))
             # The judge is pure computation now (no per-item queries), so without this
             # the loop would hold the event loop for the whole scoring phase -- freezing
             # the very progress endpoint the emit above feeds.
@@ -1499,7 +1504,14 @@ async def scan(
     # streamed movie is, and the why-panel renders both identically.
     for offset, judgment in enumerate(season_judgments):
         if offset % 100 == 0:
-            emit(Progress("scoring", len(items) + offset, total, judgment.title))
+            emit(
+                Progress(
+                    "scoring",
+                    len(items) + offset,
+                    total,
+                    Reason("scoring", {"title": judgment.title}),
+                )
+            )
             await asyncio.sleep(0)  # keep the event loop live; see the movie loop above
         if judgment.watch_reading is not None:
             # The TV lane already decided blindness against these same marks and put the
@@ -1697,7 +1709,7 @@ async def scan(
         )
 
     score_ms = round((time.monotonic() - score_started) * 1000)
-    emit(Progress("done", total, total, f"{len(condemned_keys)} candidates"))
+    emit(Progress("done", total, total, Reason("done", {"count": len(condemned_keys)})))
 
     log.info(
         "scan.size_source_tally",

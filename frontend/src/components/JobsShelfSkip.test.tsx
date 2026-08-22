@@ -42,7 +42,7 @@ const COMPLETED = {
   seasons: 311,
   applied: true,
   ok: true,
-  result: "4 added, 1 cleared",
+  result_reason: { k: "shelf_updated", p: { added: 4, removed: 1 } },
 };
 
 /** Deliberately AFTER `COMPLETED`, since the row's whole decision is which is newer. A fixture
@@ -55,17 +55,17 @@ const SKIPPED = {
   result_reason: { k: "error.leaving_soon.skip_unreachable", p: {} },
 };
 
-/** The service's sentence for a pass with no library turned on, verbatim
- *  (`LeavingSoonResult.summary`). */
+/** The catalog's own sentence for `jobs.result.shelf_no_libraries`
+ *  (`LeavingSoonResult.summary`), composed the same way the row composes it. */
 const NO_LIBRARIES = "No libraries are turned on, so no shelf was updated";
 
 /** What the route returns for that pass. Nothing was written and no library failed, so a row
- *  reasoning from the write counts rather than from `ok` and `result` reads this as a clean
- *  preview: reverting the fix flashes a green "Preview only, nothing written" against this
- *  exact payload. */
+ *  reasoning from the write counts rather than from `ok` and `result_reason` reads this as a
+ *  clean preview: reverting the fix flashes a green "Preview only, nothing written" against
+ *  this exact payload. */
 const NO_LIBRARY_PASS: LeavingSoonResult = {
   ok: false,
-  result: NO_LIBRARIES,
+  result_reason: { k: "shelf_no_libraries", p: null },
 };
 
 function shelf(over: Partial<LeavingSoonSettings> = {}): LeavingSoonSettings {
@@ -154,7 +154,9 @@ describe("the shelf row after a scan that skipped the update", () => {
     // deriving a second one. Pins the wiring from the stored summary to the screen -- the
     // sentence itself is the service's, and `tests/test_leaving_soon.py` owns its wording.
     apiMock.leavingSoonSettings.mockResolvedValue(
-      shelf({ last: { ...COMPLETED, ok: false, result: NO_LIBRARIES } }),
+      shelf({
+        last: { ...COMPLETED, ok: false, result_reason: { k: "shelf_no_libraries", p: null } },
+      }),
     );
 
     const { status } = await shelfRow();

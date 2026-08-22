@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from reaper.clock import utcnow
+from reaper.engine.reason import Reason
 from reaper.services.grace import GraceItem, GraceReport
 from reaper.services.leaving_soon import (
     LEAVING_SOON_COLLECTION,
@@ -165,12 +166,14 @@ def _pass(*outcomes: ShelfOutcome) -> LeavingSoonResult:
 
 
 class TestTheSummary:
-    """The one sentence every surface reports this pass with (rule 104).
+    """The one typed reason every surface reports this pass with (rule 104).
 
     Written here and nowhere else: the stored Jobs row, the "Update now" response and the
-    Plex panel's status line all render this string, so the four branches and their ORDER
-    are the whole contract. The order is what #555 was: the route named the no-libraries
-    case after the row had already been stored as a preview.
+    Plex panel's status line all compose this id under ``jobs.result.*``, so the four
+    branches and their ORDER are the whole contract. The order is what #555 was: the route
+    named the no-libraries case after the row had already been stored as a preview. Phase
+    11a stopped composing English here at all -- the id and raw params are the server's
+    whole say; the sentence is the browser's (``why.ts``'s ``composeIn``).
     """
 
     def test_nothing_turned_on_is_reported_as_itself_not_as_preview(self) -> None:
@@ -178,12 +181,12 @@ class TestTheSummary:
         # about preview first calls a misconfiguration a successful dry run.
         result = _pass()
         assert result.applied is False
-        assert result.summary == "No libraries are turned on, so no shelf was updated"
+        assert result.summary == Reason("shelf_no_libraries")
         assert result.ok is False
 
     def test_a_library_that_failed_beats_the_preview_caveat(self) -> None:
         result = _pass(_outcome(applied=False, error="connection refused"))
-        assert result.summary == "These shelves didn't update: Movies"
+        assert result.summary == Reason("shelf_failed", {"libraries": "Movies"})
         assert result.ok is False
 
     def test_the_failing_library_is_named_and_the_working_one_is_not(self) -> None:
@@ -195,7 +198,7 @@ class TestTheSummary:
             _outcome(added=4),
             _outcome(applied=False, error="connection refused", title="Kids TV"),
         )
-        assert result.summary == "These shelves didn't update: Kids TV"
+        assert result.summary == Reason("shelf_failed", {"libraries": "Kids TV"})
         assert result.ok is False
 
     def test_every_failing_library_is_named(self) -> None:
@@ -203,31 +206,34 @@ class TestTheSummary:
             _outcome(applied=False, error="connection refused", title="Kids TV"),
             _outcome(applied=False, error="timed out"),
         )
-        assert result.summary == "These shelves didn't update: Kids TV, Movies"
+        assert result.summary == Reason("shelf_failed", {"libraries": "Kids TV, Movies"})
 
-    def test_the_raw_cause_stays_out_of_the_sentence(self) -> None:
+    def test_the_raw_cause_stays_out_of_the_reason(self) -> None:
         """``str(exc)`` is stack-shaped and rule 21 keeps it off the screen. It survives in
-        the ``leaving_soon.problems`` log event, which is where a raw cause belongs."""
+        the ``leaving_soon.problems`` log event, which is where a raw cause belongs -- the
+        ``libraries`` param names sections, never the exception text, so an equality check
+        against the exact reason is the proof rather than a substring search."""
         result = _pass(_outcome(applied=False, error="HTTPStatusError: 502 Bad Gateway"))
-        assert "502" not in result.summary
-        assert "HTTPStatusError" not in result.summary
+        assert result.summary == Reason("shelf_failed", {"libraries": "Movies"})
 
     def test_a_preview_is_not_a_failure(self) -> None:
         # Read-only with no opt-in: computed, announced, and deliberately not written. The
-        # tick stays green, and the sentence says why nothing moved in Plex.
+        # tick stays green, and the reason says why nothing moved in Plex.
         result = _pass(_outcome(added=3, applied=False))
-        assert result.summary == "Preview only, nothing written"
+        assert result.summary == Reason("shelf_preview")
         assert result.ok is True
 
     def test_a_clean_pass_counts_what_it_did(self) -> None:
         result = _pass(_outcome(added=4, removed=1), _outcome(added=2))
-        assert result.summary == "6 added, 1 cleared"
+        assert result.summary == Reason("shelf_updated", {"added": 6, "removed": 1})
         assert result.ok is True
 
-    def test_the_counts_carry_thousands_separators(self) -> None:
-        # The browser used to format these itself and now renders this string as it arrives,
-        # so the grouping has to be here or it is nowhere.
-        assert _pass(_outcome(added=1200, removed=25)).summary == "1,200 added, 25 cleared"
+    def test_the_counts_are_raw_numbers_not_pre_formatted(self) -> None:
+        # Grouping used to happen here (Python's `:,` format); the browser renders these
+        # under jobs.result.shelf_updated with `{added, number}`/`{removed, number}` now, so
+        # the server's job is only to pass the raw counts through unformatted.
+        result = _pass(_outcome(added=1200, removed=25))
+        assert result.summary == Reason("shelf_updated", {"added": 1200, "removed": 25})
 
 
 class TestReconcile:

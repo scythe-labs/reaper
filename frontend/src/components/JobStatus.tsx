@@ -3,8 +3,18 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
 import { announce } from "../announce";
+import type { ReasonKey } from "../api";
 import { date, since, time } from "../format";
 import i18next from "../i18n";
+import { composeIn } from "../why";
+
+/** A background job's outcome, composed under `jobs.result.*` -- the server states the
+ *  fact (a typed reason), the browser says the words. `null` in, `null` out: a job that has
+ *  never run, or a shelf row's `last`/`last_skip` before either exists, carries no reason to
+ *  compose. */
+export function jobResultText(key: ReasonKey | null): string | null {
+  return key ? composeIn("jobs.result", key) : null;
+}
 
 /** The short-lived confirmation shown for a few seconds after a job finishes by hand. */
 export interface JobFlash {

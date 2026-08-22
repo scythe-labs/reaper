@@ -8214,8 +8214,8 @@ def _refusal_code_sites() -> dict[str, list[str]]:
     return sites
 
 
-_EXPECTED_REFUSAL_CODES = 210
-_EXPECTED_REFUSAL_SITES = 236
+_EXPECTED_REFUSAL_CODES = 214
+_EXPECTED_REFUSAL_SITES = 240
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
@@ -8277,7 +8277,7 @@ _TRANSPORT_ONLY_CODES = frozenset(
 
 #: `len(MESSAGES) + len(_TRANSPORT_ONLY_CODES)`, pinned so the population this test collects
 #: cannot silently shrink to match a catalog that lost entries (rule 145).
-_EXPECTED_CATALOG_ERROR_KEYS = 213
+_EXPECTED_CATALOG_ERROR_KEYS = 217
 
 
 def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:

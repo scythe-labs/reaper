@@ -52,6 +52,7 @@ from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
+from reaper.engine.reason import Reason
 from reaper.services import (
     app_settings,
     history_sync,
@@ -161,14 +162,16 @@ async def _record_run(
     job_id: str,
     *,
     ok: bool,
-    result: str,
+    result: Reason,
 ) -> None:
     """Persist an upkeep job's last completion so the Jobs page can show its last-run line.
 
-    A no-op when ``session_factory`` is ``None`` -- the startup catch-up calls the job
-    callables directly, without one, and a catch-up refresh is not an on-schedule/by-hand run.
-    Never lets this bookkeeping break the job it records: a failed write is logged and
-    swallowed, exactly like each job's own error handling.
+    ``result`` is a typed reason, a bare id under ``jobs.result.*`` plus raw params: the
+    server states the fact, the browser composes the sentence (``JobStatus.tsx``'s
+    ``jobResultText``). A no-op when ``session_factory`` is ``None`` -- the startup catch-up
+    calls the job callables directly, without one, and a catch-up refresh is not an
+    on-schedule/by-hand run. Never lets this bookkeeping break the job it records: a failed
+    write is logged and swallowed, exactly like each job's own error handling.
     """
     if session_factory is None:
         return
@@ -202,7 +205,7 @@ async def refresh_ratings(
         ):
             log.info("scheduler.ratings_fresh_skip", synced_at=state.synced_at.isoformat())
             await _record_run(
-                session_factory, "refresh_ratings", ok=True, result="Already up to date"
+                session_factory, "refresh_ratings", ok=True, result=Reason("ratings_up_to_date")
             )
             return
         loaded = await imdb_dataset.refresh(cache_engine, data_dir)
@@ -211,10 +214,7 @@ async def refresh_ratings(
         # kept are good -- but the ratings it lost are protections that stop keeping
         # titles, so the operator is told rather than left with a green tick.
         result = (
-            "Ratings refreshed, but a lot of the file could not be read. Fewer titles "
-            "now have a rating to protect them."
-            if loaded.drifted
-            else "Ratings refreshed"
+            Reason("ratings_refreshed_partial") if loaded.drifted else Reason("ratings_refreshed")
         )
         await _record_run(session_factory, "refresh_ratings", ok=True, result=result)
     except Exception as exc:
@@ -225,7 +225,10 @@ async def refresh_ratings(
         # escaping unrecorded.
         log.warning("scheduler.ratings_refresh_failed", error=str(exc))
         await _record_run(
-            session_factory, "refresh_ratings", ok=False, result="Couldn't refresh ratings"
+            session_factory,
+            "refresh_ratings",
+            ok=False,
+            result=Reason("ratings_refresh_failed"),
         )
 
 
@@ -282,7 +285,10 @@ async def refresh_curated_lists(
         # it happened.
         log.warning("scheduler.lists_refresh_failed", error=str(exc))
         await _record_run(
-            session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
+            session_factory,
+            "refresh_curated_lists",
+            ok=False,
+            result=Reason("lists_refresh_failed"),
         )
 
 
@@ -360,22 +366,22 @@ async def _refresh_curated_lists(
     )
     if plex_lists and not plex_reached:
         result = (
-            "Couldn't reach Plex, so its lists weren't checked"
+            Reason("lists_plex_unreachable")
             if plex is not None
-            else "Plex isn't connected, so its lists weren't checked"
+            else Reason("lists_plex_not_connected")
         )
         ok = False
     elif not failed:
-        result = "Lists refreshed"
+        result = Reason("lists_refreshed")
         ok = True
     elif not checked:
-        result = "Couldn't refresh lists"
+        result = Reason("lists_refresh_failed")
         ok = False
     else:
         # Only the partial outcome needs the count: a total failure and a clean pass each say
         # so in one phrase, and restating the per-list reasons here would be the same refusal
         # written twice -- every one of them is already on the row it belongs to (rule 144).
-        result = f"Refreshed {checked} lists, {failed} couldn't be checked"
+        result = Reason("lists_partial", {"checked": checked, "failed": failed})
         ok = False
     await _record_run(session_factory, "refresh_curated_lists", ok=ok, result=result)
 
@@ -415,7 +421,10 @@ async def full_history_sweep(
 
         if row is None:
             await _record_run(
-                session_factory, "full_history_sweep", ok=True, result="No history source"
+                session_factory,
+                "full_history_sweep",
+                ok=True,
+                result=Reason("history_no_source"),
             )
             return
 
@@ -431,17 +440,20 @@ async def full_history_sweep(
         if state.unservable:
             # A partial outcome, recorded the way the lists job records one: the count, and
             # not ok, so the Jobs page keeps saying so until Tautulli is repaired.
-            result = f"History updated, but Tautulli couldn't return {state.unservable} plays"
+            result = Reason("history_partial", {"unservable": state.unservable})
             ok = False
         else:
-            result, ok = "History updated", True
+            result, ok = Reason("history_updated"), True
         await _record_run(session_factory, "full_history_sweep", ok=ok, result=result)
     except Exception as exc:
         # The instance lookup and client construction are inside this try too, so a broken
         # DB read or a bad decrypt is recorded as a failed run instead of escaping unrecorded.
         log.warning("scheduler.history_sweep_failed", error=str(exc))
         await _record_run(
-            session_factory, "full_history_sweep", ok=False, result="Couldn't update history"
+            session_factory,
+            "full_history_sweep",
+            ok=False,
+            result=Reason("history_update_failed"),
         )
 
 
@@ -473,7 +485,10 @@ async def check_for_updates(
         status = await update_checker.refresh()
         if not status.enabled:
             await _record_run(
-                session_factory, "check_for_updates", ok=True, result="Update checks are off"
+                session_factory,
+                "check_for_updates",
+                ok=True,
+                result=Reason("update_checks_off"),
             )
             return
         if status.update_available is None:
@@ -485,7 +500,7 @@ async def check_for_updates(
                 session_factory,
                 "check_for_updates",
                 ok=False,
-                result="Couldn't check for updates",
+                result=Reason("update_check_failed"),
             )
             return
         dev = status.channel == "dev"
@@ -499,12 +514,16 @@ async def check_for_updates(
                 behind=len(status.changes),
             )
             result = (
-                "The dev branch has moved since this build"
+                Reason("update_dev_behind")
                 if dev
-                else f"Reaper {status.latest} is out"
+                # `latest` is unset only when the checker could not answer, which is the
+                # `update_available is None` branch above -- never reached with it True. The
+                # empty-string fallback is only for the type checker, which cannot see that
+                # invariant across two independent fields.
+                else Reason("update_available", {"latest": status.latest or ""})
             )
         else:
-            result = "This build matches the dev branch" if dev else "You are on the newest release"
+            result = Reason("update_dev_current") if dev else Reason("update_up_to_date")
         await _record_run(session_factory, "check_for_updates", ok=True, result=result)
     except Exception as exc:
         # The checker maps its own network failures to "unknown" above, so reaching here
@@ -512,7 +531,10 @@ async def check_for_updates(
         # job on the scheduler must not stop the ones that keep scans working.
         log.warning("scheduler.update_check_failed", error=str(exc))
         await _record_run(
-            session_factory, "check_for_updates", ok=False, result="Couldn't check for updates"
+            session_factory,
+            "check_for_updates",
+            ok=False,
+            result=Reason("update_check_failed"),
         )
 
 
@@ -635,7 +657,7 @@ async def scheduled_scan(
         # Jobs page would otherwise keep showing whatever the last snapshot said forever.
         # Recorded here so ScanRow can prefer this over a stale snapshot (see get_schedule).
         log.warning("scheduler.scan_failed", error=str(exc))
-        await _record_run(session_factory, SCAN_JOB_ID, ok=False, result="Scan failed")
+        await _record_run(session_factory, SCAN_JOB_ID, ok=False, result=Reason("scan_failed"))
 
 
 def apply_scan_schedule(

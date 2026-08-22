@@ -785,7 +785,7 @@ class TestAScanThatSkippedTheShelfSaysSo:
                 seasons=4,
                 applied=True,
                 ok=True,
-                result="1 added, 0 cleared",
+                reason=Reason("shelf_updated", {"added": 1, "removed": 0}),
             )
             await session.commit()
 
