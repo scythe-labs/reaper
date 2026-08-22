@@ -458,6 +458,10 @@ MESSAGES: dict[str, str] = {
         "That is not a Discord webhook URL. Paste the full "
         "https://discord.com/api/webhooks/… URL from the channel's integration settings."
     ),
+    "error.settings.notification_language_unknown": (
+        'Reaper doesn\'t have a "{tag}" language pack for Discord messages yet. Pick one '
+        "from the list."
+    ),
     "error.settings.bad_cron": (
         "That is not a valid schedule: {reason}. Use cron form, e.g. '30 4 * * *'."
     ),

@@ -25,6 +25,7 @@ from typing import Any
 
 from reaper.clock import humanize_days, humanize_window
 from reaper.engine.reason import Reason
+from reaper.i18n import format_icu as _icu
 
 
 def flat(reason: Reason) -> str:
@@ -52,9 +53,10 @@ def text(reason: Reason, namespace: str = "why") -> str:
 
     The test-side twin of ``frontend/src/why.ts``'s ``composeIn``, over the same
     ``ui.json`` -- so a sentence assertion in this suite pins the catalog entry AND the
-    params the engine put in its slots, end to end. It implements only the ICU subset the
-    ``why`` entries use (plural, select, selectordinal, number); ``why.test.ts`` proves
-    the real composer renders the same sentences, which is what keeps the twins honest.
+    params the engine put in its slots, end to end. Formatting itself is
+    ``reaper.i18n.format_icu`` (rule 119: this module stopped re-implementing it once the
+    backend needed the same ICU subset for its own catalog -- see ``tests/test_backend_i18n.py``
+    for the fixtures that hold this twin and the real ``why.ts`` composer to the same output).
     """
     if reason.id == "legacy":
         return str(reason.params.get("text", ""))
@@ -107,135 +109,6 @@ def _lookup(dotted: str, namespace: str = "why") -> str | None:
             return None
         node = node[part]
     return node if isinstance(node, str) else None
-
-
-def _replace_hash(text: str, replacement: str) -> str:
-    """``#`` substituted only at brace depth 0, so a plural nested inside another plural's
-    branch keeps its OWN ``#`` for its own recursive pass.
-
-    A naive ``str.replace("#", ...)`` run before recursing corrupts exactly that case: the
-    outer plural's replacement clobbers a ``#`` that belongs to a ``{headroom, plural, one
-    {# point} other {# points}}`` sitting inside the picked branch, because the string is
-    substituted before ``_icu`` ever sees the nested argument.
-    ``warning.graded_keeps_beyond_history`` (#868) is the first catalog entry to nest a
-    plural inside a plural's own text, which is what surfaced it.
-    """
-    out: list[str] = []
-    depth = 0
-    for ch in text:
-        if ch == "{":
-            depth += 1
-            out.append(ch)
-        elif ch == "}":
-            depth -= 1
-            out.append(ch)
-        elif ch == "#" and depth == 0:
-            out.append(replacement)
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def _js_number(value: Any) -> str:
-    """A number the way JS templates print it: no trailing ``.0``, no grouping."""
-    if isinstance(value, float) and value == int(value):
-        return str(int(value))
-    return str(value)
-
-
-def _grouped(value: Any) -> str:
-    """A number the way ICU's ``number`` format and ``#`` print it: grouped."""
-    if isinstance(value, float) and value == int(value):
-        return f"{int(value):,}"
-    if isinstance(value, int):
-        return f"{value:,}"
-    return str(value)
-
-
-def _split_options(body: str) -> dict[str, str]:
-    """``one {...} other {...}`` parsed into a selector-to-message map."""
-    options: dict[str, str] = {}
-    i = 0
-    while i < len(body):
-        while i < len(body) and body[i].isspace():
-            i += 1
-        start = i
-        while i < len(body) and body[i] != "{":
-            i += 1
-        selector = body[start:i].strip()
-        depth = 0
-        j = i
-        while j < len(body):
-            if body[j] == "{":
-                depth += 1
-            elif body[j] == "}":
-                depth -= 1
-                if depth == 0:
-                    break
-            j += 1
-        options[selector] = body[i + 1 : j]
-        i = j + 1
-    return options
-
-
-def _ordinal_category(n: int) -> str:
-    if n % 100 in (11, 12, 13):
-        return "other"
-    return {1: "one", 2: "two", 3: "few"}.get(n % 10, "other")
-
-
-def _icu(message: str, params: dict[str, Any]) -> str:
-    """The ICU MessageFormat subset the ``why`` entries use, resolved for English."""
-    out: list[str] = []
-    i = 0
-    while i < len(message):
-        ch = message[i]
-        if ch != "{":
-            out.append(ch)
-            i += 1
-            continue
-        depth = 0
-        j = i
-        while j < len(message):
-            if message[j] == "{":
-                depth += 1
-            elif message[j] == "}":
-                depth -= 1
-                if depth == 0:
-                    break
-            j += 1
-        inner = message[i + 1 : j]
-        i = j + 1
-        head, _, rest = inner.partition(",")
-        name = head.strip()
-        value = params.get(name, "")
-        if not rest:
-            out.append(value if isinstance(value, str) else _js_number(value))
-            continue
-        kind, _, body = rest.partition(",")
-        kind = kind.strip()
-        if kind == "number":
-            out.append(_grouped(value))
-            continue
-        options = _split_options(body)
-        n = value if isinstance(value, int | float) else 0
-        if kind == "plural":
-            picked = options.get(f"={_js_number(n)}")
-            if picked is None:
-                picked = options.get("one" if n == 1 else "other", options.get("other", ""))
-            out.append(_icu(_replace_hash(picked, _grouped(n)), params))
-        elif kind == "selectordinal":
-            picked = options.get(f"={_js_number(n)}")
-            if picked is None:
-                picked = options.get(_ordinal_category(int(n)), options.get("other", ""))
-            out.append(_icu(_replace_hash(picked, _grouped(n)), params))
-        elif kind == "select":
-            key = value if isinstance(value, str) else _js_number(value)
-            picked = options.get(key, options.get("other", ""))
-            out.append(_icu(picked, params))
-        else:
-            out.append(str(value))
-    return "".join(out)
 
 
 @cache

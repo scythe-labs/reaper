@@ -41,7 +41,7 @@ Last verified against the code: 2026-08-02.
 | **First start** — four steps, password forced, restore door, resume from the server | ✅ done |
 | **Packaged installs** — Win/macOS binaries + tray, snap, CalVer, update check | 🟡 no cut yet |
 | **Collections** — chip, picker, collection screen, search reaches names | ✅ done, #816 |
-| **i18n** — ICU catalog, typed reasons, errors, manual, Weblate | ✅ #862, #868, RTL #861 |
+| **i18n** — two catalogs, typed reasons, errors, manual, Weblate | ✅ #862, #868, RTL #861 |
 
 ## Open work
 

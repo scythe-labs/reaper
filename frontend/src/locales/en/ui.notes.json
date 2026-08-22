@@ -297,6 +297,7 @@
   "error.settings.launcher_conf_write_failed": "Shown in Settings, General, on the desktop app only.",
   "error.settings.no_api_key": "Shown in Settings, Security, before an API key has been generated.",
   "error.settings.no_password_set_for_arming": "Shown in Settings, Safety, when turning deletion on.",
+  "error.settings.notification_language_unknown": "Shown in Settings, Notifications, when saving the Discord notification language. `{tag}` is the BCP 47 tag the browser sent, exactly as sent.",
   "error.settings.recovery_mode_blocks_arming": "Shown in Settings, Safety, when turning deletion on.",
   "error.settings.service_list_unreachable": "Shown in Settings, Services, while mapping a Seerr portal's services. `{error}` is the underlying service's own error text, passed through as written.",
   "error.settings.timezone_unknown": "Shown in Settings, General, when saving the timezone.",

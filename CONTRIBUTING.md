@@ -29,7 +29,10 @@ If you want to know who writes this and how, the README has an honest answer und
 - **Fix the docs.** Instructions that did not work are a bug.
 - **Translate it.** Reaper's strings live on
   [Weblate](https://hosted.weblate.org/projects/reaper/). Translate there, and Weblate
-  opens the pull request here. Only `frontend/src/locales/en/ui.json` is edited in this repo.
+  opens the pull request here. Weblate holds three components: `ui` (the browser catalog,
+  `frontend/src/locales/en/ui.json`), `backend` (the Discord and desktop-launcher catalog,
+  `src/reaper/locales/en/backend.json`, which has no browser to translate in), and `glossary`
+  (the term list both draw from). Only the two English files and their notes are edited here.
   Every other `locales/<tag>/ui.json` is written by Weblate and overwritten on its next sync, so
   a pull request editing one is closed. The in-app manual is the exception: it is translated here
   in the repo `frontend/src/docs/content/<tag>/index.ts`.
@@ -39,6 +42,7 @@ If you want to know who writes this and how, the README has an honest answer und
   is Reaper's glossary, shown beside the string a translator is working on. A note is edited only
   in `ui.notes.json`: Weblate's explanation field for each string is written from it by a workflow
   on every push to `dev`, so editing it on Weblate directly is overwritten on the next push.
+  `src/reaper/locales/en/backend.notes.json` does the same for the `backend` component.
 - **Send a watch-history dump.** Reaper's scoring is tuned against real libraries, and it has
   been tuned against very few of them. `scripts/tautulli_anon_dump.py` reads your Tautulli and
   writes a file holding the numbers the engine reads, with no titles, usernames, email

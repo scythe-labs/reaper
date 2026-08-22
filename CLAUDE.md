@@ -322,8 +322,9 @@ in `website/docusaurus.config.ts`'s header, beside the `baseUrl` they have to ag
 **Two workflows outside it carry their own path lists and have to** — a `paths` filter decides
 whether a workflow starts, so it cannot read another one's output. `codeql.yml` restates the
 prose globs as `paths-ignore` once per trigger, in `**` spelling rather than the `case` globs
-above. `weblate-notes.yml` filters on the one file that can change what it does,
-`frontend/src/locales/en/ui.notes.json`, unrelated to any lane here. `tests/test_repo_hygiene.py`
+above. `weblate-notes.yml` filters on the two files that can change what it does,
+`frontend/src/locales/en/ui.notes.json` and `src/reaper/locales/en/backend.notes.json`,
+unrelated to any lane here. `tests/test_repo_hygiene.py`
 pins all three by name, so neither a fourth nor a move between files can arrive quietly and
 leave this paragraph stale again. **A workflow skipped by its own
 path filter publishes no check run at all** — a *job* skipped by an `if:` does publish one,

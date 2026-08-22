@@ -15,8 +15,21 @@ import { api, type InstanceTest } from "../api";
 import { describeError } from "../errors";
 import { composeIn } from "../why";
 import { TestBadge, testSentence } from "./ServiceModal";
+import { SetRow } from "./SetRow";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
+
+/** A BCP 47 tag's English name ("de" -> "German"), from the browser's own list rather
+ *  than a hand-kept map that would need an entry added every time a translation ships
+ *  (rule 66). Built once: the constructor is the only part worth caching. */
+const LANGUAGE_NAMES = new Intl.DisplayNames(["en"], { type: "language" });
+function languageName(tag: string): string {
+  try {
+    return LANGUAGE_NAMES.of(tag) ?? tag;
+  } catch {
+    return tag;
+  }
+}
 
 /** Client-side twin of the server's webhook validation (reaper/api/settings.py). The token
  *  lives in the URL path, so a typo'd host would leak it to a stranger -- we only accept an
@@ -88,6 +101,17 @@ export function NotificationsPanel({
       // Success here is the box emptying and a line above it flipping, both silent. The test
       // button between these two mutations already speaks (#192); these are its siblings.
       announce(t("services.discord.savedAnnouncement"));
+      invalidate();
+    },
+    onError: (e) => setError(describeError(e)),
+  });
+  // The language select writes immediately, like GeneralPanel's expand-seasons and
+  // reverse-proxy selects -- there is nothing to lose by leaving it, so it needs no place in
+  // a draft or a save bar (rule 43 does not apply: this panel has no bar to begin with).
+  const saveLanguage = useMutation({
+    mutationFn: (language: string) => api.setNotificationLanguage(language),
+    onSuccess: () => {
+      announce(t("services.notifications.language.savedAnnouncement"));
       invalidate();
     },
     onError: (e) => setError(describeError(e)),
@@ -196,6 +220,29 @@ export function NotificationsPanel({
           )}
         </>
       )}
+
+      {/* Always on screen, like the webhook box below: a loading or failed check narrows to
+          "en" and disables the select rather than hiding it (rule 17/36). */}
+      <SetRow
+        label={t("services.notifications.language.label")}
+        help={t("services.notifications.language.help")}
+      >
+        <select
+          value={data?.language ?? "en"}
+          aria-label={t("services.notifications.language.label")}
+          disabled={isPending || saveLanguage.isPending}
+          onChange={(e) => {
+            setError(null);
+            saveLanguage.mutate(e.target.value);
+          }}
+        >
+          {(data?.languages ?? ["en"]).map((tag) => (
+            <option key={tag} value={tag}>
+              {languageName(tag)}
+            </option>
+          ))}
+        </select>
+      </SetRow>
 
       <div className="add-grid">
         <label className="field-sm wide">

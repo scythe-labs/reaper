@@ -2558,8 +2558,9 @@ def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() ->
 
 #: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand and
 #: **named, not counted**. `codeql.yml` filters both its triggers, `weblate-notes.yml` filters
-#: its one (on the single file that can change what it does,
-#: `frontend/src/locales/en/ui.notes.json`), and `ci.yml` has none deliberately -- it runs on
+#: its one (on the two files that can change what it does,
+#: `frontend/src/locales/en/ui.notes.json` and, since phase 10b,
+#: `src/reaper/locales/en/backend.notes.json`), and `ci.yml` has none deliberately -- it runs on
 #: everything and classifies the diff inside a job, so its verdict can be read by other jobs
 #: and a skipped lane still reports.
 #:
@@ -4689,7 +4690,9 @@ def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -
 # being a name Reaper guesses and becomes one the operator picks off their own server. +1 for
 # `PolicyRuleEditors`'s ListNameSelect, the picker an `on_list` keep rule names its list from --
 # a rule that matches on the name, so it is a picker rather than a box (rule 108's separator half).
-_EXPECTED_SELECTS = 23
+# +1 for `NotificationsPanel`'s language picker (phase 10b): which BCP 47 tag the Discord
+# Leaving Soon embed is written in, offered from `reaper.i18n.shipped_tags()`.
+_EXPECTED_SELECTS = 24
 
 
 #: A ``//`` that starts a comment, which is any ``//`` not preceded by a colon. Splitting on the
@@ -4907,7 +4910,8 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # +1 for `PolicyEditor.warnings.test.tsx`, the warning-anchor walk split out of
 # `PolicyEditor.test.tsx` so the two run on different workers. It mounts the same page, which the
 # file it left audits, so it is named in the map rather than audited twice.
-_EXPECTED_RENDERING_TEST_FILES = 62
+# +1 for `NotificationsPanel.test.tsx` (phase 10b), auditing the new language select.
+_EXPECTED_RENDERING_TEST_FILES = 63
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -5764,7 +5768,10 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
 #: A different population from that constant, which counts the 87 under the four packages only.
 #: 122 adds `api/errors.py` and top-level `refusal.py` (phase 8a's catalog and typed refusal).
-_EXPECTED_SOURCE_MODULES = 122
+#: 124 adds top-level `i18n.py` and the new `locales` package's `__init__.py` (phase 10a's
+#: Discord/launcher backend catalog; `locales/en/backend.json` carries no `.py` and does not
+#: join this walk).
+_EXPECTED_SOURCE_MODULES = 124
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`
@@ -5819,7 +5826,7 @@ def _module_import_graph() -> dict[str, frozenset[str]]:
     a cycle, and the deferral is what a module graph drawn from top-level imports cannot see.
 
     A package's `__init__.py` is a module here like any other, because importing
-    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. All eight
+    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. All nine
     of them import nothing today, so they carry no outgoing edges.
     """
     names = {}
@@ -5981,7 +5988,7 @@ def test_the_cycle_walk_reports_the_cycles_it_is_given() -> None:
 #: Pinned for `_EXPECTED_SOURCE_MODULES`' reason (rule 145), and it carries more weight here:
 #: the expected cycle set is EMPTY, so a walk that stopped reading the tree agrees with a clean
 #: graph exactly.
-_EXPECTED_FRONTEND_MODULES = 241
+_EXPECTED_FRONTEND_MODULES = 242
 
 #: The two extensions a module in this tree can carry, and the only ones the walk resolves to.
 _TS_SUFFIXES = (".ts", ".tsx")
@@ -8204,8 +8211,8 @@ def _refusal_code_sites() -> dict[str, list[str]]:
     return sites
 
 
-_EXPECTED_REFUSAL_CODES = 209
-_EXPECTED_REFUSAL_SITES = 235
+_EXPECTED_REFUSAL_CODES = 210
+_EXPECTED_REFUSAL_SITES = 236
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
@@ -8267,7 +8274,7 @@ _TRANSPORT_ONLY_CODES = frozenset(
 
 #: `len(MESSAGES) + len(_TRANSPORT_ONLY_CODES)`, pinned so the population this test collects
 #: cannot silently shrink to match a catalog that lost entries (rule 145).
-_EXPECTED_CATALOG_ERROR_KEYS = 212
+_EXPECTED_CATALOG_ERROR_KEYS = 213
 
 
 def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None:

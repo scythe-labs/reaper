@@ -1,0 +1,30 @@
+{
+  "discord": {
+    "leaving_soon": {
+      "title": "{count, plural, one {# title is} other {# titles are}} leaving soon",
+      "body": "Watch one and it stays. Nothing is removed automatically: they show as leaving for the next {grace_days} days, and every removal is started by hand.",
+      "more": "…and {remaining, plural, one {# more.} other {# more.}}",
+      "open_link": "Open {app_name}"
+    },
+    "test": {
+      "title": "Reaper is connected",
+      "body": "This is a test message. If you can see it, your users will get a heads-up here before any title is removed."
+    }
+  },
+  "launcher": {
+    "tray": {
+      "open": "Open Reaper",
+      "quit": "Quit Reaper",
+      "tooltip": "Reaper"
+    },
+    "dialog": {
+      "crashed": "Reaper stopped unexpectedly. Open it again to restart.",
+      "port_in_use": "Reaper didn't start: port {port} is already in use, so this copy could not be reached at http://127.0.0.1:{port}. Quit whatever is using the port (another Reaper?) or {move}, then open Reaper again.",
+      "no_migrations": "Reaper can't find its database migrations next to this install. Run the container, a packaged binary, the snap, or a source checkout instead."
+    },
+    "move": {
+      "conf": "add a line like REAPER_PORT=8421 to {conf}",
+      "env": "set REAPER_PORT to a free one"
+    }
+  }
+}

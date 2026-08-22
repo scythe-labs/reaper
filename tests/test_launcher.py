@@ -659,10 +659,11 @@ class TestMain:
         monkeypatch.setattr(launcher, "_tray_image", lambda: object())
 
         def fake_tray(
-            mod: Any, server: Any, port: int, image: Any, *, dock_icon: bool
+            mod: Any, server: Any, port: int, image: Any, *, dock_icon: bool, tag: str = "en"
         ) -> BaseException | None:
             captured["tray_port"] = port
             captured["dock_icon"] = dock_icon
+            captured["tray_tag"] = tag
             error: BaseException | None = captured["tray_error"]
             return error
 

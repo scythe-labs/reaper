@@ -1039,9 +1039,18 @@ A legacy row whose stored prose already holds an English span gets its own id
 leak is visible and scoped to rows a rescan replaces. A rule name the operator typed travels as a
 param. It is their data in their language.
 
-What stays English on purpose: log lines, the confirmation phrase, the `reaper-admin` CLI,
-OpenAPI tag descriptions and the API-key auth box, and Discord posts and the tray until the
-backend has a catalog of its own.
+What stays English on purpose: log lines, the confirmation phrase, the `reaper-admin` CLI
+and the launcher's console lines, OpenAPI tag descriptions and the API-key auth box.
+
+**The two surfaces with no browser get a second catalog.** The Discord post and the desktop
+launcher's tray and dialogs are composed on the server, so they read
+`src/reaper/locales/en/backend.json` through `reaper.i18n.say`, a small ICU formatter with
+a CLDR plural table for the shipped tags. Babel is not a dependency and the catalog does not
+justify one. The tray follows the OS locale. Discord follows the `notification_language`
+setting (Settings, Notifications), whose choices are the tags with a shipped catalog, so a
+language appears there the release after Weblate's translation lands. Weblate holds it as
+the `backend` component beside `ui`. `tests/_reasons.py` formats through the same code, so
+the backend and the browser agree on the ICU subset.
 
 **HTTP error bodies get a code and keep their English `detail`.** `detail` stays the
 formatted English sentence, because an API-key client or a documented example reads it as
