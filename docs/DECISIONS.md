@@ -852,11 +852,14 @@ The simulator's stale notice can still appear at an operator who changed nothing
 that adds a field to the hashed body leaves the recorded hash unmatchable until the next scan —
 so it goes on stating the condition rather than telling them they changed something.
 
-`GateId.UNMANAGED` and the three surfaces that decode a stored explanation stay
-(`STRUCTURAL_GATES`, the chip phrase, and the why-panel's held-reap line). A stored row naming
-the gate's own blocked branch renders through the panel's generic legacy fallback now, not
-through copy of its own (#899). `Facts.is_managed` stays too: it is a true observation and the
-evidence any re-wiring would need, which is a Plex-first scan path, not a change to the gate.
+`GateId.UNMANAGED` and the two surfaces that decode a stored explanation for a hand reap stay
+(`STRUCTURAL_GATES` and the why-panel's held-reap line). The queue chip's own phrase for it is
+gone: an old row now falls to the chip's generic kept arm, the same as any other gate id the
+chip does not recognize, rather than carrying a special-cased sentence for a gate that can no
+longer fire. A stored row naming the gate's own blocked branch renders through the panel's
+generic legacy fallback now, not through copy of its own (#899). `Facts.is_managed` stays too:
+it is a true observation and the evidence any re-wiring would need, which is a Plex-first scan
+path, not a change to the gate.
 
 ## Plex index retirement
 
@@ -1062,7 +1065,8 @@ one. `code` and a raw `params` map ride beside it at the top level
 catalog knows. Services raise a `Refusal` with the code, so the English is written once.
 The browser is the first typed reader. `frontend/src/errors.ts`'s `describeError` composes
 `error.*` from `ui.json` the way `why`, `chip` and `warning` are composed, and falls back to
-the carried `detail` when a code has no entry (an older server, a newer build).
+the bare code when the catalog has no entry for it, the same fallback every other reason
+takes. The carried `detail` is the fallback only when the body carried no code at all.
 
 **Phase 11a types the outcome a background job reports** (#885). A job result is not a
 refusal: it is worded once, by whichever branch of `scheduler._record_run` or

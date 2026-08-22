@@ -132,6 +132,7 @@ function detail(
     group_title: null,
     video_resolution: null,
     library: null,
+    dormant_days: null,
     override: null,
     override_own: null,
     show_override: null,
@@ -142,6 +143,7 @@ function detail(
     chip: null,
     season_number: 3,
     show_status: null,
+    collections: null,
     content_rating: null,
     runtime_minutes: null,
     genres: [],
@@ -164,10 +166,13 @@ function detail(
       keep_discount: 0,
       threshold: 70,
       coverage: 10_000,
+      coverage_floor_bp: null,
+      watch_blind: null,
       signals,
       protections_fired: [],
       protections_checked: [],
       protections_unknown: [],
+      match: null,
     },
     ...over,
   };
@@ -772,7 +777,14 @@ describe("the verdict headline", () => {
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "unmatched", detail: null, rating_key: null },
+          match: {
+            status: "unmatched",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
@@ -792,7 +804,14 @@ describe("the verdict headline", () => {
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "unmatched", detail: null, rating_key: null },
+          match: {
+            status: "unmatched",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
           protections_unknown: [
             fired(
               "server_popularity",
@@ -814,7 +833,14 @@ describe("the verdict headline", () => {
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "ambiguous", detail: null, rating_key: null },
+          match: {
+            status: "ambiguous",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
           protections_unknown: [
             fired(
               "server_popularity",
@@ -841,7 +867,14 @@ describe("the verdict headline", () => {
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "conflicted", detail: null, rating_key: null },
+          match: {
+            status: "conflicted",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
           protections_unknown: [
             fired(
               "server_popularity",
@@ -869,7 +902,14 @@ describe("the verdict headline", () => {
         media_type: "movie",
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "conflicted", detail: null, rating_key: null },
+          match: {
+            status: "conflicted",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
@@ -894,7 +934,14 @@ describe("the verdict headline", () => {
         },
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "ambiguous", detail: null, rating_key: null },
+          match: {
+            status: "ambiguous",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
@@ -923,7 +970,14 @@ describe("the verdict headline", () => {
         },
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "ambiguous", detail: null, rating_key: null },
+          match: {
+            status: "ambiguous",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
@@ -952,7 +1006,14 @@ describe("the verdict headline", () => {
         },
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          match: { status: "ambiguous", detail: null, rating_key: null },
+          match: {
+            status: "ambiguous",
+            detail: null,
+            rating_key: null,
+            by: null,
+            merged_rating_keys: null,
+            candidate_rating_keys: null,
+          },
         },
       }),
     );
@@ -1281,7 +1342,15 @@ describe("the merged-listing count", () => {
     detail(WORKED_ROWS, {
       explanation: {
         ...detail(WORKED_ROWS).explanation,
-        match: { status: "matched", detail: null, rating_key: 900, ...match },
+        match: {
+          status: "matched",
+          detail: null,
+          rating_key: 900,
+          by: null,
+          merged_rating_keys: null,
+          candidate_rating_keys: null,
+          ...match,
+        },
       },
     });
 
@@ -1793,6 +1862,8 @@ describe("a fresh explanation composes from the catalog", () => {
           keep_discount: 0,
           threshold: 70,
           coverage: 10_000,
+          coverage_floor_bp: null,
+          watch_blind: null,
           signals: [
             signal({
               id: "unwatched",
@@ -1818,6 +1889,7 @@ describe("a fresh explanation composes from the catalog", () => {
             },
           ],
           protections_unknown: [],
+          match: null,
         },
       }),
     );
@@ -1845,6 +1917,8 @@ describe("a fresh explanation composes from the catalog", () => {
           keep_discount: 0,
           threshold: 70,
           coverage: 10_000,
+          coverage_floor_bp: null,
+          watch_blind: null,
           signals: [],
           protections_fired: [],
           protections_checked: [],
@@ -1865,6 +1939,7 @@ describe("a fresh explanation composes from the catalog", () => {
               defers_to_owner: true,
             },
           ],
+          match: null,
         },
       }),
     );

@@ -124,9 +124,6 @@ ALIAS = {
 CLIENT_ONLY = {
     # The query the browser sends as URL parameters, not a body any model validates.
     "CandidateQuery",
-    # A UI-side subset of ScanStatus (phase/done/total/detail) that several components take
-    # as a prop; the server has no model of the subset.
-    "Progress",
     # One item of a 422 validation list's `code`/`params`/`msg` triple (phase 8b): the
     # browser's own name for `api.errors.validation_error_items`'s wire shape, which is a
     # list of dicts the server builds inline rather than a model with a name to pair against.
@@ -172,7 +169,9 @@ CLIENT_ONLY = {
 # where the *arr/Seerr connection test still sends free English (docs/history/I18N_PLAN.md §5).
 # INTERFACES alone +1 for phase 8b: `ApiErrorItem` is new and sits in CLIENT_ONLY above --
 # the 422 list it describes is a plain list of dicts server-side, not a named model to pair.
-EXPECTED_INTERFACES = 100
+# INTERFACES alone -1 for the i18n legacy-layer cleanup: `Progress` had no reader anywhere in
+# the tree and no server model to sit in CLIENT_ONLY for, so it was deleted rather than kept.
+EXPECTED_INTERFACES = 99
 EXPECTED_PAIRS = 97
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)

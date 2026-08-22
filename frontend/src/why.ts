@@ -4,10 +4,9 @@
 //
 // The backend stopped writing English details: a gate, signal or keep row carries a
 // `detail_key` -- a catalog id plus raw params -- and this module turns it into the
-// sentence under `why.*` in the catalog. Rows frozen before the conversion still carry
-// their prose `detail`, which callers render verbatim; the one legacy shape this module
-// itself handles is a reason WRAPPING such prose (`{k: "legacy", p: {text}}`), which the
-// backend uses where an old stored value rides in a new slot.
+// sentence under `why.*` in the catalog. A row frozen before the conversion carries a
+// `legacy` key wrapping its sentence (`{k: "legacy", p: {text}}`), which this module
+// composes verbatim, never translated.
 //
 // Params are raw values -- day counts, byte counts, tenths -- and the derived forms the
 // messages reference are computed here, once, for every numeric param `x`:

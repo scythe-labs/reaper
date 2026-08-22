@@ -2,8 +2,9 @@
 //
 // describeError, proven against the real catalog the same way why.test.ts proves composeIn:
 // a coded ApiError composes through error.*, a 422's several items compose each and join with
-// a space the same way api.ts already joins their English `msg`, and anything without a code
-// (or without a catalog entry for it) falls back to the English it already carried.
+// a space the same way api.ts already joins their English `msg`. A code with no catalog entry
+// composes to its own bare code (`why.ts`'s fallback); only an error with no code at all falls
+// back to the English message it already carried.
 
 import { describe, expect, it } from "vitest";
 import { ApiError } from "./api";
@@ -27,11 +28,11 @@ describe("describeError", () => {
     expect(describeError(err)).toBe('"People who watched it recently" needs a value.');
   });
 
-  it("falls back to the English message when the code has no catalog entry", () => {
-    // A code this build's catalog does not carry -- a newer server, or one this build
-    // predates. describeError must not print the raw dotted id in its place.
+  it("falls back to the bare code when the catalog has no entry for it", () => {
+    // A code this build's catalog does not carry. The same fallback every other typed
+    // reason takes (`why.ts`'s composeIn): the bare code, never the server's English.
     const err = new ApiError(500, "Something new broke.", "error.not_a_real.code");
-    expect(describeError(err)).toBe("Something new broke.");
+    expect(describeError(err)).toBe("not_a_real.code");
   });
 
   it("falls back to the English message when there is no code at all", () => {

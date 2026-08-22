@@ -68,7 +68,7 @@ from reaper.services.season_evidence import _NO_KEY_REASONS as SEASON_NO_KEY_REA
 from reaper.services.season_evidence import guard_result
 from reaper.services.season_pruning import PruneConflict, SeriesPrunePlan
 from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
-from reaper.services.snapshot import HAND_SPARE_DETAIL, HAND_SPARE_REASON, _explain
+from reaper.services.snapshot import HAND_SPARE_REASON, _explain
 
 from ._auth import login
 from ._reasons import catalog
@@ -234,14 +234,19 @@ def _conflict_reason(*, kept_watchers: int | None = 0, shortfall: str | None = N
 
 
 def _conflict_detail(*, kept_watchers: int | None = 0, shortfall: str | None = None) -> str:
-    """The same conflict as its composed English sentence -- what a row frozen BEFORE
-    reasons were typed stored verbatim, so the legacy-row fixtures stay derived from the
-    one producer rather than transcribed."""
+    """The same conflict as its composed English sentence, so a test asserting on the
+    wording stays derived from the one producer rather than transcribed."""
     return reason_text(_conflict_reason(kept_watchers=kept_watchers, shortfall=shortfall))
 
 
 #: The counted shape: a comparison really was made, so the chip may state it.
 CONFLICT_SENTENCE = _conflict_detail(kept_watchers=0)
+
+#: A hypothetical future gate's typed deliberate flag -- any id other than ``blocked`` or
+#: ``legacy`` -- standing in for a producer this codebase does not ship (rule 118: the
+#: interlock is proven against a shape nothing here currently emits, not only the one it
+#: does).
+_FUTURE_GATE_REASON = Reason("cause.future_gate", {"text": "A rule asked a human to look."})
 
 
 def _drop_defers_key(explanation_json: str) -> str:
@@ -363,7 +368,7 @@ class TestKeptChipWording:
             ("server_popularity", Reason("kept.popularity_plain")),
             ("curated_list", Reason("kept.curated_list")),
             ("min_dormancy", Reason("kept.dormancy")),
-            ("unmanaged", Reason("kept.unmanaged")),
+            ("unmanaged", Reason("kept.unknown")),
             ("season_progression", Reason("kept.season.rule")),
             ("custom", Reason("kept.custom")),
             ("brand_new_gate", Reason("kept.unknown")),
@@ -376,7 +381,9 @@ class TestKeptChipWording:
         # The exact sentence snapshot.py once froze for a hand spare no longer stands out
         # from any other legacy whitelisted keep: only the typed id is matched now, proven
         # below on the shape a live scan actually freezes.
-        assert _kept_reason("whitelisted", legacy(HAND_SPARE_DETAIL)) == Reason("kept.whitelisted")
+        assert _kept_reason("whitelisted", legacy("you spared this by hand")) == Reason(
+            "kept.whitelisted"
+        )
 
     def test_a_fresh_hand_spare_still_gets_its_own_id(self) -> None:
         assert _kept_reason("whitelisted", HAND_SPARE_REASON) == Reason("kept.hand_spare")
@@ -570,13 +577,15 @@ class TestChip:
     def test_season_conflict_wants_eyes(self) -> None:
         """The keep-rule conflict is a deliberate left-for-you flag, not a plumbing
         failure -- it wears the amber-outline tone."""
+        assert "more than watched Season" in CONFLICT_SENTENCE, "the producer stopped saying this"
+
         chip = _chip(
             _exp(
                 82,
                 unknown=[
                     {
                         "gate": "season_progression",
-                        "detail": CONFLICT_SENTENCE,
+                        "detail_key": to_wire(_conflict_reason(kept_watchers=0)),
                         "defers_to_owner": True,
                     }
                 ],
@@ -604,7 +613,11 @@ class TestChip:
             _exp(
                 82,
                 unknown=[
-                    {"gate": "season_progression", "detail": detail, "defers_to_owner": False}
+                    {
+                        "gate": "season_progression",
+                        "detail_key": to_wire(_conflict_reason(kept_watchers=None)),
+                        "defers_to_owner": False,
+                    }
                 ],
             ),
             "abstain",
@@ -633,7 +646,15 @@ class TestChip:
             _exp(
                 82,
                 unknown=[
-                    {"gate": "season_progression", "detail": detail, "defers_to_owner": False}
+                    {
+                        "gate": "season_progression",
+                        "detail_key": to_wire(
+                            _conflict_reason(
+                                shortfall="your watch history only goes back 12 months"
+                            )
+                        ),
+                        "defers_to_owner": False,
+                    }
                 ],
             ),
             "abstain",
@@ -660,16 +681,16 @@ class TestChip:
         The chip must still not claim a comparison it has no evidence was made, which is what
         this pins, and the pair is swept in full below."""
         for kept_watchers in (1, None):
-            detail = _conflict_detail(kept_watchers=kept_watchers)
-            legacy = _exp(82, unknown=[{"gate": "season_progression", "detail": detail}])
+            detail_key = to_wire(_conflict_reason(kept_watchers=kept_watchers))
+            row = _exp(82, unknown=[{"gate": "season_progression", "detail_key": detail_key}])
 
-            chip = _chip(legacy, "abstain", 82)
+            chip = _chip(row, "abstain", 82)
 
             assert chip is not None
             assert chip.tone == "look"
             assert _chip_reason(chip) == Reason("look.unsettled")
             # ...and the invitation the chip extends is one the engine honors.
-            assert reap_override_verdict_decoded(legacy, score=82) == "condemn"
+            assert reap_override_verdict_decoded(row, score=82) == "condemn"
 
     @pytest.mark.parametrize("junk", ['"true"', '"false"', '"0"', "1", "0", "[]", "{}", "null"])
     def test_only_a_real_json_true_claims_the_comparison_was_made(self, junk: str) -> None:
@@ -688,9 +709,10 @@ class TestChip:
         the sweep became constant-true there and was moved here, to the consumer that
         actually inherited the strictness (rule 132: the citation must be a live one).
         """
-        detail = json.dumps(_conflict_detail(kept_watchers=1))
+        detail_key = json.dumps(to_wire(_conflict_reason(kept_watchers=1)))
         entry = json.loads(
-            f'{{"gate": "season_progression", "detail": {detail}, "defers_to_owner": {junk}}}'
+            f'{{"gate": "season_progression", "detail_key": {detail_key}, '
+            f'"defers_to_owner": {junk}}}'
         )
 
         chip = _chip(_exp(82, unknown=[entry]), "abstain", 82)
@@ -720,9 +742,10 @@ class TestChip:
         ``test_the_panel_is_served_the_flag_its_chip_reads`` below; this is everything else a
         row can carry.
         """
-        detail = json.dumps(_conflict_detail(kept_watchers=1))
+        detail_key = json.dumps(to_wire(_conflict_reason(kept_watchers=1)))
         entry = json.loads(
-            f'{{"gate": "season_progression", "detail": {detail}, "defers_to_owner": {junk}}}'
+            f'{{"gate": "season_progression", "detail_key": {detail_key}, '
+            f'"defers_to_owner": {junk}}}'
         )
         exp = _exp(82, unknown=[entry])
         row = Candidate(
@@ -964,9 +987,11 @@ class TestChip:
         fail in one direction: a bad Plex match and an unreadable protections list keep the
         file, and neither wears a chip that invites the operator to remove it."""
         for kept_watchers in (1, None):
-            detail = _conflict_detail(kept_watchers=kept_watchers)
+            detail_key = to_wire(_conflict_reason(kept_watchers=kept_watchers))
             for flag in ({"defers_to_owner": True}, {"defers_to_owner": False}, {}):
-                exp = _exp(82, unknown=[{"gate": "season_progression", "detail": detail, **flag}])
+                exp = _exp(
+                    82, unknown=[{"gate": "season_progression", "detail_key": detail_key, **flag}]
+                )
 
                 chip = _chip(exp, "abstain", 82)
                 verdict = reap_override_verdict_decoded(exp, score=82)
@@ -992,10 +1017,12 @@ class TestChip:
             assert chip is None or not _chip_reason(chip).id.startswith("look."), label
 
     def test_any_future_deliberate_flag_still_wants_eyes(self) -> None:
-        """A blocked detail that is a sentence of its own (not "could not check") is a
-        deliberate flag whatever gate raised it -- fail toward showing it loudly."""
+        """A typed detail whose id is neither ``blocked`` nor ``legacy`` is a deliberate
+        flag whatever gate raised it -- fail toward showing it loudly. A legacy row's prose
+        is never read for this any more (#899): only the typed id says "decide this
+        yourself" now."""
         chip = _chip(
-            _exp(60, unknown=[{"gate": "custom", "detail": "A rule asked a human to look."}]),
+            _exp(60, unknown=[{"gate": "custom", "detail_key": to_wire(_FUTURE_GATE_REASON)}]),
             "abstain",
             60,
         )
@@ -1359,7 +1386,7 @@ class TestTheChipSentence:
                     unknown=[
                         {
                             "gate": "season_progression",
-                            "detail": CONFLICT_SENTENCE,
+                            "detail_key": to_wire(_conflict_reason(kept_watchers=0)),
                             "defers_to_owner": True,
                         }
                     ],
@@ -1369,7 +1396,7 @@ class TestTheChipSentence:
                 "Someone watched more than a season your rule keeps.",
             ),
             (
-                _exp(60, unknown=[{"gate": "custom", "detail": "A rule asked a human to look."}]),
+                _exp(60, unknown=[{"gate": "custom", "detail_key": to_wire(_FUTURE_GATE_REASON)}]),
                 "abstain",
                 60,
                 "A check on it couldn't be settled.",
@@ -1430,7 +1457,7 @@ class TestTheChipSentence:
                     unknown=[
                         {
                             "gate": "season_progression",
-                            "detail": CONFLICT_SENTENCE,
+                            "detail_key": to_wire(_conflict_reason(kept_watchers=0)),
                             "defers_to_owner": True,
                         }
                     ],
@@ -1439,7 +1466,7 @@ class TestTheChipSentence:
                 82,
             ),
             (
-                _exp(60, unknown=[{"gate": "custom", "detail": "A rule asked a human to look."}]),
+                _exp(60, unknown=[{"gate": "custom", "detail_key": to_wire(_FUTURE_GATE_REASON)}]),
                 "abstain",
                 60,
             ),
@@ -1531,7 +1558,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                         unknown=[
                             {
                                 "gate": "season_progression",
-                                "detail": CONFLICT_SENTENCE,
+                                "detail_key": to_wire(_conflict_reason(kept_watchers=0)),
                                 "defers_to_owner": True,
                             }
                         ],
@@ -1639,7 +1666,7 @@ class TestGroupDetail:
         show-level status line."""
         group = client.get("/api/groups/sonarr:5:42").json()
         assert group["chip"]["tone"] == "look"
-        assert group["reason_key"] == {"k": "legacy", "p": {"text": CONFLICT_SENTENCE}}
+        assert group["reason_key"] == to_wire(_conflict_reason(kept_watchers=0))
 
     def test_unknown_show_is_a_404(self, client: TestClient) -> None:
         assert client.get("/api/groups/sonarr:5:999").status_code == 404
@@ -2008,7 +2035,7 @@ class TestTheChipVocabulary:
     """
 
     def test_the_chip_id_population_is_pinned(self) -> None:
-        assert len(_CHIP_IDS) == 38, (
+        assert len(_CHIP_IDS) == 35, (
             f"_CHIP_IDS holds {len(_CHIP_IDS)}. If you added or removed a chip id, bump "
             "this count deliberately."
         )

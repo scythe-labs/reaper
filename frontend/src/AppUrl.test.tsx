@@ -142,6 +142,7 @@ const CARD: Candidate = {
   group_title: null,
   video_resolution: null,
   library: null,
+  dormant_days: null,
   override: null,
   override_own: null,
   show_override: null,
@@ -152,6 +153,7 @@ const CARD: Candidate = {
   chip: null,
   show_status: null,
   season_number: null,
+  collections: null,
 };
 
 const SETUP_DONE: SetupStatus = {

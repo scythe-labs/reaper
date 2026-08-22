@@ -4,7 +4,7 @@
 // Phase 8b's gate (rule 147), modeled on i18n-extraction.test.ts's leftover-copy scan: every
 // render of a caught error goes through errors.ts's `describeError`, which composes a coded
 // `ApiError` under the catalog's `error.*` namespace and falls back to the English `message`
-// only when the catalog has no entry. Reading `.message` straight off an error bypasses that
+// only when there is no code at all. Reading `.message` straight off an error bypasses that
 // composition, silently, in every locale but the one the message happens to be written in --
 // the same failure i18n-extraction.test.ts already guards for a hardcoded string literal, one
 // hop further downstream.
@@ -52,12 +52,12 @@ export function errorMessageReadLines(fileName: string, text: string): number[] 
 }
 
 // The one file allowed to read `.message` directly: `describeError`'s own body reads it as
-// the fallback IT provides to every other caller (`err.message` when there is no catalog
-// code, or as `composeCode`'s last argument). `api.ts`'s `ApiError` constructor and
-// `parseFailure` build a `message` field rather than reading one off an error -- neither
-// matches the naming convention above (their local is `failure`, `body`, never `err`/`error`/
-// `e`/`*Error`), so today's tree needs no entry for it; if a future refactor there starts
-// reading `something.message` off a genuine error, this gate is meant to catch that too.
+// the fallback IT provides to every other caller, `err.message` when there is no code at
+// all. `api.ts`'s `ApiError` constructor and `parseFailure` build a `message` field rather
+// than reading one off an error -- neither matches the naming convention above (their local
+// is `failure`, `body`, never `err`/`error`/`e`/`*Error`), so today's tree needs no entry for
+// it; if a future refactor there starts reading `something.message` off a genuine error, this
+// gate is meant to catch that too.
 const ALLOWLIST = new Set(["errors.ts"]);
 
 describe("no component reads a caught error's .message directly (rule 147)", () => {

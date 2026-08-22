@@ -127,12 +127,12 @@ describe("composeIn", () => {
   );
 
   it("pluralizes a chip.text entry, off the real catalog", () => {
-    expect(composeIn("chip.text", { k: "kept.others_watching", p: { count: 1 } })).toBe(
-      "Kept, someone else is watching it",
-    );
-    expect(composeIn("chip.text", { k: "kept.others_watching", p: { count: 3 } })).toBe(
-      "Kept, 3 others are watching it",
-    );
+    expect(
+      composeIn("chip.text", { k: "kept.popularity", p: { count: 1, window_days_window: "year" } }),
+    ).toBe("Kept, 1 person watched it in the last year");
+    expect(
+      composeIn("chip.text", { k: "kept.popularity", p: { count: 3, window_days_window: "year" } }),
+    ).toBe("Kept, 3 people watched it in the last year");
   });
 
   it("nests a chip.sentence into the override frame the same way t() would", () => {
