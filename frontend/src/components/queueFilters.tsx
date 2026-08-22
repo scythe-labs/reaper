@@ -12,7 +12,7 @@ import i18next from "../i18n";
 
 // Each a function, not a module-level constant: the labels come from the catalog, and a
 // constant built at import time would freeze at whatever language was active on first load
-// (`applyBrowserLanguage` resolves after this module's first import). Called fresh by the
+// (`applyStoredLanguage` resolves after this module's first import). Called fresh by the
 // components that already re-render on a language change.
 export const mediaFilters = (): { value: string; label: string }[] => [
   { value: "", label: i18next.t("reviewQueue.filterOptions.media.any") },

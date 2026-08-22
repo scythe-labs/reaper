@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
+import { languageName } from "../i18n";
 import { useSuccessorFocus } from "../focus";
 import { api, type InstanceTest } from "../api";
 import { describeError } from "../errors";
@@ -18,18 +19,6 @@ import { TestBadge, testSentence } from "./ServiceModal";
 import { SetRow } from "./SetRow";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
-
-/** A BCP 47 tag's English name ("de" -> "German"), from the browser's own list rather
- *  than a hand-kept map that would need an entry added every time a translation ships
- *  (rule 66). Built once: the constructor is the only part worth caching. */
-const LANGUAGE_NAMES = new Intl.DisplayNames(["en"], { type: "language" });
-function languageName(tag: string): string {
-  try {
-    return LANGUAGE_NAMES.of(tag) ?? tag;
-  } catch {
-    return tag;
-  }
-}
 
 /** Client-side twin of the server's webhook validation (reaper/api/settings.py). The token
  *  lives in the URL path, so a typo'd host would leak it to a stranger -- we only accept an
@@ -238,7 +227,7 @@ export function NotificationsPanel({
         >
           {(data?.languages ?? ["en"]).map((tag) => (
             <option key={tag} value={tag}>
-              {languageName(tag)}
+              {languageName(tag, "en")}
             </option>
           ))}
         </select>

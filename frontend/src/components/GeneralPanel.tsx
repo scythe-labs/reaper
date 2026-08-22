@@ -19,7 +19,7 @@ import { useTranslation } from "react-i18next";
 import { accentInk, accentText, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { announce } from "../announce";
 import { useSavebarFocus, useSuccessorFocus } from "../focus";
-import i18next from "../i18n";
+import i18next, { LANGUAGES, languageName, setLanguage, storedLanguage } from "../i18n";
 import { api, type ExpandSeasonsMode, type GeneralSettings } from "../api";
 import { describeError } from "../errors";
 import { useGeneralSettings } from "../useGeneralSettings";
@@ -468,8 +468,10 @@ export function GeneralPanel({
   // what is unsaved and sends all of it in one request. The controls that take effect the
   // moment they change are not drafts and do not join it: two of them call `save.mutate`
   // themselves -- the reverse-proxy `Switch` and the expand-seasons `<select>` -- and the theme
-  // `<select>` calls `applyTheme`, which writes this browser's own localStorage and never
-  // reaches the server, so it has no draft to hold. The spare-length `Segmented` was a third
+  // and language `<select>`s write this browser's own localStorage and never reach the server,
+  // so neither has a draft to hold. The language one reloads the page (see `setLanguage`), which
+  // would take this bar's contents with it, so it is disabled while the bar has any: that is why
+  // it reads `pending` rather than being a self-contained control like the theme beside it. The spare-length `Segmented` was a third
   // until it started staging `default_spare_days` here instead (see `spareValue` above).
   const pending: { label: string; patch: Parameters<typeof api.saveGeneral>[0] }[] = [];
   for (const field of dirtyText) {
@@ -723,6 +725,27 @@ export function GeneralPanel({
                 {t("general.accent.resetToDefault")}
               </button>
             )}
+          </SetRow>
+
+          <SetRow label={t("general.language.label")} help={t("general.language.help")}>
+            {/* The stored choice is read straight from localStorage rather than held in state:
+                picking one reloads the page, so there is no render between the two to keep a
+                copy for. An empty value is "no choice made", which is what `storedLanguage`
+                returning undefined means. Disabled while the save bar holds anything, because
+                the reload would discard it with no ask. */}
+            <select
+              value={storedLanguage() ?? ""}
+              aria-label={t("general.language.label")}
+              disabled={pending.length > 0}
+              onChange={(e) => void setLanguage(e.target.value || undefined)}
+            >
+              <option value="">{t("general.language.optionBrowser")}</option>
+              {LANGUAGES.map((tag) => (
+                <option key={tag} value={tag}>
+                  {languageName(tag)}
+                </option>
+              ))}
+            </select>
           </SetRow>
 
           <SetRow label={t("general.theme.label")} help={t("general.theme.help")}>
