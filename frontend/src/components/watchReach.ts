@@ -13,6 +13,7 @@
 // (`engine/gates.py`), arriving here down the reporting lane instead of the deletion one.
 
 import { date } from "../format";
+import i18next from "../i18n";
 
 /** The mirror has history, and it is theirs to read: every figure counts from `since`, and
  *  nothing before it is visible. */
@@ -59,8 +60,8 @@ export function reachIsMeasured(reach: WatchReach): reach is MeasuredReach {
  */
 export function mirrorNote(horizonAt: string | null): string {
   return horizonAt == null
-    ? "No watch history has been read yet, so no plays show here."
-    : `Watch history reaches back to ${date(horizonAt)}, so older plays are invisible here.`;
+    ? i18next.t("watchReach.noHistory")
+    : i18next.t("watchReach.reachesBackTo", { date: date(horizonAt) });
 }
 
 /** The same line for one person, or null when there is no figure of theirs to bound: an

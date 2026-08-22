@@ -178,7 +178,50 @@
     }
   },
   "signals": {
-    "nthNewestSeason": "{n, selectordinal, =1 {the newest season} =2 {the second-newest season} =3 {the third-newest season} one {the #st-newest season} two {the #nd-newest season} few {the #rd-newest season} other {the #th-newest season}}"
+    "addedOfPoints": "Added {added} of {weight} points. {scale}",
+    "nthNewestSeason": "{n, selectordinal, =1 {the newest season} =2 {the second-newest season} =3 {the third-newest season} one {the #st-newest season} two {the #nd-newest season} few {the #rd-newest season} other {the #th-newest season}}",
+    "pointsLessThanOne": "less than 1",
+    "ramp": {
+      "few_watchers": {
+        "lead": "A title watched by",
+        "nearLabel": "Enough watchers to leave it alone",
+        "scaleFrom": "nobody",
+        "scaleTo": "25 watchers"
+      },
+      "low_rating": {
+        "lead": "A title rated",
+        "nearLabel": "Good enough to leave alone",
+        "scaleFrom": "IMDb 0.0",
+        "scaleTo": "10.0"
+      },
+      "season_rank": {
+        "farLabel": "Full points at",
+        "lead": "A season that is",
+        "nearLabel": "Left alone until",
+        "scaleFrom": "newest",
+        "scaleTo": "20th-newest"
+      },
+      "size": {
+        "farLabel": "Full points at",
+        "lead": "A title taking",
+        "nearLabel": "Left alone until",
+        "scaleFrom": "empty",
+        "scaleTo": "200 GB"
+      },
+      "unwatched": {
+        "farLabel": "Full points at",
+        "lead": "A title untouched for",
+        "nearLabel": "Left alone until",
+        "scaleFrom": "today",
+        "scaleTo": "10 years"
+      }
+    },
+    "ratingValue": "IMDb {value}",
+    "scaleAboveOrEqual": "Nothing at {from} or above, all {weight} at {to}.",
+    "scaleEvenFirst": "Even {first} adds something, all {weight} at {to}.",
+    "scaleUntil": "Nothing until {from}, all {weight} at {to}.",
+    "sizeValueGb": "{value} GB",
+    "watcherCount": "{n, plural, one {1 watcher} other {# watchers}}"
   },
   "why": {
     "blocked": "could not check {check}: {cause}",
@@ -1802,6 +1845,12 @@
     "stoppingLabel": "Stopping after the current one…",
     "summary": "{souls}, {bytes}, smallest first, and the first is a test: if it doesn't go exactly as planned, the run stops. This removes the files through Sonarr/Radarr and adds an import exclusion so they won't silently re-download."
   },
+  "reapReadiness": {
+    "arr": "Reaper can't remove anything until Radarr or Sonarr is connected. It removes files through them, never on its own.",
+    "password": "Reaper can't remove anything until you set a password. It's what turns deletion on.",
+    "plex": "Reaper can't remove anything until Plex is connected. It checks nobody is watching first, and that check runs through Plex.",
+    "tautulli": "Reaper can't remove anything until Tautulli is connected. It checks nothing was played since you approved it, and that check runs through Tautulli."
+  },
   "backup": {
     "blurb": "Save everything Reaper knows to one file, and put it all back if you ever need to.",
     "download": {
@@ -2477,6 +2526,30 @@
       "type": "Type",
       "yourDecision": "Your decision"
     },
+    "filterOptions": {
+      "media": {
+        "any": "Everything",
+        "movie": "Movies",
+        "season": "TV shows"
+      },
+      "override": {
+        "any": "Any override",
+        "none": "No override",
+        "reap": "Reaped by hand",
+        "spare": "Spared by hand"
+      },
+      "requested": {
+        "any": "Anyone",
+        "no": "Not requested",
+        "yes": "Requested"
+      },
+      "sort": {
+        "score": "Score",
+        "size": "Size",
+        "title": "Title",
+        "year": "Year"
+      }
+    },
     "heading": "Review queue",
     "heldBackSizeUnknown": "Held back: size unknown",
     "hiddenLine": {
@@ -2655,6 +2728,10 @@
     "whyScoredAria": "Why {title} scored {score}",
     "staleSeasonsWhat": "the seasons",
     "staleQueueWhat": "the queue"
+  },
+  "watchReach": {
+    "noHistory": "No watch history has been read yet, so no plays show here.",
+    "reachesBackTo": "Watch history reaches back to {date}, so older plays are invisible here."
   },
   "scales": {
     "balanceBar": {

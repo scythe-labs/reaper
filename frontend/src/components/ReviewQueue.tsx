@@ -84,11 +84,11 @@ import {
   filtersToQuery,
   initialFilters,
   loadFilters,
-  MEDIA_FILTERS,
-  OVERRIDE_FILTERS,
-  REQUESTED_FILTERS,
+  mediaFilters,
+  overrideFilters,
+  requestedFilters,
   saveFilters,
-  SORTS,
+  sorts,
   type FilterDimension,
   type QueueFilters,
 } from "./queueFilters";
@@ -2136,7 +2136,7 @@ export function ReviewQueue({
         label: t("reviewQueue.filterDim.type"),
         icon: <LayersIcon />,
         defaultValue: "",
-        options: MEDIA_FILTERS.filter((f) => f.value !== ""),
+        options: mediaFilters().filter((f) => f.value !== ""),
         value: (f) => f.mediaType,
         set: (f, v) => ({ ...f, mediaType: v }),
       },
@@ -2154,7 +2154,7 @@ export function ReviewQueue({
         label: t("reviewQueue.filterDim.requested"),
         icon: <FunnelIcon />,
         defaultValue: "any",
-        options: REQUESTED_FILTERS.filter((f) => f.value !== "any"),
+        options: requestedFilters().filter((f) => f.value !== "any"),
         value: (f) => f.requested,
         set: (f, v) => ({ ...f, requested: v as RequestedFilter }),
       },
@@ -2172,7 +2172,7 @@ export function ReviewQueue({
         label: t("reviewQueue.filterDim.yourDecision"),
         icon: <OverrideIcon />,
         defaultValue: "any",
-        options: OVERRIDE_FILTERS.filter((f) => f.value !== "any"),
+        options: overrideFilters().filter((f) => f.value !== "any"),
         value: (f) => f.override,
         set: (f, v) => ({ ...f, override: v as OverrideFilter }),
       },
@@ -2609,7 +2609,7 @@ export function ReviewQueue({
               onChange={(v) => setFilters((f) => ({ ...f, sort: v as SortKey }))}
               title={t("reviewQueue.sortByTitle")}
             >
-              {SORTS.map((s) => (
+              {sorts().map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
                 </option>

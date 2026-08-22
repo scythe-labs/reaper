@@ -125,17 +125,30 @@ interface RampUnits {
 
 const WHOLE = { step: 1, toStored: Math.round, fromStored: (v: number) => v };
 
+/** `RampUnits`, except `nearLabel`/`farLabel`/`lead`/`scaleFrom`/`scaleTo` hold a catalog key
+ *  rather than English text -- `rampUnits()` below is the one place that resolves them, at CALL
+ *  time, so a language change is picked up on the next render rather than frozen at whatever
+ *  language was active when this module first loaded (the same reason `say` is a function and
+ *  not a precomputed string). */
+type RampSpec = Omit<RampUnits, "nearLabel" | "farLabel" | "lead" | "scaleFrom" | "scaleTo"> & {
+  nearLabel: string;
+  farLabel?: string;
+  lead: string;
+  scaleFrom: string;
+  scaleTo: string;
+};
+
 /** Keyed by `SignalId`. A key absent from here is a rule of the operator's own, which
  *  states its own range in the rule editor and is not described by this module. */
-const RAMPS: Record<string, RampUnits> = {
+const RAMP_SPECS: Record<string, RampSpec> = {
   unwatched: {
     unitKind: "time",
-    nearLabel: "Left alone until",
-    farLabel: "Full points at",
-    scaleFrom: "today",
-    scaleTo: "10 years",
+    nearLabel: "signals.ramp.unwatched.nearLabel",
+    farLabel: "signals.ramp.unwatched.farLabel",
+    scaleFrom: "signals.ramp.unwatched.scaleFrom",
+    scaleTo: "signals.ramp.unwatched.scaleTo",
     widest: "3650",
-    lead: "A title untouched for",
+    lead: "signals.ramp.unwatched.lead",
     shape: "direct",
     say: humanDays,
     unit: "days",
@@ -145,12 +158,12 @@ const RAMPS: Record<string, RampUnits> = {
   },
   season_rank: {
     unitKind: "fixed",
-    nearLabel: "Left alone until",
-    farLabel: "Full points at",
-    scaleFrom: "newest",
-    scaleTo: "20th-newest",
+    nearLabel: "signals.ramp.season_rank.nearLabel",
+    farLabel: "signals.ramp.season_rank.farLabel",
+    scaleFrom: "signals.ramp.season_rank.scaleFrom",
+    scaleTo: "signals.ramp.season_rank.scaleTo",
     widest: "20",
-    lead: "A season that is",
+    lead: "signals.ramp.season_rank.lead",
     shape: "direct",
     // `saturate_at` takes no ceiling (`ge=1`, and the box passes only a `min`), so the
     // catalog message words every number an operator can save, not just the twenty the
@@ -163,26 +176,26 @@ const RAMPS: Record<string, RampUnits> = {
   },
   few_watchers: {
     unitKind: "fixed",
-    nearLabel: "Enough watchers to leave it alone",
-    scaleFrom: "nobody",
-    scaleTo: "25 watchers",
+    nearLabel: "signals.ramp.few_watchers.nearLabel",
+    scaleFrom: "signals.ramp.few_watchers.scaleFrom",
+    scaleTo: "signals.ramp.few_watchers.scaleTo",
     widest: "25",
-    lead: "A title watched by",
+    lead: "signals.ramp.few_watchers.lead",
     shape: "shortfall",
-    say: (n) => (n === 1 ? "1 watcher" : `${n} watchers`),
+    say: (n) => i18next.t("signals.watcherCount", { n }),
     unit: "people",
     probeMax: 25,
     ...WHOLE,
   },
   low_rating: {
     unitKind: "fixed",
-    nearLabel: "Good enough to leave alone",
-    scaleFrom: "IMDb 0.0",
-    scaleTo: "10.0",
+    nearLabel: "signals.ramp.low_rating.nearLabel",
+    scaleFrom: "signals.ramp.low_rating.scaleFrom",
+    scaleTo: "signals.ramp.low_rating.scaleTo",
     widest: "10.0",
-    lead: "A title rated",
+    lead: "signals.ramp.low_rating.lead",
     shape: "shortfall",
-    say: (n) => `IMDb ${(n / 10).toFixed(1)}`,
+    say: (n) => i18next.t("signals.ratingValue", { value: (n / 10).toFixed(1) }),
     unit: "IMDb",
     probeMax: 100,
     step: 0.1,
@@ -200,14 +213,14 @@ const RAMPS: Record<string, RampUnits> = {
     // its weight stayed in the score denominator (#417). `unitKind: "fixed"` follows -- there
     // is one unit now, so rule 40 puts it in a suffix rather than a picker.
     unitKind: "fixed",
-    nearLabel: "Left alone until",
-    farLabel: "Full points at",
-    scaleFrom: "empty",
-    scaleTo: "200 GB",
+    nearLabel: "signals.ramp.size.nearLabel",
+    farLabel: "signals.ramp.size.farLabel",
+    scaleFrom: "signals.ramp.size.scaleFrom",
+    scaleTo: "signals.ramp.size.scaleTo",
     widest: "200",
-    lead: "A title taking",
+    lead: "signals.ramp.size.lead",
     shape: "direct",
-    say: (n) => `${Math.round(n)} GB`,
+    say: (n) => i18next.t("signals.sizeValueGb", { value: Math.round(n) }),
     unit: "GB",
     probeMax: 200,
     step: 1,
@@ -221,9 +234,22 @@ const RAMPS: Record<string, RampUnits> = {
 };
 
 /** What the operator can set on this signal, or `null` where this module has nothing to
- *  say -- a rule of their own, or a signal id it does not know. */
+ *  say -- a rule of their own, or a signal id it does not know. Every label is resolved
+ *  through the catalog here, at call time, so every reader of this function's result gets
+ *  the current language whatever the language was when the module first loaded. */
 export function rampUnits(id: string): RampUnits | null {
-  return RAMPS[id] ?? null;
+  const spec = RAMP_SPECS[id];
+  if (!spec) return null;
+  return {
+    ...spec,
+    nearLabel: i18next.t(spec.nearLabel),
+    // `exactOptionalPropertyTypes` reads an explicit `farLabel: undefined` as a value, not an
+    // absence, so the key is genuinely omitted rather than set to undefined.
+    ...(spec.farLabel === undefined ? {} : { farLabel: i18next.t(spec.farLabel) }),
+    lead: i18next.t(spec.lead),
+    scaleFrom: i18next.t(spec.scaleFrom),
+    scaleTo: i18next.t(spec.scaleTo),
+  };
 }
 
 /** The two ends of a ramp, in the operator's units.
@@ -236,7 +262,7 @@ export function rampEnds(
   floor: number | null | undefined,
   saturate: number | null | undefined,
 ): { earnsFrom: string; earnsAll: string; shape: RampShape } | null {
-  const units = RAMPS[id];
+  const units = RAMP_SPECS[id];
   if (!units || floor == null || saturate == null) return null;
   if (units.shape === "shortfall") {
     // The line is the gap, and full points land at zero. Both facts come off the arithmetic
@@ -266,17 +292,25 @@ export function rampScale(
 ): string | null {
   const ends = rampEnds(id, floor, saturate);
   if (!ends) return null;
-  const units = RAMPS[id];
+  const units = RAMP_SPECS[id];
   if (ends.shape === "shortfall") {
-    return `Nothing at ${ends.earnsFrom} or above, all ${weight} at ${ends.earnsAll}.`;
+    return i18next.t("signals.scaleAboveOrEqual", {
+      from: ends.earnsFrom,
+      weight,
+      to: ends.earnsAll,
+    });
   }
   // A floor below the first value the field can take means nothing real ever lands under
   // it, so "nothing until" would be false about every item there is. Say what happens
   // instead of what does not.
   if (units?.first !== undefined && (floor ?? 0) < units.first) {
-    return `Even ${units.say(units.first)} adds something, all ${weight} at ${ends.earnsAll}.`;
+    return i18next.t("signals.scaleEvenFirst", {
+      first: units.say(units.first),
+      weight,
+      to: ends.earnsAll,
+    });
   }
-  return `Nothing until ${ends.earnsFrom}, all ${weight} at ${ends.earnsAll}.`;
+  return i18next.t("signals.scaleUntil", { from: ends.earnsFrom, weight, to: ends.earnsAll });
 }
 
 /** The strip under a signal's bounds: where it charges, and how hard, drawn to scale.
@@ -313,7 +347,7 @@ export function rampStrip(
   floor: number | null | undefined,
   saturate: number | null | undefined,
 ): RampStrip | null {
-  const units = RAMPS[id];
+  const units = rampUnits(id);
   if (!units || floor == null || saturate == null) return null;
   // Rounded, because these land in inline styles: `55 / 100 * 100` is 55.00000000000001 in
   // binary floating point, and a browser reads that as 55% while every reader of the DOM
@@ -374,7 +408,7 @@ export function rampFill(strip: RampStrip): string {
  *  "less than 1" rather than a "0" beside a bar with color in it. */
 export function sayPoints(points: number): string {
   if (points <= 0) return "0";
-  if (points < 1) return "less than 1";
+  if (points < 1) return i18next.t("signals.pointsLessThanOne");
   return Number.isInteger(points) ? String(points) : points.toFixed(1);
 }
 
@@ -401,7 +435,7 @@ export function probeSaid(
   points: number,
   weight: number,
 ): ProbeSaid | null {
-  const units = RAMPS[id];
+  const units = rampUnits(id);
   if (!units) return null;
   return {
     lead: units.lead,
@@ -435,5 +469,9 @@ export function rowRampSentence(
 ): string | null {
   const scale = rampScale(id, floor, saturate, weight);
   if (!scale) return null;
-  return `Added ${sayPoints(Math.round(added * 10) / 10)} of ${weight} points. ${scale}`;
+  return i18next.t("signals.addedOfPoints", {
+    added: sayPoints(Math.round(added * 10) / 10),
+    weight,
+    scale,
+  });
 }

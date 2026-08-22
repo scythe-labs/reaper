@@ -19,6 +19,7 @@
 // watching ... runs through Plex"), so the constraint reads the same wherever it is met.
 
 import type { SetupStatus } from "./api";
+import i18next from "./i18n";
 
 /** One reason a real run cannot go ahead. */
 export interface ReapBlocker {
@@ -48,32 +49,25 @@ export function reapBlockers(setup: SetupStatus): ReapBlocker[] {
   if (!setup.has_password) {
     blockers.push({
       key: "password",
-      sentence:
-        "Reaper can't remove anything until you set a password. It's what turns deletion on.",
+      sentence: i18next.t("reapReadiness.password"),
     });
   }
   if (!setup.plex_linked) {
     blockers.push({
       key: "plex",
-      sentence:
-        "Reaper can't remove anything until Plex is connected. It checks nobody is watching " +
-        "first, and that check runs through Plex.",
+      sentence: i18next.t("reapReadiness.plex"),
     });
   }
   if (!setup.has_tautulli) {
     blockers.push({
       key: "tautulli",
-      sentence:
-        "Reaper can't remove anything until Tautulli is connected. It checks nothing was " +
-        "played since you approved it, and that check runs through Tautulli.",
+      sentence: i18next.t("reapReadiness.tautulli"),
     });
   }
   if (!setup.has_radarr && !setup.has_sonarr) {
     blockers.push({
       key: "arr",
-      sentence:
-        "Reaper can't remove anything until Radarr or Sonarr is connected. It removes files " +
-        "through them, never on its own.",
+      sentence: i18next.t("reapReadiness.arr"),
     });
   }
   return blockers;
