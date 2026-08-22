@@ -338,7 +338,7 @@ class TestCapsCountOnlyWhatWillActuallyBeDeleted:
         # the cap counted all three (the spare included) and aborted this legitimate run.
         assert report.state is RunState.COMPLETED
         assert report.aborted_reason is None
-        assert any("spared this by hand" in o.detail for o in report.outcomes)
+        assert any(o.detail.id == "error.reap.step.spared_by_hand" for o in report.outcomes)
 
     async def test_the_cap_still_aborts_when_the_deletable_set_is_over(
         self, session: AsyncSession
@@ -357,7 +357,7 @@ class TestCapsCountOnlyWhatWillActuallyBeDeleted:
 
         assert report.state is RunState.ABORTED
         assert report.aborted_reason is not None
-        assert "over your per-run cap" in report.aborted_reason.lower()
+        assert report.aborted_reason.id == "error.reap.items_over_run_cap"
 
 
 class TestARemovedRadarrRefusesThePlan:

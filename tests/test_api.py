@@ -450,9 +450,13 @@ class TestTheRunsApi:
 
         The reason is already operator copy; the executor writes one sentence and uses it for
         this column and for the live report both.
+
+        This row carries prose with no `error_json` twin -- a snapshot frozen before phase
+        11b, or any row written straight to the column the way this test does -- so
+        `error_key` has to thaw it as a `legacy` reason rather than come back empty (rule 96).
         """
         run = client.post("/api/runs").json()
-        reason = "Radarr accepted the delete; not confirmed. Reaper could not reach it again."
+        reason = "Radarr accepted the delete, not confirmed. Reaper could not reach it again."
 
         engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
         with Session(engine) as session:
@@ -467,6 +471,7 @@ class TestTheRunsApi:
         read_back = client.get(f"/api/runs/{run['id']}").json()["steps"][0]
         assert read_back["state"] == "failed"
         assert read_back["error"] == reason
+        assert read_back["error_key"] == {"k": "legacy", "p": {"text": reason}}
 
     def test_a_step_that_has_not_run_carries_no_reason(self, client: TestClient) -> None:
         """The other direction, so the field above cannot pass by always being populated:
@@ -516,7 +521,7 @@ class TestTheRunsApi:
         """
         client.post("/api/runs")
         row = client.get("/api/runs").json()[0]
-        assert set(row) == {"id", "state", "approved_at", "aborted_reason"}
+        assert set(row) == {"id", "state", "approved_at", "aborted_reason", "aborted_reason_key"}
         # ...and the detail route still answers with the whole thing.
         full = client.get(f"/api/runs/{row['id']}").json()
         assert full["confirmation_phrase"].startswith("REAP ")

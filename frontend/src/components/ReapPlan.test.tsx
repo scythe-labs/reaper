@@ -61,6 +61,7 @@ const run = {
     // separately below rather than from here, so this fixture keeps covering the ordinary
     // plan where no row carries a reason.
     error: null,
+    error_key: null,
   })),
 } as Run;
 

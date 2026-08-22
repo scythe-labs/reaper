@@ -145,7 +145,15 @@ def refusal_text(code: str, **params: Any) -> str:
     renders it from the code and params the response actually carries, rather than
     transcribing the sentence -- the same reason ``text`` above renders a ``Reason`` from the
     ``why`` catalog instead of a hand-copied string. Phase 8a (docs/history/I18N_PLAN.md §5).
-    """
-    from reaper.refusal import MESSAGES
 
-    return MESSAGES[code].format(**params)
+    Renders through ``reaper.refusal.english`` (phase 11b) rather than a bare
+    ``MESSAGES[code].format(**params)``, so a template with a ``{name}_gb`` placeholder --
+    the run journal's growth-check sentences -- renders here exactly as
+    ``services.executor`` renders it for the prose column, with no second derivation to
+    drift (rule 104). Harmless for every older caller: the derived companions the extra
+    pass adds are never referenced by a template that does not ask for them.
+    """
+    from reaper.engine.reason import Reason
+    from reaper.refusal import english
+
+    return english(Reason(code, params))

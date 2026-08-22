@@ -86,10 +86,6 @@ _NO_PANEL_ROUTE = {
         "facts_from_dict has one caller, the policy simulator, which reads a re-decided "
         "score and verdict and never builds or stores an Explanation"
     ),
-    "executor._NO_APPROVED_SIZE_REASON": (
-        "a run step's own skip reason, already a finished sentence the report prints as it "
-        "stands; it never rides on a gate outcome"
-    ),
     "preview.NOT_PROBED_REASON": (
         "the facts a policy probe leaves out. probe_signal answers one route with a number "
         "and a detail string and builds no candidate, stores no Explanation and touches no "
