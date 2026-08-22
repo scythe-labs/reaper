@@ -31,6 +31,10 @@ datas = [
     (str(ROOT / "frontend" / "dist"), "frontend/dist"),
     (str(ROOT / "alembic"), "alembic"),
     (str(Path(SPECPATH) / "buildinfo.json"), "."),  # noqa: F821
+    # reaper.i18n's backend catalog (Discord, the tray/dialogs above). PyInstaller does not
+    # bundle a package's non-Python data files on its own, so this ships it at the same
+    # relative path `importlib.resources.files("reaper.locales")` resolves at runtime.
+    (str(ROOT / "src" / "reaper" / "locales"), "reaper/locales"),
 ]
 
 hiddenimports = [

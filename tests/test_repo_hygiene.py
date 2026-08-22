@@ -5764,7 +5764,10 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
 #: tree finds no cycles at all, and the assertion below cannot tell that from a clean graph.
 #: A different population from that constant, which counts the 87 under the four packages only.
 #: 122 adds `api/errors.py` and top-level `refusal.py` (phase 8a's catalog and typed refusal).
-_EXPECTED_SOURCE_MODULES = 122
+#: 124 adds top-level `i18n.py` and the new `locales` package's `__init__.py` (phase 10a's
+#: Discord/launcher backend catalog; `locales/en/backend.json` carries no `.py` and does not
+#: join this walk).
+_EXPECTED_SOURCE_MODULES = 124
 
 #: Every import cycle under `src/reaper`, each rotated to start at its smallest member. Two,
 #: and both are one edge: `api/settings.py` imports `reaper.launcher` at module level, `launcher`
@@ -5819,7 +5822,7 @@ def _module_import_graph() -> dict[str, frozenset[str]]:
     a cycle, and the deferral is what a module graph drawn from top-level imports cannot see.
 
     A package's `__init__.py` is a module here like any other, because importing
-    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. All eight
+    `reaper.services.app_settings` executes `reaper/services/__init__.py` as well. All nine
     of them import nothing today, so they carry no outgoing edges.
     """
     names = {}

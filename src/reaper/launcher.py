@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import locale
 import os
 import socket
 import subprocess
@@ -48,6 +49,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from reaper.buildinfo import env_flag, frozen_bundle, install_root, project_root
 from reaper.config import LAUNCHER_CONF_NAME, Settings, configured_env
+from reaper.i18n import say
 
 if TYPE_CHECKING:
     import uvicorn
@@ -298,6 +300,24 @@ def _loopback_occupied(port: int) -> bool:
         return False
 
 
+def _os_locale_tag() -> str:
+    """The OS's language as a bare BCP 47 primary tag (``es_ES`` -> ``es``), or ``"en"``
+    when the OS reports nothing readable.
+
+    A double-clicked build has no browser language to read and no Settings page open yet,
+    so the OS locale is the only signal this early. `reaper.i18n.say` already falls back to
+    English for a tag with no shipped catalog, so a region this build has no catalog for
+    (``es_MX`` vs. a shipped ``es``) still finds it: only the language subtag is kept."""
+    try:
+        raw = locale.getlocale()[0]
+    except ValueError:
+        raw = None
+    if not raw:
+        return "en"
+    tag = raw.replace("_", "-").split("-")[0].strip().lower()
+    return tag or "en"
+
+
 def _say(message: str, *, frozen: bool) -> None:
     """Put a refusal where this install's operator can see it: stderr always, and a
     native dialog when frozen, because a double-clicked windowed app has no stderr
@@ -426,6 +446,7 @@ def _serve_with_tray(
     image: Any,
     *,
     dock_icon: bool,
+    tag: str = "en",
 ) -> BaseException | None:
     """Give the main thread to the icon and serve from a worker thread.
 
@@ -435,6 +456,9 @@ def _serve_with_tray(
     between requests; the watcher joins the worker and then stops the icon, so the
     icon also leaves when the server dies on its own. Returns what killed the
     worker, or ``None`` for a clean quit.
+
+    ``tag`` names the tray's own language (``_os_locale_tag``), independent of anything
+    the browser later picks.
     """
     failure: list[BaseException] = []
 
@@ -456,10 +480,10 @@ def _serve_with_tray(
     icon = pystray_mod.Icon(
         "Reaper",
         icon=image,
-        title="Reaper",
+        title=say("launcher.tray.tooltip", tag),
         menu=pystray_mod.Menu(
-            pystray_mod.MenuItem("Open Reaper", open_ui, default=True),
-            pystray_mod.MenuItem("Quit Reaper", quit_),
+            pystray_mod.MenuItem(say("launcher.tray.open", tag), open_ui, default=True),
+            pystray_mod.MenuItem(say("launcher.tray.quit", tag), quit_),
         ),
     )
 
@@ -501,6 +525,7 @@ def reads_launcher_conf(env: MutableMapping[str, str], *, frozen: bool) -> bool:
 
 def main() -> None:
     frozen = _bundle_root() is not None
+    tag = _os_locale_tag()
     export_buildinfo(os.environ, _buildinfo_path())
     _resolve_data_dir(os.environ, frozen=frozen)
     conf: Path | None = None
@@ -516,10 +541,7 @@ def main() -> None:
     # continuing would create a data folder that can never be brought current.
     root = project_root()
     if not (root / "alembic").is_dir():
-        sys.stderr.write(
-            "Reaper can't find its database migrations next to this install. Run the "
-            "container, a packaged binary, the snap, or a source checkout instead.\n"
-        )
+        _say(say("launcher.dialog.no_migrations", tag), frozen=frozen)
         raise SystemExit(2)
 
     # Refuse the occupied port before preflight touches the disk: preflight applies a
@@ -538,14 +560,12 @@ def main() -> None:
     port = _port(settled, frozen=frozen)
     if _loopback_occupied(port):
         move = (
-            f"add a line like REAPER_PORT=8421 to {conf}"
+            say("launcher.move.conf", tag, conf=str(conf))
             if conf is not None
-            else "set REAPER_PORT to a free one"
+            else say("launcher.move.env", tag)
         )
         _say(
-            f"Reaper didn't start: port {port} is already in use, so this copy could "
-            f"not be reached at http://127.0.0.1:{port}. Quit whatever is using the "
-            f"port (another Reaper?) or {move}, then open Reaper again.",
+            say("launcher.dialog.port_in_use", tag, port=port, move=move),
             frozen=frozen,
         )
         raise SystemExit(2)
@@ -596,9 +616,9 @@ def main() -> None:
         if backend is not None and image is not None:
             server = uvicorn.Server(uvicorn.Config(create_app, **_serve_kwargs(host, port)))
             dock = sys.platform == "darwin" and env_flag(DESKTOP_DOCK_KEY, default=False)
-            error = _serve_with_tray(backend, server, port, image, dock_icon=dock)
+            error = _serve_with_tray(backend, server, port, image, dock_icon=dock, tag=tag)
             if error is not None:
-                _say("Reaper stopped unexpectedly. Open it again to restart.", frozen=frozen)
+                _say(say("launcher.dialog.crashed", tag), frozen=frozen)
                 raise SystemExit(1)
             return
         sys.stderr.write("No tray icon in this install; serving without one.\n")

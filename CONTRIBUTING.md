@@ -39,6 +39,9 @@ If you want to know who writes this and how, the README has an honest answer und
   is Reaper's glossary, shown beside the string a translator is working on. A note is edited only
   in `ui.notes.json`: Weblate's explanation field for each string is written from it by a workflow
   on every push to `dev`, so editing it on Weblate directly is overwritten on the next push.
+  The Discord notification and the desktop launcher's tray and dialogs have no browser to
+  translate in, so they carry their own small catalog, `src/reaper/locales/en/backend.json`
+  (and its own `backend.notes.json`), read the same way `ui.json` is.
 - **Send a watch-history dump.** Reaper's scoring is tuned against real libraries, and it has
   been tuned against very few of them. `scripts/tautulli_anon_dump.py` reads your Tautulli and
   writes a file holding the numbers the engine reads, with no titles, usernames, email

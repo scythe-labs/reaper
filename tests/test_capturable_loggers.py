@@ -101,7 +101,9 @@ class TestTheGuardReachesEveryLoggerInTheTree:
     52 with ``services/library_seen.py`` (#553), which logs an unreadable stored key set and
     the scan whose crop of returns the population cap refused. Then 53 with
     ``services/identity_churn.py`` (#809), which logs every scan's share of the library that
-    changed Plex identity, so the ordinary rate can be read off a second library's logs."""
+    changed Plex identity, so the ordinary rate can be read off a second library's logs.
+    Then 54, with ``i18n.py`` (phase 10a), which warns on a catalog it cannot read or
+    parse, a key no catalog carries, and a message this formatter cannot render."""
 
     @staticmethod
     def _modules_declaring_a_logger() -> set[str]:
@@ -118,8 +120,8 @@ class TestTheGuardReachesEveryLoggerInTheTree:
 
     def test_the_count_is_the_one_reconciled_by_hand(self) -> None:
         declared = self._modules_declaring_a_logger()
-        assert len(declared) == 53, (
-            f"expected 53 modules declaring a logger, found {len(declared)}. Bump the number "
+        assert len(declared) == 54, (
+            f"expected 54 modules declaring a logger, found {len(declared)}. Bump the number "
             "here AND in this class's docstring above, which restates it and which nothing "
             "else asserts (rule 144). Those are the only two live copies. The archived "
             "simplification plan restates the figure too, and it is frozen history, so its "

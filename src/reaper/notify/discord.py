@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.config import Settings
 from reaper.crypto import SecretBox
+from reaper.i18n import say
 from reaper.services import app_settings
 
 log = structlog.get_logger(__name__)
@@ -133,7 +134,9 @@ class DiscordNotifier:
         await asyncio.sleep(min(retry_after, _MAX_RETRY_AFTER))
         return await client.post(self._url, json=payload)
 
-    async def announce_leaving_soon(self, titles: list[str], *, grace_days: int) -> bool:
+    async def announce_leaving_soon(
+        self, titles: list[str], *, grace_days: int, tag: str = "en"
+    ) -> bool:
         """ "These N titles are leaving soon." The headline count is honest even when the
         enumerated list is truncated for length.
 
@@ -153,26 +156,27 @@ class DiscordNotifier:
         "Unwatched" this used to open with then told every user that a film one of
         them watched last night had gone unplayed. The dormancy that would let it branch per
         title is not on this call, so the claim is dropped rather than guessed.
+
+        ``tag`` is a BCP 47 language tag, ``"en"`` until Settings grows an install-wide
+        language (phase 10b of ``docs/history/I18N_PLAN.md``'s catalog work).
         """
         if not titles:
             return False
         shown = titles[:_MAX_TITLES]
         lines = "\n".join(f"• {t}" for t in shown)
-        if len(titles) > _MAX_TITLES:
-            lines += f"\n…and {len(titles) - _MAX_TITLES} more."
-        count = len(titles)
-        noun = "title is" if count == 1 else "titles are"
+        remaining = len(titles) - _MAX_TITLES
+        if remaining > 0:
+            lines += "\n" + say("discord.leaving_soon.more", tag, remaining=remaining)
         # The way back in: the Application URL from Settings -> General, when set.
-        link = f"\n\n[Open {self._app_name}]({self._app_url})" if self._app_url else ""
+        link = ""
+        if self._app_url:
+            link_text = say("discord.leaving_soon.open_link", tag, app_name=self._app_name)
+            link = f"\n\n[{link_text}]({self._app_url})"
+        body = say("discord.leaving_soon.body", tag, grace_days=grace_days)
         return await self.post(
             Embed(
-                title=f"{count} {noun} leaving soon",
-                description=(
-                    f"Watch one and it stays. Nothing "
-                    f"is removed automatically: they show as leaving for the next "
-                    f"{grace_days} days, and every removal is started by hand.\n\n"
-                    f"{lines}{link}"
-                ),
+                title=say("discord.leaving_soon.title", tag, count=len(titles)),
+                description=f"{body}\n\n{lines}{link}",
             )
         )
 
