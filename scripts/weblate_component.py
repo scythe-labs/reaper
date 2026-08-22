@@ -40,7 +40,10 @@ API_ROOT = "https://hosted.weblate.org/api"
 PROJECT = "reaper"
 UI_COMPONENT_URL = f"{API_ROOT}/components/{PROJECT}/ui/"
 BACKEND_COMPONENT_URL = f"{API_ROOT}/components/{PROJECT}/backend/"
-BACKEND_ADDONS_URL = f"{BACKEND_COMPONENT_URL}addons/"
+#: A component's own `addons/` URL accepts POST only (the first real run read it and got a
+#: 405). Listing is the instance-wide `/api/addons/`, filtered by the `component` each row
+#: points at.
+ADDONS_LIST_URL = f"{API_ROOT}/addons/?page_size=100"
 CREATE_COMPONENT_URL = f"{API_ROOT}/projects/{PROJECT}/components/"
 DEFAULT_KEY_FILE = Path("/opt/reaper_1/.weblate_api")
 
@@ -148,18 +151,43 @@ def _ensure_component(key: str, *, dry_run: bool) -> bool:
     return True
 
 
+def _repository_root(key: str) -> str:
+    """The component whose repository the backend component shares.
+
+    Weblate links a component to an existing one in the project when both name the same
+    repository, so `backend` (and `glossary`) carry `linked_component` pointing at `ui`. A
+    repository-scoped add-on such as git squash lives on that root and applies to every
+    linked component, which is why the first run installed a second copy on `ui` instead
+    of one on `backend`.
+    """
+    component = _request(BACKEND_COMPONENT_URL, key=key)
+    return str(component.get("linked_component") or BACKEND_COMPONENT_URL).rstrip("/") + "/"
+
+
+def _addon_names(root: str, *, key: str) -> set[str]:
+    """The add-ons installed on `root`, read from the instance-wide list."""
+    names: set[str] = set()
+    url: str | None = ADDONS_LIST_URL
+    while url is not None:
+        page = _request(url, key=key)
+        for addon in page.get("results", []):
+            if str(addon.get("component", "")).rstrip("/") + "/" == root:
+                names.add(str(addon.get("name", "")))
+        url = page.get("next")
+    return names
+
+
 def _ensure_git_squash_addon(key: str, *, dry_run: bool) -> None:
-    addons = _request(BACKEND_ADDONS_URL, key=key)
-    results = addons.get("results", addons) if isinstance(addons, dict) else addons
-    if any(a.get("name") == GIT_SQUASH_ADDON["name"] for a in results):
-        print("git.squash add-on already installed")
+    root = _repository_root(key)
+    if GIT_SQUASH_ADDON["name"] in _addon_names(root, key=key):
+        print(f"git.squash add-on already installed on {root}")
         return
     if dry_run:
-        print("would POST the git.squash add-on")
+        print(f"would POST the git.squash add-on to {root}addons/")
         print(json.dumps(GIT_SQUASH_ADDON, indent=2, sort_keys=True))
         return
-    _request(BACKEND_ADDONS_URL, method="POST", key=key, body=json.dumps(GIT_SQUASH_ADDON).encode())
-    print("installed the git.squash add-on")
+    _request(f"{root}addons/", method="POST", key=key, body=json.dumps(GIT_SQUASH_ADDON).encode())
+    print(f"installed the git.squash add-on on {root}")
 
 
 def main(argv: list[str] | None = None) -> int:
