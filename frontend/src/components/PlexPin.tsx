@@ -27,7 +27,7 @@ import { composeError } from "../why";
  *  whichever one states it again.
  *
  *  A function, not a constant: this module is in the eager bundle, so a string resolved in its
- *  body would stay English for the life of the page (`i18n-eager-catalog.test.ts`). */
+ *  body would stay English for the life of the page (`i18n-module-scope.test.ts`). */
 export const chooseServerSaid = () => i18next.t("plex.pin.chooseServerSaid");
 
 /** Poll every two seconds. The wait is a person staring at a browser tab, so the faster

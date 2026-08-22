@@ -120,7 +120,7 @@ import { staleReadLine, StaleReadNotice } from "./StaleReadNotice";
  *  free to drift from the one on screen (rule 144).
  *
  *  Functions, not constants: this module is in the eager bundle, so a string resolved in its
- *  body would stay English for the life of the page (`i18n-eager-catalog.test.ts`). */
+ *  body would stay English for the life of the page (`i18n-module-scope.test.ts`). */
 const nudgeNewerScan = () => i18next.t("reviewQueue.nudge.newerScan");
 const nudgeViewingPrevious = () => i18next.t("reviewQueue.nudge.viewingPrevious");
 const toastCaughtUp = () => i18next.t("reviewQueue.toast.caughtUp");

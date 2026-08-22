@@ -16,7 +16,7 @@ import i18next from "../i18n";
  *  The scan bar's two shared a constant; this line and the wizard each wrote it out (rule 144).
  *
  *  A function, not a constant: this module is in the eager bundle, so a string resolved in its
- *  body would stay English for the life of the page (`i18n-eager-catalog.test.ts`). */
+ *  body would stay English for the life of the page (`i18n-module-scope.test.ts`). */
 export const scanningLabel = () => i18next.t("shell.scanLine.scanningLabel");
 
 /** A thin accent line pinned to the very top of the window while a scan runs in the

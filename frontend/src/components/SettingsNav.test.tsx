@@ -19,7 +19,7 @@ import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { useState } from "react";
-import { PANELS as DECLARED_PANELS, type Panel, Settings } from "./Settings";
+import { panels as declaredPanels, type Panel, Settings } from "./Settings";
 
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
@@ -172,14 +172,14 @@ describe("the settings section navigation", () => {
   });
 
   it("mirrors the section list declared in Settings.tsx", () => {
-    // One set, two hand copies: this table and `PANELS` in Settings.tsx. A new section used to
+    // One set, two hand copies: this table and `panels` in Settings.tsx. A new section used to
     // fail only here, on the labels, which reads as a rail bug -- while the thing that actually
     // needed doing was classifying the new section in the switch guard, and the suite went green
     // again the moment a label was appended (#156). `dirtyPanels` is a total record now, so the
     // compiler owns that half; this owns the label half and names the other one (rules 103, 144).
     expect(
-      DECLARED_PANELS.map((p) => p.label),
-      "Settings.tsx's PANELS changed. Update this table, and classify the section in " +
+      declaredPanels().map((p) => p.label),
+      "Settings.tsx's `panels` changed. Update this table, and classify the section in " +
         "`dirtyPanels` (Settings.tsx): tsc refuses a missing key, but a `false` written without " +
         "checking drops that section's unsaved edits with no confirm.",
     ).toEqual(PANELS);

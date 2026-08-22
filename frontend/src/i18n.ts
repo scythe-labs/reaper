@@ -142,16 +142,13 @@ export async function applyStoredLanguage(): Promise<void> {
 /** Remember `tag` for this browser and reload onto it. `undefined` forgets the choice, so the
  *  browser's language decides again.
  *
- *  It reloads rather than switching in place because the lazily imported half of the tree still
- *  builds module-scope tables from the catalog when its chunk is first imported (`Settings.tsx`'s
- *  `PANELS`, `policyMeta.ts`'s `GATE_META`, and so on). Those are correct because a lazy chunk
- *  loads when the operator opens the screen, which is after this function or
- *  `applyStoredLanguage` has served the language. Switching in place would leave each frozen in
- *  whatever language its chunk happened to load in, so the settings rail would keep the old
- *  language while everything around it changed. A reload re-evaluates all of them.
+ *  It reloads rather than switching in place because not every surface subscribes to a language
+ *  change. `useTranslation` re-renders its component; a module reading the catalog through the
+ *  plain `i18next` import does not, so a screen holding still would keep the old words while the
+ *  ones around it changed. A reload paints the whole app once, in one language.
  *
- *  The EAGER half cannot use a table at all: it is evaluated before `applyStoredLanguage` is even
- *  awaited, so it resolves per render instead and `i18n-eager-catalog.test.ts` holds the split. */
+ *  What it no longer covers for is a frozen table. Every string in the tree resolves in a
+ *  function now, and `i18n-module-scope.test.ts` keeps it that way (#897). */
 export async function setLanguage(tag: string | undefined): Promise<void> {
   try {
     if (tag === undefined) localStorage.removeItem(LANGUAGE_KEY);

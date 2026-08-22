@@ -7,7 +7,7 @@
 // holds as chips -- each chip being the control that edits that one -- so Radarr, Sonarr and
 // Seerr can each take as many as the operator runs without the row growing a control per
 // instance. Tautulli offers no second: it mirrors one Plex and Reaper connects to one Plex,
-// which is the `singleton` flag `KINDS` already carries and the backend already refuses past.
+// which is the `singleton` flag `kinds` already carries and the backend already refuses past.
 //
 // Continue is gated on `scan_ready` -- Tautulli plus at least one of Radarr or Sonarr -- which
 // is the server's own predicate, not a second copy of it. Seerr sits under an Optional divider
@@ -28,7 +28,7 @@ import { describeError } from "../errors";
 import i18next from "../i18n";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
-import { KINDS, ServiceModal } from "./ServiceModal";
+import { kinds, ServiceModal } from "./ServiceModal";
 import { SetupRestoreModal } from "./SetupRestoreModal";
 import { StepCard } from "./SetupStepper";
 
@@ -37,9 +37,9 @@ import { StepCard } from "./SetupStepper";
  *  a computed key is unreadable to the missing-key gate (`jobMeta` in JobsPanel.tsx is the same
  *  shape).
  *
- *  The label, hint and port all come from `KINDS` (ServiceModal) rather than being restated
+ *  The label, hint and port all come from `kinds` (ServiceModal) rather than being restated
  *  here -- that table is the declaration, and a second copy of a service's hint is a sentence
- *  that drifts (rule 144). Only what `KINDS` does not carry lives here. */
+ *  that drifts (rule 144). Only what `kinds` does not carry lives here. */
 function rowMeta(kind: string): { badge: string; names: readonly string[] } {
   switch (kind) {
     case "tautulli":
@@ -173,49 +173,53 @@ export function SetupConnectStep({
       {instances && (
         <>
           <div className="conn-list">
-            {KINDS.filter((k) => REQUIRED_KINDS.includes(k.value)).map((k) => (
-              <ConnRow
-                key={k.value}
-                kind={k}
-                rows={of(k.value)}
-                required={k.value === "tautulli"}
-                onAdd={() => setEditing({ kind: k.value, instance: null })}
-                onEdit={(i) => setEditing({ kind: k.value, instance: i })}
-                confirming={confirmRemove}
-                addRef={afterRemove.ref}
-                removeError={removeErrorFor(of(k.value))}
-                onAskRemove={setConfirmRemove}
-                onRemove={(i) => {
-                  afterRemove.arriving();
-                  remove.mutate(i.id);
-                }}
-                removing={remove.isPending}
-              />
-            ))}
+            {kinds()
+              .filter((k) => REQUIRED_KINDS.includes(k.value))
+              .map((k) => (
+                <ConnRow
+                  key={k.value}
+                  kind={k}
+                  rows={of(k.value)}
+                  required={k.value === "tautulli"}
+                  onAdd={() => setEditing({ kind: k.value, instance: null })}
+                  onEdit={(i) => setEditing({ kind: k.value, instance: i })}
+                  confirming={confirmRemove}
+                  addRef={afterRemove.ref}
+                  removeError={removeErrorFor(of(k.value))}
+                  onAskRemove={setConfirmRemove}
+                  onRemove={(i) => {
+                    afterRemove.arriving();
+                    remove.mutate(i.id);
+                  }}
+                  removing={remove.isPending}
+                />
+              ))}
           </div>
           <p className="conn-note">{t("setup.connect.note")}</p>
 
           <p className="conn-split">{t("setup.connect.optional")}</p>
           <div className="conn-list">
-            {KINDS.filter((k) => !REQUIRED_KINDS.includes(k.value)).map((k) => (
-              <ConnRow
-                key={k.value}
-                kind={k}
-                rows={of(k.value)}
-                required={false}
-                onAdd={() => setEditing({ kind: k.value, instance: null })}
-                onEdit={(i) => setEditing({ kind: k.value, instance: i })}
-                confirming={confirmRemove}
-                addRef={afterRemove.ref}
-                removeError={removeErrorFor(of(k.value))}
-                onAskRemove={setConfirmRemove}
-                onRemove={(i) => {
-                  afterRemove.arriving();
-                  remove.mutate(i.id);
-                }}
-                removing={remove.isPending}
-              />
-            ))}
+            {kinds()
+              .filter((k) => !REQUIRED_KINDS.includes(k.value))
+              .map((k) => (
+                <ConnRow
+                  key={k.value}
+                  kind={k}
+                  rows={of(k.value)}
+                  required={false}
+                  onAdd={() => setEditing({ kind: k.value, instance: null })}
+                  onEdit={(i) => setEditing({ kind: k.value, instance: i })}
+                  confirming={confirmRemove}
+                  addRef={afterRemove.ref}
+                  removeError={removeErrorFor(of(k.value))}
+                  onAskRemove={setConfirmRemove}
+                  onRemove={(i) => {
+                    afterRemove.arriving();
+                    remove.mutate(i.id);
+                  }}
+                  removing={remove.isPending}
+                />
+              ))}
           </div>
         </>
       )}
@@ -286,7 +290,7 @@ function ConnRow({
   removing,
   removeError,
 }: {
-  kind: (typeof KINDS)[number];
+  kind: ReturnType<typeof kinds>[number];
   rows: Instance[];
   required: boolean;
   onAdd: () => void;
@@ -308,7 +312,7 @@ function ConnRow({
   const connected = rows.length > 0;
   // A singleton that already has one offers no second, and its slot collapses rather than
   // holding a dead control: the chip beside it already carries the name and the connected
-  // state. Same predicate the services panel uses, off the same `KINDS` flag.
+  // state. Same predicate the services panel uses, off the same `kinds` flag.
   const canAdd = !kind.singleton || rows.length === 0;
 
   return (

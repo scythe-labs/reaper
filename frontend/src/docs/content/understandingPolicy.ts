@@ -76,7 +76,7 @@ export const understandingPolicy: Doc = {
     ]),
 
     h2("What's in a policy", "in-a-policy"),
-    // "which starts by itself" is the same fact as `APPLIES_ON_NEXT_SCAN`
+    // "which starts by itself" is the same fact as `appliesOnNextScan`
     // (components/PolicySimulator.tsx), the sentence the savebar and the simulator both show.
     // Kept as its own wording because this paragraph names which controls sit in that half,
     // and left saying only "take effect on the next scan" it read as a chore the operator has

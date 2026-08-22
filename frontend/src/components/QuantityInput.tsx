@@ -25,7 +25,7 @@ export interface Unit {
  *  descriptions all use 1e9). Mixing conventions showed the same cap as two numbers.
  *
  *  A function, not a constant: this module is in the eager bundle, so a string resolved in its
- *  body would stay English for the life of the page (`i18n-eager-catalog.test.ts`). */
+ *  body would stay English for the life of the page (`i18n-module-scope.test.ts`). */
 export const sizeUnits = (): Unit[] => [
   { label: i18next.t("shell.quantityInput.units.mb"), factor: 1e6 },
   { label: i18next.t("shell.quantityInput.units.gb"), factor: 1e9 },

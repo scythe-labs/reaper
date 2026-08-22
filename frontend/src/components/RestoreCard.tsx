@@ -46,14 +46,14 @@ import { Notice } from "./Notice";
  *  It used to instruct -- "Restart Reaper's container to finish" -- because that was the only way
  *  to finish. `Restart now` is under it now, so the sentence says what is true and the button says
  *  what to do (#386). */
-export const RESTORE_ARMED_LEAD = i18next.t("backup.restore.armedLead");
-export const RESTORE_ARMED_REST = i18next.t("backup.restore.armedRest");
+export const restoreArmedLead = () => i18next.t("backup.restore.armedLead");
+export const restoreArmedRest = () => i18next.t("backup.restore.armedRest");
 
 /** The same pair for the state after `Restart now` is pressed. It claims only what the server
  *  accepted -- the stop -- and never that Reaper is back, which this page cannot see: the
  *  connection it would ask over is the one about to go (rule 85). */
-export const RESTORE_STOPPING_LEAD = i18next.t("backup.restore.stoppingLead");
-export const RESTORE_STOPPING_REST = i18next.t("backup.restore.stoppingRest");
+export const restoreStoppingLead = () => i18next.t("backup.restore.stoppingLead");
+export const restoreStoppingRest = () => i18next.t("backup.restore.stoppingRest");
 
 /** What both surfaces pass in. Split out because two components take exactly this set. */
 export interface RestoreProps {
@@ -215,7 +215,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // staged the swap whether or not the read that redraws the card lands. It was the one
       // outcome in this panel with no signal at all -- the card simply became a different card,
       // which is an absence, and the operator hears nothing when a full restore is armed (#173).
-      announce(`${RESTORE_ARMED_LEAD} ${RESTORE_ARMED_REST}`);
+      announce(`${restoreArmedLead()} ${restoreArmedRest()}`);
       // The confirm armed the swap; refetch so `armed` flips on and this card shows the
       // restart prompt. Drop the staged summary from local state either way.
       reset();
@@ -250,7 +250,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       // Said on the 200, which is the whole of what settled: the server took the stop. Whether it
       // comes back is not this page's to know or to claim (rule 85).
       setStopping(true);
-      announce(`${RESTORE_STOPPING_LEAD} ${RESTORE_STOPPING_REST}`);
+      announce(`${restoreStoppingLead()} ${restoreStoppingRest()}`);
     } catch (err) {
       // Its own lead, like the other three: nothing was stopped, and the staged restore is exactly
       // where it was.
@@ -401,7 +401,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
       <>
         <Notice tone="warn" className="restore-armed" as="div">
           <span>
-            <strong>{RESTORE_STOPPING_LEAD}</strong> {RESTORE_STOPPING_REST}
+            <strong>{restoreStoppingLead()}</strong> {restoreStoppingRest()}
           </span>
         </Notice>
         <p className="help">{t("backup.restore.stoppingHelp")}</p>
@@ -432,7 +432,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
             by Restart now, so it answers a press and stays an alert. */}
         <Notice tone="warn" className="restore-armed" as="div" standing>
           <span>
-            <strong>{RESTORE_ARMED_LEAD}</strong> {RESTORE_ARMED_REST}
+            <strong>{restoreArmedLead()}</strong> {restoreArmedRest()}
           </span>
           <button
             type="button"

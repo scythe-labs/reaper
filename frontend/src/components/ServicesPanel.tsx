@@ -16,7 +16,7 @@ import { useSuccessorFocus } from "../focus";
 import { api, type InstanceKind, type Instance, type InstanceTest } from "../api";
 import { useBackGuard } from "../backnav";
 import { describeError } from "../errors";
-import { KINDS, kindLabel, ServiceModal, TestBadge, testSentence } from "./ServiceModal";
+import { kinds, kindLabel, ServiceModal, TestBadge, testSentence } from "./ServiceModal";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
 
@@ -208,7 +208,7 @@ function ServiceCard({
 /** One kind's cards and its Add button.
  *
  *  Its own component only so it can hold a hook per kind: a `useSuccessorFocus()` inside the
- *  `KINDS.map` below would be a hook in a loop. What it buys is where focus goes when a card
+ *  `kinds().map` below would be a hook in a loop. What it buys is where focus goes when a card
  *  removes itself -- the card IS the thing that unmounts, so the successor cannot live inside it
  *  (#173). The Add button is the target rather than a neighbouring card: the cards' own focusable
  *  content is a Test/Edit/Remove triplet, and landing on another service's Test button reads as
@@ -220,7 +220,7 @@ function ServiceSection({
   rows,
   onOpen,
 }: {
-  kind: (typeof KINDS)[number];
+  kind: ReturnType<typeof kinds>[number];
   rows: Instance[];
   onOpen: (instance: Instance | null) => void;
 }) {
@@ -293,7 +293,7 @@ export function ServicesPanel() {
       {error && data && <StaleReadNotice what={t("services.panel.staleWhat")} />}
       {isPending && <p className="muted">{t("common.loading")}</p>}
       {data &&
-        KINDS.map((k) => (
+        kinds().map((k) => (
           <ServiceSection
             key={k.value}
             kind={k}

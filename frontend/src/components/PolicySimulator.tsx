@@ -18,7 +18,7 @@ import { useSuccessorFocus } from "../focus";
 import { bytes, count, totalBytes } from "../format";
 import i18next from "../i18n";
 import { composeIn } from "../why";
-import { GATE_META, UNNAMED_GATE_LABEL } from "./policyMeta";
+import { gateMeta, unnamedGateLabel } from "./policyMeta";
 import { Notice } from "./Notice";
 import { ProgressBar } from "./ProgressBar";
 
@@ -61,19 +61,17 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
  *  starts. One string, because a reader lands on that heading in the next breath and two
  *  copies of one fact drift (rule 144); `PolicyEditor` announces it from here.
  *
- *  Resolved at module load, which holds only because this module ships in a lazily imported
- *  chunk: nothing here runs until the operator opens Policy, and the language is served before
- *  that. A module in the eager bundle has to resolve per render instead
- *  (`i18n-eager-catalog.test.ts`). */
-export const RESCAN_HEADING = i18next.t("policySim.rescanHeading");
+ *  A function, not a constant: a string resolved in a module body stays in whatever language
+ *  was serving when the module first loaded (`i18n-module-scope.test.ts`). */
+export const rescanHeading = () => i18next.t("policySim.rescanHeading");
 
 /** Said and shown instead when the rescan cannot carry the changes yet.
  *
  *  This is the one thing about the wait an operator cannot see: the bar in front of them
  *  belongs to a scan that started BEFORE they saved, so it is scoring the old policy. Saying
- *  `RESCAN_HEADING` here would be a sentence that is wrong about the very thing it describes,
+ *  `rescanHeading` here would be a sentence that is wrong about the very thing it describes,
  *  which is why the announcement branches rather than settling for one string. */
-export const RESCAN_QUEUED_LEAD = i18next.t("policySim.rescanQueuedLead");
+export const rescanQueuedLead = () => i18next.t("policySim.rescanQueuedLead");
 
 /** What saving does, and the one thing the counts beside it cannot show: they describe a
  *  draft, and nothing on the server moves until a scan re-scores the library under it.
@@ -85,7 +83,7 @@ export const RESCAN_QUEUED_LEAD = i18next.t("policySim.rescanQueuedLead");
  *  watching this panel's numbers move had nowhere on it to learn that the list they review
  *  had not moved with them. The refusal notice below carries the same news for the edits
  *  that cannot preview; this is the sentence for the ones that can. */
-export const APPLIES_ON_NEXT_SCAN = i18next.t("policySim.appliesOnNextScan");
+export const appliesOnNextScan = () => i18next.t("policySim.appliesOnNextScan");
 
 /** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
  *  the numbers just can't be re-derived from the old scan. So it's neutral, short, and gives
@@ -147,14 +145,14 @@ export function StaleNotice({
     <div className="sim sim-info">
       <h3 ref={afterStart.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
         {scanning
-          ? RESCAN_HEADING
+          ? rescanHeading()
           : ((staleKind && STALE_HEADINGS[staleKind]) ?? STALE_HEADINGS.gathers_differently)}
       </h3>
       {scanning ? (
         <>
           <p>
             {followupQueued
-              ? `${RESCAN_QUEUED_LEAD} ${t("policySim.queuedRescanTail")}`
+              ? `${rescanQueuedLead()} ${t("policySim.queuedRescanTail")}`
               : t("policySim.scoringLibrary")}
           </p>
           <p className="muted">
@@ -163,7 +161,7 @@ export function StaleNotice({
               percent,
             })}
           </p>
-          <ProgressBar label={RESCAN_HEADING} percent={percent} />
+          <ProgressBar label={rescanHeading()} percent={percent} />
         </>
       ) : (
         <>
@@ -270,7 +268,7 @@ export function Outcome({
               start" beside numbers already drawn from the last one reads as a demand. It
               belongs on BOTH branches -- an inert edit saves and scans exactly like any
               other, and that operator has the most reason to wonder why a scan began. */}
-          <p className="help">{APPLIES_ON_NEXT_SCAN}</p>
+          <p className="help">{appliesOnNextScan()}</p>
         </>
       )}
 
@@ -301,14 +299,14 @@ export function Outcome({
         <>
           <h3>{t("policySim.whyTitlesWereSpared")}</h3>
           <dl className="sim-delta">
-            {/* Every id the server can send is named in `GATE_META`, which `satisfies` keeps
+            {/* Every id the server can send is named in `gateMeta`, which `satisfies` keeps
                 complete over `GateId`. The fallback is rule 66's, for an id from a server
                 newer than this browser: it used to be `titleCase`, which printed the engine's
                 own slug ("Season Progression", "Custom") as the reason a title was kept, in
                 the panel read while deciding what to delete (#551, rule 21). */}
             {simulation.protected_by.map((g) => (
               <div key={g.gate}>
-                <dt>{GATE_META[g.gate]?.label ?? UNNAMED_GATE_LABEL}</dt>
+                <dt>{gateMeta()[g.gate]?.label ?? unnamedGateLabel()}</dt>
                 <dd>{count(g.count)}</dd>
               </div>
             ))}

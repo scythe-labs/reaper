@@ -37,7 +37,11 @@ import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
 
-export const KINDS: {
+/** The service kinds Reaper can be pointed at, in the order the setup step lists them.
+ *
+ *  A function, not a constant: a string resolved in a module body keeps whatever language was
+ *  serving when the module first loaded (`i18n-module-scope.test.ts`). */
+export const kinds = (): {
   value: InstanceKind;
   label: string;
   hint: string;
@@ -45,7 +49,7 @@ export const KINDS: {
   // Only one may be added. Tautulli mirrors a single Plex, and Reaper connects to one Plex,
   // so a second has no working setup. The backend refuses it too; this only hides the add.
   singleton?: boolean;
-}[] = [
+}[] => [
   {
     value: "radarr",
     label: i18next.t("services.kinds.radarr.label"),
@@ -74,7 +78,7 @@ export const KINDS: {
 ];
 
 export function kindLabel(kind: InstanceKind): string {
-  return KINDS.find((k) => k.value === kind)?.label ?? kind;
+  return kinds().find((k) => k.value === kind)?.label ?? kind;
 }
 
 /** What media a Seerr service asks for, in a person's words rather than the stored key.
@@ -301,7 +305,7 @@ export function ServiceModal({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const editing = instance !== null;
-  const meta = KINDS.find((k) => k.value === kind);
+  const meta = kinds().find((k) => k.value === kind);
   const initial = instance ? splitBaseUrl(instance.base_url) : null;
 
   const [name, setName] = useState(instance?.name ?? defaultName ?? "");

@@ -35,7 +35,7 @@ import i18next from "../i18n";
 import { composeIn } from "../why";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
-import { RESCAN_HEADING, RESCAN_QUEUED_LEAD } from "./PolicySimulator";
+import { rescanHeading, rescanQueuedLead } from "./PolicySimulator";
 
 /** How long ago, in the app's usual plain phrasing. Null stamps are handled by the caller,
  *  which has a whole sentence to say about a list that has never checked in. */
@@ -515,7 +515,7 @@ export function ListsPanel({
       // progress it drives is on another tab. Same two sentences `PolicyEditor` says, from
       // the panel that owns them, and branching for the same reason -- a scan that was
       // already running is scoring the lists as they were before this edit.
-      announce(started.followup_queued ? RESCAN_QUEUED_LEAD : `${RESCAN_HEADING}.`);
+      announce(started.followup_queued ? rescanQueuedLead() : `${rescanHeading()}.`);
     },
   });
 
