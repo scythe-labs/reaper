@@ -69,7 +69,9 @@ from tests._auth import login
 #: because it was in one for two releases, drifting once per route added while
 #: ``test_the_session_scheme_is_declared`` said "counted, not remembered" and asserted
 #: nothing (rule 144).
-FENCED_OPERATIONS = 48
+#: +1 for `PUT /api/settings/notifications/language` (phase 10b): a setting write, closed to
+#: an API key by the same deny-by-default fence as every other one, with no allowlist edit.
+FENCED_OPERATIONS = 49
 
 
 class TestScanProgressPercent:

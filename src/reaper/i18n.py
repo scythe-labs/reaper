@@ -223,13 +223,22 @@ def format_icu(message: str, params: Mapping[str, Any], tag: str = DEFAULT_TAG) 
     return "".join(out)
 
 
+def _locales_root() -> Any:
+    """`reaper.locales`'s own directory, as a `Traversable`. Broken out of `_load` so a test
+    can monkeypatch it to a `tmp_path` fixture (a plain `pathlib.Path` already implements
+    every `Traversable` method this module calls) rather than needing a committed, non-English
+    `backend.json` to prove a translated catalog is checked (see
+    `tests/test_backend_locales.py`)."""
+    return resources.files("reaper.locales")
+
+
 def _load(tag: str) -> dict[str, Any] | None:
     """`<tag>/backend.json`, or `None` if it does not exist, is unreadable, or is not a JSON
     object. Loaded through `importlib.resources`, anchored on the `reaper.locales` package
     -- never a path relative to the current working directory -- so this resolves the same
     way from a test run, a wheel install, and the editable install the Docker image uses."""
     try:
-        traversable = resources.files("reaper.locales").joinpath(tag, "backend.json")
+        traversable = _locales_root().joinpath(tag, "backend.json")
         if not traversable.is_file():
             return None
         raw = traversable.read_text(encoding="utf-8")
@@ -276,6 +285,28 @@ def catalog(tag: str = DEFAULT_TAG) -> dict[str, Any]:
     if translated is None:
         return english
     return _merge(english, translated)
+
+
+@cache
+def shipped_tags() -> tuple[str, ...]:
+    """Every BCP 47 tag with a shipped backend catalog: the directories under
+    `reaper.locales` holding a `backend.json`, English always first.
+
+    `services.app_settings.get_notification_language` reads this to validate a stored tag,
+    and `NotificationsOut.languages` (api/settings.py) reads it for the exact choices the
+    Settings -> Notifications picker offers -- so a translation only becomes choosable once
+    its `backend.json` actually ships, and a build that ever drops one loses the choice
+    rather than silently keeping a stale option (rule 66: a server-defined list renders from
+    the server response). Cached like `catalog`: the shipped set is fixed for the life of the
+    process.
+    """
+    root = _locales_root()
+    tags = sorted(
+        entry.name
+        for entry in root.iterdir()
+        if entry.is_dir() and entry.name != DEFAULT_TAG and entry.joinpath("backend.json").is_file()
+    )
+    return (DEFAULT_TAG, *tags)
 
 
 def _lookup(node: Mapping[str, Any], dotted: str) -> str | None:

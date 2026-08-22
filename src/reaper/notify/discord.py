@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.i18n import say
+from reaper.i18n import DEFAULT_TAG, say
 from reaper.services import app_settings
 
 log = structlog.get_logger(__name__)
@@ -67,7 +67,10 @@ class DiscordNotifier:
 
     ``app_name`` is the sender name the message wears (Settings -> General), so two
     installs posting into one channel stay tellable-apart. ``app_url`` adds an "open"
-    link at the end of list messages; empty means no link, never a broken one.
+    link at the end of list messages; empty means no link, never a broken one. ``language``
+    is the BCP 47 tag every ``say(...)`` call in this class reads its catalog through
+    (Settings -> Notifications); English until the operator picks one of
+    ``reaper.i18n.shipped_tags()``.
     """
 
     def __init__(
@@ -76,10 +79,12 @@ class DiscordNotifier:
         *,
         app_name: str = "Reaper",
         app_url: str | None = None,
+        language: str = DEFAULT_TAG,
     ) -> None:
         self._url = webhook_url
         self._app_name = app_name
         self._app_url = app_url
+        self._language = language
 
     async def post(self, embed: Embed) -> bool:
         """Send one embed. Returns whether it landed; never raises.
@@ -134,9 +139,7 @@ class DiscordNotifier:
         await asyncio.sleep(min(retry_after, _MAX_RETRY_AFTER))
         return await client.post(self._url, json=payload)
 
-    async def announce_leaving_soon(
-        self, titles: list[str], *, grace_days: int, tag: str = "en"
-    ) -> bool:
+    async def announce_leaving_soon(self, titles: list[str], *, grace_days: int) -> bool:
         """ "These N titles are leaving soon." The headline count is honest even when the
         enumerated list is truncated for length.
 
@@ -157,11 +160,11 @@ class DiscordNotifier:
         them watched last night had gone unplayed. The dormancy that would let it branch per
         title is not on this call, so the claim is dropped rather than guessed.
 
-        ``tag`` is a BCP 47 language tag, ``"en"`` until Settings grows an install-wide
-        language (phase 10b of ``docs/history/I18N_PLAN.md``'s catalog work).
+        Written in ``self._language`` (Settings -> Notifications), English until changed.
         """
         if not titles:
             return False
+        tag = self._language
         shown = titles[:_MAX_TITLES]
         lines = "\n".join(f"• {t}" for t in shown)
         remaining = len(titles) - _MAX_TITLES
@@ -209,4 +212,5 @@ async def build_notifier(
         webhook,
         app_name=await app_settings.get_application_name(session),
         app_url=await app_settings.get_application_url(session),
+        language=await app_settings.get_notification_language(session),
     )

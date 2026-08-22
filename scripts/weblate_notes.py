@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Push `frontend/src/locales/en/ui.notes.json` into Weblate as each unit's explanation.
+"""Push a repo notes file into Weblate as each unit's explanation, for every component that
+carries one: `ui` (`frontend/src/locales/en/ui.notes.json`) and, since phase 10b, `backend`
+(`src/reaper/locales/en/backend.notes.json`).
 
-Standalone by design (stdlib only, rule 15): the CI job that runs this on every push to
-`frontend/src/locales/en/ui.notes.json` installs nothing beyond Python itself. Weblate stores a
-translator note per source string as a unit's `explanation` field; this script is the one place
-that writes it, so a note is edited here, in the repository, never by hand on Weblate
-(CONTRIBUTING's "Translate it").
+Standalone by design (stdlib only, rule 15): the CI job that runs this on every push to either
+notes file installs nothing beyond Python itself. Weblate stores a translator note per source
+string as a unit's `explanation` field; this script is the one place that writes it, so a note is
+edited here, in the repository, never by hand on Weblate (CONTRIBUTING's "Translate it").
 
-    python3 scripts/weblate_notes.py            # writes the diff
+    python3 scripts/weblate_notes.py            # writes the diff, both components
     python3 scripts/weblate_notes.py --dry-run   # prints the diff, writes nothing
 
 The API key is read from `WEBLATE_API_KEY`, or from the file `--key-file` names
@@ -28,15 +29,32 @@ from pathlib import Path
 from typing import Any
 
 API_ROOT = "https://hosted.weblate.org/api"
-UNITS_URL = f"{API_ROOT}/translations/reaper/ui/en/units/?page_size=100"
-NOTES_PATH = Path(__file__).resolve().parent.parent / "frontend/src/locales/en/ui.notes.json"
+PROJECT = "reaper"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_KEY_FILE = Path("/opt/reaper_1/.weblate_api")
+
+#: Every component this script keeps in sync, and the one repo file that holds its notes. Both
+#: sides are edited only here (CONTRIBUTING's "Translate it"): Weblate's own explanation field
+#: is overwritten by the next push regardless of a hand edit there.
+_COMPONENTS: tuple[tuple[str, Path], ...] = (
+    ("ui", REPO_ROOT / "frontend/src/locales/en/ui.notes.json"),
+    ("backend", REPO_ROOT / "src/reaper/locales/en/backend.notes.json"),
+)
+
 
 #: Retries on a transient failure, and the ceiling on how long one retry may sleep -- a
 #: `Retry-After` is a remote server's number, and rule 114 (backend.md) is the same doctrine
 #: for any sleep driven by one: clamp it, never trust it outright.
 MAX_ATTEMPTS = 5
 MAX_RETRY_AFTER = 60
+
+
+def _component_url(component: str) -> str:
+    return f"{API_ROOT}/components/{PROJECT}/{component}/"
+
+
+def _units_url(component: str) -> str:
+    return f"{API_ROOT}/translations/{PROJECT}/{component}/en/units/?page_size=100"
 
 
 def _api_key(key_file: Path) -> str:
@@ -69,11 +87,15 @@ def _http_open(url: str, *, method: str = "GET", key: str, body: bytes | None = 
     return urllib.request.urlopen(request, timeout=30)  # noqa: S310 (host checked above)
 
 
-def _request_json(url: str, *, method: str = "GET", key: str, body: bytes | None = None) -> Any:
+def _request_json(
+    url: str, *, method: str = "GET", key: str, body: bytes | None = None, allow_404: bool = False
+) -> Any:
     """One call, retried on a transient failure or a rate limit, else raised.
 
     A non-2xx status other than 429 is a real failure (a bad key, a moved unit) and is not
     retried -- retrying it would only hide the failure behind a delay before the same error.
+    `allow_404` returns ``None`` for a 404 instead of raising, for the "does this component
+    exist yet" probe in `main`.
     """
     last: Exception | None = None
     for attempt in range(MAX_ATTEMPTS):
@@ -82,6 +104,8 @@ def _request_json(url: str, *, method: str = "GET", key: str, body: bytes | None
                 raw = response.read()
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as exc:
+            if exc.code == 404 and allow_404:
+                return None
             if exc.code == 429 and attempt + 1 < MAX_ATTEMPTS:
                 wait = min(int(exc.headers.get("Retry-After", "5") or "5"), MAX_RETRY_AFTER)
                 print(f"  rate-limited, waiting {wait}s", file=sys.stderr)
@@ -95,11 +119,11 @@ def _request_json(url: str, *, method: str = "GET", key: str, body: bytes | None
     raise RuntimeError(f"{method} {url} failed after {MAX_ATTEMPTS} tries: {last}")
 
 
-def _fetch_units(key: str) -> dict[str, dict[str, Any]]:
+def _fetch_units(key: str, units_url: str) -> dict[str, dict[str, Any]]:
     """Every English unit's `context` (the dotted catalog key) mapped to its `source_unit`
     URL and current `explanation`, paging through `next` until it is null."""
     units: dict[str, dict[str, Any]] = {}
-    url: str | None = UNITS_URL
+    url: str | None = units_url
     while url is not None:
         page = _request_json(url, key=key)
         for unit in page["results"]:
@@ -158,9 +182,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     key = _api_key(args.key_file)
-    notes: dict[str, str] = json.loads(NOTES_PATH.read_text(encoding="utf-8"))
-    units = _fetch_units(key)
-    sync(notes, units, dry_run=args.dry_run, key=key)
+    for component, notes_path in _COMPONENTS:
+        print(f"== {component} ==")
+        # A component this script's own notes file names before `scripts/weblate_component.py`
+        # has created it: the workflow fires on the same push that adds a component's notes
+        # file, which can land before anyone runs that script by hand. Skipping rather than
+        # raising keeps that push from failing CI over a component that is created moments
+        # later -- the next push (or a manual re-run) picks up the notes once it exists.
+        if _request_json(_component_url(component), key=key, allow_404=True) is None:
+            print(f"  {component} does not exist on Weblate yet, skipping")
+            continue
+        notes: dict[str, str] = json.loads(notes_path.read_text(encoding="utf-8"))
+        units = _fetch_units(key, _units_url(component))
+        sync(notes, units, dry_run=args.dry_run, key=key)
     return 0
 
 

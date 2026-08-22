@@ -63,6 +63,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import InstanceKind, PlexServer
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.reason import Reason, to_wire
+from reaper.i18n import shipped_tags
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import (
     admin_password,
@@ -347,10 +348,20 @@ class NotificationsOut(BaseModel):
     """Whether a Discord webhook is stored. The URL itself is a credential and is NEVER
     echoed back to the browser -- a view says only *whether* one is set, exactly like an
     instance API key."""
+    language: str
+    """The BCP 47 tag the Leaving Soon embed is written in. English until changed."""
+    languages: list[str]
+    """Every tag ``language`` may be set to -- ``reaper.i18n.shipped_tags()`` -- so the
+    picker's choices come from the server rather than a copy the browser could drift from
+    (rule 66)."""
 
 
 class NotificationsIn(BaseModel):
     webhook_url: str
+
+
+class NotificationLanguageIn(BaseModel):
+    language: str
 
 
 class NotificationsTestIn(BaseModel):
@@ -982,15 +993,23 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
 # ---------------------------------------------------------------------------
 
 
+async def _notifications_out(session: AsyncSession, *, has_webhook: bool) -> NotificationsOut:
+    return NotificationsOut(
+        has_webhook=has_webhook,
+        language=await app_settings.get_notification_language(session),
+        languages=list(shipped_tags()),
+    )
+
+
 @router.get("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def get_notifications(request: Request) -> NotificationsOut:
-    """Whether a Discord webhook is configured. The URL is write-only -- like an API key,
-    only its presence is ever reported, never the value."""
+    """Whether a Discord webhook is configured, and the language it is written in. The URL
+    is write-only -- like an API key, only its presence is ever reported, never the value."""
     async with session_factory(request)() as session:
         has = await app_settings.has_discord_webhook(
             session, secret_box(request), runtime_settings(request)
         )
-    return NotificationsOut(has_webhook=has)
+        return await _notifications_out(session, has_webhook=has)
 
 
 @router.put("/notifications", tags=[api_tags.NOTIFICATIONS])
@@ -1001,8 +1020,8 @@ async def set_notifications(request: Request, payload: NotificationsIn) -> Notif
     async with session_factory(request)() as session:
         await app_settings.set_discord_webhook(session, secret_box(request), url)
         await session.commit()
-    log.info("notifications.webhook_set")
-    return NotificationsOut(has_webhook=True)
+        log.info("notifications.webhook_set")
+        return await _notifications_out(session, has_webhook=True)
 
 
 @router.delete("/notifications", tags=[api_tags.NOTIFICATIONS])
@@ -1011,8 +1030,29 @@ async def clear_notifications(request: Request) -> NotificationsOut:
     async with session_factory(request)() as session:
         await app_settings.clear_discord_webhook(session)
         await session.commit()
-    log.info("notifications.webhook_cleared")
-    return NotificationsOut(has_webhook=False)
+        log.info("notifications.webhook_cleared")
+        return await _notifications_out(session, has_webhook=False)
+
+
+@router.put("/notifications/language", tags=[api_tags.NOTIFICATIONS])
+async def set_notification_language(
+    request: Request, payload: NotificationLanguageIn
+) -> NotificationsOut:
+    """Which language the Leaving Soon embed is written in. Refused when the tag names no
+    shipped backend catalog (``reaper.i18n.shipped_tags()``), so a stale option or a hand-
+    built request cannot save a language ``say(...)`` would just fall back to English on
+    anyway without saying so."""
+    tag = payload.language
+    if tag not in shipped_tags():
+        refuse(422, "error.settings.notification_language_unknown", tag=tag)
+    async with session_factory(request)() as session:
+        await app_settings.set_notification_language(session, tag)
+        await session.commit()
+        has = await app_settings.has_discord_webhook(
+            session, secret_box(request), runtime_settings(request)
+        )
+        log.info("notifications.language_set", language=tag)
+        return await _notifications_out(session, has_webhook=has)
 
 
 @router.post("/notifications/test", tags=[api_tags.NOTIFICATIONS])

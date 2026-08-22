@@ -29,7 +29,9 @@ If you want to know who writes this and how, the README has an honest answer und
 - **Fix the docs.** Instructions that did not work are a bug.
 - **Translate it.** Reaper's strings live on
   [Weblate](https://hosted.weblate.org/projects/reaper/). Translate there, and Weblate
-  opens the pull request here. Only `frontend/src/locales/en/ui.json` is edited in this repo.
+  opens the pull request here. Weblate holds three components: `ui` (the browser catalog),
+  `backend` (the Discord and desktop-launcher catalog), and `glossary` (the shared term list
+  both draw from). Only `frontend/src/locales/en/ui.json` is edited in this repo.
   Every other `locales/<tag>/ui.json` is written by Weblate and overwritten on its next sync, so
   a pull request editing one is closed. The in-app manual is the exception: it is translated here
   in the repo `frontend/src/docs/content/<tag>/index.ts`.
