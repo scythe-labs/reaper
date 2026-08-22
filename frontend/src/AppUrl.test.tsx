@@ -153,6 +153,7 @@ const CARD: Candidate = {
   chip: null,
   show_status: null,
   season_number: null,
+  collections: null,
 };
 
 const SETUP_DONE: SetupStatus = {

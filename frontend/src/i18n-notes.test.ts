@@ -97,7 +97,7 @@ const HOW_TO_UPDATE =
 //: three assertions below already name every individual key that moved, but a set that shrank
 //: by exactly as much as it grew would leave them empty while this population changed under
 //: everyone's feet.
-const EXPECTED_REQUIRED_COUNT = 1145;
+const EXPECTED_REQUIRED_COUNT = 1143;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

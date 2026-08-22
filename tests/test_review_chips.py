@@ -2035,7 +2035,7 @@ class TestTheChipVocabulary:
     """
 
     def test_the_chip_id_population_is_pinned(self) -> None:
-        assert len(_CHIP_IDS) == 36, (
+        assert len(_CHIP_IDS) == 35, (
             f"_CHIP_IDS holds {len(_CHIP_IDS)}. If you added or removed a chip id, bump "
             "this count deliberately."
         )

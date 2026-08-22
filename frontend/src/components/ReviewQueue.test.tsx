@@ -85,6 +85,7 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     chip: null,
     show_status: null,
     season_number: null,
+    collections: null,
     ...extra,
   };
   // Default an item's own decision to its effective one unless a test sets them apart (to

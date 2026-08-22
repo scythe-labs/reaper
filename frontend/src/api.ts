@@ -168,9 +168,8 @@ export interface Candidate {
    *  collection first -- `CollectionChip` takes element 0. Navigation only, never a verdict
    *  input. Null means "not recorded for this scan" (no Plex configured, a failed
    *  section read, a row from before this shipped), NOT "in no collection": render no
-   *  chip for null rather than an empty one. Optional: the test fixtures are not made to
-   *  carry it (#816 phase 3). */
-  collections?: string[] | null;
+   *  chip for null rather than an empty one. */
+  collections: string[] | null;
   /** Which of three search blocks this row matched: 0 exact title, 1 partial title/show,
    *  2 collection-name only. Null outside a search. Optional: no component reads it yet
    *  (#816 phase 3b; the divider that reads it is phase 5). */
@@ -222,10 +221,10 @@ export interface Group {
   show_status: ShowStatus | null;
   /** The show's Plex collection names, taken the same way as `show_status`: a TV
    *  collection lists the show, not its seasons, so every season carries the same list.
-   *  Null means "not recorded for this scan," never "in no collection". Optional, same
-   *  reason as `Candidate.collections` -- `toGroups` (ReviewQueue.tsx) reads it off the
-   *  first season into the local `Group.collections` `CollectionChip` renders. */
-  collections?: string[] | null;
+   *  Null means "not recorded for this scan," never "in no collection". Unread today:
+   *  `toGroups` (ReviewQueue.tsx) builds the card's own group from each season row's
+   *  `Candidate.collections` instead, never this field. */
+  collections: string[] | null;
   /** Every season, sorted by season number (unnumbered rows last). */
   seasons: Candidate[];
 }
@@ -375,10 +374,9 @@ export interface Match {
   status: "matched" | "unmatched" | "ambiguous" | "conflicted" | null;
   /** Which kind of evidence bound this item, e.g. `tmdb`. Audit vocabulary, so it is declared
    *  here and deliberately not rendered: rule 21 keeps id kinds off the panel. It is typed so
-   *  the next reader of this file finds it instead of re-discovering the drift (#260).
-   *  Optional like `candidate_rating_keys` below, which the server also always sends: these
-   *  are the fields no component reads, so fixtures are not made to carry them. */
-  by?: string | null;
+   *  the next reader of this file finds it instead of re-discovering the drift (#260). Null
+   *  when nothing bound this item, and on a record stored before this shipped. */
+  by: string | null;
   /** For the audit log, not shown to the owner: "Bound by TMDB id 1001", etc. */
   detail: string | null;
   rating_key: number | null;
@@ -386,11 +384,12 @@ export interface Match {
    *  an ordinary single-listing bind, and on a record stored before this shipped. Load-bearing
    *  on the deletion path -- the executor re-reads this list, so the listings are protected
    *  together -- which is why the panel says the count out loud. */
-  merged_rating_keys?: number[] | null;
-  /** The Plex rows an abstain was choosing between, on `ambiguous` and `conflicted`. The
-   *  panel renders `links.match_candidates` rather than these numbers; they are here so a
-   *  reader can tell how many there were without following the links. */
-  candidate_rating_keys?: number[] | null;
+  merged_rating_keys: number[] | null;
+  /** The Plex rows an abstain was choosing between, on `ambiguous` and `conflicted`. Null
+   *  outside those two states, and on a record stored before this shipped. The panel renders
+   *  `links.match_candidates` rather than these numbers; they are here so a reader can tell
+   *  how many there were without following the links. */
+  candidate_rating_keys: number[] | null;
 }
 
 /** A graded keep's contribution to the score -- points subtracted, and whether it could be
@@ -440,7 +439,7 @@ export interface Explanation {
    *  basis points (5000 = 50%). Frozen beside `threshold` so an abstain forced by the floor can
    *  name the line coverage fell under. Null when the row could not be read or predates this
    *  field: the panel drops the floor clause rather than read the live policy (rule 113). */
-  coverage_floor_bp?: number | null;
+  coverage_floor_bp: number | null;
   /** Whether this title is held because the plays Reaper recorded earlier stopped being
    *  readable. The panel offers the per-title escape on it, and on nothing else: the reason
    *  text beside it is operator copy and will be reworded (rule 92).
@@ -449,10 +448,10 @@ export interface Explanation {
    *  claim that the scan took a reading and it was honest. **`null` is "cannot tell"** -- a
    *  row scanned before the key existed, or an item with no reading to judge -- and it is what
    *  actually arrives for such a row: `Explanation` defaults the field to `None` and nothing
-   *  sets `exclude_none`, so the server serializes it as `null`. The `?` is defense against a
-   *  shape the server does not emit. Both read as "cannot tell", never as `false`, because
-   *  offering to discard a watch record on a guess is the wrong direction. */
-  watch_blind?: boolean | null;
+   *  sets `exclude_none`, so the server serializes it as `null`. Both read as "cannot tell",
+   *  never as `false`, because offering to discard a watch record on a guess is the wrong
+   *  direction. */
+  watch_blind: boolean | null;
   signals: SignalContribution[];
   keeps?: KeepContribution[];
   /** Why it is being kept. */

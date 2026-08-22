@@ -1082,7 +1082,6 @@ _CHIP_IDS: frozenset[str] = frozenset(
         "kept.rating_plain",
         "kept.popularity",
         "kept.popularity_plain",
-        "kept.others_watching",
         "kept.curated_list",
         "kept.no_history",
         "kept.dormancy",

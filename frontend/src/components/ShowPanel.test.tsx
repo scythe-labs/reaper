@@ -72,6 +72,7 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     chip: null,
     show_status: null,
     season_number: n,
+    collections: null,
     ...extra,
   };
   if (extra.override_own === undefined) c.override_own = c.override;
@@ -93,6 +94,7 @@ function group(seasons: Candidate[]): Group {
     show_spare_expires_at: null,
     links: NO_LINKS,
     show_status: "ended",
+    collections: null,
     seasons,
   };
 }

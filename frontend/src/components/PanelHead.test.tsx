@@ -84,6 +84,7 @@ function item(links: Links): CandidateDetail {
     chip: null,
     season_number: 3,
     show_status: null,
+    collections: null,
     content_rating: null,
     runtime_minutes: null,
     genres: [],
@@ -95,6 +96,8 @@ function item(links: Links): CandidateDetail {
       keep_discount: 0,
       threshold: 70,
       coverage: 10_000,
+      coverage_floor_bp: null,
+      watch_blind: null,
       signals: [],
       protections_fired: [],
       protections_checked: [],
@@ -119,6 +122,7 @@ function show(links: Links): Group {
     show_spare_expires_at: null,
     links,
     show_status: null,
+    collections: null,
     seasons: [],
   };
 }
