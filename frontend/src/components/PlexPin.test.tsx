@@ -17,7 +17,7 @@ import { announce, Announcer } from "../announce";
 import type { ReasonKey } from "../api";
 import { composeError } from "../why";
 import type { PinPollResult } from "./PlexPin";
-import { CHOOSE_SERVER_SAID, usePlexPinPoll } from "./PlexPin";
+import { chooseServerSaid, usePlexPinPoll } from "./PlexPin";
 
 // The real `announce` and the real `Announcer`, with a counter around the call. Counting matters
 // here and the rendered regions cannot do it: they alternate, hold one sentence at a time, and
@@ -263,7 +263,7 @@ describe("the account that owns several servers", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(200);
       });
-      expect(said()).toContain(CHOOSE_SERVER_SAID);
+      expect(said()).toContain(chooseServerSaid());
     } finally {
       vi.useRealTimers();
     }
@@ -285,11 +285,11 @@ describe("who is allowed to say the picker sentence", () => {
     readFileSync(join(dirname(fileURLToPath(import.meta.url)), name), "utf8");
 
   it("is this hook, and neither of the two screens driving it", () => {
-    expect(read("PlexPin.tsx")).toContain(`= i18next.t("plex.pin.chooseServerSaid")`);
+    expect(read("PlexPin.tsx")).toContain(`() => i18next.t("plex.pin.chooseServerSaid")`);
 
     for (const caller of ["Login.tsx", "PlexPanel.tsx"]) {
       expect(
-        read(caller).includes(CHOOSE_SERVER_SAID),
+        read(caller).includes(chooseServerSaid()),
         `${caller} states the picker sentence itself. The hook already announces it for every ` +
           `caller, so this one says it twice. Delete the local copy (#177, rules 72 and 144).`,
       ).toBe(false);

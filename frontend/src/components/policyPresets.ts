@@ -10,8 +10,9 @@
 //
 // The preset labels and help sentences live in `locales/en/ui.json` under `policyMeta.*`.
 // This is a data module, not a component, so it reads the catalog through the plain
-// `i18next` import rather than the `useTranslation` hook -- the module-scope pattern
-// `GeneralPanel`'s `ACCENT_PRESETS` already uses.
+// `i18next` import rather than the `useTranslation` hook. `presets` is a FUNCTION, never a
+// constant: a string resolved in a module body keeps whatever language was serving when the
+// module first loaded (`i18n-module-scope.test.ts`).
 
 import type { PolicyBody, ProfileSettings } from "../api";
 import { list } from "../format";
@@ -54,13 +55,13 @@ export type PresetCaps = Pick<
   | "max_unmeasured_per_run"
 >;
 
-export const PRESETS: {
+export const presets = (): {
   id: PresetId;
   label: string;
   help: string;
   condemn_at: number;
   caps: PresetCaps;
-}[] = [
+}[] => [
   {
     id: "cautious",
     label: i18next.t("policyMeta.presets.cautious.label"),
@@ -185,7 +186,7 @@ export function weightsMatchMix(draft: PolicyBody, mix: Record<string, number>):
 export function activePreset(draft: PolicyBody): PresetId | null {
   const mix = DEFAULT_WEIGHTS[draft.media_type === "tv" ? "tv" : "movie"];
   if (!weightsMatchMix(draft, mix)) return null;
-  return PRESETS.find((p) => p.condemn_at === draft.condemn_at)?.id ?? null;
+  return presets().find((p) => p.condemn_at === draft.condemn_at)?.id ?? null;
 }
 
 /** A list said the way a person would: "A", "A and B", "A, B, and C". Used by the intent

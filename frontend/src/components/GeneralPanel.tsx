@@ -8,10 +8,11 @@
 // One save bar covers the whole panel (rule 43), and it reports upward through `onDirtyChange`
 // so the section rail can hold a switch that would discard a draft (rule 146).
 //
-// The copy lives in `locales/en/ui.json` under `general.*`. Two module-scope arrays
-// (`ACCENT_PRESETS`, `TEXT_FIELDS`) build their strings before the component ever renders,
-// so they read the catalog through the plain `i18next` import rather than the `useTranslation`
-// hook -- the same split the plan draws between components and non-component modules.
+// The copy lives in `locales/en/ui.json` under `general.*`. Two of the tables below
+// (`accentPresets`, `textFields`) are read outside a component, so they take the catalog from
+// the plain `i18next` import rather than the `useTranslation` hook. Each is a FUNCTION for the
+// reason `i18n-module-scope.test.ts` states: a string resolved in a module body keeps whatever
+// language was serving when the module first loaded.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, type RefObject, useEffect, useState } from "react";
@@ -65,7 +66,7 @@ function applyTheme(choice: ThemeChoice) {
 // Each carries the color's name, because the swatch is a bare colored circle: its only other
 // name would be the hex, which a screen reader spells out one character at a time and which
 // rule 21 would not accept as operator copy either.
-const ACCENT_PRESETS: { value: string; name: string }[] = [
+const accentPresets = (): { value: string; name: string }[] => [
   { value: DEFAULT_ACCENT, name: i18next.t("general.accentPresets.reaperBlue") },
   { value: "#4f46e5", name: i18next.t("general.accentPresets.indigo") },
   { value: "#7c3aed", name: i18next.t("general.accentPresets.violet") },
@@ -134,7 +135,7 @@ type TextField = {
  *
  *  #90 was this shape: one `> 0` condition shared by three of these echoes, plus a fourth that
  *  did not handle the field at all. */
-const TEXT_FIELDS: readonly TextField[] = [
+const textFields = (): readonly TextField[] => [
   {
     name: "application_name",
     label: i18next.t("general.fields.applicationName.label"),
@@ -169,7 +170,7 @@ const EMPTY_TEXT: Record<TextFieldName, string> = {
 
 function seededText(data: GeneralSettings): Record<TextFieldName, string> {
   const next = { ...EMPTY_TEXT };
-  for (const field of TEXT_FIELDS) next[field.name] = field.seed(data);
+  for (const field of textFields()) next[field.name] = field.seed(data);
   return next;
 }
 
@@ -189,7 +190,7 @@ export function GeneralPanel({
   // below either is a different hook order on those renders.
   const bar = useSavebarFocus();
 
-  // One record over `TEXT_FIELDS`, not one `useState` per field: the echoes below walk the
+  // One record over `textFields`, not one `useState` per field: the echoes below walk the
   // descriptor, and a field it does not know about would still need its own state here.
   //
   // Every writer of this record uses the functional form, and that is load-bearing rather than
@@ -267,7 +268,7 @@ export function GeneralPanel({
       queryClient.setQueryData(["general-settings"], data);
       setText((current) => {
         const next = { ...current };
-        for (const field of TEXT_FIELDS) {
+        for (const field of textFields()) {
           if (field.name in sent) next[field.name] = field.seed(data);
         }
         return next;
@@ -445,7 +446,7 @@ export function GeneralPanel({
   const ready = !!data && seeded;
 
   const dirtyText = ready
-    ? TEXT_FIELDS.filter((field) => field.clean(text[field.name]) !== field.seed(data))
+    ? textFields().filter((field) => field.clean(text[field.name]) !== field.seed(data))
     : [];
   const accentValid = isHexColor(accent);
   const accentDirty = ready && accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
@@ -646,7 +647,7 @@ export function GeneralPanel({
                   role="group"
                   aria-label={t("general.accent.quickColorsGroup")}
                 >
-                  {ACCENT_PRESETS.map((c) => (
+                  {accentPresets().map((c) => (
                     <button
                       key={c.value}
                       type="button"

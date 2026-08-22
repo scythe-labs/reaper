@@ -35,7 +35,7 @@ import { Notice } from "./Notice";
 import { SafetyBanner } from "./SafetyBanner";
 import { ProgressBar } from "./ProgressBar";
 import { phaseLabel } from "./ScanBar";
-import { ScanLine, SCANNING_LABEL } from "./ScanLine";
+import { ScanLine, scanningLabel } from "./ScanLine";
 import { StepCard } from "./SetupStepper";
 
 export function SetupScanStep({
@@ -135,7 +135,7 @@ export function SetupScanStep({
               <span className="spinner" aria-hidden="true" />
               <h3>{t("setup.scan.runningHeading")}</h3>
             </div>
-            <ProgressBar label={SCANNING_LABEL} percent={percent} />
+            <ProgressBar label={scanningLabel()} percent={percent} />
             <p className="blurb">{t("setup.scan.runningBlurb")}</p>
             {phase && <p className="muted setup-scanmsg">{phase}</p>}
 

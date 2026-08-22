@@ -1183,7 +1183,7 @@ class TestTheRewatchKeepNameIsOneDeclaration:
 class TestEveryGateIdHasOperatorCopy:
     """A gate id the browser has no copy for is printed at the operator as a slug.
 
-    ``GATE_META`` (``frontend/src/components/policyMeta.ts``) is the browser's one
+    ``gateMeta`` (``frontend/src/components/policyMeta.ts``) is the browser's one
     declaration of what each protection is called. The policy simulator's "Why titles were
     spared" list reads it by id, and until #551 an id it lacked fell through to a
     ``titleCase`` of the slug -- so "Season Progression" and "Custom", both of which fire on
@@ -1232,7 +1232,7 @@ class TestEveryGateIdHasOperatorCopy:
             "engine.gates.GateId and policyMeta.ts's GateId union disagree. A gate the "
             "browser does not know is printed as its raw id in the policy simulator's "
             '"Why titles were spared" list (rule 21). Add it to the union, and to '
-            "GATE_META with a plain-language label (tsc requires it once the union moves)."
+            "gateMeta with a plain-language label (tsc requires it once the union moves)."
         )
 
     def test_the_map_still_has_to_cover_the_union(self) -> None:
@@ -1248,14 +1248,14 @@ class TestEveryGateIdHasOperatorCopy:
         source = self._source()
         clause = f'satisfies Record<GateId | "{HAND_SPARE_TALLY_ID}", GateMeta>'
         assert clause in source, (
-            f"policyMeta.ts no longer closes GATE_META with `{clause}`, so tsc has stopped "
+            f"policyMeta.ts no longer closes gateMeta with `{clause}`, so tsc has stopped "
             "requiring a label for every gate id and for the hand-spare tally."
         )
         for gate in self._declared():
-            assert f"\n  {gate}: {{" in source, f"{gate} has no GATE_META entry"
+            assert f"\n    {gate}: {{" in source, f"{gate} has no gateMeta entry"
 
     def _marked_retired(self) -> set[str]:
-        """Every id ``GATE_META`` marks ``retired``.
+        """Every id ``gateMeta`` marks ``retired``.
 
         Comments are stripped first, and each entry is read brace-depth aware, so
         ``server_popularity``'s nested ``window`` object is part of its entry rather than an
@@ -1263,8 +1263,8 @@ class TestEveryGateIdHasOperatorCopy:
         comparison below rather than matching nothing.
         """
         text = _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", self._source()))
-        start = text.find("export const GATE_META")
-        assert start != -1, "policyMeta.ts no longer declares `export const GATE_META`."
+        start = text.find("export function gateMeta")
+        assert start != -1, "policyMeta.ts no longer declares `export function gateMeta`."
         body, entry = text[text.index("{", start) + 1 :], re.compile(r"(\w+)\s*:\s*\{")
         found: set[str] = set()
         cursor = 0

@@ -51,7 +51,7 @@ export type Panel =
 /** The ten sections, in rail order. Exported for the one test that owns the hand-written label
  *  table this must agree with (SettingsNav.test.tsx), so a section added here fails there naming
  *  what to do rather than as an unexplained label mismatch (rules 103, 144). */
-export const PANELS: { id: Panel; label: string }[] = [
+export const panels = (): { id: Panel; label: string }[] => [
   { id: "general", label: i18next.t("shell.settings.panels.general") },
   { id: "services", label: i18next.t("shell.settings.panels.services") },
   { id: "plex", label: i18next.t("shell.settings.panels.plex") },
@@ -104,7 +104,7 @@ export function Settings({
   // `Record<Panel, …>`: a panel missing from it does not compile, where an absent key used to read
   // as "holds nothing" and switch straight through. That is rule 103's one-declaration branch, and
   // it replaces a comment claiming these five "are the whole population" -- a claim nothing checked
-  // against the ten in `PANELS`, so the next section added would have been unguarded and silent
+  // against the ten in `panels`, so the next section added would have been unguarded and silent
   // (#156). `npm run build` runs `tsc --noEmit` and is a CI gate, so the compiler is the guard.
   //
   // The last two took a hop the first three did not: their drafts live in CHILD components
@@ -117,7 +117,7 @@ export function Settings({
   const [securityDirty, setSecurityDirty] = useState(false);
   const [backupDirty, setBackupDirty] = useState(false);
 
-  // Every panel classified, in `PANELS` order. A `false` here is a claim that the section has
+  // Every panel classified, in `panels` order. A `false` here is a claim that the section has
   // nothing to lose on the way out, so each one says why -- verified in the tree.
   const dirtyPanels: Record<Panel, boolean> = {
     general: generalDirty,
@@ -165,9 +165,10 @@ export function Settings({
     handledJump.current = jump.nonce;
     confirmSwitch.request(jump.panel);
   }, [jump, confirmSwitch]);
-  const pendingLabel = PANELS.find((p) => p.id === confirmSwitch.pending)?.label ?? "";
+  const sections = panels();
+  const pendingLabel = sections.find((p) => p.id === confirmSwitch.pending)?.label ?? "";
   // The section being LEFT, so one string serves every panel that raises the shared sentence.
-  const leavingLabel = PANELS.find((p) => p.id === panel)?.label ?? "";
+  const leavingLabel = sections.find((p) => p.id === panel)?.label ?? "";
   // Ten labels stop fitting one line well above this, but the app already has exactly one
   // definition of a narrow screen and a second would be worse than swapping a little early:
   // below this width the section rail is a bottom bar, so a compact settings header is the
@@ -183,7 +184,7 @@ export function Settings({
             aria-label={t("shell.settings.sectionLabel")}
             onChange={(e) => confirmSwitch.request(e.target.value as Panel)}
           >
-            {PANELS.map((p) => (
+            {sections.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}
               </option>
@@ -192,7 +193,7 @@ export function Settings({
         </nav>
       ) : (
         <nav className="settings-nav" aria-label={t("shell.settings.sectionsLabel")}>
-          {PANELS.map((p) => (
+          {sections.map((p) => (
             <button
               key={p.id}
               className={panel === p.id ? "settings-tab active" : "settings-tab"}

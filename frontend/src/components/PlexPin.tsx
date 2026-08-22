@@ -24,9 +24,11 @@ import { composeError } from "../why";
  *  step once: Settings announced the picker and the login screen said nothing (#177, rule 72).
  *
  *  Exported because `PlexPin.test.tsx` reads the two callers' source and fails by name in
- *  whichever one states it again. Resolved from the catalog at module load, which is safe
- *  because `../i18n` inits synchronously with inline resources. */
-export const CHOOSE_SERVER_SAID = i18next.t("plex.pin.chooseServerSaid");
+ *  whichever one states it again.
+ *
+ *  A function, not a constant: this module is in the eager bundle, so a string resolved in its
+ *  body would stay English for the life of the page (`i18n-module-scope.test.ts`). */
+export const chooseServerSaid = () => i18next.t("plex.pin.chooseServerSaid");
 
 /** Poll every two seconds. The wait is a person staring at a browser tab, so the faster
  *  of the two intervals this replaced wins: two seconds still costs at most 150 requests
@@ -154,7 +156,7 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
               // of forgetting it (rule 72) -- which is not hypothetical, since the login screen
               // is exactly the caller that forgot it. Told and NOT focused: the picker replaces
               // the wait on a timer, so moving focus here is a steal rather than a recovery.
-              announce(CHOOSE_SERVER_SAID);
+              announce(chooseServerSaid());
               h.onChooseServer?.(result.servers ?? []);
             } else {
               // "pending" or "retrying" -- neither is final, so keep polling. Only
@@ -214,7 +216,7 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
           setServers(result.servers ?? []);
           // The pick can land back on the picker (an account whose server list changed under
           // it), and that arrives the same way: on an answer, not on a press.
-          announce(CHOOSE_SERVER_SAID);
+          announce(chooseServerSaid());
           h.onChooseServer?.(result.servers ?? []);
         } else {
           begin(pinId, machineId);

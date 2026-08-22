@@ -6,7 +6,7 @@
 import { render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GATE_META } from "../components/policyMeta";
+import { gateMeta } from "../components/policyMeta";
 import i18n from "../i18n";
 import { expectNoA11yViolations } from "../test/a11y";
 import { docSections } from "./blocks";
@@ -252,8 +252,8 @@ describe("useDocs / DocsProvider", () => {
 
 describe("the protections tables", () => {
   // Rule 25: operator copy may only name a feature that is wired. These tables hand-list the
-  // protections and their defaults, so each is a second copy of GATE_META that nothing kept
-  // honest -- when the "unmanaged" gate was retired, its entry left GATE_META and the editor
+  // protections and their defaults, so each is a second copy of gateMeta that nothing kept
+  // honest -- when the "unmanaged" gate was retired, its entry left gateMeta and the editor
   // while this row stayed, telling operators a protection shipped On that no policy carried.
   //
   // This walks EVERY doc, not one. Guarding `understandingPolicy` alone is how the cheat
@@ -287,14 +287,14 @@ describe("the protections tables", () => {
       // direction. It does NOT mean the id is inert -- `season_progression` and `custom` both
       // fire on ordinary scans and are excluded here because there is no switch to document,
       // not because nothing reaches them.
-      const known = Object.values(GATE_META)
+      const known = Object.values(gateMeta())
         .filter((m) => !m.retired)
         .map((m) => m.label);
       const listed = table.rows.map((r) => r[0] ?? "");
 
       expect(
         listed.filter((label) => !known.includes(label)),
-        `${docId} names a protection GATE_META no longer has`,
+        `${docId} names a protection gateMeta no longer has`,
       ).toEqual([]);
       expect(
         known.filter((label) => !listed.includes(label)),

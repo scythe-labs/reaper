@@ -15,10 +15,10 @@ import { describe, expect, it } from "vitest";
 import type { Simulation } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import {
-  APPLIES_ON_NEXT_SCAN,
+  appliesOnNextScan,
   Outcome,
-  RESCAN_HEADING,
-  RESCAN_QUEUED_LEAD,
+  rescanHeading,
+  rescanQueuedLead,
   StaleNotice,
 } from "./PolicySimulator";
 
@@ -46,8 +46,8 @@ describe("the wait the simulator shows while a rescan runs", () => {
     // 144).
     renderNotice();
 
-    expect(screen.getByRole("heading", { name: RESCAN_HEADING })).toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: RESCAN_HEADING })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: rescanHeading() })).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: rescanHeading() })).toBeInTheDocument();
   });
 
   it("has no accessibility violations in either of its two states", async () => {
@@ -68,7 +68,7 @@ describe("the wait the simulator shows while a rescan runs", () => {
     // from the bar itself.
     renderNotice({ followupQueued: true });
 
-    expect(screen.getByText(new RegExp(RESCAN_QUEUED_LEAD.slice(0, 40)))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(rescanQueuedLead().slice(0, 40)))).toBeInTheDocument();
   });
 
   it("does not claim a second scan when this one carries the changes", () => {
@@ -76,7 +76,7 @@ describe("the wait the simulator shows while a rescan runs", () => {
     // (rule 118): a test that passes for both states pins neither.
     renderNotice({ followupQueued: false });
 
-    expect(screen.queryByText(new RegExp(RESCAN_QUEUED_LEAD.slice(0, 40)))).toBeNull();
+    expect(screen.queryByText(new RegExp(rescanQueuedLead().slice(0, 40)))).toBeNull();
     expect(screen.getByText(/scoring your library under the new policy/i)).toBeInTheDocument();
   });
 });
@@ -160,20 +160,22 @@ describe("who is allowed to write the rescan sentences", () => {
     // key each constant reads: the sentence itself lives in locales/en/ui.json, and the
     // imported constant values checked below are what the catalog served.
     const panel = read("PolicySimulator.tsx");
-    expect(panel).toContain(`export const RESCAN_HEADING = i18next.t("policySim.rescanHeading")`);
+    expect(panel).toContain(
+      `export const rescanHeading = () => i18next.t("policySim.rescanHeading")`,
+    );
     expect(panel).toContain(`i18next.t("policySim.rescanQueuedLead")`);
     // The savebar's sentence, now that this panel shows it too. The savebar is at the foot of
     // the left column and this panel is the right one, so a reword reaching only one of them
     // leaves two answers to "when does this take effect" on one screen.
     expect(panel).toContain(
-      `export const APPLIES_ON_NEXT_SCAN = i18next.t("policySim.appliesOnNextScan")`,
+      `export const appliesOnNextScan = () => i18next.t("policySim.appliesOnNextScan")`,
     );
 
     const editor = read("PolicyEditor.tsx");
     for (const [name, sentence] of [
-      ["RESCAN_HEADING", RESCAN_HEADING],
-      ["RESCAN_QUEUED_LEAD", RESCAN_QUEUED_LEAD],
-      ["APPLIES_ON_NEXT_SCAN", APPLIES_ON_NEXT_SCAN],
+      ["rescanHeading", rescanHeading()],
+      ["rescanQueuedLead", rescanQueuedLead()],
+      ["appliesOnNextScan", appliesOnNextScan()],
     ] as const) {
       expect(
         editor.includes(sentence),
@@ -182,8 +184,8 @@ describe("who is allowed to write the rescan sentences", () => {
           `the old thing (#177, rules 72 and 144).`,
       ).toBe(false);
     }
-    expect(editor).toContain("RESCAN_QUEUED_LEAD");
-    expect(editor).toContain("APPLIES_ON_NEXT_SCAN");
+    expect(editor).toContain("rescanQueuedLead");
+    expect(editor).toContain("appliesOnNextScan");
   });
 });
 
@@ -250,7 +252,7 @@ describe("the outcome panel on an edit that changes no title", () => {
     expect(screen.queryByText(/Your last scan flags/)).not.toBeInTheDocument();
     // And says nothing about a scan either, for the same reason: there is no save pending
     // for one to follow, and these numbers already describe the scan that has run.
-    expect(screen.queryByText(APPLIES_ON_NEXT_SCAN)).not.toBeInTheDocument();
+    expect(screen.queryByText(appliesOnNextScan())).not.toBeInTheDocument();
   });
 
   it.each([
@@ -263,7 +265,7 @@ describe("the outcome panel on an edit that changes no title", () => {
     // Both branches, because an inert edit still saves and still starts a scan (rule 118).
     renderOutcome({ changed_titles }, true);
 
-    expect(screen.getByText(APPLIES_ON_NEXT_SCAN)).toBeInTheDocument();
+    expect(screen.getByText(appliesOnNextScan())).toBeInTheDocument();
   });
 
   it("reads the last scan's count off the server rather than off the two deltas", () => {
@@ -335,7 +337,7 @@ describe("what the spared-by list calls each protection", () => {
     return row?.querySelector("dd")?.textContent ?? "";
   }
 
-  // The engine's id, then the words. Written from `GATE_META`'s intent rather than from its
+  // The engine's id, then the words. Written from `gateMeta`'s intent rather than from its
   // source, so a label edited into engine vocabulary fails here (rule 119).
   //
   // `season_progression` is deliberately vague and pinned that way: the same id tallies a

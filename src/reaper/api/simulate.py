@@ -784,7 +784,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
 #: list membership -- and on a fresh install, where ``WhitelistGate`` is retired and no gate
 #: emits that id at all, "Why titles were spared" was hand spares wearing a list's name, which
 #: invites softening a keep rule that covers none of them (rule 144). The frontend's
-#: ``GATE_META`` carries the copy for it.
+#: ``gateMeta`` carries the copy for it.
 HAND_SPARE_TALLY_ID = "hand_spare"
 
 

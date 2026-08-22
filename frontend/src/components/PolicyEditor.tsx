@@ -55,26 +55,26 @@ import { DocLink, HelpIcon } from "../docs/DocLink";
 import { bytes, count, humanDays } from "../format";
 import i18next from "../i18n";
 import { DeletionToggle } from "./DeletionToggle";
-import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
+import { gateMeta, signalMeta, titleCase } from "./policyMeta";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 import {
   activePreset,
   andList,
   DEFAULT_WEIGHTS,
-  PRESETS,
+  presets,
   REMOVAL_POINTS,
   rescaleToBudget,
   type PresetCaps,
   type PresetId,
 } from "./policyPresets";
 import {
-  APPLIES_ON_NEXT_SCAN,
+  appliesOnNextScan,
   Outcome,
-  RESCAN_HEADING,
-  RESCAN_QUEUED_LEAD,
+  rescanHeading,
+  rescanQueuedLead,
   StaleNotice,
 } from "./PolicySimulator";
-import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
+import { FixedQuantity, QuantityInput, sizeUnits, timeUnits } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
 import { SETTLE_MS, usePolicyProbe } from "../usePolicyProbe";
@@ -198,16 +198,16 @@ function GateRow({
 }) {
   const { t } = useTranslation();
   // Sibling of the simulator's spared-by row (rule 72), and the two fallbacks deliberately
-  // DIFFER. There, an id appears once in a tally, so `UNNAMED_GATE_LABEL` reads correctly:
+  // DIFFER. There, an id appears once in a tally, so `unnamedGateLabel` reads correctly:
   // "Another protection, 7". Here it names a switch, and two ids this build has no copy for
   // would draw two controls carrying one name and no help, leaving the operator unable to
   // tell which protection they were turning off -- so the label stays per-id. Prefer a
   // title-cased slug the operator can at least tell apart over rule 21's nicer sentence,
   // because a control has to be identifiable before it can be plain.
-  // Unreachable for every id the engine has (`GATE_META` covers all of `GateId`), and the SPA
+  // Unreachable for every id the engine has (`gateMeta` covers all of `GateId`), and the SPA
   // ships inside the server's own image, so reaching this at all needs a browser holding a
   // stale bundle against a newer server. Rule 66's fallback, not a surface anyone should meet.
-  const meta = GATE_META[gate.gate] ?? { label: titleCase(gate.gate), help: "" };
+  const meta = gateMeta()[gate.gate] ?? { label: titleCase(gate.gate), help: "" };
   // What this row's boxes point `aria-describedby` at. The block rendering these sits under
   // the whole list, so reaching one meant browsing the page in document order: a keyboard
   // operator moving control to control never met it (#189). Every gate warning the server
@@ -261,7 +261,7 @@ function GateRow({
           <span>{meta.lead ?? t("policyEditor.atLeast")}</span>
           <QuantityInput
             value={gate.threshold}
-            units={TIME_UNITS}
+            units={timeUnits()}
             min={meta.min ?? 5}
             ariaLabel={t("policyEditor.gateRow.thresholdAriaLabel", { label: meta.label })}
             describedBy={describes("threshold")}
@@ -294,7 +294,7 @@ function GateRow({
             <span>{meta.window.label}</span>
             <QuantityInput
               value={gate.window_days}
-              units={TIME_UNITS}
+              units={timeUnits()}
               min={1}
               ariaLabel={meta.window.aria}
               describedBy={describes("window_days")}
@@ -687,7 +687,7 @@ function SignalRow({
   onChange: (s: SignalSetting) => void;
 }) {
   const { t } = useTranslation();
-  const meta = SIGNAL_META[signal.signal] ?? { label: titleCase(signal.signal), help: "" };
+  const meta = signalMeta()[signal.signal] ?? { label: titleCase(signal.signal), help: "" };
 
   return (
     <li className="rule-row">
@@ -797,7 +797,7 @@ function SignalRamp({
     units.unitKind !== "fixed" ? (
       <QuantityInput
         value={value}
-        units={units.unitKind === "time" ? TIME_UNITS : SIZE_UNITS}
+        units={units.unitKind === "time" ? timeUnits() : sizeUnits()}
         min={bounds.min ?? 0}
         ariaLabel={ariaLabel}
         onChange={onNext}
@@ -1632,7 +1632,7 @@ export function PolicyEditor({
       // It branches because the two cases are not the same news. When a scan was already running,
       // the bar the operator is now watching belongs to a scan that started BEFORE they saved, so
       // "rescanning to apply your changes" would be wrong about the one thing it claims (#177).
-      announce(started.followup_queued ? RESCAN_QUEUED_LEAD : `${RESCAN_HEADING}.`);
+      announce(started.followup_queued ? rescanQueuedLead() : `${rescanHeading()}.`);
     },
   });
 
@@ -1930,9 +1930,9 @@ export function PolicyEditor({
   };
   const preset = activePreset(draft);
   const presetHelp =
-    PRESETS.find((p) => p.id === preset)?.help ?? t("policyEditor.presetHelp.custom");
+    presets().find((p) => p.id === preset)?.help ?? t("policyEditor.presetHelp.custom");
 
-  const applyPreset = (p: (typeof PRESETS)[number]) => {
+  const applyPreset = (p: ReturnType<typeof presets>[number]) => {
     const mix = DEFAULT_WEIGHTS[mediaType];
     // The whole removal lane, not just the built-ins: the shipped mix is already the full
     // 100 points, so leaving the operator's own rules beside it put every preset over
@@ -2140,11 +2140,11 @@ export function PolicyEditor({
             <Segmented
               value={preset ?? "custom"}
               onChange={(id) => {
-                const p = PRESETS.find((x) => x.id === id);
+                const p = presets().find((x) => x.id === id);
                 if (p) applyPreset(p);
               }}
               label={t("policyEditor.starting.label")}
-              options={PRESETS.map((p) => [p.id, p.label] as const)}
+              options={presets().map((p) => [p.id, p.label] as const)}
             />
           </div>
           <p className="help">
@@ -2528,7 +2528,7 @@ export function PolicyEditor({
                 <span>{t("policyEditor.rewatchCard.mostRecentlyWithin")}</span>
                 <QuantityInput
                   value={draft.rewatch_recent_days}
-                  units={TIME_UNITS}
+                  units={timeUnits()}
                   min={1}
                   ariaLabel={t("policyEditor.rewatchCard.mostRecentlyWithinAriaLabel")}
                   onChange={(v) => update({ rewatch_recent_days: v })}
@@ -2749,13 +2749,13 @@ export function PolicyEditor({
                   <span className="row-h">{t("policyEditor.pace.diskFreedRowHeader")}</span>
                   <QuantityInput
                     value={pace.max_bytes_per_run}
-                    units={SIZE_UNITS}
+                    units={sizeUnits()}
                     ariaLabel={t("policyEditor.pace.mostDiskPerRunAriaLabel")}
                     onChange={(v) => updatePace({ max_bytes_per_run: v })}
                   />
                   <QuantityInput
                     value={pace.max_bytes_per_30d}
-                    units={SIZE_UNITS}
+                    units={sizeUnits()}
                     ariaLabel={t("policyEditor.pace.mostDiskPer30dAriaLabel")}
                     onChange={(v) => updatePace({ max_bytes_per_30d: v })}
                   />
@@ -2771,7 +2771,7 @@ export function PolicyEditor({
               <span className="ex-ctl">
                 <QuantityInput
                   value={pace.grace_days}
-                  units={TIME_UNITS}
+                  units={timeUnits()}
                   min={7}
                   ariaLabel={t("policyEditor.pace.gracePeriodLabel")}
                   onChange={(v) => updatePace({ grace_days: v })}
@@ -2843,12 +2843,12 @@ export function PolicyEditor({
               {/* What Save will ACTUALLY write, not what is merely dirty: a held-back policy
                   half must not be described as applying on the next scan (PR-7). */}
               {willSavePolicy && willSavePace
-                ? `${APPLIES_ON_NEXT_SCAN} ${t("policyEditor.savebar.paceAppliesImmediately")}`
+                ? `${appliesOnNextScan()} ${t("policyEditor.savebar.paceAppliesImmediately")}`
                 : willSavePolicy
                   ? t("policyEditor.savebar.savesOnlyKind", {
                       kind,
                       otherKind,
-                      appliesOnNextScan: APPLIES_ON_NEXT_SCAN,
+                      appliesOnNextScan: appliesOnNextScan(),
                     })
                   : willSavePace
                     ? `${t("policyEditor.savebar.paceAppliesImmediately")} ${t("policyEditor.savebar.paceOnlyTail")}`

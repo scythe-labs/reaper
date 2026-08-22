@@ -46,7 +46,7 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     // On first-run setup, an account owning several servers answers "choose_server": the
     // sign-in stays valid while the picker is up, and the pick carries the answer.
     //
-    // The announcement that goes with it is `usePlexPinPoll`'s (`CHOOSE_SERVER_SAID`), not this
+    // The announcement that goes with it is `usePlexPinPoll`'s (`chooseServerSaid`), not this
     // handler's. It was hand-written into both callers (rule 144), and the pair had already been
     // out of step once: Settings announced the picker and this screen said nothing (#177, rule
     // 72). The hook now speaks for every caller, so this one only has to move itself.

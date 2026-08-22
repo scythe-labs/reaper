@@ -997,7 +997,7 @@ describe("the controls a screen reader has to tell apart", () => {
   // protecting through an `on_list` keep rule. A stored draft can still carry the retired
   // gate, though -- the loader keeps an enabled row whose target list could not be created
   // rather than silently withdrawing cover -- so the editor renders it as a plain protection
-  // row from its `GATE_META` copy instead of dropping it or crashing. Rule 66's fallback
+  // row from its `gateMeta` copy instead of dropping it or crashing. Rule 66's fallback
   // beneath that no longer title-cases the id (#551): an id this build has no copy for reads
   // "Another protection", never a slug.
   it("tolerates a stored draft still carrying the retired whitelisted gate", async () => {
@@ -1010,7 +1010,7 @@ describe("the controls a screen reader has to tell apart", () => {
 
     // Named in the operator's words, not by the `titleCase` fallback. The gate is retired as a
     // switch, but a stored body from before the upgrade still carries its id, so its copy stays
-    // in `GATE_META` and the row reads as a sentence rather than as "Whitelisted".
+    // in `gateMeta` and the row reads as a sentence rather than as "Whitelisted".
     //
     // And it says what THIS gate meant: tags and the "Never Reap" collection, the lists the
     // operator curates by hand. The two retired labels were taken from `engine/fields.py` in

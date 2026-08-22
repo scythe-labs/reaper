@@ -1276,7 +1276,7 @@ def _kept_reason(gate: str, reason: Reason | None) -> Reason:
         # entry: an unparseable detail costs it the countdown and it still answers. So this
         # arm exists for the reordering, not for a case that fires -- and it exists at all
         # because the generic fallback below is what makes a missing member silent (rule 66),
-        # which is the whole reason `GATE_META`'s guard was written.
+        # which is the whole reason `gateMeta`'s guard was written.
         return Reason("kept.returned")
     if gate == "custom":
         return Reason("kept.custom")
