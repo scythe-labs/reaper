@@ -47,6 +47,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.policy import PolicyBody, join_and
 from reaper.engine.policy_migrations import LIST_GATES_NOW_KEEP_RULES, PolicyRepair
+from reaper.engine.reason import Reason
 from reaper.refusal import Refusal
 from reaper.services import (
     app_settings,
@@ -71,8 +72,8 @@ class ScanConfigError(Refusal):
 
     Defaults to 400 rather than ``Refusal``'s own 422: the one route that turns this into an
     HTTP response (``api.lists``'s check-now) has always answered 400. The two background
-    catchers (``api.scan``, ``services.scheduler``) read ``str(exc)`` for a status line and
-    never touch this field.
+    catchers (``api.scan``, ``services.scheduler``) read ``str(exc)`` for a log line and
+    ``exc.as_reason()`` for the typed reason a poller reads.
     """
 
     def __init__(
@@ -81,8 +82,16 @@ class ScanConfigError(Refusal):
         super().__init__(code, status=status, **params)
 
 
-class ScanInProgressError(RuntimeError):
-    """A scan is already running, so this one was refused rather than run on top of it."""
+class ScanInProgressError(Refusal):
+    """A scan is already running, so this one was refused rather than run on top of it.
+
+    A ``Refusal`` subclass (phase 11a) rather than a bare ``RuntimeError``, so ``api.scan``
+    can turn it into a typed ``error_reason`` the same way it does ``ScanConfigError`` and
+    ``IntegrationError`` -- every catcher still matches it by class exactly as it did before.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("error.scan.already_running", status=409)
 
 
 # One scan at a time, enforced HERE so every caller shares it: the browser's scan button
@@ -615,9 +624,7 @@ async def run_scan(
     rather than aborting -- partial evidence must never look complete.
     """
     if not _claim_scan():
-        raise ScanInProgressError(
-            "A scan is already running. Wait for it to finish, then start another."
-        )
+        raise ScanInProgressError()
     try:
         return await _run_scan_locked(
             settings=settings,
@@ -769,7 +776,7 @@ async def _run_scan_locked(
         # Pull watch history into the local mirror BEFORE scoring reads it. Incremental
         # after the first time, but on a fresh install it is what populates the table at
         # all -- without it every item's dormancy is Unknown and the scan judges nothing.
-        emit(Progress("history", 0, 0, "syncing watch history"))
+        emit(Progress("history", 0, 0, Reason("history_sync")))
         history_started = time.monotonic()
         try:
             hist = await history_sync.sync(cache_engine, tautulli)
@@ -808,7 +815,7 @@ async def _run_scan_locked(
 
         # Refresh the protection lists BEFORE scoring reads them, or every list the
         # operator defined is silently empty and protects nothing.
-        emit(Progress("lists", 0, 0, "refreshing protection lists"))
+        emit(Progress("lists", 0, 0, Reason("lists")))
 
         # Plex is optional (a movie-only deployment runs without it), but a *configured*
         # Plex that is briefly unreachable must degrade, not crash the whole scan the way an
@@ -931,14 +938,14 @@ async def _run_scan_locked(
         if snapshot.degraded:
             log.info("scan.shelves_skipped", snapshot=snapshot.id, reason="degraded")
         else:
-            emit(Progress("shelves", 0, 0, "updating shelves"))
+            emit(Progress("shelves", 0, 0, Reason("shelves")))
             after_scan_started = time.monotonic()
             await leaving_soon.after_scan(session_factory, settings, box)
             after_scan_ms = round((time.monotonic() - after_scan_started) * 1000)
 
         # Only now is the run truly done: bar to 100%, and the browser's next poll sees
         # `running` flip false right behind it.
-        emit(Progress("complete", snapshot.item_count, snapshot.item_count, str(snapshot.id)))
+        emit(Progress("complete", snapshot.item_count, snapshot.item_count, None))
 
         # The one line an operator reads to answer "how long did that take, and where did
         # the time go?" -- the TRUE end-to-end wall clock (including the shelf reconcile,

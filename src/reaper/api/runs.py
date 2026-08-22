@@ -47,7 +47,9 @@ from reaper.api.schemas import (
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import ActionStep, Candidate, ReapRun, RunState
+from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
+from reaper.engine.reason import Reason, to_wire
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
@@ -453,7 +455,10 @@ class ReapStatus(BaseModel):
     deleted_bytes: int = 0
     skipped: int = 0
     title: str = ""
-    error: str | None = None
+    #: Why the run stopped, as a typed reason: the executor's own catalog code
+    #: (``exc.as_reason()``) on a refused run, or ``error.reap.unexpected`` for anything
+    #: else. ``null`` while running and on a clean finish.
+    error_reason: ReasonKey | None = None
     report: RunReportOut | None = None
     """The after-action report, set once the run ends. Null while running; the browser reads
     it when ``running`` turns false to render the per-item checklist without a second call."""
@@ -542,7 +547,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     status.deleted_bytes = 0
     status.skipped = 0
     status.title = ""
-    status.error = None
+    status.error_reason = None
     status.report = None
 
     try:
@@ -694,7 +699,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             # PLANNED, missing clients). The run row is untouched; surface the reason to the
             # poller so the sheet can show it.
             status.phase = "error"
-            status.error = str(exc)
+            status.error_reason = ReasonKey.model_validate(to_wire(exc.as_reason()))
             log.info("reap.execute_refused", run_id=run_id, error=str(exc))
         except Exception as exc:
             # A background task must never crash silently -- surface it as an error the UI
@@ -704,7 +709,9 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             # CancelledError, which is not an Exception, so it does NOT reach here and does not
             # kick a scan as the app is going down.
             status.phase = "error"
-            status.error = str(exc)
+            status.error_reason = ReasonKey.model_validate(
+                to_wire(Reason("error.reap.unexpected", {"error": str(exc)}))
+            )
             log.warning("reap.background_failed", run_id=run_id, error=str(exc))
             if status.deleted_items > 0:
                 launch_scan(app)

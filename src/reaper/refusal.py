@@ -23,6 +23,8 @@ params, formatted through this same catalog.
 
 from __future__ import annotations
 
+from reaper.engine.reason import Reason
+
 #: Every code an API response, a stored explanation, or the engine's own ``str()`` can
 #: surface, mapped to its ``str.format`` template. Plain language throughout (rule 21):
 #: outcome first, no ids, no jargon, no em dashes. A ``{field}`` placeholder carries the
@@ -650,6 +652,10 @@ MESSAGES: dict[str, str] = {
         "stopped here rather than risk deleting something you just kept. Anything "
         "already deleted stays deleted; nothing further was sent."
     ),
+    # api.runs.execute_run's own catch-all (phase 11a), not one of ExecutionError's raise
+    # sites: a background crash the executor itself never named. Anything already removed
+    # stays removed; the executor's own interlocks are what make that true, not this code.
+    "error.reap.unexpected": "The reap hit a problem it didn't expect: {error}",
     # -----------------------------------------------------------------------------
     # Scanning (services.scan_runner.ScanConfigError), all raise sites -- 3 codes
     # across 4 sites ("missing_sources" covers two).
@@ -669,6 +675,17 @@ MESSAGES: dict[str, str] = {
         "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. Add "
         "them in Settings first."
     ),
+    # -----------------------------------------------------------------------------
+    # Scanning: the background job's own status poll (api.scan.ScanStatus.error_reason,
+    # phase 11a). Not raised through ScanConfigError -- these three cover the poller's
+    # other catch arms, so the browser has a typed reason for every way a background scan
+    # can stop.
+    # -----------------------------------------------------------------------------
+    "error.scan.already_running": (
+        "A scan is already running. Wait for it to finish, then start another."
+    ),
+    "error.scan.source_unreachable": "Reaper couldn't reach one of your sources: {error}",
+    "error.scan.unexpected": "The scan hit a problem it didn't expect: {error}",
 }
 
 
@@ -701,3 +718,13 @@ class Refusal(ValueError):  # noqa: N818 -- "Refusal" is the domain noun the pla
             # A code with no catalog entry, or params that do not match its placeholders.
             # Never raise out of __str__: the fallback is the code itself, still readable.
             return template
+
+    def as_reason(self) -> Reason:
+        """This refusal's code and params, as the typed container a wire field carries.
+
+        Lets a route hand a caught ``Refusal`` straight to a ``ReasonKey`` field (``ScanStatus
+        .error_reason``, ``ReapStatus.error_reason``) the same way ``api.errors.refuse`` builds
+        one for an HTTPException: one code, one params dict, read by both readers instead of a
+        second English rendering.
+        """
+        return Reason(self.code, dict(self.params))

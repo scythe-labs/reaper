@@ -1211,11 +1211,11 @@ class LeavingSoonOut(BaseModel):
     ok: bool
     """Whether the pass did what it set out to do. Preview is not a failure; no library
     turned on, or one that failed, is."""
-    result: str
-    """The one plain sentence describing this pass, worded by the service
-    (``LeavingSoonResult.summary``) and stored on the Jobs row in the same breath. The
-    browser renders it and never composes its own, which is how the row and this response
-    came to say different things about one pass (#555)."""
+    result_reason: ReasonKey
+    """The typed reason describing this pass (``LeavingSoonResult.summary``), the same one
+    stored on the Jobs row in the same breath. The browser composes it under
+    ``jobs.result.*`` and never words its own, which is how the row and this response came
+    to say different things about one pass (#555)."""
     # `problems` used to ride here as a per-library list. It was only ever read as
     # `problems.length > 0`, never rendered, and the split that moved the wording into the
     # service took even that reader away -- so it shipped a field no operator could reach,

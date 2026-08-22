@@ -133,7 +133,7 @@ class TestTheSettingsRoutes:
                 seasons=311,
                 applied=True,
                 ok=True,
-                result="4 added, 1 cleared",
+                reason=Reason("shelf_updated", {"added": 4, "removed": 1}),
             )
             await app_settings.set_leaving_soon_last_skip(
                 session,
@@ -151,6 +151,39 @@ class TestTheSettingsRoutes:
         # The completed pass survives the skip. Overwriting it would take the shelf's only
         # true counts down with a pass that wrote nothing to Plex.
         assert (body["last"]["movies"], body["last"]["seasons"]) == (280, 311)
+        assert body["last"]["result_reason"] == {
+            "k": "shelf_updated",
+            "p": {"added": 4, "removed": 1},
+        }
+
+    async def test_a_last_pass_stored_before_the_typed_conversion_still_reads(
+        self, client: TestClient, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The same rule 96 thaw as the skip row above, for the completed-pass record: a row
+        written before phase 11a carries a bare English phrase under ``"result"`` instead of
+        a wire-encoded reason, thawed as ``Reason("legacy", {"text": ...})``. Written straight
+        into storage, since ``set_leaving_soon_last`` only ever writes the new shape now."""
+        async with factory() as session:
+            await app_settings._set(
+                session,
+                app_settings.LEAVING_SOON_LAST_KEY,
+                {
+                    "at": "2026-05-01T02:00:00+00:00",
+                    "movies": 10,
+                    "seasons": 3,
+                    "applied": True,
+                    "ok": True,
+                    "result": "6 added, 1 cleared",
+                },
+            )
+            await session.commit()
+
+        body = client.get("/api/settings/leaving-soon").json()
+
+        assert body["last"]["result_reason"] == {
+            "k": "legacy",
+            "p": {"text": "6 added, 1 cleared"},
+        }
 
     async def test_a_skip_stored_before_the_typed_conversion_still_reads(
         self, client: TestClient, factory: async_sessionmaker[AsyncSession]
@@ -251,10 +284,10 @@ class TestTheSettingsRoutes:
 
         body = client.post("/api/leaving-soon/sync").json()
 
-        assert body["result"] == "No libraries are turned on, so no shelf was updated"
+        assert body["result_reason"] == {"k": "shelf_no_libraries", "p": None}
         assert body["ok"] is False
         stored = client.get("/api/settings/leaving-soon").json()["last"]
-        assert (stored["ok"], stored["result"]) == (body["ok"], body["result"])
+        assert (stored["ok"], stored["result_reason"]) == (body["ok"], body["result_reason"])
 
     def test_a_manual_update_while_off_is_refused_in_plain_words(self, client: TestClient) -> None:
         resp = client.post("/api/leaving-soon/sync")

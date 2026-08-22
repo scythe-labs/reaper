@@ -219,21 +219,23 @@ class LeavingSoonResult:
         return not self.problems and not self.no_libraries
 
     @property
-    def summary(self) -> str:
-        """One plain sentence saying how this pass went.
+    def summary(self) -> Reason:
+        """One typed reason saying how this pass went, under ``jobs.result.*``.
 
         Every surface reporting the pass reads this one: the stored Jobs row, the response the
         "Update now" button flashes, and the Plex panel's status line. It was written twice --
         here, and again in TypeScript over the response -- and the two disagreed, because the
         route added the no-libraries case AFTER this had been stored. A pass with nothing
         turned on was stored green while the button flashed red about the same pass (#555).
+        Composing one sentence from one reason, read by every surface, is what keeps that from
+        happening again: the server states the fact, the browser says the words.
 
         The order is the fix. Nothing turned on is reported as itself rather than as preview,
         which is what ``applied`` alone calls it (it is false whenever there are no outcomes),
         and a real per-library failure beats the benign preview caveat.
         """
         if self.no_libraries:
-            return "No libraries are turned on, so no shelf was updated"
+            return Reason("shelf_no_libraries")
         if self.problems:
             # Named, not counted. "Some shelves didn't update" was the whole answer the
             # operator got, on every surface, while the response carried the failing library
@@ -243,10 +245,10 @@ class LeavingSoonResult:
             # ``str(exc)``, which is a stack-shaped sentence rule 21 keeps off the screen; it
             # stays the log's field, where a raw cause belongs.
             failed = ", ".join(o.section_title for o in self.outcomes if o.error)
-            return f"These shelves didn't update: {failed}"
+            return Reason("shelf_failed", {"libraries": failed})
         if not self.applied:
-            return "Preview only, nothing written"
-        return f"{self.added:,} added, {self.removed:,} cleared"
+            return Reason("shelf_preview")
+        return Reason("shelf_updated", {"added": self.added, "removed": self.removed})
 
 
 def _grace_keys(report: GraceReport) -> tuple[set[int], set[int], dict[int, str]]:
@@ -567,7 +569,7 @@ async def _run_pass(
             seasons=result.seasons_on_shelves,
             applied=result.applied,
             ok=result.ok,
-            result=result.summary,
+            reason=result.summary,
         )
         await session.commit()
 

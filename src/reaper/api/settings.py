@@ -243,12 +243,12 @@ class LeavingSoonLastOut(BaseModel):
     #: one turned on to update. Never false merely because it ran in preview (unarmed).
     #: This, not ``applied``, is what should color the Jobs page's status dot.
     ok: bool
-    #: The pass's own one-line summary (``LeavingSoonResult.summary``). Rendered as it
-    #: arrives: no surface words a pass of its own (#555). The Plex panel's shelf status
-    #: shows it on every pass; the Jobs row shows it only when ``ok`` is false, since
+    #: The pass's own typed reason (``LeavingSoonResult.summary``), composed under
+    #: ``jobs.result.*``: no surface words a pass of its own (#555). The Plex panel's shelf
+    #: status shows it on every pass; the Jobs row shows it only when ``ok`` is false, since
     #: ``JobStatus`` reads it as the reason a run failed and a run that worked is already
     #: described by the counts beside it.
-    result: str
+    result_reason: ReasonKey
 
 
 class LeavingSoonLastSkipOut(BaseModel):
@@ -303,7 +303,9 @@ class ScheduledJobOut(BaseModel):
     #: crashed outright and wrote no snapshot, so ScanRow can still show it failed.
     last_run_at: str | None = None
     last_ok: bool | None = None
-    last_result: str | None = None
+    #: The typed reason of the last completion (``jobs.result.*``), the browser's to compose
+    #: (``JobStatus.tsx``'s ``jobResultText``). ``null`` for a job that has never run.
+    last_result_reason: ReasonKey | None = None
 
 
 class ScheduleOut(BaseModel):
@@ -693,7 +695,7 @@ async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> Leavin
             seasons=int(last.get("seasons", 0)),
             applied=bool(last.get("applied", False)),
             ok=bool(last.get("ok", True)),
-            result=str(last.get("result", "")),
+            result_reason=ReasonKey.model_validate(to_wire(app_settings.thaw_stored_reason(last))),
         )
         if last
         else None,
@@ -780,7 +782,9 @@ async def get_schedule(request: Request) -> ScheduleOut:
                 running=job_id in running,
                 last_run_at=last.get("at") if last else None,
                 last_ok=last.get("ok") if last else None,
-                last_result=last.get("result") if last else None,
+                last_result_reason=(
+                    ReasonKey.model_validate(to_wire(last["result"])) if last else None
+                ),
             )
         )
     return ScheduleOut(jobs=jobs)

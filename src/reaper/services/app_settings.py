@@ -559,11 +559,27 @@ async def set_maintenance_schedule(session: AsyncSession, job_id: str, cron: str
 # --- upkeep job last-run ---------------------------------------------------
 
 
+def thaw_stored_reason(value: dict[str, Any]) -> Reason:
+    """Read one stored job-outcome reason: ``{"k", "p"}`` on a fresh row.
+
+    A row written before this conversion (phase 11a) carries a bare English phrase under
+    ``"result"`` instead, thawed as ``Reason("legacy", {"text": ...})`` exactly as
+    ``engine.reason.from_wire`` already does for a bare stored string (rule 96): an old row
+    still reads, it just stops being translated. One derivation shared by every job-outcome
+    reader -- ``get_job_last_runs``, ``get_leaving_soon_last``, ``get_leaving_soon_last_skip``
+    -- so a record lacking a fresh key thaws the same way everywhere (rule 104).
+    """
+    return from_wire(
+        {"k": value["k"], "p": value.get("p")} if "k" in value else str(value.get("result", ""))
+    )
+
+
 async def get_job_last_runs(session: AsyncSession) -> dict[str, dict[str, Any]]:
     """The last completion of each upkeep job, keyed by job id.
 
-    Each value is ``{"at": iso, "ok": bool, "result": str}`` -- when it last finished, whether
-    it succeeded, and a short plain-language summary. A job that has never completed is simply
+    Each value is ``{"at": iso, "ok": bool, "result": Reason}`` -- when it last finished,
+    whether it succeeded, and a typed reason the browser composes under ``jobs.result.*``
+    (``frontend/src/why.ts``'s ``jobResultText``). A job that has never completed is simply
     absent, which the Jobs page reads as "hasn't run yet". Read from the per-job rows so one
     job's write never touches another's.
     """
@@ -580,16 +596,22 @@ async def get_job_last_runs(session: AsyncSession) -> dict[str, dict[str, Any]]:
     for row in rows:
         value = json.loads(row.value_json)
         if isinstance(value, dict):
-            out[row.key[len(JOB_LAST_RUN_PREFIX) :]] = value
+            out[row.key[len(JOB_LAST_RUN_PREFIX) :]] = {
+                "at": value.get("at"),
+                "ok": value.get("ok"),
+                "result": thaw_stored_reason(value),
+            }
     return out
 
 
 async def set_job_last_run(
-    session: AsyncSession, job_id: str, *, at: str, ok: bool, result: str
+    session: AsyncSession, job_id: str, *, at: str, ok: bool, result: Reason
 ) -> None:
     """Record one upkeep job's last completion. Writes only this job's own row (rule 59)."""
     await _set(
-        session, f"{JOB_LAST_RUN_PREFIX}{job_id}", {"at": at, "ok": bool(ok), "result": result}
+        session,
+        f"{JOB_LAST_RUN_PREFIX}{job_id}",
+        {"at": at, "ok": bool(ok), **to_wire(result)},
     )
 
 
@@ -713,7 +735,13 @@ async def set_leaving_soon_unarmed(session: AsyncSession, *, allowed: bool) -> N
 
 async def get_leaving_soon_last(session: AsyncSession) -> dict[str, Any] | None:
     """What the last shelf update did: when it ran, how many movies and seasons are on
-    the shelves, and whether the writes actually landed in Plex."""
+    the shelves, and whether the writes actually landed in Plex.
+
+    The raw stored dict, wire-encoded reason and all -- ``api.settings`` reads its ``at``/
+    ``movies``/``seasons``/``applied``/``ok`` fields directly and thaws the reason itself
+    with ``thaw_stored_reason`` (rule 104), the same helper ``get_job_last_runs`` and
+    ``get_leaving_soon_last_skip`` use.
+    """
     value = await _get(session, LEAVING_SOON_LAST_KEY, default=None)
     return dict(value) if isinstance(value, dict) else None
 
@@ -726,7 +754,7 @@ async def set_leaving_soon_last(
     seasons: int,
     applied: bool,
     ok: bool,
-    result: str,
+    reason: Reason,
 ) -> None:
     await _set(
         session,
@@ -737,7 +765,7 @@ async def set_leaving_soon_last(
             "seasons": seasons,
             "applied": applied,
             "ok": ok,
-            "result": result,
+            **to_wire(reason),
         },
     )
 
@@ -746,17 +774,14 @@ async def get_leaving_soon_last_skip(session: AsyncSession) -> tuple[str, Reason
     """When the last skip happened, and why, as a typed reason.
 
     A row written before this conversion (phase 8a) carries a bare English phrase under
-    ``"result"`` instead of a wire-encoded reason; thawed as ``Reason("legacy", {"text":
-    ...})`` exactly as ``engine.reason.from_wire`` already does for a bare stored string
-    (rule 96: an old row still reads, it just stops being typed)."""
+    ``"result"`` instead of a wire-encoded reason; thawed by the same shared helper every
+    job-outcome reader uses (``thaw_stored_reason``, rule 104: an old row still reads, it
+    just stops being typed)."""
     value = await _get(session, LEAVING_SOON_LAST_SKIP_KEY, default=None)
     if not isinstance(value, dict):
         return None
     at = str(value.get("at", ""))
-    reason = from_wire(
-        {"k": value["k"], "p": value.get("p")} if "k" in value else str(value.get("result", ""))
-    )
-    return at, reason
+    return at, thaw_stored_reason(value)
 
 
 async def set_leaving_soon_last_skip(session: AsyncSession, *, at: str, reason: Reason) -> None:
