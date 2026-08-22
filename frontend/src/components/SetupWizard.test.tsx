@@ -249,8 +249,10 @@ describe("the first scan finishing", () => {
   it("says so, because nothing the operator did ended it", async () => {
     // The scan status is polled every second while it runs, and the settled panel only appears
     // once that poll has answered AND the invalidation it triggers has refetched the setup
-    // read. The clock is driven rather than waited on: a bare `findByText` races its own
-    // default 1000ms window against that same 1000ms interval (rule 133).
+    // read. The clock is driven rather than waited on, because rule 133 wants the delay asked
+    // for and not a real one sampled. It also used to be a race: the wait's window was 1000ms,
+    // the same as that interval. The window is 5000ms now (`src/test/setup.ts`, #887), so the
+    // race is gone and rule 133 is the whole reason this drives the clock.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       apiMock.scanStatus.mockResolvedValue(RUNNING);

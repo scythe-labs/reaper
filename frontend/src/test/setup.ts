@@ -7,9 +7,45 @@ import "@testing-library/jest-dom/vitest";
 // It guards its own document writes, so the node-environment test files can run it too.
 import "../i18n";
 
+import { configure, getConfig } from "@testing-library/react";
 import { afterEach } from "vitest";
 
 import { forgetWrittenUrl } from "../navUrl";
+
+// `findBy*` and `waitFor` run on Testing Library's own `asyncUtilTimeout`, and
+// `vite.config.ts`'s `testTimeout` does not reach it. It defaults to 1000ms, which is a budget
+// for waiting on a read, and this suite spends it rendering whole panels: the nine-case anchor
+// walk in `PolicyEditor.warnings.test.tsx` measured 630-948ms per case on an IDLE box, so its
+// widest case had 5% of the budget left. Three full-suite runs failed this way on branches that
+// touch none of it, each passing again alone and on a re-run (#887). Reproduced under a load of
+// 32 on a 20-core box: two full-suite runs in three, three distinct assertions, every one of
+// them a wait in that file.
+//
+// Raised rather than made deterministic, because nothing here is racing. The assertion waits for
+// a first render whose cost belongs to the machine, so there is no timer for a fake clock to
+// advance and no event for a deterministic wait to key on. Two files already answered this once:
+// `AppStaleRead.test.tsx` and `AppUrl.test.tsx` warm a `React.lazy` boundary in `beforeAll` so a
+// cold transform cannot land inside the 1000ms (#651). Both still turned up in #887's failing
+// sets, because that fix covers the one boundary it names and the cost is everywhere.
+//
+// 5000ms, well under `testTimeout`'s 15000, so an element that is genuinely missing still loses
+// HERE and prints Testing Library's "unable to find" with the DOM it searched. Let it lose to
+// `testTimeout` instead and the report is the test's name and nothing else. A real hang now costs
+// five seconds, which is cheaper than the re-run a false failure costs. Per test file, like the
+// rest of this file, so it leaves nothing behind for the next worker (rule 133).
+configure({ asyncUtilTimeout: 5000 });
+
+// Read back, for the same reason the warm-up below asserts its own effect. `configure` takes a
+// partial and ignores a key it does not know, so a rename in a major bump of
+// `@testing-library/dom` leaves this file setting nothing, every wait back on 1000ms, and #887
+// returning with no line to blame. Fail here instead, where the message names the cause.
+if (getConfig().asyncUtilTimeout !== 5000) {
+  throw new Error(
+    "Testing Library kept its own asyncUtilTimeout, so `configure` above set nothing and every " +
+      "`findBy*`/`waitFor` in the suite is back on the 1000ms default. Check whether the option " +
+      "was renamed. See #887.",
+  );
+}
 
 // This file is `setupFiles`, so it runs for EVERY test file, including the twelve carrying an
 // `@vitest-environment node` docblock. Those have no DOM at all rather than an empty one, so
@@ -37,8 +73,10 @@ if (hasDom) {
 // `*ByRole` query makes one: `queryAllByRole` filters inaccessible elements, which reads
 // computed visibility. So whichever role query runs first in a file paid that ~52ms, and
 // when that query was a test's first `await findByRole(...)` the cost landed INSIDE
-// `findBy`'s fixed 1000ms budget, spending 5% of the margin before the read it is waiting
-// for had a chance to land. Ten test files opened on a role query that way.
+// `findBy`'s budget, spending 5% of the then-1000ms margin before the read it is waiting
+// for had a chance to land. Ten test files opened on a role query that way. The budget is
+// 5000ms now (above), so this buys headroom rather than rescuing the margin, and it is still
+// ~52ms nobody has to spend inside a wait.
 //
 // Measured on a four-element DOM, so this is not about tree size and not about matching an
 // accessible name: a bare `getAllByRole("button")` costs 60ms cold and 0.6ms warm, and one

@@ -4354,6 +4354,39 @@ and dropped the six plays in progress.
 changing how much of it is asked for, and bisect by offset against the live source: the log says
 which page, and that is enough to find the row.
 
+## A `findBy` budget is not the test timeout, and 1000ms sat 5% from the render it waited on (2026-08-22)
+
+Two independent budgets bound an `await screen.findByText(...)`, and raising one never moved the
+other. `vite.config.ts` sets vitest's `testTimeout` to 15000ms, which bounds the whole test.
+Testing Library keeps its own `asyncUtilTimeout` for `findBy*` and `waitFor`, defaulted to
+1000ms, and that is the one the wait actually loses to. So a test with 13.7 seconds of headroom
+left failed at 1270ms.
+
+**Measured idle**, the nine-case anchor walk in `PolicyEditor.warnings.test.tsx` costs 630-948ms
+per case, 53 tests in 34.8s. Each case renders the whole policy editor and then waits on a probe
+string. The widest case, `condemn_at`, spent 948ms of a 1000ms budget on a box doing nothing
+else, and it runs first, so it also pays the file's cold transform.
+
+**Reproduced** by running the full suite under a load of 32 on a 20-core box: two runs in three
+failed, three distinct assertions, every one of them an `Unable to find` in that file. After
+raising the budget to 5000ms, five full-suite runs under the same load passed, 1582 tests each.
+
+**The negative result is the reason this looked like a mystery.** The same file run ALONE under
+the same load passed three times out of three, and again at a load of 21. A single-file run
+still gets a core. The failure needs the ~20 vitest workers of a full run contending with
+whatever else holds the box, which is exactly the condition nobody reproduces when they re-run
+the one file that failed and watch it pass.
+
+The class had already been answered three times, locally and correctly each time: #149 and #228
+replaced one expensive `findByRole` name query with a cheap text wait, and #651 warmed a
+`React.lazy` boundary in `beforeAll` so a cold transform could not land inside the budget. Every
+one of those fixes covered the site it named. None of them could cover the budget, and two of
+the files carrying them turned up in #887's failing sets anyway.
+
+⇒ When a wait fails well inside its test's timeout, read the waiting library's own timeout
+before reading the test. And reproduce a suspected load flake with the SUITE, never with the
+file: running the file alone removes the contention that is the whole cause.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
