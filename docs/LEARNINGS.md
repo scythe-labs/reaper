@@ -4406,9 +4406,22 @@ a property name cannot match:
   reading-order form at all, so the angle has to ride in a custom property an `[dir="rtl"]` rule
   flips.
 
-Converting both lifted the mirror to 2432/2649. What remains is two named things rather than a
-long tail: glyphs inside SVG icons keep their own coordinates (every icon BOX now mirrors, only
-the drawing inside does not), and three chart elements are positioned by a JavaScript percentage.
+Two more classes were only visible the same way, and both are things a stylesheet cannot mirror
+because they are a drawing or a number rather than a style:
+
+- **Glyphs that point along the line.** A browser mirrors layout and never artwork, and only a
+  handful of characters (brackets, angle quotes) carry the Unicode mirroring property, which
+  `→`, `›`, `↗` and `▸` do not. Six of them pointed back at the margin the reader started from.
+  The two that also rotate when open compose the flip with the rotate, scale first, because
+  `transform` is one property and a second rule would replace the first rather than add to it.
+- **The two places measuring the viewport in raw pixels.** `usePopoverShift` and `fixedMenuPos`
+  pulled a menu toward the LEFT edge whichever way the page read. Rewriting both in distances
+  from the inline-start edge removed the branch instead of adding one: the arithmetic is its own
+  mirror, and the caller converts on the way in.
+
+The mirror finished at 2445/2654. What is left is two benign classes, not a tail: the paths
+inside non-directional icons (a clock is not asymmetric because it is directional), and English
+text runs reordered by bidi, which is what English in an RTL page is supposed to do.
 
 **The rewrite is free in a left-to-right page, measured rather than argued.** 56 screenshots
 across five views, a login screen and two viewports came back pixel-identical before and after,
@@ -4416,12 +4429,20 @@ and a synthetic page carrying all 116 selectors compared 4176 computed values wi
 change. The only 60 differences were `text-align`'s computed keyword moving `left` to `start`,
 which resolves to the same used value.
 
-**Two negative results, both of which cost time to rule out.** `linear-gradient(var(--a), ...)`
+**Three negative results, each of which cost time to rule out.** `linear-gradient(var(--a), ...)`
 with `--a: 90deg` rasterizes bit-identically to the literal, so the custom-property indirection
-is not a rendering risk. And one capture in four differed from its neighbours by 59 pixels, each
-off by 1/255, on the anti-aliased corners of two poster thumbnails: a JPEG re-decode, not a style
-change. Three runs agreeing and one disagreeing is the shape to expect from a harness that loads
-remote images, so diff a suspected regression against a SECOND clean run before believing it.
+is not a rendering risk. One capture in four differed from its neighbours by 59 pixels, each off
+by 1/255, on the anti-aliased corners of two poster thumbnails: a JPEG re-decode, not a style
+change. And a release landing mid-session put an "update available" dot on the account chip,
+which widened the chip, shifted the whole masthead, and failed **53 of 56** shots at once, on a
+change that had touched none of it.
+
+⇒ **Pin every server answer the chrome renders, not just the one the page under test is about.**
+Three runs agreeing and one disagreeing is a decode flake; 53 failing in the same rectangle is a
+feed, and the shape of the diff says which before the images are opened. The harness pins the
+scan poll, the log page and the update check for this reason. The About panel cannot be pinned
+that way at all: it prints the running build's own commit, so any two commits render it
+differently, and the mock has to carry the baseline's version string for that page to compare.
 
 ⇒ A stylesheet's resistance to mirroring is not a list of property names. Convert by grep, then
 render the mirrored page and measure every box against it, because the two worst cases here were
