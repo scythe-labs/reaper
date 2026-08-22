@@ -1671,9 +1671,6 @@ export interface Safety {
    *  this rather than plain read-only: the operator is otherwise sent to a switch that
    *  cannot help them. Only a restart with the flag off clears it. */
   recovery_mode: boolean;
-  /** Why a mutating call is refused right now (`RuntimeSafety.why_blocked`), composed with
-   *  `why.ts`'s `composeError`. Null while deletion is armed. */
-  note_reason: ReasonKey | null;
 }
 
 export interface Notifications {

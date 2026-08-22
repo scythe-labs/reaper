@@ -123,7 +123,6 @@ beforeEach(() => {
   apiMock.safety.mockResolvedValue({
     destructive_enabled: false,
     has_password: true,
-    note_reason: null,
   });
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
@@ -1111,7 +1110,6 @@ describe("forgetting the recorded watch history", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: false,
       has_password: false,
-      note_reason: null,
     });
     renderPanel();
 

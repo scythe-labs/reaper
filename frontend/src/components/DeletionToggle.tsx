@@ -131,7 +131,6 @@ export function DeletionToggle() {
 
   return (
     <>
-      {/* No `data.note` here: it says where to turn deletion on, and this IS that place. */}
       <div className={`safety-state ${on ? "armed" : "safe"}`}>
         <span className="banner-dot" aria-hidden="true" />
         <div>

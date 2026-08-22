@@ -102,7 +102,6 @@ describe("the arming password", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: false,
       has_password: true,
-      note_reason: null,
     });
   });
 
@@ -130,7 +129,6 @@ describe("the arming password", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: true,
       has_password: true,
-      note_reason: null,
     });
     await person.click(screen.getByRole("button", { name: /Confirm/i }));
 
@@ -146,7 +144,6 @@ describe("the arming password", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: true,
       has_password: true,
-      note_reason: null,
     });
     await person.click(screen.getByRole("button", { name: /Confirm/i }));
 

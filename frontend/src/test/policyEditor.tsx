@@ -149,7 +149,6 @@ export function policyEditorKit(apiMock: ApiMock) {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: false,
       has_password: true,
-      note_reason: null,
     });
     apiMock.scanStatus.mockResolvedValue({
       running: false,

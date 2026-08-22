@@ -98,7 +98,6 @@ beforeEach(() => {
   apiMock.safety.mockResolvedValue({
     destructive_enabled: false,
     has_password: true,
-    note_reason: null,
   });
 });
 
@@ -336,7 +335,6 @@ describe("what the wizard says about deletion", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: true,
       has_password: true,
-      note_reason: null,
     });
     renderWizard();
 

@@ -21,7 +21,6 @@ beforeEach(() => {
   apiMock.safety.mockResolvedValue({
     destructive_enabled: false,
     has_password: true,
-    note_reason: null,
   });
 });
 afterEach(() => vi.useRealTimers());
@@ -41,7 +40,6 @@ describe("the safety state", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: true,
       has_password: true,
-      note_reason: null,
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);
