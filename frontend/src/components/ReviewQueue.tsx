@@ -117,10 +117,13 @@ import { staleReadLine, StaleReadNotice } from "./StaleReadNotice";
  *  on screen and once into the shared live region. Neither had a voice before -- both were bare
  *  `role="status"` nodes mounted with their own text, which several readers never announce -- and
  *  a hand-copied sentence in the announcement would be a second copy of an operator-facing claim
- *  free to drift from the one on screen (rule 144). */
-const NUDGE_NEWER_SCAN = i18next.t("reviewQueue.nudge.newerScan");
-const NUDGE_VIEWING_PREVIOUS = i18next.t("reviewQueue.nudge.viewingPrevious");
-const TOAST_CAUGHT_UP = i18next.t("reviewQueue.toast.caughtUp");
+ *  free to drift from the one on screen (rule 144).
+ *
+ *  Functions, not constants: this module is in the eager bundle, so a string resolved in its
+ *  body would stay English for the life of the page (`i18n-eager-catalog.test.ts`). */
+const nudgeNewerScan = () => i18next.t("reviewQueue.nudge.newerScan");
+const nudgeViewingPrevious = () => i18next.t("reviewQueue.nudge.viewingPrevious");
+const toastCaughtUp = () => i18next.t("reviewQueue.toast.caughtUp");
 
 const PAGE = 40;
 
@@ -129,7 +132,7 @@ const PAGE = 40;
 //  render window nears the end of what we have.
 const FETCH_PAGE = 100;
 
-const TABS: { verdict: Verdict; label: string; blurb: string; empty: string }[] = [
+const tabs = (): { verdict: Verdict; label: string; blurb: string; empty: string }[] => [
   {
     verdict: "condemn",
     label: i18next.t("reviewQueue.tabs.condemn.label"),
@@ -153,10 +156,8 @@ const TABS: { verdict: Verdict; label: string; blurb: string; empty: string }[] 
 /** Each lane's name, keyed by verdict. The collection screen's fate summary reads these rather
  *  than spelling the three names a second time: it is the one surface showing all three lanes
  *  at once, so a name that drifts from the tab above it reads as a different set. */
-const LANE_LABEL = Object.fromEntries(TABS.map((t) => [t.verdict, t.label])) as Record<
-  Verdict,
-  string
->;
+const laneLabels = () =>
+  Object.fromEntries(tabs().map((t) => [t.verdict, t.label])) as Record<Verdict, string>;
 
 // --- remembered filters --------------------------------------------------------------------
 // Each queue tab keeps its own filters and sort, on this device, until changed or cleared.
@@ -501,7 +502,7 @@ function RequestedChip({ who }: { who: string | null }) {
  *  that hasn't started airing yet, and the softer wording claims only what the server
  *  actually told us. A chip beside a title is ambiguous to a screen reader ("Ended" what?),
  *  so each one names its subject in the long form. */
-const SHOW_STATUS_TEXT: Record<ShowStatus, { label: string; about: string }> = {
+const showStatusText = (): Record<ShowStatus, { label: string; about: string }> => ({
   ended: {
     label: i18next.t("reviewQueue.showStatus.ended.label"),
     about: i18next.t("reviewQueue.showStatus.ended.about"),
@@ -514,7 +515,7 @@ const SHOW_STATUS_TEXT: Record<ShowStatus, { label: string; about: string }> = {
     label: i18next.t("reviewQueue.showStatus.unknown.label"),
     about: i18next.t("reviewQueue.showStatus.unknown.about"),
   },
-};
+});
 
 /** Whether the show has finished, as the one chip both the card and the why-panel wear.
  *
@@ -537,7 +538,7 @@ export function ShowStatusChip({
   // any show, so neither draws anything.
   if (status === null) return null;
   if (status === "continuing" && quiet) return null;
-  const { label, about } = SHOW_STATUS_TEXT[status];
+  const { label, about } = showStatusText()[status];
   // role="img": a plain <span> has no role, and ARIA does not let a generic element carry
   // a name, so an aria-label on one is dropped and a screen reader reads the bare "Ended".
   // A role that supports naming makes the long form the announced text; `title` keeps the
@@ -555,11 +556,11 @@ export function ShowStatusChip({
 }
 
 /** What a strip square's tooltip says about its season's lane. */
-const MARK_LABELS: Record<string, string> = {
+const markLabels = (): Record<string, string> => ({
   condemn: i18next.t("reviewQueue.markLabels.condemn"),
   protect: i18next.t("reviewQueue.markLabels.protect"),
   abstain: i18next.t("reviewQueue.markLabels.abstain"),
-};
+});
 
 /** The season strip: one small square per season of the show, colored by its fate
  *  across the WHOLE snapshot -- so "which seasons stay and which go" reads at a glance
@@ -576,6 +577,7 @@ function SeasonStrip({
   onOpen: (id: number) => void;
 }) {
   const { t } = useTranslation();
+  const lanes = markLabels();
   return (
     <div className="season-strip">
       {marks.map((mark, i) => {
@@ -616,10 +618,10 @@ function SeasonStrip({
         // scan realizes the clock, so nothing will reap it before then (rule 61).
         const lane =
           fate === "reap"
-            ? MARK_LABELS.condemn
+            ? lanes.condemn
             : fate === "spare" || fate === "spare-expired" || fate === "refused"
-              ? MARK_LABELS.protect
-              : (MARK_LABELS[mark.verdict] ?? mark.verdict);
+              ? lanes.protect
+              : (lanes[mark.verdict] ?? mark.verdict);
         return (
           <button
             type="button"
@@ -1964,7 +1966,7 @@ export function ReviewQueue({
     // watch regions that were already there -- which is the bug `Notice` reached for `role="alert"`
     // to avoid, and it is why this toast was silent while looking correct (#177). The words are
     // the toast's own, so the ear and the eye get the same sentence (rule 144).
-    announce(TOAST_CAUGHT_UP);
+    announce(toastCaughtUp());
     const id = window.setTimeout(() => setToastOn(false), 2600);
     return () => window.clearTimeout(id);
   }, [toastTick]);
@@ -1985,7 +1987,7 @@ export function ReviewQueue({
   const nudgeUp = freshness.showBar;
   const nudgeWasUp = useRef(false);
   useEffect(() => {
-    if (nudgeUp && !nudgeWasUp.current) announce(`${NUDGE_NEWER_SCAN}. ${NUDGE_VIEWING_PREVIOUS}`);
+    if (nudgeUp && !nudgeWasUp.current) announce(`${nudgeNewerScan()}. ${nudgeViewingPrevious()}`);
     nudgeWasUp.current = nudgeUp;
   }, [nudgeUp]);
 
@@ -2060,7 +2062,9 @@ export function ReviewQueue({
     });
   };
 
-  const tab = TABS.find((tb) => tb.verdict === verdict) ?? TABS[0]!;
+  const tabList = tabs();
+  const tab = tabList.find((tb) => tb.verdict === verdict) ?? tabList[0]!;
+  const laneLabel = laneLabels();
   // Memoized on the loaded set. Without it, every render re-folded every fetched candidate
   // into groups -- and a drag-select across a long list renders once per `pointerenter`
   // (P-1). Everything derived from it is memoized on it, all the way to the card props.
@@ -2421,19 +2425,19 @@ export function ReviewQueue({
                     "kept by a protection") made the same set read as a fourth vocabulary. */}
                 {collCondemned > 0 && (
                   <span className="coll-fate coll-fate-condemn">
-                    <b>{count(collCondemned)}</b> {LANE_LABEL.condemn.toLowerCase()}
+                    <b>{count(collCondemned)}</b> {laneLabel.condemn.toLowerCase()}
                   </span>
                 )}
                 {collProtected > 0 && (
                   <span className="coll-fate coll-fate-protect">
                     <b>{count(collProtected)}</b>{" "}
-                    {t("reviewQueue.collFateInLane", { lane: LANE_LABEL.protect })}
+                    {t("reviewQueue.collFateInLane", { lane: laneLabel.protect })}
                   </span>
                 )}
                 {collAbstained > 0 && (
                   <span className="coll-fate coll-fate-abstain">
                     <b>{count(collAbstained)}</b>{" "}
-                    {t("reviewQueue.collFateInLane", { lane: LANE_LABEL.abstain })}
+                    {t("reviewQueue.collFateInLane", { lane: laneLabel.abstain })}
                   </span>
                 )}
               </div>
@@ -2445,7 +2449,7 @@ export function ReviewQueue({
               navigation can land on "Review queue" the way it lands on those views. */}
             <h2>{t("reviewQueue.heading")}</h2>
             <nav className="tabs" aria-label={t("reviewQueue.tabsNavAria")}>
-              {TABS.map((tb) => (
+              {tabList.map((tb) => (
                 <button
                   key={tb.verdict}
                   className={tb.verdict === verdict ? "tab active" : "tab"}
@@ -2478,8 +2482,8 @@ export function ReviewQueue({
           <div className="scan-nudge">
             <span className="nudge-dot" aria-hidden="true" />
             <span className="nudge-text">
-              <b>{NUDGE_NEWER_SCAN}</b>
-              <span>{NUDGE_VIEWING_PREVIOUS}</span>
+              <b>{nudgeNewerScan()}</b>
+              <span>{nudgeViewingPrevious()}</span>
             </span>
             <span className="nudge-actions">
               <button type="button" className="primary sm" onClick={showLatest}>
@@ -2526,7 +2530,7 @@ export function ReviewQueue({
                 />
               </svg>
             </span>
-            <span className="scan-toast-msg">{TOAST_CAUGHT_UP}</span>
+            <span className="scan-toast-msg">{toastCaughtUp()}</span>
           </div>
         )}
 

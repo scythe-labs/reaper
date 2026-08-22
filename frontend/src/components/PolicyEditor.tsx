@@ -74,7 +74,7 @@ import {
   RESCAN_QUEUED_LEAD,
   StaleNotice,
 } from "./PolicySimulator";
-import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
+import { FixedQuantity, QuantityInput, sizeUnits, timeUnits } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
 import { SETTLE_MS, usePolicyProbe } from "../usePolicyProbe";
@@ -261,7 +261,7 @@ function GateRow({
           <span>{meta.lead ?? t("policyEditor.atLeast")}</span>
           <QuantityInput
             value={gate.threshold}
-            units={TIME_UNITS}
+            units={timeUnits()}
             min={meta.min ?? 5}
             ariaLabel={t("policyEditor.gateRow.thresholdAriaLabel", { label: meta.label })}
             describedBy={describes("threshold")}
@@ -294,7 +294,7 @@ function GateRow({
             <span>{meta.window.label}</span>
             <QuantityInput
               value={gate.window_days}
-              units={TIME_UNITS}
+              units={timeUnits()}
               min={1}
               ariaLabel={meta.window.aria}
               describedBy={describes("window_days")}
@@ -797,7 +797,7 @@ function SignalRamp({
     units.unitKind !== "fixed" ? (
       <QuantityInput
         value={value}
-        units={units.unitKind === "time" ? TIME_UNITS : SIZE_UNITS}
+        units={units.unitKind === "time" ? timeUnits() : sizeUnits()}
         min={bounds.min ?? 0}
         ariaLabel={ariaLabel}
         onChange={onNext}
@@ -2528,7 +2528,7 @@ export function PolicyEditor({
                 <span>{t("policyEditor.rewatchCard.mostRecentlyWithin")}</span>
                 <QuantityInput
                   value={draft.rewatch_recent_days}
-                  units={TIME_UNITS}
+                  units={timeUnits()}
                   min={1}
                   ariaLabel={t("policyEditor.rewatchCard.mostRecentlyWithinAriaLabel")}
                   onChange={(v) => update({ rewatch_recent_days: v })}
@@ -2749,13 +2749,13 @@ export function PolicyEditor({
                   <span className="row-h">{t("policyEditor.pace.diskFreedRowHeader")}</span>
                   <QuantityInput
                     value={pace.max_bytes_per_run}
-                    units={SIZE_UNITS}
+                    units={sizeUnits()}
                     ariaLabel={t("policyEditor.pace.mostDiskPerRunAriaLabel")}
                     onChange={(v) => updatePace({ max_bytes_per_run: v })}
                   />
                   <QuantityInput
                     value={pace.max_bytes_per_30d}
-                    units={SIZE_UNITS}
+                    units={sizeUnits()}
                     ariaLabel={t("policyEditor.pace.mostDiskPer30dAriaLabel")}
                     onChange={(v) => updatePace({ max_bytes_per_30d: v })}
                   />
@@ -2771,7 +2771,7 @@ export function PolicyEditor({
               <span className="ex-ctl">
                 <QuantityInput
                   value={pace.grace_days}
-                  units={TIME_UNITS}
+                  units={timeUnits()}
                   min={7}
                   ariaLabel={t("policyEditor.pace.gracePeriodLabel")}
                   onChange={(v) => updatePace({ grace_days: v })}

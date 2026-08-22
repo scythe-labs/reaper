@@ -13,8 +13,11 @@ import i18next from "../i18n";
 
 /** What a running scan is called, wherever one is announced or named for a screen reader: this
  *  line, the scan bar's own track and its start announcement, and the wizard's first-run track.
- *  The scan bar's two shared a constant; this line and the wizard each wrote it out (rule 144). */
-export const SCANNING_LABEL = i18next.t("shell.scanLine.scanningLabel");
+ *  The scan bar's two shared a constant; this line and the wizard each wrote it out (rule 144).
+ *
+ *  A function, not a constant: this module is in the eager bundle, so a string resolved in its
+ *  body would stay English for the life of the page (`i18n-eager-catalog.test.ts`). */
+export const scanningLabel = () => i18next.t("shell.scanLine.scanningLabel");
 
 /** A thin accent line pinned to the very top of the window while a scan runs in the
  *  background, filling to the scan's real percent and gone the moment it finishes. Ambient
@@ -32,7 +35,7 @@ export function ScanLine({ running, percent }: { running: boolean; percent: numb
     <div
       className={running ? "scanline on" : "scanline"}
       role="progressbar"
-      aria-label={SCANNING_LABEL}
+      aria-label={scanningLabel()}
       aria-hidden={!running}
       aria-valuemin={0}
       aria-valuemax={100}

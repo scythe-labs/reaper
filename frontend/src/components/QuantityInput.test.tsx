@@ -8,7 +8,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
+import { FixedQuantity, QuantityInput, sizeUnits, timeUnits } from "./QuantityInput";
 
 /** A parent that stores what the box emits, the way every real call site does. */
 function Fixed({
@@ -64,7 +64,7 @@ function Sized({ initial = 1e9, onEmit }: { initial?: number; onEmit?: (n: numbe
   return (
     <QuantityInput
       value={value}
-      units={SIZE_UNITS}
+      units={sizeUnits()}
       ariaLabel="Most disk freed per run"
       onChange={(n) => {
         setValue(n);
@@ -289,7 +289,7 @@ describe("the unit a screen reader hears", () => {
     // announces the unit as its own value. Describing the number with it as well would say
     // the unit twice on the way through the pair.
     render(
-      <QuantityInput value={60} units={TIME_UNITS} onChange={vi.fn()} ariaLabel="Grace period" />,
+      <QuantityInput value={60} units={timeUnits()} onChange={vi.fn()} ariaLabel="Grace period" />,
     );
 
     expect(screen.getByLabelText("Grace period")).not.toHaveAttribute("aria-describedby");
@@ -302,13 +302,13 @@ describe("the unit a value is shown in", () => {
     // U17: the unit was picked once, on mount, so a preset staging 7 days into a box left
     // on months read "0.23 months" -- right, and unreadable.
     const { rerender } = render(
-      <QuantityInput value={60} units={TIME_UNITS} onChange={vi.fn()} ariaLabel="Grace period" />,
+      <QuantityInput value={60} units={timeUnits()} onChange={vi.fn()} ariaLabel="Grace period" />,
     );
     expect(screen.getByLabelText("Grace period")).toHaveValue(2);
     expect(screen.getByLabelText("Grace period unit")).toHaveValue("months");
 
     rerender(
-      <QuantityInput value={7} units={TIME_UNITS} onChange={vi.fn()} ariaLabel="Grace period" />,
+      <QuantityInput value={7} units={timeUnits()} onChange={vi.fn()} ariaLabel="Grace period" />,
     );
 
     expect(screen.getByLabelText("Grace period unit")).toHaveValue("weeks");
@@ -415,7 +415,7 @@ describe("how the unit is worded beside the number", () => {
     render(
       <QuantityInput
         value={365}
-        units={TIME_UNITS}
+        units={timeUnits()}
         onChange={vi.fn()}
         ariaLabel="Minimum dormancy"
       />,
@@ -429,7 +429,7 @@ describe("how the unit is worded beside the number", () => {
     const { rerender } = render(
       <QuantityInput
         value={730}
-        units={TIME_UNITS}
+        units={timeUnits()}
         onChange={vi.fn()}
         ariaLabel="Minimum dormancy"
       />,
@@ -440,7 +440,7 @@ describe("how the unit is worded beside the number", () => {
     rerender(
       <QuantityInput
         value={400}
-        units={TIME_UNITS}
+        units={timeUnits()}
         onChange={vi.fn()}
         ariaLabel="Minimum dormancy"
       />,
@@ -454,7 +454,7 @@ describe("how the unit is worded beside the number", () => {
     render(
       <QuantityInput
         value={1e9}
-        units={SIZE_UNITS}
+        units={sizeUnits()}
         onChange={vi.fn()}
         ariaLabel="Minimum dormancy"
       />,

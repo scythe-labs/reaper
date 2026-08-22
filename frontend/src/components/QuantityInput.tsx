@@ -21,15 +21,19 @@ export interface Unit {
   singular?: string;
 }
 
-// Decimal, matching every other place a rule says GB (presets, coercion, rule
-// descriptions all use 1e9). Mixing conventions showed the same cap as two numbers.
-export const SIZE_UNITS: Unit[] = [
+/** Decimal, matching every other place a rule says GB (presets, coercion, rule
+ *  descriptions all use 1e9). Mixing conventions showed the same cap as two numbers.
+ *
+ *  A function, not a constant: this module is in the eager bundle, so a string resolved in its
+ *  body would stay English for the life of the page (`i18n-eager-catalog.test.ts`). */
+export const sizeUnits = (): Unit[] => [
   { label: i18next.t("shell.quantityInput.units.mb"), factor: 1e6 },
   { label: i18next.t("shell.quantityInput.units.gb"), factor: 1e9 },
   { label: i18next.t("shell.quantityInput.units.tb"), factor: 1e12 },
 ];
 
-export const TIME_UNITS: Unit[] = [
+/** The time units, late-resolved for the same reason `sizeUnits` is. */
+export const timeUnits = (): Unit[] => [
   {
     label: i18next.t("shell.quantityInput.units.days"),
     factor: 1,

@@ -24,7 +24,7 @@ import { composeError, composeIn } from "../why";
 import { JobStatus, jobResultText, useJobFlash } from "./JobStatus";
 import { Notice } from "./Notice";
 import { ProgressBar } from "./ProgressBar";
-import { SCANNING_LABEL } from "./ScanLine";
+import { scanningLabel } from "./ScanLine";
 
 /** Friendly names for the scan's internal phases, so the status line reads in English. A
  *  plain function rather than a frozen table, read from the catalog on every call (each id
@@ -172,7 +172,7 @@ export function ScanRow({
       // own, and the next thing said is the finish -- which for a library scan is minutes away
       // (#177). Said at `onSuccess`, so it reports a scan that actually started rather than one
       // still being asked for (rule 85); a start that fails speaks through the `Notice` below.
-      announce(`${SCANNING_LABEL}. ${t("shell.scanBar.keepsRunning")}`);
+      announce(`${scanningLabel()}. ${t("shell.scanBar.keepsRunning")}`);
     },
   });
 
@@ -305,7 +305,7 @@ export function ScanRow({
 
         {scanning ? (
           <>
-            <ProgressBar label={SCANNING_LABEL} percent={pct ?? 0} />
+            <ProgressBar label={scanningLabel()} percent={pct ?? 0} />
             <div className="jobrow-sched">{t("shell.scanBar.keepsRunning")}</div>
           </>
         ) : (

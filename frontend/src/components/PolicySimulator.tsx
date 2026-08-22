@@ -61,10 +61,10 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
  *  starts. One string, because a reader lands on that heading in the next breath and two
  *  copies of one fact drift (rule 144); `PolicyEditor` announces it from here.
  *
- *  Resolved from the catalog at module load, which is safe because `../i18n` inits
- *  synchronously with inline resources -- the `CHOOSE_SERVER_SAID` pattern
- *  (`PlexPin.tsx`), so `ListsPanel.tsx` and `PolicyEditor.tsx` keep importing this
- *  constant unchanged. */
+ *  Resolved at module load, which holds only because this module ships in a lazily imported
+ *  chunk: nothing here runs until the operator opens Policy, and the language is served before
+ *  that. A module in the eager bundle has to resolve per render instead
+ *  (`i18n-eager-catalog.test.ts`). */
 export const RESCAN_HEADING = i18next.t("policySim.rescanHeading");
 
 /** Said and shown instead when the rescan cannot carry the changes yet.

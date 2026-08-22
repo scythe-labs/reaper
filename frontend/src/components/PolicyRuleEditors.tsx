@@ -34,8 +34,8 @@ import { usePopoverShift } from "./popoverFit";
 import {
   FixedQuantity,
   QuantityInput,
-  SIZE_UNITS,
-  TIME_UNITS,
+  sizeUnits,
+  timeUnits,
   decimalsOfStep,
   useTypedNumber,
 } from "./QuantityInput";
@@ -661,7 +661,7 @@ export function RemoveRulesEditor({
                     {field.type === "days" ? (
                       <QuantityInput
                         value={rFrom}
-                        units={TIME_UNITS}
+                        units={timeUnits()}
                         ariaLabel={t("policyRules.rampStartAriaLabel")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}
@@ -670,7 +670,7 @@ export function RemoveRulesEditor({
                     ) : field.type === "bytes" ? (
                       <QuantityInput
                         value={rFrom}
-                        units={SIZE_UNITS}
+                        units={sizeUnits()}
                         ariaLabel={t("policyRules.rampStartAriaLabel")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}
@@ -690,7 +690,7 @@ export function RemoveRulesEditor({
                     {field.type === "days" ? (
                       <QuantityInput
                         value={rTo}
-                        units={TIME_UNITS}
+                        units={timeUnits()}
                         ariaLabel={t("policyRules.fullEffectAriaLabel")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}
@@ -699,7 +699,7 @@ export function RemoveRulesEditor({
                     ) : field.type === "bytes" ? (
                       <QuantityInput
                         value={rTo}
-                        units={SIZE_UNITS}
+                        units={sizeUnits()}
                         ariaLabel={t("policyRules.fullEffectAriaLabel")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}

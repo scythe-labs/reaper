@@ -278,7 +278,7 @@ export function PlexPanel({
       announce(said);
       done();
     },
-    // The picker's announcement is `usePlexPinPoll`'s (`CHOOSE_SERVER_SAID`), not this panel's.
+    // The picker's announcement is `usePlexPinPoll`'s (`chooseServerSaid`), not this panel's.
     // It was written here first and again on the login screen in that screen's own words (rule
     // 144), and `PlexPin.test.tsx` fails by name if this file states it again.
     //
