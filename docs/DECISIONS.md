@@ -1079,3 +1079,18 @@ typed `*_reason` twin rather than kept alongside it. The run journal (phase 11b)
 `to_stored`/`from_stored` (`engine/reason.py`), in the same column that used to hold the
 sentence. A row written before #899 still holds a bare English sentence, and `from_stored`
 reads it back as a `legacy` reason (rule 96), so a past run's steps keep reading correctly.
+
+**The last two composers are coded too: a connection test's own verdict, and a client's
+transport failure.** `services.instances.explain_failure` used to return a formatted string;
+it returns a `Reason` now, under `error.instance.*`. `clients/base.py`'s `IntegrationError`
+and `clients/plex.py`'s `PlexError` used to compose their own message at the raise site; each
+now carries a catalog code (`error.integration.*`, `error.plexclient.*`) and raw params, and
+renders through the same `english()` a stored explanation uses. Where a route used to nest the
+raw `str(exc)` inside its own refusal's `{error}` param, it now nests `exc.as_reason()`
+instead, so the browser composes the client's own sentence rather than reading English handed
+to it in a param. `english()` and `why.ts`'s `composeIn` both learned to recurse into a nested
+param whose id already starts with `error.`, composing it under the error namespace rather
+than `why`, since that is the shape a nested `IntegrationError`/`PlexError` code takes. A site
+catching a bare `Exception` (never a Reaper-raised type) still passes `str(exc)` through as a
+raw, unlabeled `{error}`/`{detail}` string: that text is not Reaper's own, so there is nothing
+to give a code.
