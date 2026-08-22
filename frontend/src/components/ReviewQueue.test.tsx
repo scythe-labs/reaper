@@ -292,13 +292,15 @@ describe("keeping the list in step with the latest scan", () => {
     // for it (#149). The nudge is not rendered with the list: `nudging` is set by an effect
     // that runs only once the candidates read has resolved and the snapshot mismatch has been
     // observed, so the button is two commits behind the render. A single
-    // `findByRole("button", { name })` had to cover that whole chain on one 1000ms budget,
+    // `findByRole("button", { name })` had to cover that whole chain on one budget, then 1000ms,
     // while re-computing accessible names across both cards and the open panel on every poll,
     // which is the most expensive query Testing Library has. It lost the race on a loaded CI
     // runner about one run in a few, on branches that do not touch this file at all, and the
-    // dumped DOM showed exactly this: both cards rendered, no nudge yet.
+    // dumped DOM showed exactly this: both cards rendered, no nudge yet. The budget is 5000ms
+    // now (`src/test/setup.ts`, #887), which widens the margin and does not make the one query
+    // any cheaper.
     //
-    // Two cheap text waits instead, each with its own 1000ms budget, so a genuine regression
+    // Two cheap text waits instead, each with its own budget, so a genuine regression
     // in this chain fails naming the step that broke rather than the button at the end of it.
     // Rule 137's margin sweep is how a step with no headroom is found: hold every React Query
     // notification back 200ms and re-run. That is a diagnostic to apply and revert, not

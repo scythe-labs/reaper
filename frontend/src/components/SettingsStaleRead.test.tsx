@@ -248,7 +248,8 @@ describe("the Leaving Soon row through a failed refetch", () => {
     // Settle the state this button's EXISTENCE depends on before reaching for it (#228, the
     // twin of #149). `findByRole` with a name matcher re-computes accessible names across the
     // whole Settings tree on every 50ms poll -- the most expensive query Testing Library has --
-    // and here it had to cover the shelf read landing as well, on one 1000ms budget. It lost
+    // and here it had to cover the shelf read landing as well, on one budget, then 1000ms and
+    // 5000ms now (`src/test/setup.ts`, #887). It lost
     // that race on a loaded CI runner, on commits touching nothing in this tree, and the dumped
     // DOM showed the panel still on "Loading the upkeep jobs…" with this row on "Loading…".
     //

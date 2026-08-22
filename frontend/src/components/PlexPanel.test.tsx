@@ -772,7 +772,8 @@ describe("the groups below the form, through a failed refetch", () => {
     // row in SettingsStaleRead.test.tsx). This grid is two reads deep -- the panel returns early
     // while `plex` is pending and the grid waits on `plex-libraries` behind it -- and a
     // `findByRole` with a name matcher re-computes accessible names across the whole panel on
-    // every 50ms poll, so the pair had one 1000ms budget with the looking taken out of it.
+    // every 50ms poll, so the pair had one budget with the looking taken out of it. That budget
+    // was 1000ms then and is 5000ms now (`src/test/setup.ts`, #887); the query costs the same.
     await screen.findByText("Refresh libraries");
     const toggle = screen.getByRole("switch", { name: "Let Reaper touch Movies" });
 
