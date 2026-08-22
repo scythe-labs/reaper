@@ -135,8 +135,9 @@ class TestUsers:
 
         client.get_json = fake  # type: ignore[method-assign]
         try:
-            with pytest.raises(IntegrationError, match="pageInfo"):
+            with pytest.raises(IntegrationError) as exc:
                 await client.users()
+            assert exc.value.code == "error.integration.unexpected_shape"
         finally:
             await client.aclose()
 

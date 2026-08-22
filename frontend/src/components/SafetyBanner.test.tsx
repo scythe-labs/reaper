@@ -24,7 +24,6 @@ const READ_ONLY: Safety = {
   destructive_enabled: false,
   has_password: true,
   recovery_mode: false,
-  note: null,
 };
 
 function renderBanner() {

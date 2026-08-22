@@ -52,7 +52,7 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
     # three sibling routes answer it (rule 10, rule 21, rule 72). It used to share the 400
     # above, because the service raised `PlexError` for the not-linked case too (#734).
     except PlexError as exc:
-        refuse(502, "error.plex.unreachable", error=str(exc))
+        refuse(502, "error.plex.unreachable", error=exc.as_reason())
 
     # ``ok`` and ``result_reason`` are the pass's own facts, already stored on the Jobs row by
     # the same derivation (``LeavingSoonResult.summary``). This route used to add the

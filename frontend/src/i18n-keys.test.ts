@@ -58,6 +58,7 @@ const DYNAMIC: Record<string, string[]> = {
     "lists.plexError",
     "services.discord.testResult.",
     "services.modal.mapError",
+    "services.test.",
   ],
   "errors.ts": ["error."],
   "components/PolicyRuleEditors.tsx": [

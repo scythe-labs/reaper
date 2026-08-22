@@ -76,7 +76,6 @@ beforeEach(() => {
   apiMock.safety.mockResolvedValue({
     destructive_enabled: false,
     has_password: true,
-    note: null,
   });
 });
 

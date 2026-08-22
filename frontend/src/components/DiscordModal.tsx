@@ -70,11 +70,16 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
     onMutate: () => ({ of: testedWith() }),
     onSuccess: (r, _v, issued) => {
       // The server sends a typed reason (docs/history/I18N_PLAN.md §5); composed here, once,
-      // into the same `{ok, detail, version}` shape `TestBadge` and `testSentence` already
-      // render for a connection test.
+      // under its own `services.discord.testResult` namespace (never `services.test`, which
+      // is `ServiceModal.tsx`'s own), then carried as a `legacy` reason so `TestBadge` and
+      // `testSentence` render the already-composed sentence verbatim rather than re-routing
+      // it through a namespace it does not belong to.
       const result: InstanceTest = {
         ok: r.ok,
-        detail: composeIn("services.discord.testResult", r.reason),
+        detail_reason: {
+          k: "legacy",
+          p: { text: composeIn("services.discord.testResult", r.reason) },
+        },
         version: r.version,
       };
       setTest({ result, of: issued.of });

@@ -131,7 +131,7 @@ async def get_fairness(request: Request) -> FairnessReportOut:
         # Any unreachable Seerr is a 502 with the reason -- never a partial leaderboard that
         # looks complete. (Seerr's user list / quota are best-effort inside build_report and
         # do not reach here.)
-        refuse(502, "error.fairness.build_failed", error=str(exc))
+        refuse(502, "error.fairness.build_failed", error=exc.as_reason())
 
     return FairnessReportOut(
         total_requests=report.total_requests,
@@ -175,7 +175,7 @@ async def get_person(request: Request, identity: str) -> PersonDetailOut:
                 cache=_request_cache(request),
             )
     except IntegrationError as exc:
-        refuse(502, "error.fairness.build_failed", error=str(exc))
+        refuse(502, "error.fairness.build_failed", error=exc.as_reason())
 
     if detail is None:
         refuse(404, "error.fairness.person_not_found")

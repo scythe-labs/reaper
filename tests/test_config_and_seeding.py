@@ -16,6 +16,7 @@ from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import Instance, InstanceKind
 from reaper.db.session import create_engine, create_session_factory
+from reaper.engine.reason import Reason
 from reaper.services.seeding import seed_instances
 
 
@@ -284,7 +285,14 @@ class TestRuntimeSafety:
     def test_it_ships_read_only_by_default(self) -> None:
         """The default must be safe: an unconfigured RuntimeSafety cannot delete."""
         assert RuntimeSafety().destructive_allowed is False
-        assert "turned off" in (RuntimeSafety().why_blocked() or "")
+        assert RuntimeSafety().why_blocked() == Reason("error.safety.deletion_off")
 
     def test_no_explanation_when_permitted(self) -> None:
         assert RuntimeSafety(destructive_enabled=True).why_blocked() is None
+
+    def test_recovery_mode_names_the_switch_that_cannot_clear_it(self) -> None:
+        """Recovery holds deletion off however the stored switch reads, so it takes the
+        reason ahead of the plain "deletion is off" one -- naming the other switch would
+        send the operator to a control the arm route also refuses."""
+        blocked = RuntimeSafety(destructive_enabled=True, recovery_mode=True)
+        assert blocked.why_blocked() == Reason("error.safety.recovery_mode_active")

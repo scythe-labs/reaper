@@ -48,6 +48,7 @@ from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import AppUser, AuthProvider, PendingPlexLogin, PlexServer
+from reaper.engine.reason import ReasonParam
 from reaper.refusal import Refusal
 from reaper.services.plex_link import (
     PlexLinkError,
@@ -74,9 +75,7 @@ class LoginError(Refusal):
     never 422's "well-formed but refused content."
     """
 
-    def __init__(
-        self, code: str, /, *, status: int = 401, **params: str | int | float | bool
-    ) -> None:
+    def __init__(self, code: str, /, *, status: int = 401, **params: ReasonParam) -> None:
         super().__init__(code, status=status, **params)
 
 

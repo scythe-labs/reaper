@@ -90,7 +90,7 @@ class TestAMutatingCallIsRefusedUnlessArmedAndDeclared:
         a mutation which skipped the executor cannot reach Plex."""
         session = GuardedSession(ARMED)
 
-        with pytest.raises(SafetyViolationError, match="not declared"):
+        with pytest.raises(SafetyViolationError, match="wasn't declared"):
             session.put("http://127.0.0.1:1/library/x")
 
     def test_turning_deletion_off_blocks_even_a_declared_mutation(self) -> None:
@@ -109,7 +109,7 @@ class TestAMutatingCallIsRefusedUnlessArmedAndDeclared:
         with declared_mutation():
             pass
 
-        with pytest.raises(SafetyViolationError, match="not declared"):
+        with pytest.raises(SafetyViolationError, match="wasn't declared"):
             session.post("http://127.0.0.1:1/library/x")
 
 
@@ -231,7 +231,7 @@ class TestGetShapedMutationsAreGated:
 
     def test_a_refresh_get_is_blocked_when_armed_but_not_declared(self) -> None:
         session = GuardedSession(ARMED)
-        with pytest.raises(SafetyViolationError, match="not declared"):
+        with pytest.raises(SafetyViolationError, match="wasn't declared"):
             session.get("http://127.0.0.1:1/library/sections/3/refresh")
 
     def test_a_refresh_get_passes_when_armed_and_declared(self) -> None:

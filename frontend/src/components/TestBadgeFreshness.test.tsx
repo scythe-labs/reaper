@@ -32,7 +32,11 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
-const PASSED = { ok: true, detail: "Reached", version: "4.0.1" };
+const PASSED = {
+  ok: true,
+  detail_reason: { k: "legacy", p: { text: "Reached" } },
+  version: "4.0.1",
+};
 // The Discord webhook test sends a typed reason rather than `PASSED`'s free-form `detail`
 // (docs/history/I18N_PLAN.md §5); composed by NotificationsPanel into "Posted a test
 // message to your Discord channel." (`services.discord.testResult.posted`).

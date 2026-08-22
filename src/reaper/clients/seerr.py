@@ -337,13 +337,17 @@ class SeerrClient(BaseClient):
         if not isinstance(rows, list):
             # A page whose rows cannot be read is not a page with no rows. Coerced to [],
             # it ended the walk below as though the walk were finished (rule 56/89).
-            raise IntegrationError(self.service, "/request did not return a list of results")
+            raise IntegrationError(
+                self.service, "error.integration.unexpected_shape", path="/request"
+            )
         results = [_parse_request(r, self.instance_key) for r in rows]
         if results and total <= 0:
             # Rows came back but no total did: the envelope shape changed (pageInfo moved
             # or was renamed). Treating that as total=0 would stop after one page and
             # silently undercount every requester, so refuse instead.
-            raise IntegrationError(self.service, "/request returned rows but no pageInfo total")
+            raise IntegrationError(
+                self.service, "error.integration.unexpected_shape", path="/request"
+            )
         return results, total
 
     async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
@@ -372,13 +376,16 @@ class SeerrClient(BaseClient):
                 # requester index for this scan (every lookup becomes Unknown, which keeps);
                 # continuing would report a partial set as the whole truth.
                 raise IntegrationError(
-                    self.service, f"/request stopped at {len(out)} of {total} requests"
+                    self.service,
+                    "error.integration.seerr_list_incomplete",
+                    seen=len(out),
+                    total=total,
                 )
             if pages >= MAX_PAGES:
                 # Only reachable while the reported total keeps outrunning ``skip``, which is a
                 # portal that is not advancing through the listing.
                 raise IntegrationError(
-                    self.service, f"the request list never finished, after {len(out)} requests"
+                    self.service, "error.integration.seerr_list_unbounded", count=len(out)
                 )
         log.info("seerr.requests_loaded", count=len(out), filter=filter_)
         return out
@@ -402,25 +409,32 @@ class SeerrClient(BaseClient):
             if not isinstance(results, list):
                 # Unreadable rows are not zero rows. Same defect as :meth:`requests`, and
                 # fixed the same way (rules 56/89 and 72).
-                raise IntegrationError(self.service, "/user did not return a list of results")
+                raise IntegrationError(
+                    self.service, "error.integration.unexpected_shape", path="/user"
+                )
             total = int((payload.get("pageInfo") or {}).get("results") or 0)
             if results and total <= 0:
                 # Rows but no total: the envelope shape changed. Refuse rather than stop
                 # after one page and silently undercount, exactly as :meth:`requests` does.
-                raise IntegrationError(self.service, "/user returned rows but no pageInfo total")
+                raise IntegrationError(
+                    self.service, "error.integration.unexpected_shape", path="/user"
+                )
             out.extend(_parse_user(r) for r in results)
             skip += take
             if skip >= total:
                 break
             if not results:
                 raise IntegrationError(
-                    self.service, f"/user stopped at {len(out)} of {total} accounts"
+                    self.service,
+                    "error.integration.seerr_list_incomplete",
+                    seen=len(out),
+                    total=total,
                 )
             if pages >= MAX_PAGES:
                 # The same loop, twenty lines up (rule 72). Also the only bound when a caller
                 # passes ``take=0``, where ``skip`` never advances at all.
                 raise IntegrationError(
-                    self.service, f"the account list never finished, after {len(out)} accounts"
+                    self.service, "error.integration.seerr_list_unbounded", count=len(out)
                 )
         log.info("seerr.users_loaded", count=len(out))
         return out
@@ -453,7 +467,9 @@ class SeerrClient(BaseClient):
             name = payload.get("name") or payload.get("originalName")
             released = payload.get("firstAirDate")
         if not name:
-            raise IntegrationError(self.service, f"/{kind}/{tmdb_id} carried no title")
+            raise IntegrationError(
+                self.service, "error.integration.unexpected_shape", path=f"/{kind}/{tmdb_id}"
+            )
         # A TMDB date is "YYYY-MM-DD"; the year is its first four chars. Absent or malformed
         # dates leave the year unknown rather than guessed.
         year = _as_int(str(released)[:4]) if released else None

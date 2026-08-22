@@ -587,7 +587,7 @@ async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
     try:
         return await _sync_libraries(request)
     except PlexError as exc:
-        refuse(502, "error.plex.libraries_sync_failed", error=str(exc))
+        refuse(502, "error.plex.libraries_sync_failed", error=exc.as_reason())
 
 
 async def _sync_libraries(request: Request) -> list[PlexLibraryOut]:

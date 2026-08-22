@@ -194,7 +194,7 @@ def launch_scan(app: FastAPI) -> ScanStatus:
             # code of its own -- one shared code for every source, with the client's own
             # plain-language text as its raw param (rule 21).
             status.error_reason = ReasonKey.model_validate(
-                to_wire(Reason("error.scan.source_unreachable", {"error": str(exc)}))
+                to_wire(Reason("error.scan.source_unreachable", {"error": exc.as_reason()}))
             )
             status.phase = "error"
         except Exception as exc:

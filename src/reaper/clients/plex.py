@@ -52,7 +52,9 @@ from reaper.clients.base import (
 )
 from reaper.config import RuntimeSafety
 from reaper.engine.identity import PlexFile, PlexItem, parse_guids, to_basename
+from reaper.engine.reason import Reason
 from reaper.ratings import Rating, from_plex
+from reaper.refusal import MESSAGES
 from reaper.text import fold
 
 if TYPE_CHECKING:
@@ -220,7 +222,27 @@ def _parse_sweep_element(el: Element, *, library: str | None = None) -> PlexItem
 
 
 class PlexError(RuntimeError):
-    """Plex could not be reached, or refused the operation."""
+    """Plex could not be reached, or refused the operation.
+
+    Carries a catalog code and raw params the same way ``clients.base.IntegrationError``
+    does (``error.plexclient.*`` in ``reaper.refusal.MESSAGES``); no ``service`` param,
+    since there is always exactly one Plex.
+    """
+
+    def __init__(self, code: str, /, **params: str | int | float | bool) -> None:
+        self.code = code
+        self.params: dict[str, str | int | float | bool] = params
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        template = MESSAGES.get(self.code, self.code)
+        try:
+            return template.format(**self.params)
+        except (KeyError, IndexError):
+            return template
+
+    def as_reason(self) -> Reason:
+        return Reason(self.code, dict(self.params))
 
 
 # ---------------------------------------------------------------------------
@@ -392,12 +414,7 @@ class GuardedSession(requests.Session):
                         method,
                         path,
                         reason="shelf_not_allowed",
-                        message=(
-                            f"Blocked {method} to Plex (Leaving Soon shelf). Turn deletion "
-                            'on, or turn on "Update while read-only" under Settings, Plex, '
-                            "Leaving Soon to allow this reversible shelf write while "
-                            "Reaper is read-only."
-                        ),
+                        code="error.integration.write_shelf_blocked",
                     )
             elif not self._safety.destructive_allowed:
                 refuse_mutation(
@@ -405,7 +422,8 @@ class GuardedSession(requests.Session):
                     method,
                     path,
                     reason="not_armed",
-                    message=f"Blocked {method} to Plex. {self._safety.why_blocked()}",
+                    code="error.integration.write_not_armed",
+                    why=self._safety.why_blocked() or "",
                 )
             elif not _declared.get():
                 refuse_mutation(
@@ -413,11 +431,7 @@ class GuardedSession(requests.Session):
                     method,
                     path,
                     reason="not_declared",
-                    message=(
-                        f"Blocked {method} to Plex: this mutation was not declared to the "
-                        "action journal. Destructive calls must go through the action "
-                        "executor so that they are recorded before they are sent."
-                    ),
+                    code="error.integration.write_not_declared",
                 )
         # Trace only what passed the guard and reached the wire; a blocked mutation raised
         # above and never happened. plexapi puts X-Plex-Token in the query string (rule 13),
@@ -540,9 +554,7 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
         if any(el.get("ratingKey") is None for el in raw):
             # A child the paging math cannot advance over: not the container shape the loop
             # assumes. Raise so the caller falls back / degrades, never end on a filtered page.
-            raise PlexError(
-                f"{what} returned a child with no ratingKey; refusing to read the page as complete"
-            )
+            raise PlexError("error.plexclient.paging_failed", what=what)
         yield raw
         start += len(raw)
         total_attr = container.get("totalSize")
@@ -553,20 +565,17 @@ def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[li
                 return
             if not raw:
                 # start < total but the page was empty: no progress. Fail closed.
-                raise PlexError(f"{what} stalled at {start} of {int(total_attr)}")
+                raise PlexError("error.plexclient.paging_failed", what=what)
             if pages >= SWEEP_MAX_PAGES:
                 # Only reachable while the reported total keeps outrunning ``start`` on full
                 # pages, which is a server that is not advancing through the listing.
-                raise PlexError(f"{what} never finished, after {start} items")
+                raise PlexError("error.plexclient.paging_failed", what=what)
         elif len(raw) < SWEEP_PAGE_SIZE:
             # No totalSize to lean on: a short raw page is the last page.
             return
         else:
             # A full page with no totalSize -- we cannot tell whether more remains.
-            raise PlexError(
-                f"{what} returned a full page with no totalSize; "
-                "refusing to guess it is the last page"
-            )
+            raise PlexError("error.plexclient.paging_failed", what=what)
 
 
 def _iter_section_pages(
@@ -680,7 +689,9 @@ class PlexClient:
             try:
                 built = await asyncio.to_thread(build)
             except Exception as exc:
-                raise PlexError(f"Could not reach Plex at {self._base_url}: {exc}") from exc
+                raise PlexError(
+                    "error.plexclient.connect_failed", base_url=self._base_url, detail=str(exc)
+                ) from exc
             self._server = built
             return built
 
@@ -728,7 +739,7 @@ class PlexClient:
         except SafetyViolationError:
             raise
         except Exception as exc:
-            raise PlexError(f"Could not {what}: {exc}") from exc
+            raise PlexError("error.plexclient.call_failed", what=what, detail=str(exc)) from exc
 
     # -- reading -----------------------------------------------------------
 
@@ -773,10 +784,7 @@ class PlexClient:
             # conclude that nobody is -- that is precisely the Unknown-vs-Absent
             # distinction the whole engine is built on, applied to the last check
             # before an irreversible act.
-            raise PlexError(
-                f"Could not read active sessions from Plex ({exc}). Refusing to delete: "
-                "not being able to see who is watching is not the same as nobody watching."
-            ) from exc
+            raise PlexError("error.plexclient.streams_unreadable", detail=str(exc)) from exc
 
     async def section_paths(self) -> list[PlexSectionPaths]:
         """Every library section and the paths it covers, each carrying its own key.
@@ -1023,7 +1031,7 @@ class PlexClient:
             if raw is None:
                 # No totalSize to read means the answer is not a count. Fail closed rather
                 # than fall back to ``size`` (rule 56) or guess at zero.
-                raise PlexError(f"trash listing for section {section_key} reported no totalSize")
+                raise PlexError("error.plexclient.trash_count_failed", section=section_key)
             return int(raw)
 
         # Not through `_call`: `read` raises `PlexError` itself on a missing totalSize, and
@@ -1033,7 +1041,7 @@ class PlexClient:
         except PlexError:
             raise
         except Exception as exc:
-            raise PlexError(f"Could not count the trash in section {section_key}: {exc}") from exc
+            raise PlexError("error.plexclient.trash_count_failed", section=section_key) from exc
 
     async def empties_trash_after_scan(self) -> bool:
         """Does this server empty a section's trash by itself after every scan?

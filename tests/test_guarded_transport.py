@@ -45,7 +45,7 @@ class TestMutationsAreBlocked:
         declared to the action journal *before* it is sent, so that a crash
         mid-run leaves a record of what was attempted."""
         async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
-            with pytest.raises(SafetyViolationError, match="not declared to the action journal"):
+            with pytest.raises(SafetyViolationError, match="wasn't declared to the action journal"):
                 await client._send("DELETE", "/api/v3/movie/1")
 
     async def test_a_declared_mutation_passes_when_armed(self, httpx2_mock: respx.Router) -> None:

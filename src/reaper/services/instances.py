@@ -39,7 +39,8 @@ from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
 from reaper.engine import identity
-from reaper.refusal import Refusal
+from reaper.engine.reason import Reason
+from reaper.refusal import Refusal, english
 
 log = structlog.get_logger(__name__)
 
@@ -125,8 +126,14 @@ class InstanceView:
 
 @dataclass(frozen=True)
 class TestResult:
+    """The verdict on a connection test. ``detail`` is a typed reason rather than a frozen
+    English sentence: :func:`explain_failure`'s own ``error.instance.*`` code on a failure,
+    or a ``services.test.*`` id (composed by ``ServiceModal.tsx``, never rendered server-side)
+    on a pass. Only the failure case is ever stored (``last_error``, via :func:`english`
+    below) or reflected in a log line; a pass's detail travels to the browser as-is."""
+
     ok: bool
-    detail: str
+    detail: Reason
     version: str | None = None
 
 
@@ -472,7 +479,7 @@ async def delete_instance(session: AsyncSession, instance_id: int) -> bool:
 #: Shown when nothing in the chain below recognizes the failure. Never a bare class name:
 #: "ConnectError: All connection attempts failed" is the first thing a new operator sees
 #: if a URL is wrong, and it teaches them nothing about what to change.
-_GENERIC_FAILURE = "Couldn't connect. The full reason is in Reaper's log."
+_GENERIC_FAILURE = Reason("error.instance.unrecognized")
 
 
 def _causes(exc: BaseException) -> list[BaseException]:
@@ -524,12 +531,19 @@ def _self_signed(chain: list[BaseException]) -> bool:
     )
 
 
-def explain_failure(kind: InstanceKind, exc: BaseException) -> str:
-    """One plain sentence an operator can act on, for the families we can recognize.
+def explain_failure(kind: InstanceKind, exc: BaseException) -> Reason:
+    """One plain sentence an operator can act on, as a typed reason, for the families we
+    can recognize.
 
     Everything else falls through to :data:`_GENERIC_FAILURE`; the raw exception is
     logged by the caller either way, so nothing is lost, it just is not put in front of
     someone who is only trying to get a URL and a key right.
+
+    Every branch adds something a raw client error does not know on its own -- which
+    status means "check your key" versus "check the URL", the certificate advice, the
+    generic-but-deliberate wording for a codeless ``IntegrationError`` -- so each keeps its
+    own ``error.instance.*`` code rather than nesting the client's. A code is reused across
+    call sites only where the English would be the same; this English never is.
 
     **Branch order is load-bearing** and is pinned by ``tests/test_instances.py``:
     certificate failures must be read before the transport families (they arrive wrapped
@@ -539,58 +553,42 @@ def explain_failure(kind: InstanceKind, exc: BaseException) -> str:
     transport failure is also wrapped in one.
     """
     chain = _causes(exc)
-    label = _KIND_LABEL.get(kind, "The server")
+    label = _KIND_LABEL[kind]
 
     # Certificate problems first: they surface as a ConnectError, so the transport
     # branch below would otherwise swallow the one detail that names the fix.
     if any(isinstance(e, ssl.SSLError) for e in chain):
         if _self_signed(chain):
-            return (
-                "The server's certificate is signed by an authority this machine doesn't "
-                "know. Only turn off the certificate check if this is your own server on "
-                "your own network: your API key travels on this connection."
-            )
-        return (
-            "The server's certificate was rejected. It may have expired, or be for a "
-            "different address, or something may be sitting between Reaper and the server."
-        )
+            return Reason("error.instance.cert_unknown_authority")
+        return Reason("error.instance.cert_rejected")
 
     status = exc.status if isinstance(exc, IntegrationError) else None
     if status is not None:
         if status in (401, 403):
-            return f"{label} refused the API key. Copy it again from its own settings."
+            return Reason("error.instance.auth_refused", {"service": label})
         if status == 404:
-            return (
-                f"{label} answered, but there is nothing at this address. Check for a "
-                "missing or extra path at the end of the URL."
-            )
+            return Reason("error.instance.address_empty", {"service": label})
         if status == 429:
-            return f"{label} asked Reaper to slow down. Wait a moment and test again."
+            return Reason("error.instance.rate_limited", {"service": label})
         if 300 <= status < 400:
-            return (
-                "The server sent Reaper somewhere else, and Reaper won't send your API "
-                "key to a different address. Check the URL and anything proxying it."
-            )
+            return Reason("error.instance.redirected")
         if status >= 500:
-            return f"{label} reported a problem of its own (HTTP {status}). Check its log."
-        return f"{label} refused the request (HTTP {status})."
+            return Reason("error.instance.server_error", {"service": label, "status": status})
+        return Reason("error.instance.request_refused", {"service": label, "status": status})
 
     if any(isinstance(e, httpx2.TimeoutException) for e in chain):
         if any(isinstance(e, httpx2.ConnectTimeout | httpx2.PoolTimeout) for e in chain):
-            return "Couldn't open a connection to the server in time."
-        return "The server didn't answer in time."
+            return Reason("error.instance.connect_timed_out")
+        return Reason("error.instance.read_timed_out")
     if any(isinstance(e, httpx2.UnsupportedProtocol | httpx2.InvalidURL) for e in chain):
-        return "That isn't an address Reaper can use. Start it with http:// or https://."
+        return Reason("error.instance.bad_address")
     if any(isinstance(e, httpx2.ConnectError | httpx2.ProxyError) for e in chain):
-        return (
-            "Couldn't reach the server at this address. Check the URL and port, and that "
-            "the service is running."
-        )
+        return Reason("error.instance.unreachable")
     if any(isinstance(e, httpx2.TransportError) for e in chain):
-        return "The connection to the server broke before it answered."
+        return Reason("error.instance.connection_broke")
     if any(isinstance(e, ValueError) for e in chain):
         # A body that would not parse: usually a login page or a proxy error page.
-        return f"The address answered, but not with data from {label}. Check the URL."
+        return Reason("error.instance.bad_body", {"service": label})
     if isinstance(exc, IntegrationError):
         # The server answered and reported a problem of its own, with no HTTP status to
         # go on. This is the commonest Tautulli misconfiguration: it answers a bad API
@@ -598,9 +596,7 @@ def explain_failure(kind: InstanceKind, exc: BaseException) -> str:
         # an answer in a shape Reaper could not use, and a URL that redirects in a loop.
         # The raw text stays in the log; the key and the URL are what an operator can act
         # on.
-        return (
-            f"{label} answered, but turned the request down. Check the API key first, then the URL."
-        )
+        return Reason("error.instance.refused", {"service": label})
     return _GENERIC_FAILURE
 
 
@@ -672,11 +668,17 @@ async def test_connection(
                 status = await client.system_status()  # type: ignore[attr-defined]
                 version = str(status.get("version") or "") or None
                 app = str(status.get("appName") or kind.value).strip()
-                return TestResult(ok=True, detail=f"Connected to {app}.", version=version)
+                return TestResult(
+                    ok=True,
+                    detail=Reason("services.test.connected", {"service": app}),
+                    version=version,
+                )
             if kind is InstanceKind.TAUTULLI:
                 info = await client.server_info()  # type: ignore[attr-defined]
                 name = str(info.get("pms_name") or "Plex").strip()
-                return TestResult(ok=True, detail=f"Connected. Watching {name}.")
+                return TestResult(
+                    ok=True, detail=Reason("services.test.connectedWatching", {"name": name})
+                )
             status = await client.status()  # type: ignore[attr-defined]
             version = str(status.get("version") or "") or None
             # /status needs no key, so it passes even with a wrong one. Probe an
@@ -684,7 +686,13 @@ async def test_connection(
             # going quiet and surfacing later as a scan warning with the requester signal
             # dark. A 401/403 lands in explain_failure's key-refused branch.
             await client.requests(take=1)  # type: ignore[attr-defined]
-            return TestResult(ok=True, detail="Connected to Seerr.", version=version)
+            return TestResult(
+                ok=True,
+                detail=Reason(
+                    "services.test.connected", {"service": _KIND_LABEL[InstanceKind.SEERR]}
+                ),
+                version=version,
+            )
     except Exception as exc:  # network/TLS/timeout/HTTP -- report, don't crash the request
         # The raw exception stays here, in the log, where a diagnosis needs it. What the
         # operator is shown is the plain-language translation.
@@ -715,7 +723,11 @@ async def test_saved_instance(
         if result.version:
             row.detected_version = result.version
     else:
-        row.last_error = result.detail
+        # `last_error` is a stored, untyped text column (unlike the live test's own
+        # `TestOut.detail_reason`), so this is still where a `Reason` becomes English --
+        # `english()` is the one place that happens (rule 104), same catalog the browser's
+        # own build was generated from.
+        row.last_error = english(result.detail)
     await session.flush()
     return result
 

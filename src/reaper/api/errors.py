@@ -17,7 +17,8 @@ from typing import Any, NoReturn
 
 from fastapi import HTTPException
 
-from reaper.refusal import MESSAGES, Refusal
+from reaper.engine.reason import Reason, to_wire
+from reaper.refusal import MESSAGES, Refusal, english
 
 
 class RefusalHTTPException(HTTPException):
@@ -28,6 +29,15 @@ class RefusalHTTPException(HTTPException):
     ``detail`` exactly as it always has. ``code`` and ``params`` ride beside it, read by the
     exception handler that serializes the top-level wire shape (``main.py``) and by any test
     asserting on the typed refusal rather than a transcribed sentence.
+
+    A param may itself be a nested :class:`~reaper.engine.reason.Reason` (an
+    ``IntegrationError``/``PlexError``'s own code, nested via ``as_reason()``) or a tuple of
+    them, exactly as a stored explanation's params can. ``detail`` renders it through
+    :func:`~reaper.refusal.english`, which recurses, rather than ``str.format`` alone, which
+    would print the dataclass's ``repr`` (rule 104: one renderer). ``params`` on the wire
+    encode it through :func:`~reaper.engine.reason.to_wire` for the same reason ``params``
+    themselves are wire-encoded there -- a raw ``Reason`` is not JSON serializable, and the
+    browser's own ``composeIn`` already knows how to read this exact shape back.
     """
 
     def __init__(
@@ -40,11 +50,7 @@ class RefusalHTTPException(HTTPException):
     ) -> None:
         self.code = code
         self.params: dict[str, Any] = dict(params or {})
-        template = MESSAGES.get(code, code)
-        try:
-            detail = template.format(**self.params)
-        except (KeyError, IndexError):
-            detail = template
+        detail = english(Reason(code, self.params))
         super().__init__(status_code=status_code, detail=detail, headers=headers)
 
 
@@ -65,14 +71,17 @@ def refuse_from(exc: Refusal) -> NoReturn:
 def refusal_body(status: int, code: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     """The wire shape every refusal answers with: ``detail`` (the formatted English)
     beside ``code`` and ``params``. One serializer for the exception handler and the
-    raw-ASGI auth guard alike, so the shape cannot drift between the two (rule 104)."""
-    params = dict(params or {})
-    template = MESSAGES.get(code, code)
-    try:
-        detail = template.format(**params)
-    except (KeyError, IndexError):
-        detail = template
-    return {"detail": detail, "code": code, "params": params}
+    raw-ASGI auth guard alike, so the shape cannot drift between the two (rule 104).
+
+    ``detail`` renders through :func:`~reaper.refusal.english`, so a nested ``Reason``
+    param (an ``IntegrationError``/``PlexError``'s own code) composes into its sentence
+    rather than printing a dataclass. ``params`` on the wire is ``to_wire``'s encoding of
+    the same nested value, never the raw ``Reason`` object -- which ``json.dumps`` (this
+    body's caller, both of them) cannot serialize at all."""
+    reason = Reason(code, dict(params or {}))
+    detail = english(reason)
+    wire_params = to_wire(reason).get("p", {})
+    return {"detail": detail, "code": code, "params": wire_params}
 
 
 def validation_error_items(errors: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:

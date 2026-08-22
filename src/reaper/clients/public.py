@@ -96,8 +96,9 @@ class PublicClient(BaseClient):
                         if not location:
                             raise IntegrationError(
                                 self.service,
-                                f"redirect with no Location for GET {path}",
+                                "error.integration.redirect_missing_location",
                                 status=response.status_code,
+                                path=path,
                             )
                         target = str(response.request.url.join(location))
                         continue
@@ -107,6 +108,8 @@ class PublicClient(BaseClient):
                         async for chunk in response.aiter_bytes(_CHUNK):
                             handle.write(chunk)
                     return
-            raise IntegrationError(self.service, f"too many redirects for GET {path}")
+            raise IntegrationError(
+                self.service, "error.integration.too_many_redirects", method="GET", path=path
+            )
         finally:
             self._trace("GET", path, status, started)

@@ -272,7 +272,7 @@ class ImdbList:
             payload = await client.get_json(parts.path)
 
         if not isinstance(payload, list):
-            raise IntegrationError(self.slug, "expected a JSON array")
+            raise IntegrationError(self.slug, "error.integration.unexpected_shape", path=parts.path)
 
         # Through identity.ExternalIds.of like every other id write: the mirror emits
         # `tt0000000` for a title it has no IMDb id for, and stored raw that row would be
@@ -297,9 +297,7 @@ class ImdbList:
             # silently stop protecting the titles that fell off. An IMDb chart is never
             # genuinely empty, so even the floor of 1 refuses an empty custom list.
             raise IntegrationError(
-                self.slug,
-                f"expected at least {floor} entries, got {len(items)}. Refusing to "
-                "install a truncated protection list.",
+                self.slug, "error.integration.imdb_list_truncated", floor=floor, count=len(items)
             )
         return items
 
@@ -440,10 +438,7 @@ class ArrTagRule:
                     f"keep tag {names} does not exist in {self.client.service}"
                 )
             raise IntegrationError(
-                self.client.service,
-                f"the keep tag {names} does not exist there, so anything that used to "
-                "carry it is no longer protected. The keep list was left as it was, so "
-                "add the tag back or take it out of your keep tags.",
+                self.client.service, "error.integration.keep_tag_missing", names=names
             )
 
         # id -> the operator's spelling, for the per-tag counts. Built from `wanted`, so a
@@ -584,7 +579,9 @@ class PlexCollection:
             # Not a missing container but a missing LIBRARY: a mistyped name, or one the
             # operator removed. A hard failure, recorded against the slug, exactly as the
             # raw plexapi NotFound this replaces was.
-            raise IntegrationError("plex", f"there is no library called {self.section_name!r}")
+            raise IntegrationError(
+                "plex", "error.integration.library_not_found", name=self.section_name
+            )
         for section in sections:
             try:
                 return section.collection(self.collection_name)

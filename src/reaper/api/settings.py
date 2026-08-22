@@ -183,16 +183,18 @@ class TestOut(BaseModel):
     """The verdict on a saved instance's connection test: did it reach the service, and what
     to say about it.
 
-    ``detail`` comes from an *arr/Seerr integration's own connectivity text (a probe result
-    or a transport error), which has no fixed vocabulary to catalog -- out of scope for the
-    typed-reason conversion (docs/history/I18N_PLAN.md §5) that gave the Discord webhook test
-    its own :class:`DiscordTestOut` below. The mapping a pre-save probe reads is on
+    ``detail_reason`` used to be ``detail: str``, an *arr/Seerr integration's own
+    connectivity text (a probe result or a transport error) with no fixed vocabulary to
+    catalog. It has one now: a failure carries ``services.instances.explain_failure``'s
+    ``error.instance.*`` code, and a pass a ``services.test.*`` id ``ServiceModal.tsx`` owns.
+    The field is replaced rather than kept alongside a new typed twin, the same move
+    :class:`DiscordTestOut` below made first. The mapping a pre-save probe reads is on
     :class:`InstanceProbeOut` below, because only that route can answer it and a shared shape
     said otherwise: the published contract had a Discord webhook test declaring it may return
     Sonarr root folders (rule 25)."""
 
     ok: bool
-    detail: str
+    detail_reason: ReasonKey
     version: str | None = None
 
 
@@ -336,7 +338,6 @@ class SafetyOut(BaseModel):
     false however the stored switch is set, and the banner says so in its own tone: an
     operator told only "read-only" would go to Policy, Deletion and find a switch that
     refuses (rule 53, for a state rather than a limit)."""
-    note: str | None = None
 
 
 class SafetyIn(BaseModel):
@@ -583,7 +584,9 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> Instan
     result = await instances.test_connection(
         kind, payload.base_url, payload.api_key, verify=payload.verify_tls
     )
-    out = InstanceProbeOut(ok=result.ok, detail=result.detail, version=result.version)
+    out = InstanceProbeOut(
+        ok=result.ok, detail_reason=to_wire(result.detail), version=result.version
+    )
     if not result.ok:
         return out
     try:
@@ -635,7 +638,7 @@ async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
         except instances.InstanceError as exc:
             refuse_from(exc)
         await session.commit()
-    return TestOut(ok=result.ok, detail=result.detail, version=result.version)
+    return TestOut(ok=result.ok, detail_reason=to_wire(result.detail), version=result.version)
 
 
 @router.get("/instances/{instance_id}/root-folders", tags=[api_tags.SERVICES])
@@ -659,7 +662,7 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
         except instances.InstanceError as exc:
             refuse_from(exc)
         except IntegrationError as exc:
-            refuse(502, "error.settings.folder_list_unreachable", error=str(exc))
+            refuse(502, "error.settings.folder_list_unreachable", error=exc.as_reason())
     return [RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in folders]
 
 
@@ -678,7 +681,7 @@ async def instance_seerr_services(request: Request, instance_id: int) -> list[Se
         except instances.InstanceError as exc:
             refuse_from(exc)
         except IntegrationError as exc:
-            refuse(502, "error.settings.service_list_unreachable", error=str(exc))
+            refuse(502, "error.settings.service_list_unreachable", error=exc.as_reason())
     return [SeerrServiceOut.model_validate(s, from_attributes=True) for s in services]
 
 
@@ -900,7 +903,6 @@ async def _safety_out(session: AsyncSession, safety: RuntimeSafety) -> SafetyOut
         destructive_enabled=safety.destructive_allowed,
         has_password=await admin_password.has_password(session),
         recovery_mode=safety.recovery_mode,
-        note=safety.why_blocked(),
     )
 
 
