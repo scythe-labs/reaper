@@ -546,6 +546,11 @@ class ActionStepOut(BaseModel):
     the reason sat in the row the whole time (#260). Never add a message here that is not
     already fit for the operator to read (rule 21)."""
 
+    error_key: ReasonKey | None = None
+    """The typed twin of ``error`` (phase 11b): the stored ``error_json`` column when the row
+    carries one, a ``legacy`` wrap of ``error`` when it does not, ``None`` when neither does.
+    The browser composes this and falls back to the prose above when it is absent."""
+
 
 class RunOut(BaseModel):
     """A planned or executed reap run: the durable record of what Reaper would do."""
@@ -618,6 +623,10 @@ class RunSummaryOut(BaseModel):
     state: str
     approved_at: str
     aborted_reason: str | None = None
+    aborted_reason_key: ReasonKey | None = None
+    """The typed twin of ``aborted_reason`` (phase 11b), thawed the same way
+    ``ActionStepOut.error_key`` is: the stored ``aborted_reason_json`` when present, else a
+    ``legacy`` wrap of the prose, else ``None``."""
 
 
 class RunCheckOut(BaseModel):
@@ -625,6 +634,10 @@ class RunCheckOut(BaseModel):
     whether it passed. Rendered as a ``✓``/``✗`` tick, like the why-panel's checks."""
 
     label: str
+    label_key: ReasonKey | None = None
+    """The typed twin of ``label`` (phase 11b): the live :class:`~reaper.engine.reason.Reason`
+    the executor recorded this checklist line with. Always present for a check built this
+    run; ``None`` only if a future reader constructs one with no reason at all."""
     ok: bool
 
 
@@ -636,6 +649,8 @@ class RunOutcomeOut(BaseModel):
     kind: str
     state: str  # verified | failed | skipped
     detail: str
+    detail_key: ReasonKey | None = None
+    """The typed twin of ``detail`` (phase 11b), the same way ``RunCheckOut.label_key`` is."""
     checks: list[RunCheckOut]
 
 
@@ -647,6 +662,9 @@ class RunReportOut(BaseModel):
     dry_run: bool
     state: str
     aborted_reason: str | None = None
+    aborted_reason_key: ReasonKey | None = None
+    """The typed twin of ``aborted_reason`` (phase 11b): the live
+    :class:`~reaper.engine.reason.Reason` the executor recorded on ``RunReport``."""
 
     would_delete_items: int
     """The count of items removed. In a real run this is what was actually deleted; in a

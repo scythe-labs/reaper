@@ -49,7 +49,8 @@ from reaper.crypto import SecretBox
 from reaper.db.models import ActionStep, Candidate, ReapRun, RunState
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.policy import ProfileSettings
-from reaper.engine.reason import Reason, to_wire
+from reaper.engine.reason import Reason, from_wire, legacy, to_wire
+from reaper.refusal import english
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
@@ -84,6 +85,31 @@ profile_router = APIRouter(prefix="/api", tags=[api_tags.POLICY])
 #: route. A plan of 500 seasons is 1,500 rows, each with a path and a stringified request body,
 #: and the table draws 50 of them. The rest are a route away rather than in every response.
 STEP_PAGE = 50
+
+
+def _reason_key(reason: Reason | None) -> ReasonKey | None:
+    """A typed reason as the wire shape a response model carries. One conversion (rule
+    104): used directly for a live :class:`~reaper.engine.reason.Reason` still in memory
+    (``_report_out``'s ``RunReportOut``/``RunOutcomeOut``/``RunCheckOut``), and through
+    :func:`_thaw_reason` for one recovered from a stored prose/json column pair."""
+    return None if reason is None else ReasonKey.model_validate(to_wire(reason))
+
+
+def _thaw_reason(json_col: str | None, prose: str | None) -> ReasonKey | None:
+    """The typed key beside a stored journal prose column (``ActionStep.error``,
+    ``ReapRun.aborted_reason``): the ``_json`` twin when it parses, a ``legacy`` wrap of
+    the prose when it does not or there is none, ``None`` when neither column holds
+    anything. A malformed ``_json`` blob degrades to the ``legacy`` reading rather than
+    raising a row off the queue (rule 96) -- ``from_wire`` already does the same for a
+    malformed nested shape, so only the outer ``json.loads`` needs its own guard here."""
+    if json_col:
+        try:
+            decoded = json.loads(json_col)
+        except (ValueError, TypeError):
+            decoded = None
+        if decoded is not None:
+            return _reason_key(from_wire(decoded))
+    return _reason_key(legacy(prose)) if prose else None
 
 
 async def _run_steps(session: AsyncSession, run: ReapRun) -> list[ActionStep]:
@@ -258,6 +284,7 @@ async def _run_out(
                 state=s.state.value,
                 is_canary=s.ordinal == 0,
                 error=s.error,
+                error_key=_thaw_reason(s.error_json, s.error),
             )
             for s in steps[:STEP_PAGE]
         ],
@@ -336,6 +363,7 @@ async def list_runs(
                 state=r.state.value,
                 approved_at=r.approved_at.isoformat(),
                 aborted_reason=r.aborted_reason,
+                aborted_reason_key=_thaw_reason(r.aborted_reason_json, r.aborted_reason),
             )
             for r in runs
         ]
@@ -386,6 +414,7 @@ async def get_run_steps(
                     state=s.state.value,
                     is_canary=s.ordinal == 0,
                     error=s.error,
+                    error_key=_thaw_reason(s.error_json, s.error),
                 )
                 for s in steps[offset : offset + limit]
             ],
@@ -684,7 +713,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 # Why an aborted run stopped (a cap breach, a failed canary, a changed
                 # manifest) lived only in the UI report; carry it here too, or the log
                 # cannot tell one abort from another.
-                aborted_reason=report.aborted_reason,
+                aborted_reason=english(report.aborted_reason) if report.aborted_reason else None,
             )
             # Removing files leaves the last snapshot's queue and policy preview stale, so
             # kick a fresh scan -- on a completed OR a stopped run alike, as long as at least
@@ -765,7 +794,8 @@ def _report_out(report: RunReport) -> RunReportOut:
         run_id=report.run_id,
         dry_run=report.dry_run,
         state=report.state.value,
-        aborted_reason=report.aborted_reason,
+        aborted_reason=english(report.aborted_reason) if report.aborted_reason else None,
+        aborted_reason_key=_reason_key(report.aborted_reason),
         would_delete_items=report.deleted_items,
         deleted_bytes=report.deleted_bytes,
         deleted_unmeasured=report.deleted_unmeasured,
@@ -776,8 +806,12 @@ def _report_out(report: RunReport) -> RunReportOut:
                 title=o.title,
                 kind=o.kind,
                 state=o.state.value,
-                detail=o.detail,
-                checks=[RunCheckOut(label=c.label, ok=c.ok) for c in o.checks],
+                detail=english(o.detail),
+                detail_key=_reason_key(o.detail),
+                checks=[
+                    RunCheckOut(label=english(c.label), label_key=_reason_key(c.label), ok=c.ok)
+                    for c in o.checks
+                ],
             )
             for o in report.outcomes
         ],
