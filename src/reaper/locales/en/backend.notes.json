@@ -3,6 +3,8 @@
   "discord.leaving_soon.body": "The first paragraph of the same Discord embed, above the bulleted title list. {grace_days} is a whole number of days.",
   "discord.leaving_soon.more": "A fragment appended after the bulleted title list when it was trimmed for length. {remaining} is a whole number: how many more titles are leaving soon but are not listed by name.",
   "discord.leaving_soon.open_link": "The link text at the end of the embed, back to this install. {app_name} is the operator's name for their Reaper (Settings, General), not the literal word Reaper.",
+  "discord.test.title": "The title of the test message Reaper posts to Discord when the operator presses Test on Settings, Notifications. A whole sentence, no params.",
+  "discord.test.body": "The body of that test message. A whole sentence, no params. 'Your users' are the people who watch on the operator's Plex server.",
   "launcher.tray.open": "The desktop app's tray/menu-bar icon item that opens Reaper in the browser (Windows tray, macOS menu bar).",
   "launcher.tray.quit": "The desktop app's tray/menu-bar icon item that stops the server and closes the icon.",
   "launcher.tray.tooltip": "The name shown when hovering the desktop app's tray/menu-bar icon.",

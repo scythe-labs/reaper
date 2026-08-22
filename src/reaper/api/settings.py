@@ -63,7 +63,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import InstanceKind, PlexServer
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.reason import Reason, to_wire
-from reaper.i18n import shipped_tags
+from reaper.i18n import say, shipped_tags
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import (
     admin_password,
@@ -436,13 +436,11 @@ def _validated_discord_webhook(raw: str) -> str:
     return url
 
 
-def _sample_embed() -> Embed:
+def _sample_embed(language: str) -> Embed:
+    """The test post, in the install's notification language like every other post."""
     return Embed(
-        title="Reaper is connected",
-        description=(
-            "This is a test message. If you can see it, your users will get a heads-up "
-            "here before any title is removed."
-        ),
+        title=say("discord.test.title", language),
+        description=say("discord.test.body", language),
     )
 
 
@@ -1063,19 +1061,18 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
     body omits it. Best-effort like all Discord posting: a bad webhook comes back as
     ``ok: false`` with a reason, it never raises.
     """
-    if payload.webhook_url is not None:
-        notifier: DiscordNotifier | None = DiscordNotifier(
-            _validated_discord_webhook(payload.webhook_url)
-        )
-    else:
-        async with session_factory(request)() as session:
+    async with session_factory(request)() as session:
+        language = await app_settings.get_notification_language(session)
+        if payload.webhook_url is not None:
+            notifier: DiscordNotifier | None = DiscordNotifier(
+                _validated_discord_webhook(payload.webhook_url), language=language
+            )
+        else:
             notifier = await build_notifier(session, secret_box(request), runtime_settings(request))
-        if notifier is None:
-            return DiscordTestOut(ok=False, reason=to_wire(Reason("not_configured")))
+    if notifier is None:
+        return DiscordTestOut(ok=False, reason=to_wire(Reason("not_configured")))
 
-    # Both branches above leave ``notifier`` set (the stored branch returns early when None).
-    assert notifier is not None
-    ok = await notifier.post(_sample_embed())
+    ok = await notifier.post(_sample_embed(language))
     reason = Reason("posted") if ok else Reason("failed")
     return DiscordTestOut(ok=ok, reason=to_wire(reason))
 

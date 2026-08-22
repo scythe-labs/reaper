@@ -39,13 +39,14 @@ UI_LOCALES = REPO / "frontend" / "src" / "locales"
 #: it, which is what keeps the two-way count below honest.
 _SAY_CALL_SITES = (
     SRC / "notify" / "discord.py",
+    SRC / "api" / "settings.py",
     SRC / "launcher.py",
 )
 
 #: Rule 145: the population this file's two scanning guards claim to cover, reconciled by
-#: hand against `backend.json` -- 4 discord.leaving_soon.* keys, 3 launcher.tray.* keys, 3
-#: launcher.dialog.* keys, 2 launcher.move.* keys.
-_EXPECTED_CATALOG_KEY_COUNT = 12
+#: hand against `backend.json` -- 4 discord.leaving_soon.* keys, 2 discord.test.* keys, 3
+#: launcher.tray.* keys, 3 launcher.dialog.* keys, 2 launcher.move.* keys.
+_EXPECTED_CATALOG_KEY_COUNT = 14
 
 
 def _leaves(node: object, prefix: str = "") -> dict[str, str]:

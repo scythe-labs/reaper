@@ -5,6 +5,10 @@
       "body": "Watch one and it stays. Nothing is removed automatically: they show as leaving for the next {grace_days} days, and every removal is started by hand.",
       "more": "…and {remaining, plural, one {# more.} other {# more.}}",
       "open_link": "Open {app_name}"
+    },
+    "test": {
+      "title": "Reaper is connected",
+      "body": "This is a test message. If you can see it, your users will get a heads-up here before any title is removed."
     }
   },
   "launcher": {
