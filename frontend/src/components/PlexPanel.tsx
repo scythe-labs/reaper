@@ -534,20 +534,24 @@ export function PlexPanel({
     // How the pass went is the pass's own reason, composed under `jobs.result.*` (rule 104),
     // never worded here. This line used to read `applied` and word the caveat itself, which
     // called a pass with no libraries turned on a preview, on the very screen those libraries
-    // are turned on (#555). A row stored before that field existed thaws as "" and is left
-    // out, rather than opening the line with a stray period.
+    // are turned on (#555). The period between the outcome and the line belongs to the
+    // `passLine` frame in the catalog, never appended here: a translated sentence is not
+    // edited after it is composed. A row stored before that field existed composes to "" and
+    // takes the bare line, so the frame never opens on an empty outcome.
     const resultText = jobResultText(last.result_reason);
-    const went = skipped
-      ? `${t("plex.leavingSoon.status.laterScanSkipped")} `
-      : resultText
-        ? `${resultText}. `
-        : "";
     // The counts survive a skip -- nothing was written, so the shelves still hold them -- and
     // past tense is the whole correction, exactly as the Jobs row's counts line puts it.
     const held = skipped
       ? t("plex.leavingSoon.status.heldSkipped")
       : t("plex.leavingSoon.status.held");
-    return `${went}${t("plex.leavingSoon.status.line", { since: since(last.at), movies, seasons, held })}`;
+    const line = t("plex.leavingSoon.status.line", {
+      since: since(last.at),
+      movies,
+      seasons,
+      held,
+    });
+    if (skipped) return `${t("plex.leavingSoon.status.laterScanSkipped")} ${line}`;
+    return resultText ? t("plex.leavingSoon.status.passLine", { result: resultText, line }) : line;
   })();
 
   // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask

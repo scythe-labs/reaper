@@ -579,7 +579,7 @@ async def get_job_last_runs(session: AsyncSession) -> dict[str, dict[str, Any]]:
 
     Each value is ``{"at": iso, "ok": bool, "result": Reason}`` -- when it last finished,
     whether it succeeded, and a typed reason the browser composes under ``jobs.result.*``
-    (``frontend/src/why.ts``'s ``jobResultText``). A job that has never completed is simply
+    (``JobStatus.tsx``'s ``jobResultText``). A job that has never completed is simply
     absent, which the Jobs page reads as "hasn't run yet". Read from the per-job rows so one
     job's write never touches another's.
     """

@@ -1083,6 +1083,7 @@
         "moviesCount": "{count} {n, plural, one {movie} other {movies}}",
         "neverRan": "Not updated yet. It runs after every scan, or from the Jobs page.",
         "neverRanSkipped": "The last scan didn't update the shelves. The Jobs page says why.",
+        "passLine": "{result}. {line}",
         "seasonsCount": "{count} {n, plural, one {season} other {seasons}}"
       }
     },
@@ -3125,7 +3126,7 @@
       "snapshotSummary": "{itemCount} items, <condemned>{condemnedCount}</condemned> would be removed, freeing <freed>{freedAmount}</freed>",
       "step": {
         "active_streams": "active streams",
-        "done": "{count} candidates",
+        "done": "{count, plural, one {# candidate} other {# candidates}}",
         "history_sync": "syncing watch history",
         "libraries": "movie and TV libraries",
         "lists": "refreshing protection lists",

@@ -167,7 +167,7 @@ async def _record_run(
     """Persist an upkeep job's last completion so the Jobs page can show its last-run line.
 
     ``result`` is a typed reason, a bare id under ``jobs.result.*`` plus raw params: the
-    server states the fact, the browser composes the sentence (``frontend/src/why.ts``'s
+    server states the fact, the browser composes the sentence (``JobStatus.tsx``'s
     ``jobResultText``). A no-op when ``session_factory`` is ``None`` -- the startup catch-up
     calls the job callables directly, without one, and a catch-up refresh is not an
     on-schedule/by-hand run. Never lets this bookkeeping break the job it records: a failed

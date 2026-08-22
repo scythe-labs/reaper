@@ -1065,8 +1065,8 @@ the carried `detail` when a code has no entry (an older server, a newer build).
 refusal: it is worded once, by whichever branch of `scheduler._record_run` or
 `LeavingSoonResult.summary` produced it, and read back later by a screen that never saw the
 run. So it has no English on the server at all, and the catalog under `jobs.result.*` and
-`shell.scanBar.step.*` is its only home — the same move phase 8a made for the leaving-soon
-skip reason, and every `*_result`/`detail`/`error` field this phase touches is replaced by its
+`shell.scanBar.step.*` is its only home, the same move phase 8a made for the leaving-soon
+skip reason. Every `*_result`, `detail` and `error` field this phase touches is replaced by its
 typed `*_reason` twin rather than kept alongside it. The run journal (phase 11b) keeps its
 English beside a typed key instead, because it is the audit record: an operator reads a past
 run's steps without the catalog that composed them, on a build that may since have changed
