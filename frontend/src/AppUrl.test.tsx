@@ -104,7 +104,7 @@ const SAFETY: Safety = {
   destructive_enabled: false,
   has_password: true,
   recovery_mode: false,
-  note: null,
+  note_reason: null,
 };
 
 const SNAPSHOT: Snapshot = {

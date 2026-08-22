@@ -1094,3 +1094,13 @@ than `why`, since that is the shape a nested `IntegrationError`/`PlexError` code
 catching a bare `Exception` (never a Reaper-raised type) still passes `str(exc)` through as a
 raw, unlabeled `{error}`/`{detail}` string: that text is not Reaper's own, so there is nothing
 to give a code.
+
+**One composer was still left: `RuntimeSafety.why_blocked`.** It used to return one of two
+composed sentences, recovery mode on or deletion off, or `None`. It returns a `Reason` now,
+reusing `error.safety.recovery_mode_active` and `error.safety.deletion_off`, the same two
+codes the executor's own backstop check and the execute route already raise (rule 144: one
+code per condition). Both guarded transports nest that reason as `write_not_armed`'s `why`
+param, and `SafetyViolationError.__str__` renders through `english()` instead of a bare
+`str.format`, so the nested reason composes into its own sentence there too.
+`SafetyOut.note: str | None` becomes `note_reason: ReasonKey | None`, composed by the browser
+the same way every other reason is.

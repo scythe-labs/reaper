@@ -194,7 +194,7 @@ class TestRecoveryModeHoldsDeletionOff:
             safety = client.get("/api/settings/safety").json()
             assert safety["recovery_mode"] is True
             assert safety["destructive_enabled"] is False
-            assert "Recovery mode is on" in safety["note"]
+            assert safety["note_reason"]["k"] == "error.safety.recovery_mode_active"
 
     def test_turning_deletion_off_still_needs_nothing(self, tmp_path: Path) -> None:
         """Making Reaper safer is never gated, and recovery mode does not change that."""

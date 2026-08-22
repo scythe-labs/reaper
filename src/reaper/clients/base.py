@@ -39,7 +39,7 @@ from tenacity import (
 
 from reaper.config import RuntimeSafety
 from reaper.engine.reason import Reason
-from reaper.refusal import MESSAGES
+from reaper.refusal import MESSAGES, english
 
 log = structlog.get_logger(__name__)
 
@@ -185,20 +185,21 @@ class SafetyViolationError(RuntimeError):
     application is in read-only mode. Carries a catalog code and raw params the same way
     :class:`IntegrationError` does, in the same ``error.integration.*`` namespace: the
     transport guard's own refusal is this layer's failure exactly as a client's is, just
-    for a write rather than a read.
+    for a write rather than a read. A param may itself be a :class:`Reason` (``why``, the
+    nested ``error.safety.*`` cause from ``RuntimeSafety.why_blocked``), the same shape a
+    stored explanation's own params can carry.
     """
 
-    def __init__(self, code: str, /, **params: str | int | float | bool) -> None:
+    def __init__(self, code: str, /, **params: str | int | float | bool | Reason) -> None:
         self.code = code
-        self.params: dict[str, str | int | float | bool] = params
+        self.params: dict[str, str | int | float | bool | Reason] = params
         super().__init__(str(self))
 
     def __str__(self) -> str:
-        template = MESSAGES.get(self.code, self.code)
-        try:
-            return template.format(**self.params)
-        except (KeyError, IndexError):
-            return template
+        # Through `english()`, not a bare `str.format`, so a nested `Reason` param (`why`)
+        # composes into its own sentence instead of printing the dataclass (rule 104: one
+        # renderer -- the same move `refusal.Refusal.__str__` makes).
+        return english(self.as_reason())
 
     def as_reason(self) -> Reason:
         return Reason(self.code, dict(self.params))
@@ -211,7 +212,7 @@ def refuse_mutation(
     *,
     reason: str,
     code: str,
-    **params: str | int | float | bool,
+    **params: str | int | float | bool | Reason,
 ) -> NoReturn:
     """Record a blocked write, then raise it. Both guards refuse through here.
 

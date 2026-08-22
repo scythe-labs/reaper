@@ -120,7 +120,11 @@ beforeEach(() => {
   apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 0 });
   // An install that has set an admin password and left deletion off -- the shipped state, and
   // the only one in which the reset is offered at all. The tests that vary it say so.
-  apiMock.safety.mockResolvedValue({ destructive_enabled: false, has_password: true, note: null });
+  apiMock.safety.mockResolvedValue({
+    destructive_enabled: false,
+    has_password: true,
+    note_reason: null,
+  });
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
     allow_unarmed: false,
@@ -1107,7 +1111,7 @@ describe("forgetting the recorded watch history", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: false,
       has_password: false,
-      note: null,
+      note_reason: null,
     });
     renderPanel();
 

@@ -18,7 +18,11 @@ vi.mock("./api", async (importOriginal) => ({
 beforeEach(() => {
   // `shouldAdvanceTime` keeps waitFor's own polling alive while the clock is ours to move.
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  apiMock.safety.mockResolvedValue({ destructive_enabled: false, has_password: true, note: null });
+  apiMock.safety.mockResolvedValue({
+    destructive_enabled: false,
+    has_password: true,
+    note_reason: null,
+  });
 });
 afterEach(() => vi.useRealTimers());
 
@@ -37,7 +41,7 @@ describe("the safety state", () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: true,
       has_password: true,
-      note: null,
+      note_reason: null,
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);

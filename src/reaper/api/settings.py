@@ -338,7 +338,10 @@ class SafetyOut(BaseModel):
     false however the stored switch is set, and the banner says so in its own tone: an
     operator told only "read-only" would go to Policy, Deletion and find a switch that
     refuses (rule 53, for a state rather than a limit)."""
-    note: str | None = None
+    note_reason: ReasonKey | None = None
+    """Why a mutating call is refused right now (``RuntimeSafety.why_blocked``), as the same
+    typed ``error.safety.*`` reason the transport guards carry -- composed by the browser,
+    never rendered here."""
 
 
 class SafetyIn(BaseModel):
@@ -900,11 +903,12 @@ async def run_job(request: Request, job_id: str) -> JobRunOut:
 
 
 async def _safety_out(session: AsyncSession, safety: RuntimeSafety) -> SafetyOut:
+    why = safety.why_blocked()
     return SafetyOut(
         destructive_enabled=safety.destructive_allowed,
         has_password=await admin_password.has_password(session),
         recovery_mode=safety.recovery_mode,
-        note=safety.why_blocked(),
+        note_reason=None if why is None else ReasonKey.model_validate(to_wire(why)),
     )
 
 

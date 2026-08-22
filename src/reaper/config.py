@@ -35,6 +35,8 @@ from dotenv import dotenv_values
 from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from reaper.engine.reason import Reason
+
 log = structlog.get_logger(__name__)
 
 # REAPER_SONARR_1_URL / _API_KEY / _NAME  ->  ("sonarr", "1", "URL")
@@ -479,17 +481,16 @@ class RuntimeSafety(BaseModel):
         """
         return self.destructive_allowed or self.allow_leaving_soon_unarmed
 
-    def why_blocked(self) -> str | None:
+    def why_blocked(self) -> Reason | None:
+        """Why a mutating call is refused right now, as the same typed reason the executor's
+        own backstop check and the execute route raise (``error.safety.*`` in
+        ``reaper.refusal.MESSAGES``) -- one code per condition (rule 144), read here by both
+        transport guards and the safety status route rather than composed three times.
+        """
         # Recovery first: it is the reason that the operator cannot clear from the UI, so
         # naming the other one would send them to a switch that will not help.
         if self.recovery_mode:
-            return (
-                "Recovery mode is on, so Reaper can look but can't remove anything. "
-                "Turn it off and restart."
-            )
+            return Reason("error.safety.recovery_mode_active")
         if not self.destructive_enabled:
-            return (
-                "Deletion is turned off, so Reaper can look but can't remove anything. "
-                "Turn it on in Policy -> Deletion when you're ready."
-            )
+            return Reason("error.safety.deletion_off")
         return None

@@ -8047,7 +8047,10 @@ def _refusal_code_sites() -> dict[str, list[str]]:
 
 
 _EXPECTED_REFUSAL_CODES = 309
-_EXPECTED_REFUSAL_SITES = 360
+#: +2 for `config.RuntimeSafety.why_blocked`'s two `Reason(...)` returns, reusing the two
+#: `error.safety.*` codes the executor's own backstop and the execute route already raise
+#: (rule 144) -- no new code, two new sites.
+_EXPECTED_REFUSAL_SITES = 362
 
 
 def test_every_refusal_code_has_a_raiser_and_a_catalog_entry() -> None:
