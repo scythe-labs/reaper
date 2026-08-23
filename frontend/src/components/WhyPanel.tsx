@@ -1282,8 +1282,10 @@ const WATCH_RECORD_STALE = [["candidate"], ["candidates"], ["watch-evidence"]];
 function rewatchOddsSentence(odds: RewatchOdds, mediaType: string): string {
   if (odds.state === "no_history") return i18next.t("why.panel.rewatch.noHistory");
   // Season rows read as shows, the same noun the rest of the panel uses for TV (rule 21:
-  // plain language, no internal vocabulary).
-  if (odds.state === "thin") return i18next.t("why.panel.rewatch.thin", { mediaType });
+  // plain language, no internal vocabulary). "thin" shares its catalog entry with the gate's
+  // own `RewatchOddsGate` Reason (`why.rewatch_thin`): the two sentences were byte-identical
+  // once both carried the select, so one entry serves both surfaces (rule 144).
+  if (odds.state === "thin") return composeReason({ k: "rewatch_thin", p: { mediaType } });
   const pct = Math.round((100 * odds.k) / odds.n);
   return i18next.t("why.panel.rewatch.measured", { n: odds.n, k: odds.k, pct, mediaType });
 }

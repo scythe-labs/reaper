@@ -4448,6 +4448,25 @@ differently, and the mock has to carry the baseline's version string for that pa
 render the mirrored page and measure every box against it, because the two worst cases here were
 both invisible to the grep and both obvious in the render.
 
+## An ICU `select` with its variable entirely absent prints the template, not the `other` branch (2026-08-22)
+
+Merging the movie and season halves of five `why.cause.*` pairs behind one `{mediaType, select,
+...}` key meant an old stored reason, frozen before the merge, could reach the catalog with no
+`mediaType` param at all. The assumption was that `select` degrades the way a missing plural
+count does: read `intl-messageformat` and `i18next-icu`'s own docs, expect `other`, ship it.
+
+**Wrong.** A key present with the value `undefined` (`{mediaType: undefined}`) does fall to
+`other`. A key **absent from the params object entirely** does not: `intl-messageformat` throws
+`MissingValueError` when called directly, and `i18next.t()` swallows that and returns the raw,
+unparsed template string instead, braces and all, printed straight at the operator. Proven with
+both call shapes side by side in a throwaway test before trusting either, since the two params
+objects look interchangeable and are not: `{}` breaks, `{mediaType: undefined}` does not.
+
+⇒ Before relying on ICU's `other` branch to cover a param a legacy row might lack, prove the
+missing-KEY case specifically, not just the missing-VALUE case. `why.ts`'s resolution point now
+defaults `mediaType` onto the params object for every id that carries a select and predates it,
+so the key is always present even when no caller supplied a value.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

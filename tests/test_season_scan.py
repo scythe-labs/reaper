@@ -36,7 +36,7 @@ from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
-from reaper.engine.reason import legacy
+from reaper.engine.reason import Reason, legacy
 from reaper.engine.signals import Score, SignalConfig
 from reaper.engine.signals import score as score_signals
 from reaper.ratings import Rating, RatingSource
@@ -594,11 +594,16 @@ class TestBuildSeasonFacts:
         claims the show couldn't be found when the opposite is true."""
         facts = _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.AMBIGUOUS)
         assert isinstance(facts.days_observed_unwatched, Unknown)
-        assert facts.days_observed_unwatched.reason == "plex_show_ambiguous"
+        # Shared with the movie lane now (rule 72): the same base id, media-selected.
+        assert facts.days_observed_unwatched.reason == Reason(
+            "cause.plex_ambiguous", {"mediaType": "season"}
+        )
 
         unmatched = _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.UNMATCHED)
         assert isinstance(unmatched.days_observed_unwatched, Unknown)
-        assert unmatched.days_observed_unwatched.reason == "plex_season_unmatched"
+        assert unmatched.days_observed_unwatched.reason == Reason(
+            "cause.plex_unmatched", {"mediaType": "season"}
+        )
 
     def test_a_season_unmatched_within_a_matched_show_is_warned(self) -> None:
         """The show bound to Plex but this season did not, so it abstains and shows only
@@ -2363,14 +2368,16 @@ class TestGatherEndToEnd:
         assert not guard.defers_to_owner
         # The cause is the one the season's own Unknown facts carry, character for character,
         # which is what makes `WhyPanel.LeftForYou` group all five under one heading instead
-        # of opening a second box saying the same thing (rule 144).
+        # of opening a second box saying the same thing (rule 144). `guard_result` attaches
+        # the season `mediaType` to the bare id it froze; the fact builder attaches the same
+        # param directly (rule 72's one shared table, `gates.no_key_reason`).
         cause = season_evidence.no_key_reason(identity.MatchStatus.UNMATCHED)
         assert reason_flat(guard.detail) == (
-            f"blocked[check=check.season_progress cause=cause.{cause}]"
+            f"blocked[check=check.season_progress cause=cause.{cause}[mediaType=season]]"
         )
         unwatched = by_key["sonarr:1:77:2"].facts.days_observed_unwatched
         assert isinstance(unwatched, Unknown)
-        assert unwatched.reason == cause
+        assert unwatched.reason == Reason(f"cause.{cause}", {"mediaType": "season"})
 
     async def test_a_show_without_files_logs_no_content(self, cache_engine: AsyncEngine) -> None:
         """A show Sonarr has no downloaded episodes for is dropped as no_content, and its
@@ -2620,8 +2627,12 @@ class TestShowLevelRewatchFacts:
         facts = next(j for j in judgments if j.media_key == "sonarr:1:3:1").facts
         assert isinstance(facts.rewatch_viewings, Unknown)
         assert isinstance(facts.rewatch_last_play_days, Unknown)
-        assert facts.rewatch_viewings.reason == "plex_season_unmatched"
-        assert facts.rewatch_last_play_days.reason == "plex_season_unmatched"
+        assert facts.rewatch_viewings.reason == Reason(
+            "cause.plex_unmatched", {"mediaType": "season"}
+        )
+        assert facts.rewatch_last_play_days.reason == Reason(
+            "cause.plex_unmatched", {"mediaType": "season"}
+        )
         # The cohort's Unknown carries the one shared reason (rewatch.NO_REWATCH_ESTIMATE_
         # REASON), not the match-status reason above: every "nothing to show" cause reads
         # the same to the operator (services.snapshot.build_facts's own comment).

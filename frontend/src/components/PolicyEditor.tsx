@@ -2942,6 +2942,7 @@ export function PolicyEditor({
               threshold={draft.condemn_at}
               pace={pace}
               edited={simulatedIsEdited && simulationIsSettled}
+              mediaType={mediaType}
             />
           ) : (
             <StaleNotice

@@ -53,7 +53,13 @@ from reaper.clock import from_epoch
 from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
-from reaper.engine.gates import GateId, GateResult, blocked_reason, progress_is_establishable
+from reaper.engine.gates import (
+    GateId,
+    GateResult,
+    blocked_reason,
+    no_key_reason_id,
+    progress_is_establishable,
+)
 from reaper.engine.policy import PolicyBody
 from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.services.season_pruning import SeriesPrunePlan, active_progress, plan_series_prune
@@ -381,7 +387,14 @@ def guard_result(
             GATE_ABSTAIN,
             blocked=True,
             unestablishable=True,
-            detail=blocked_reason("season_progress", progress_unknown_reason),
+            # `progress_unknown_reason` is the bare id `season_scan` froze onto the bundle
+            # (this function's own docstring above); this is the one place season context
+            # attaches the panel's `mediaType` select, since every caller of this guard is
+            # season-only.
+            detail=blocked_reason(
+                "season_progress",
+                Reason(f"cause.{progress_unknown_reason}", {"mediaType": "season"}),
+            ),
         )
 
     return GateResult(
@@ -391,29 +404,24 @@ def guard_result(
     )
 
 
-#: The show-side twin of ``snapshot._NO_KEY_REASONS``: why this season has no Plex rating
-#: key, one entry per non-matched resolver outcome. Same contract -- each value is a key
-#: into the catalog's ``why.cause.*`` entries, and
-#: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one with no entry
-#: there. Two maps rather than one shared with the movie lane because the subjects differ
-#: ("this season" against "this item", "this show" against "this title").
-_NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
-    identity.MatchStatus.UNMATCHED: "plex_season_unmatched",
-    identity.MatchStatus.AMBIGUOUS: "plex_show_ambiguous",
-    identity.MatchStatus.CONFLICTED: "sonarr_plex_disagree",
-}
-
-
 def no_key_reason(show_match_status: identity.MatchStatus | None) -> str:
-    """Why this season has no Plex rating key, in the operator's words.
+    """Why this season has no Plex rating key, as the bare catalog id.
 
-    One derivation for both readers (rule 104): ``season_scan.build_season_facts`` stamps it
-    on every Unknown observation, and ``season_scan._judge_series`` hands the same string to
-    the mid-binge guard so the panel groups all of them under one cause. Two ``.get`` calls
-    with two fallbacks is how the guard's sentence would come to name a different cause from
-    the four gates printed beside it.
+    A thin wrapper over ``gates.no_key_reason_id`` now that the movie and season lanes share
+    one ``MatchStatus`` -> id table (rule 72: this used to be its own copy, ``_NO_KEY_
+    REASONS``, naming the same three outcomes with season-flavored strings -- "this season"
+    against "this item" -- where the catalog's ICU ``mediaType`` select now carries that
+    difference instead). Kept bare rather than media-typed because this is the one caller
+    (``season_scan``'s ``progress_unknown_reason``) that freezes the id as plain text on
+    :class:`SeasonPruneInput`, through its own codec; :func:`guard_result` below is what
+    attaches ``mediaType`` when it turns the frozen id into a panel-facing cause, and every
+    OTHER season call site reads ``gates.no_key_reason`` directly for the same reason.
+
+    One derivation for both readers (rule 104): ``season_scan.build_season_facts`` stamps the
+    media-typed reason on every Unknown observation, and ``season_scan._judge_series`` hands
+    the same reason to the mid-binge guard so the panel groups all of them under one cause.
     """
-    return _NO_KEY_REASONS.get(show_match_status, "plex_season_unmatched")
+    return no_key_reason_id(show_match_status)
 
 
 #: Every field of :class:`SeasonPruneInput`, and the codec key it is stored under. Written

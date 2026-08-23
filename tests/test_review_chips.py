@@ -44,6 +44,7 @@ from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import (
     ABSTAIN,
+    NO_KEY_REASON_IDS,
     PROTECT,
     Evaluation,
     Facts,
@@ -64,10 +65,8 @@ from reaper.services.condemned import (
     MATCH_UNREADABLE,
     reap_override_verdict_decoded,
 )
-from reaper.services.season_evidence import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
 from reaper.services.season_evidence import guard_result
 from reaper.services.season_pruning import PruneConflict, SeriesPrunePlan
-from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
 from reaper.services.snapshot import HAND_SPARE_REASON, _explain
 
 from ._auth import login
@@ -945,7 +944,7 @@ class TestChip:
         never_ran = guard_result(
             SeriesPrunePlan(series_title="Show", prunable=[2]),
             2,
-            progress_unknown_reason="plex_season_unmatched",
+            progress_unknown_reason="plex_unmatched",
         )
         frozen = json.loads(
             _explain(
@@ -1747,20 +1746,20 @@ class TestTheMatchStatusVocabulary:
         }
         assert reap_override_verdict_decoded(exp, score=99) == "condemn"
 
-    @pytest.mark.parametrize(
-        "reasons",
-        [MOVIE_NO_KEY_REASONS, SEASON_NO_KEY_REASONS],
-        ids=["movie", "season"],
-    )
-    def test_every_status_has_its_own_no_key_reason(
-        self, reasons: dict[identity.MatchStatus | None, str]
-    ) -> None:
+    def test_every_status_has_its_own_no_key_reason(self) -> None:
         """Every non-matched status names its own cause, and no two share a string. A
         missing entry falls back to the ``unmatched`` wording, which is a wrong DEFINITE
-        statement ("we couldn't find this in Plex") about an item Reaper did find."""
+        statement ("we couldn't find this in Plex") about an item Reaper did find.
+
+        One shared table now (rule 72), read by both the movie and season lanes through
+        ``gates.no_key_reason`` -- this used to be two near-identical copies,
+        ``snapshot._NO_KEY_REASONS`` and ``season_evidence._NO_KEY_REASONS``, that differed
+        only in which literal each status mapped to. The panel's ICU ``mediaType`` select
+        carries that difference now.
+        """
         wanted = {s for s in identity.MatchStatus if s is not identity.MatchStatus.MATCHED}
-        assert set(reasons) == wanted
-        assert len(set(reasons.values())) == len(wanted), "two statuses share one reason"
+        assert set(NO_KEY_REASON_IDS) == wanted
+        assert len(set(NO_KEY_REASON_IDS.values())) == len(wanted), "two statuses share one reason"
 
     def test_no_reason_is_typed_by_hand(self) -> None:
         """The gate under the copy check below, and the one that makes it complete.
@@ -1847,7 +1846,7 @@ class TestTheMatchStatusVocabulary:
         operator.
         """
         plan = SeriesPrunePlan(series_title="Show", prunable=[2])
-        detail = guard_result(plan, 2, progress_unknown_reason="plex_season_unmatched").detail
+        detail = guard_result(plan, 2, progress_unknown_reason="plex_unmatched").detail
         assert detail.id == "blocked"
         check = detail.params["check"]
         assert isinstance(check, Reason)
@@ -1934,12 +1933,8 @@ class TestTheMatchStatusVocabulary:
                 {
                     **checked,
                     **{
-                        f"_NO_KEY_REASONS[{s.name if s else None}]": r
-                        for s, r in MOVIE_NO_KEY_REASONS.items()
-                    },
-                    **{
-                        f"season _NO_KEY_REASONS[{s.name if s else None}]": r
-                        for s, r in SEASON_NO_KEY_REASONS.items()
+                        f"NO_KEY_REASON_IDS[{s.name if s else None}]": r
+                        for s, r in NO_KEY_REASON_IDS.items()
                     },
                 }.items()
             )
@@ -1964,7 +1959,7 @@ class TestTheMatchStatusVocabulary:
         would print the raw backend phrase at the operator holding one, reopening #282.
 
         The population is the same one the forward walk trusts: every module-level
-        ``*_REASON`` string under ``src/reaper``, plus both ``_NO_KEY_REASONS`` maps. A
+        ``*_REASON`` string under ``src/reaper``, plus the ``NO_KEY_REASON_IDS`` map. A
         producer spelled some other way is therefore invisible here and reads as orphaned --
         the failure direction that costs a written line, not a wrong claim at the operator.
 
@@ -1974,12 +1969,16 @@ class TestTheMatchStatusVocabulary:
         """
         keys = set(_catalog_causes())
         # Rule 145: pin what the walk covers, reconciled by hand against the catalog.
-        assert len(keys) == 29, (
+        # 29 -> 24: the movie/season merge behind one media-typed key (rule 72) retired five
+        # season-only entries -- plex_season_unmatched, plex_show_ambiguous,
+        # sonarr_plex_disagree, no_season_added_at, no_season_size -- whose surviving
+        # movie-side sibling now carries both wordings behind an ICU `mediaType` select.
+        assert len(keys) == 24, (
             f"why.cause holds {len(keys)} entries. If you added or removed one, bump this\n"
             "count deliberately."
         )
         producers = set(_reason_constants().values())
-        producers |= set(MOVIE_NO_KEY_REASONS.values()) | set(SEASON_NO_KEY_REASONS.values())
+        producers |= set(NO_KEY_REASON_IDS.values())
         producers |= set(_COMPOSED_CAUSE_IDS)
         orphaned = [
             k

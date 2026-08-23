@@ -209,6 +209,7 @@ export function Outcome({
   threshold,
   pace,
   edited,
+  mediaType,
 }: {
   simulation: Simulation;
   threshold: number;
@@ -222,6 +223,9 @@ export function Outcome({
    *  describe two different bodies for a round trip, and the sentence below is categorical
    *  enough that the mismatch reads as a finding rather than as a stale number (rule 85). */
   edited: boolean;
+  /** Which policy this simulation ran under, so the spared-by list's `gateMeta` label can
+   *  pick the movie/TV wording the same way the rewatch card's own copy does. */
+  mediaType: "movie" | "tv";
 }) {
   const { t } = useTranslation();
   const moreExamples = simulation.newly_condemned - simulation.examples_newly_condemned.length;
@@ -306,7 +310,7 @@ export function Outcome({
                 the panel read while deciding what to delete (#551, rule 21). */}
             {simulation.protected_by.map((g) => (
               <div key={g.gate}>
-                <dt>{gateMeta()[g.gate]?.label ?? unnamedGateLabel()}</dt>
+                <dt>{gateMeta(mediaType)[g.gate]?.label ?? unnamedGateLabel()}</dt>
                 <dd>{count(g.count)}</dd>
               </div>
             ))}

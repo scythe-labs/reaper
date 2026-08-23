@@ -46,10 +46,43 @@ function lookup(key: string, params?: Record<string, unknown>): string | undefin
   return i18next.exists(key) ? i18next.t(key, params ?? {}) : undefined;
 }
 
+// The movie and season halves of five `why.cause.*` pairs merged behind one media-typed
+// key (identical concept, two literal ids -- `plex_unmatched`/`plex_season_unmatched` and
+// four siblings). A scan snapshot frozen before that merge can still hold the retired
+// season-side id, with no `mediaType` param at all: the catalog no longer has an entry for
+// it, so this rewrites it to the surviving id plus the param the merge added, and the row
+// renders the same "this season"/"Sonarr" wording it always did. Serves only rows frozen
+// before the merge; delete once those scans have aged out of the last `keep_scans`
+// snapshots Reaper keeps (`services.retention.KEEP_SNAPSHOTS`).
+const RETIRED_SEASON_CAUSE_ALIASES: Record<string, string> = {
+  "cause.plex_season_unmatched": "cause.plex_unmatched",
+  "cause.plex_show_ambiguous": "cause.plex_ambiguous",
+  "cause.sonarr_plex_disagree": "cause.radarr_plex_disagree",
+  "cause.no_season_added_at": "cause.no_added_at",
+  "cause.no_season_size": "cause.no_file_size",
+};
+
+// Every id that carries a `mediaType` select today but has a stored row from before it did:
+// the five merged `cause.*` ids above, by their surviving key, plus `rewatch_thin`
+// (RewatchOddsGate's own thin-cohort Reason, which shared its exact wording with the
+// why-panel's evidence block until the two were merged behind this one entry, #906).
+// ICU's `select` does not fall to `other` when the variable is entirely absent from params
+// -- it leaves the raw template unparsed instead, proven in why.test.ts -- so a row frozen
+// before its select shipped prints broken syntax rather than the sentence it always
+// rendered. Defaulted below to the wording those bare rows always had (every one of them
+// was a movie row, since `rewatch_thin` used the same "titles" wording on both lanes); a
+// fresh row's own "movie"/"season" param overrides it like any other entry the loop below
+// sets.
+const MEDIA_TYPED_IDS = new Set([...Object.values(RETIRED_SEASON_CAUSE_ALIASES), "rewatch_thin"]);
+
 export function composeIn(namespace: string, key: ReasonKey): string {
   if (key.k === "legacy") return String(key.p?.text ?? "");
+  const retiredId = namespace === "why" ? RETIRED_SEASON_CAUSE_ALIASES[key.k] : undefined;
+  const aliased: ReasonKey = retiredId
+    ? { k: retiredId, p: { ...(key.p ?? {}), mediaType: "season" } }
+    : key;
   const params: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(key.p ?? {})) {
+  for (const [name, value] of Object.entries(aliased.p ?? {})) {
     if (isReasonKey(value)) {
       // A nested reason whose own id is a full `error.*` catalog code (an
       // `IntegrationError`/`PlexError`'s own code, carried in via `as_reason()`) composes
@@ -73,6 +106,9 @@ export function composeIn(namespace: string, key: ReasonKey): string {
       }
     }
   }
+  if (MEDIA_TYPED_IDS.has(aliased.k) && !("mediaType" in params)) {
+    params.mediaType = "movie";
+  }
   if (typeof params.field === "string") {
     const label = lookup(`why.field.${params.field}`);
     params.field_label = label ?? params.field;
@@ -82,15 +118,15 @@ export function composeIn(namespace: string, key: ReasonKey): string {
   if (typeof params.source === "string") {
     params.source_label = lookup(`why.source.${params.source}`) ?? params.source;
   }
-  const text = lookup(`${namespace}.${key.k}`, params);
+  const text = lookup(`${namespace}.${aliased.k}`, params);
   if (text !== undefined) return text;
   // An id this build has no entry for: a stored legacy sentence riding in a slot, or a
   // row written by a newer build. Render what identifies it rather than dropping the row
   // (the same never-blank-the-panel posture the backend readers take), shorn of a slot
   // namespace so a legacy cause sentence reads as itself.
-  const raw = key.p?.text;
+  const raw = aliased.p?.text;
   if (typeof raw === "string" && raw) return raw;
-  return key.k.replace(/^(cause|check)\./, "");
+  return aliased.k.replace(/^(cause|check)\./, "");
 }
 
 export function composeReason(key: ReasonKey): string {

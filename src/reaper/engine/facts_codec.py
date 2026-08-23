@@ -26,7 +26,7 @@ from typing import Any
 
 from reaper.engine.gates import Facts, GateId, GateResult, thaw_defers_to_owner
 from reaper.engine.observation import Absent, Known, Observation, Unknown
-from reaper.engine.reason import from_wire, to_wire
+from reaper.engine.reason import Reason, from_wire, to_wire
 from reaper.ratings import Rating, RatingSource
 
 #: The two ``Facts`` fields that are not observations, each serialized by hand above.
@@ -81,7 +81,12 @@ def _obs_to_dict(obs: Observation[Any]) -> dict[str, Any]:
         return {"k": "known", "v": obs.value, "s": obs.source}
     if isinstance(obs, Absent):
         return {"k": "absent", "s": obs.source}
-    return {"k": "unknown", "r": obs.reason, "s": obs.source}
+    # A bare id (``"imdb_unreadable"``) stores as itself, same as always. A producer that
+    # needed a param (the movie/season media select) hands ``Unknown`` a full ``Reason``
+    # instead (``gates.no_key_reason`` and friends), and that one is wire-encoded like any
+    # other stored ``Reason`` so its params round-trip too.
+    reason = to_wire(obs.reason) if isinstance(obs.reason, Reason) else obs.reason
+    return {"k": "unknown", "r": reason, "s": obs.source}
 
 
 def _obs_from_dict(d: dict[str, Any]) -> Observation[Any]:
@@ -94,8 +99,11 @@ def _obs_from_dict(d: dict[str, Any]) -> Observation[Any]:
     # catalog id. It stays that string: a re-decision wraps it as a cause via
     # ``gates.blocked_reason``, which a consumer keyed on catalog ids simply will not
     # match, and the frontend's missing-entry fallback (``why.ts`` composeIn) renders it
-    # raw -- the same "not translated" reading it had before the conversion.
-    return Unknown(reason=d["r"], source=d["s"])
+    # raw -- the same "not translated" reading it had before the conversion. A dict is the
+    # media-typed shape ``to_wire`` produces above, and decodes back through ``from_wire``.
+    raw = d["r"]
+    reason = from_wire(raw) if isinstance(raw, dict) else raw
+    return Unknown(reason=reason, source=d["s"])
 
 
 def _rating_to_dict(r: Rating) -> dict[str, Any]:

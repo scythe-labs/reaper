@@ -220,7 +220,13 @@ describe("the outcome panel on an edit that changes no title", () => {
 
   function renderOutcome(sim: Partial<Simulation>, edited: boolean) {
     return render(
-      <Outcome simulation={{ ...BASE, ...sim }} threshold={62} pace={null} edited={edited} />,
+      <Outcome
+        simulation={{ ...BASE, ...sim }}
+        threshold={62}
+        pace={null}
+        edited={edited}
+        mediaType="movie"
+      />,
     );
   }
 
@@ -323,9 +329,18 @@ describe("the outcome panel on an edit that changes no title", () => {
 // the operator wrote -- read as "Season Progression" and "Custom" beside their counts, in the
 // panel someone reads while deciding what to delete (rule 21).
 describe("what the spared-by list calls each protection", () => {
-  function renderSpared(protected_by: { gate: string; count: number }[]) {
+  function renderSpared(
+    protected_by: { gate: string; count: number }[],
+    mediaType: "movie" | "tv" = "movie",
+  ) {
     return render(
-      <Outcome simulation={{ ...BASE, protected_by }} threshold={62} pace={null} edited={false} />,
+      <Outcome
+        simulation={{ ...BASE, protected_by }}
+        threshold={62}
+        pace={null}
+        edited={false}
+        mediaType={mediaType}
+      />,
     );
   }
 
@@ -359,6 +374,18 @@ describe("what the spared-by list calls each protection", () => {
     expect(screen.queryByText(slug)).not.toBeInTheDocument();
     expect(screen.queryByText(gate)).not.toBeInTheDocument();
     expect(tally(label)).toBe("40");
+  });
+
+  it("picks the rewatch-odds label's movie or TV wording off the simulator's own policy", () => {
+    renderSpared([{ gate: "rewatch_odds", count: 12 }], "movie");
+    expect(
+      screen.getByText("Keep titles most likely to be rewatched above a percentage"),
+    ).toBeInTheDocument();
+
+    renderSpared([{ gate: "rewatch_odds", count: 12 }], "tv");
+    expect(
+      screen.getByText("Keep shows most likely to be rewatched above a percentage"),
+    ).toBeInTheDocument();
   });
 
   it("still says something true about an id it has no copy for", () => {

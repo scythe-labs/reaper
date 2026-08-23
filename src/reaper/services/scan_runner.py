@@ -189,6 +189,18 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
                 RatingFloorGate(rules=policy.rating_rules(), match=policy.keep_rating_match)
             )
             continue
+        if setting.gate is GateId.REWATCH_ODDS:
+            # The one gate whose Reason needs to say "shows" on a TV policy. `Facts` carries
+            # no media discriminator of its own (`gates.no_key_reason`'s movie/season merge is
+            # attached per item, off the fact builder; this gate is built once per POLICY), so
+            # the wording is set here, off the same ``media_type`` the policy body carries.
+            gates.append(
+                RewatchOddsGate(
+                    GateConfig(threshold=setting.threshold, window_days=setting.window_days),
+                    media_type="season" if policy.media_type == "tv" else "movie",
+                )
+            )
+            continue
         gate_type = GATE_TYPES.get(setting.gate)
         if gate_type is None:
             # The two list gates reach this by a different route and need their own sentence.

@@ -33,6 +33,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
+from reaper.engine import identity
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.reason import Reason
 from reaper.ratings import (
@@ -94,9 +95,10 @@ class GateId(enum.StrEnum):
     all, whatever else it scores. See MinDormancyGate."""
 
     REWATCH_ODDS = "rewatch_odds"
-    """Opt-in, movies only: keep anything whose dormancy cohort gets watched again at or
-    above the operator's percentage. See RewatchOddsGate; a TV body never carries the row
-    (``PolicyBody._rewatch_odds_row``)."""
+    """Opt-in, both lanes: keep anything whose dormancy cohort gets watched again at or above
+    the operator's percentage. See RewatchOddsGate; every body carries the row, movie and TV
+    alike (``PolicyBody._rewatch_odds_row``), off each policy's own frozen cohort -- a movie's
+    own, a season's the show's."""
 
     RETURNED = "returned"
     """Opt-in, both lanes: hold a title that left the library and came back, because a return
@@ -557,6 +559,70 @@ def _blocked(
             detail=blocked_reason(what, observation.reason),
         )
     return None
+
+
+#: A movie or a season/show -- the same two-way split ``why.panel.rewatch.thin`` and
+#: ``why.panel.keptNotice.conflicted`` already carry as an ICU ``mediaType`` select in the
+#: catalog. Named here because the reasons below are the shared producer for both lanes.
+MediaKind = Literal["movie", "season"]
+
+#: Why an item/season/show carries no Plex rating key, one entry per non-matched resolver
+#: outcome -- shared by the movie and season lanes (rule 72: this used to be two near-copies,
+#: ``snapshot._NO_KEY_REASONS`` and ``season_evidence._NO_KEY_REASONS``, that differed only in
+#: which literal each ``MatchStatus`` mapped to). A KEY into the catalog's ``why.cause.*``
+#: entries, which the ICU ``mediaType`` select turns into "this title"/"this season" wording;
+#: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one with no entry there.
+NO_KEY_REASON_IDS: dict[identity.MatchStatus | None, str] = {
+    identity.MatchStatus.UNMATCHED: "plex_unmatched",
+    identity.MatchStatus.AMBIGUOUS: "plex_ambiguous",
+    identity.MatchStatus.CONFLICTED: "radarr_plex_disagree",
+}
+
+
+def no_key_reason_id(match_status: identity.MatchStatus | None) -> str:
+    """The bare catalog id for why an item has no Plex rating key, with no media wording
+    attached. ``None`` (a record from before the field shipped) takes the unmatched wording,
+    which it has always read as.
+
+    This is the shape ``season_evidence``'s ``SeasonPruneInput.progress_unknown_reason`` field
+    stores: a plain id, because that field's own codec (``season_evidence._KEYS``) freezes it
+    as a bare string, and the mid-binge guard (``season_evidence.guard_result``) is the one
+    place season context attaches the ``mediaType`` param, since every caller of *this*
+    function is season-only anyway.
+    """
+    return NO_KEY_REASON_IDS.get(match_status, "plex_unmatched")
+
+
+def no_key_reason(match_status: identity.MatchStatus | None, media_type: MediaKind) -> Reason:
+    """The typed cause for a missing Plex rating key: the shared id above, plus which wording
+    the panel's ``mediaType`` select should pick. What ``Unknown(reason=...)`` carries directly
+    on the movie and season fact builders (rule 72)."""
+    return Reason(f"cause.{no_key_reason_id(match_status)}", {"mediaType": media_type})
+
+
+#: Why dormancy (or an all-time span) could not be measured: matched to Plex, but no arrival
+#: date and no play, so there is no instant to measure from. Shared by the movie and season
+#: lanes (rule 72: this used to be ``snapshot.NO_ADDED_AT_REASON``/``season_scan.NO_ADDED_AT_
+#: REASON``, two constants naming the same concept two different ways). A KEY into the
+#: catalog's ``why.cause.*`` entries, named here so the drift test covers it (rule 144).
+NO_ADDED_AT_REASON = "no_added_at"
+
+#: Why a file/season's size is unreadable: the *arr reported no size on disk. Shared the same
+#: way as the reason above (rule 72: was ``snapshot.NO_SIZE_REASON``/``season_scan.NO_SIZE_
+#: REASON``). Reaches the panel through a keep rule on "Size on disk".
+NO_SIZE_REASON = "no_file_size"
+
+
+def no_added_at_reason(media_type: MediaKind) -> Reason:
+    """The typed cause for a missing arrival date, media-selected the same way as
+    :func:`no_key_reason`."""
+    return Reason(f"cause.{NO_ADDED_AT_REASON}", {"mediaType": media_type})
+
+
+def no_size_reason(media_type: MediaKind) -> Reason:
+    """The typed cause for a missing on-disk size, media-selected the same way as
+    :func:`no_key_reason`."""
+    return Reason(f"cause.{NO_SIZE_REASON}", {"mediaType": media_type})
 
 
 def _rating_value(rating: Rating) -> Reason:
@@ -1023,6 +1089,14 @@ class RewatchOddsGate:
 
     config: GateConfig
     id: GateId = GateId.REWATCH_ODDS
+    media_type: MediaKind = "movie"
+    """Which wording the panel's ICU ``mediaType`` select should pick for this gate's thin-cohort
+    Reason -- "movie" or "season". ``Facts`` carries no media discriminator of its own (unlike
+    ``KeepConfig.media_type`` in ``engine/signals.py``, the rewatch keep's own twin), so this is
+    set once at construction (``scan_runner.build_gates``, off the policy's own ``media_type``)
+    rather than read per item. Defaulted to "movie" so a hand-built gate in a test needs no
+    opinion about it (rule 141: sweep both values where it matters, which the season fixtures
+    below do)."""
 
     def evaluate(self, facts: Facts) -> GateResult:
         n_obs = facts.rewatch_cohort_n
@@ -1041,7 +1115,11 @@ class RewatchOddsGate:
         n = int(n_obs.value)
         k = int(k_obs.value)
         if n < REWATCH_BLOCK_FLOOR_N:
-            return GateResult(self.id, ABSTAIN, detail=Reason("rewatch_thin"))
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                detail=Reason("rewatch_thin", {"mediaType": self.media_type}),
+            )
         floor = self.config.threshold
         if wilson_upper(k, n) * 100 >= floor:
             # Lowercase fragment: it renders in the "Protections that fired" list.
