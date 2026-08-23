@@ -13,14 +13,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine, select
 from sqlalchemy import create_engine as sa_create_engine
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from reaper import logbuffer
@@ -151,16 +151,28 @@ def _explanation(score: float) -> str:
     )
 
 
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
+def _boot(tmp_path: Path) -> tuple[Settings, Engine, str, datetime]:
+    """A fresh throwaway install, migrated, plus the list fingerprint a scan records --
+    without it the simulator refuses, which is right for a snapshot that cannot say and
+    useless here. The caller seeds its own rows on the returned engine and commits before
+    handing both to :func:`_client`."""
     settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
+    return settings, engine, seeded_fingerprint(settings), utcnow()
 
-    now = utcnow()
+
+def _client(settings: Settings, engine: Engine) -> Iterator[TestClient]:
+    """Close the seeding engine and hand back a client logged in on the same install."""
+    engine.dispose()
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+@pytest.fixture
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    settings, engine, list_hash, now = _boot(tmp_path)
     with Session(engine) as session:
         snapshot = Snapshot(
             created_at=now,
@@ -362,11 +374,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             FirstFlagged(media_key="radarr:1:10", first_flagged_at=now, last_seen_condemned_at=now)
         )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 class TestTheRunsApi:
@@ -575,14 +583,7 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
     one I asked for" and "planned the whole set" the same number -- so the selection could
     not be told from the fall-through. Three is the smallest count that distinguishes them.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    # What a scan records about the lists it gathered membership under: without it the
-    # simulator refuses, which is right for a snapshot that cannot say and useless here.
-    list_hash = seeded_fingerprint(settings)
-
-    now = utcnow()
+    settings, engine, list_hash, now = _boot(tmp_path)
     with Session(engine) as session:
         snapshot = Snapshot(
             created_at=now,
@@ -643,11 +644,7 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
             for n in (10, 11, 12)
         )
         session.commit()
-    engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
+    yield from _client(settings, engine)
 
 
 class TestTheRunSelectionIsExplicit:

@@ -52,14 +52,13 @@ import { announce } from "../announce";
 import { describeError } from "../errors";
 import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
 import { DocLink, HelpIcon } from "../docs/DocLink";
-import { bytes, count, humanDays } from "../format";
+import { bytes, count, humanDays, list } from "../format";
 import i18next from "../i18n";
 import { DeletionToggle } from "./DeletionToggle";
 import { gateMeta, signalMeta, titleCase } from "./policyMeta";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 import {
   activePreset,
-  andList,
   DEFAULT_WEIGHTS,
   presets,
   REMOVAL_POINTS,
@@ -2112,7 +2111,7 @@ export function PolicyEditor({
                 {tvKeepClauses.length > 0 && (
                   <>
                     {t("policyEditor.intent.alwaysKeeps")}
-                    <strong>{andList(tvKeepClauses)}</strong>
+                    <strong>{list(tvKeepClauses)}</strong>
                   </>
                 )}
                 {paceTail}
@@ -2971,4 +2970,4 @@ export function PolicyEditor({
 
 // Re-exported so the preset helpers keep their old import path while callers and tests move
 // over to ./policyPresets, which now owns them (R-2).
-export { andList, weightsMatchMix } from "./policyPresets";
+export { weightsMatchMix } from "./policyPresets";

@@ -15,7 +15,6 @@
 // module first loaded (`i18n-module-scope.test.ts`).
 
 import type { PolicyBody, ProfileSettings } from "../api";
-import { list } from "../format";
 import i18next from "../i18n";
 
 // ---------------------------------------------------------------------------
@@ -187,16 +186,4 @@ export function activePreset(draft: PolicyBody): PresetId | null {
   const mix = DEFAULT_WEIGHTS[draft.media_type === "tv" ? "tv" : "movie"];
   if (!weightsMatchMix(draft, mix)) return null;
   return presets().find((p) => p.condemn_at === draft.condemn_at)?.id ?? null;
-}
-
-/** A list said the way a person would: "A", "A and B", "A, B, and C". Used by the intent
- *  summary, whose clauses are pushed one at a time as their switches turn on, so the
- *  number of them is never known ahead of time.
- *
- *  Delegates to `format.ts`'s `list()` (`Intl.ListFormat`) rather than hand-rolling the
- *  glue words here a second time -- the same "a, b, and c" job Stage 2 already moved off
- *  hand-built English for `WhyPanel`'s `joinChecks` (rule 72). Locale-correct for free,
- *  and nothing to add to the catalog: the glue is native, not copy. */
-export function andList(parts: string[]): string {
-  return list(parts);
 }

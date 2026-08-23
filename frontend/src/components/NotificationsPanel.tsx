@@ -12,40 +12,15 @@ import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { languageName } from "../i18n";
 import { useSuccessorFocus } from "../focus";
-import { api, type InstanceTest } from "../api";
+import { api } from "../api";
 import { describeError } from "../errors";
-import { composeDiscordTestResult, TestBadge, testSentence } from "./ServiceModal";
+import { TestBadge, useWebhookTest } from "./ServiceModal";
 import { SetRow } from "./SetRow";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
 
-/** Client-side twin of the server's webhook validation (reaper/api/settings.py). The token
- *  lives in the URL path, so a typo'd host would leak it to a stranger -- we only accept an
- *  https URL whose host is Discord's webhook endpoint (subdomains like ptb./canary. count)
- *  and whose path is a real /api/webhooks/ path. The server checks the same thing; this just
- *  spares a round-trip and gives an instant hint. */
-const DISCORD_WEBHOOK_HOSTS = ["discord.com", "discordapp.com"];
-
 /** The webhook box's format complaint, named once for both ends (rule 67). */
 const WEBHOOK_ERROR_ID = "discord-webhook-error";
-
-/** Exported so `DiscordModal` checks the format the same way this panel does. A second copy
- *  of these host and path rules would be one validator written twice, and the copy that drifts
- *  is the one that starts accepting a URL the backend then refuses (rule 18, rule 144). */
-export function isDiscordWebhook(raw: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(raw.trim());
-  } catch {
-    return false;
-  }
-  if (url.protocol !== "https:") return false;
-  const host = url.hostname.toLowerCase();
-  const okHost =
-    DISCORD_WEBHOOK_HOSTS.includes(host) ||
-    DISCORD_WEBHOOK_HOSTS.some((h) => host.endsWith("." + h));
-  return okHost && url.pathname.startsWith("/api/webhooks/");
-}
 
 /** The Discord webhook is the only channel that actually warns your users before a title
  *  is deleted -- the Plex "Leaving Soon" label only reaches people who pinned the library. It
@@ -67,16 +42,18 @@ export function NotificationsPanel({
     queryFn: api.notifications,
   });
   const [url, setUrl] = useState("");
-  // The result and the URL it was computed for, the same pairing `ServiceModal` keeps for its own
-  // badge (rule 72). Save, Remove and the Test button each cleared this, but EDITING the box did
-  // not, so a passed test then a pasted-over URL left "Passed" beside a webhook nobody had sent
-  // to (rule 85, #178).
-  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** What the test was sent. A blank box tests the webhook already STORED, so blank is a real
-   *  value here and not an absence -- which is why this is the trimmed string rather than a
-   *  truthiness check. */
-  const testedWith = () => url.trim();
+  const connected = data?.has_webhook ?? false;
+  const {
+    typed,
+    validNew,
+    badFormat,
+    canTest,
+    test,
+    testedWith,
+    clearTest,
+    sendTest: testWebhook,
+  } = useWebhookTest(url, connected, (e) => setError(describeError(e)));
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["notifications"] });
 
@@ -84,7 +61,7 @@ export function NotificationsPanel({
     mutationFn: () => api.setWebhook(url.trim()),
     onSuccess: () => {
       setUrl("");
-      setTest(null);
+      clearTest();
       setError(null);
       // Success here is the box emptying and a line above it flipping, both silent. The test
       // button between these two mutations already speaks (#192); these are its siblings.
@@ -104,25 +81,6 @@ export function NotificationsPanel({
     },
     onError: (e) => setError(describeError(e)),
   });
-  const testWebhook = useMutation({
-    // Test the URL typed in the box (the one about to be saved) if there is one; otherwise
-    // test the already-stored webhook, so a saved channel can be verified without re-pasting.
-    mutationFn: () => api.testWebhook(url.trim() ? url.trim() : null),
-    // What this request is ABOUT, captured when it is issued rather than computed at success
-    // time, the same as `ServiceModal`'s own test (rule 72). The box stays live while the request
-    // is out. `testedWith()` called at success would fingerprint whatever is typed by then, so a
-    // second webhook pasted mid-send gets "Passed" for a channel nobody tried (rule 85).
-    onMutate: () => ({ of: testedWith() }),
-    onSuccess: (r, _v, issued) => {
-      // The server sends a typed reason (docs/history/I18N_PLAN.md §5); composed once, in
-      // `ServiceModal.tsx`'s `composeDiscordTestResult`, into the same shape `TestBadge` and
-      // `testSentence` already render for a connection test (rule 144).
-      const result: InstanceTest = composeDiscordTestResult(r);
-      setTest({ result, of: issued.of });
-      announce(testSentence(result));
-    },
-    onError: (e) => setError(describeError(e)),
-  });
   // Remove is the rule 72 twin of the API key's, and the harder half of the pair: removing the
   // webhook disables BOTH of the pressed button's siblings in the same breath -- Save wants a
   // typed URL and `setUrl("")` has just cleared it, Send test wants a stored one and that is what
@@ -133,20 +91,13 @@ export function NotificationsPanel({
     mutationFn: () => api.clearWebhook(),
     onSuccess: () => {
       setUrl("");
-      setTest(null);
+      clearTest();
       setError(null);
       announce(t("services.discord.removedAnnouncement"));
       invalidate();
     },
     onError: (e) => setError(describeError(e)),
   });
-
-  const connected = data?.has_webhook ?? false;
-  const typed = url.trim().length > 0;
-  const validNew = typed && isDiscordWebhook(url);
-  const badFormat = typed && !validNew;
-  // Test either the freshly typed URL (must be valid) or, when the box is empty, the stored one.
-  const canTest = (validNew || (!typed && connected)) && !testWebhook.isPending;
 
   // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask
   // first. A pasted webhook is the costliest draft in Settings to drop: it is a secret, it is
@@ -272,7 +223,7 @@ export function NotificationsPanel({
           disabled={!canTest}
           onClick={() => {
             setError(null);
-            setTest(null);
+            clearTest();
             testWebhook.mutate();
           }}
         >

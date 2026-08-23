@@ -874,10 +874,6 @@ class Score:
 
     keep_results: Sequence[KeepResult] = ()
 
-    @property
-    def unevaluated(self) -> list[SignalResult]:
-        return [r for r in self.results if not r.evaluated and r.weight > 0]
-
 
 def score(
     configs: Sequence[SignalConfig],

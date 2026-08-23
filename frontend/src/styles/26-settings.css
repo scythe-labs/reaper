@@ -670,12 +670,7 @@ button.danger:hover:not(:disabled) {
   border-radius: 50%;
   border: 2px solid var(--accent-ring);
   border-top-color: var(--accent);
-  animation: job-spin 0.7s linear infinite;
-}
-@keyframes job-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: spin 0.7s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .spin {

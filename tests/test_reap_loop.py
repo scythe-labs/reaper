@@ -3041,6 +3041,19 @@ class FakeRadarr:
         return [{"path": "/movies", "accessible": self._root_accessible}]
 
 
+class UnreachableAfterDelete(FakeRadarr):
+    """A movie Radarr accepted the delete for, then went unreachable for the confirming
+    re-read: nobody knows whether the movie is there. Shared by three tests in
+    ``TestARemovalIsCountedEvenWhenTheStepFails`` that each drive it a different way."""
+
+    async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
+        if movie_id in self._deleted:
+            # A timeout carries no status at all, which is exactly the case that
+            # used to collapse into "the movie is still present".
+            raise IntegrationError("radarr", "timed out", status=None)
+        return await super().movie_by_id(movie_id)
+
+
 class FakeSonarr:
     """A stand-in Sonarr for the season prune path."""
 
@@ -4031,15 +4044,6 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         as the mirror above, where a clean read proved it was: the file almost certainly
         went, and leaving it uncharged lets an intermittently slow Radarr buy unlimited
         deletions past the monthly budget (rules 97 and 5/30)."""
-
-        class UnreachableAfterDelete(FakeRadarr):
-            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
-                if movie_id in self._deleted:
-                    # A timeout carries no status at all, which is exactly the case that
-                    # used to collapse into "the movie is still present".
-                    raise IntegrationError("radarr", "timed out", status=None)
-                return await super().movie_by_id(movie_id)
-
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
 
@@ -4058,13 +4062,6 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         responses: a movie Radarr refused to delete is still on disk and can be retried, a
         movie it could not re-read is gone. Printing "the movie is still there" for the
         second sends the operator looking for a file nobody can find (rules 7/24 and 21)."""
-
-        class UnreachableAfterDelete(FakeRadarr):
-            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
-                if movie_id in self._deleted:
-                    raise IntegrationError("radarr", "timed out", status=None)
-                return await super().movie_by_id(movie_id)
-
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
 
@@ -4097,13 +4094,6 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         the builder; this one is what proves a REAL executor failure populates it, where
         that one writes the row itself.
         """
-
-        class UnreachableAfterDelete(FakeRadarr):
-            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
-                if movie_id in self._deleted:
-                    raise IntegrationError("radarr", "timed out", status=None)
-                return await super().movie_by_id(movie_id)
-
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
 

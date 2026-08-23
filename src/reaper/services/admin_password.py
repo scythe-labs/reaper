@@ -98,8 +98,10 @@ async def verify(session: AsyncSession, password: str) -> bool:
         argon2_gate.release(slots)
 
 
-async def _unique_username(session: AsyncSession, desired: str) -> str:
-    base = desired.strip() or "admin"
+async def unique_username(session: AsyncSession, desired: str, fallback: str) -> str:
+    """A username not already taken. Plex usernames are unique on Plex, but a
+    local admin might happen to share one, and ``username`` is unique here."""
+    base = desired.strip() or fallback
     candidate, suffix = base, 2
     while await session.scalar(select(AppUser.id).where(AppUser.username == candidate)):
         candidate = f"{base}-{suffix}"
@@ -143,7 +145,7 @@ async def set_password(
 
     user = AppUser(
         provider=AuthProvider.LOCAL,
-        username=await _unique_username(session, username_hint),
+        username=await unique_username(session, username_hint, "admin"),
         password_hash=hash_password(password),
         is_active=True,
         created_at=utcnow(),

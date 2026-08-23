@@ -11,7 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import { api, type PlexLinkPoll, type PlexResourceConnection, type WatchEvidence } from "../api";
+import { api, type PlexLinkPoll, type WatchEvidence } from "../api";
 import { describeError } from "../errors";
 import { useSuccessorFocus } from "../focus";
 import i18next from "../i18n";
@@ -21,34 +21,11 @@ import { shelfRenamePending, shelfSkipIsCurrent } from "../shelfStatus";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { useSafety } from "../useSafety";
 import { jobResultText } from "./JobStatus";
-import { ServerPickList, usePlexPinPoll } from "./PlexPin";
+import { MANUAL_CONNECTION, ServerPickList, connectionLabel, usePlexPinPoll } from "./PlexPin";
 import { StaleReadSlot, collapseStaleReads } from "./StaleReadNotice";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SetRow } from "./SetRow";
-
-const MANUAL_CONNECTION = "__manual__";
-
-/** The label a connection shows in the picker: where it goes, then how.
- *
- *  plex.direct hostnames embed the address as dashes ("192-168-20-73.abc….plex.direct"),
- *  which reads as noise; show the address itself and keep the certificate goodness as
- *  the "secure" tag. The full URI stays the option's value, so what is saved is exact. */
-function connectionLabel(c: PlexResourceConnection): string {
-  const kind = c.relay
-    ? i18next.t("plex.connectionKind.relay")
-    : c.local
-      ? i18next.t("plex.connectionKind.local")
-      : i18next.t("plex.connectionKind.remote");
-  let host = c.uri.replace(/^https?:\/\//, "");
-  const direct = /^(\d+)-(\d+)-(\d+)-(\d+)\.[0-9a-f]+\.plex\.direct(:\d+)?$/i.exec(host);
-  if (direct) {
-    host = `${direct[1]}.${direct[2]}.${direct[3]}.${direct[4]}${direct[5] ?? ""}`;
-  }
-  return c.protocol === "https"
-    ? i18next.t("plex.connectionLabel.secure", { kind, host })
-    : i18next.t("plex.connectionLabel.plain", { kind, host });
-}
 
 /** The address the Manual address row would save, or "" when it has no host to send. One
  *  declaration, so the Save that composes it and the dirty check that reports this draft up to
