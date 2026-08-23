@@ -20,10 +20,9 @@ import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import { api, type InstanceTest } from "../api";
 import { describeError } from "../errors";
-import { composeIn } from "../why";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
-import { TestBadge, testSentence } from "./ServiceModal";
+import { composeDiscordTestResult, TestBadge, testSentence } from "./ServiceModal";
 import { isDiscordWebhook } from "./Settings";
 
 /** The webhook box's format complaint, named once for both ends of the association
@@ -69,19 +68,10 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
     // second webhook pasted mid-send gets "Passed" for a channel nobody tried (rule 85).
     onMutate: () => ({ of: testedWith() }),
     onSuccess: (r, _v, issued) => {
-      // The server sends a typed reason (docs/history/I18N_PLAN.md §5); composed here, once,
-      // under its own `services.discord.testResult` namespace (never `services.test`, which
-      // is `ServiceModal.tsx`'s own), then carried as a `legacy` reason so `TestBadge` and
-      // `testSentence` render the already-composed sentence verbatim rather than re-routing
-      // it through a namespace it does not belong to.
-      const result: InstanceTest = {
-        ok: r.ok,
-        detail_reason: {
-          k: "legacy",
-          p: { text: composeIn("services.discord.testResult", r.reason) },
-        },
-        version: r.version,
-      };
+      // The server sends a typed reason (docs/history/I18N_PLAN.md §5); composed once, in
+      // `ServiceModal.tsx`'s `composeDiscordTestResult`, into the same shape `TestBadge` and
+      // `testSentence` already render for a connection test (rule 144).
+      const result: InstanceTest = composeDiscordTestResult(r);
       setTest({ result, of: issued.of });
       announce(testSentence(result));
     },
