@@ -97,7 +97,12 @@ const HOW_TO_UPDATE =
 //: three assertions below already name every individual key that moved, but a set that shrank
 //: by exactly as much as it grew would leave them empty while this population changed under
 //: everyone's feet.
-const EXPECTED_REQUIRED_COUNT = 1182;
+//: 1177: recomputed against the combined tree once #907's catalog consolidation (brand
+//: table, common.done/passwordMismatch/savebar, removed aria twins, unified jobs/about
+//: update-status keys) and #906's movie/season media-typed-key merge landed together --
+//: neither PR's own count (1182, 1181) describes this tree, since each was pinned against
+//: a base the other's removals and additions had not yet touched.
+const EXPECTED_REQUIRED_COUNT = 1177;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

@@ -109,6 +109,92 @@ describe("composeReason", () => {
   });
 });
 
+describe("the five media-typed why.cause pairs (movie/season merge)", () => {
+  it("selects the movie or season wording off a fresh mediaType param", () => {
+    expect(composeReason({ k: "cause.plex_unmatched", p: { mediaType: "movie" } })).toBe(
+      "This title couldn't be found in Plex.",
+    );
+    expect(composeReason({ k: "cause.plex_unmatched", p: { mediaType: "season" } })).toBe(
+      "This season couldn't be found in Plex.",
+    );
+    expect(composeReason({ k: "cause.plex_ambiguous", p: { mediaType: "season" } })).toBe(
+      "This show looks like more than one thing in Plex.",
+    );
+    expect(composeReason({ k: "cause.radarr_plex_disagree", p: { mediaType: "movie" } })).toBe(
+      "Plex and Radarr describe this file differently.",
+    );
+    expect(composeReason({ k: "cause.radarr_plex_disagree", p: { mediaType: "season" } })).toBe(
+      "Plex and Sonarr describe this show differently.",
+    );
+    expect(composeReason({ k: "cause.no_added_at", p: { mediaType: "season" } })).toBe(
+      "Plex didn't say when this season was added.",
+    );
+    expect(composeReason({ k: "cause.no_file_size", p: { mediaType: "season" } })).toBe(
+      "Sonarr didn't report this season's size.",
+    );
+  });
+
+  it("an old bare movie-side reason (no params at all, frozen before the merge) still renders words", () => {
+    // Before this merge the movie side never carried a `mediaType` param -- ICU's `select`
+    // leaves the raw template unparsed rather than falling to `other` when the variable is
+    // entirely absent from params, so this pins the resolution-point default that keeps a
+    // pre-merge row from printing broken syntax at the operator.
+    expect(composeReason({ k: "cause.plex_unmatched" })).toBe(
+      "This title couldn't be found in Plex.",
+    );
+    expect(composeReason({ k: "cause.no_file_size" })).toBe(
+      "Radarr didn't report this file's size.",
+    );
+  });
+
+  it("an old season-side id, retired by the merge, still renders the season wording", () => {
+    // Every scan made before this merge that carried one of the five retired season-only
+    // ids: the catalog has no entry for them any more, so why.ts's alias map is the only
+    // thing standing between one of these rows and its raw id on screen.
+    expect(composeReason({ k: "cause.plex_season_unmatched" })).toBe(
+      "This season couldn't be found in Plex.",
+    );
+    expect(composeReason({ k: "cause.plex_show_ambiguous" })).toBe(
+      "This show looks like more than one thing in Plex.",
+    );
+    expect(composeReason({ k: "cause.sonarr_plex_disagree" })).toBe(
+      "Plex and Sonarr describe this show differently.",
+    );
+    expect(composeReason({ k: "cause.no_season_added_at" })).toBe(
+      "Plex didn't say when this season was added.",
+    );
+    expect(composeReason({ k: "cause.no_season_size" })).toBe(
+      "Sonarr didn't report this season's size.",
+    );
+  });
+
+  it("a retired season id nested inside a blocked check still composes whole", () => {
+    expect(
+      composeReason({
+        k: "blocked",
+        p: { check: { k: "check.watch_history" }, cause: { k: "cause.plex_season_unmatched" } },
+      }),
+    ).toBe("could not check your watch history: This season couldn't be found in Plex.");
+  });
+});
+
+describe("rewatch_thin (#906: merged with the why-panel's own rewatch-odds thin sentence)", () => {
+  it("selects the movie or season wording off a fresh mediaType param", () => {
+    expect(composeReason({ k: "rewatch_thin", p: { mediaType: "movie" } })).toBe(
+      "Too few titles like this to say.",
+    );
+    expect(composeReason({ k: "rewatch_thin", p: { mediaType: "season" } })).toBe(
+      "Too few shows like this to say.",
+    );
+  });
+
+  it("an old bare reason (no params at all, frozen before the select shipped) still renders words", () => {
+    // RewatchOddsGate wrote this bare, on both the movie and season lanes, before #906 --
+    // proving the same missing-param behavior Task A's cause merge already guards against.
+    expect(composeReason({ k: "rewatch_thin" })).toBe("Too few titles like this to say.");
+  });
+});
+
 describe("composeIn", () => {
   // Fixture entries, added to i18next at test time rather than reading real catalog
   // content -- `warning` has no production keys yet (chip.text/chip.sentence do now, and

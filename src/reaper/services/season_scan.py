@@ -80,7 +80,14 @@ from reaper.db import KEY_CHUNK
 from reaper.db.models import SizeSource
 from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
-from reaper.engine.gates import Facts, GateResult, lifetime_shortfall
+from reaper.engine.gates import (
+    Facts,
+    GateResult,
+    lifetime_shortfall,
+    no_added_at_reason,
+    no_key_reason,
+    no_size_reason,
+)
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.reason import Reason
 from reaper.ratings import Rating, RatingSource, merge_by_source
@@ -471,17 +478,6 @@ def series_genres(series: Mapping[str, Any]) -> Observation[str]:
     return Known(value=", ".join(genres), source="sonarr") if genres else Absent(source="sonarr")
 
 
-#: The season twin of ``snapshot.NO_ADDED_AT_REASON``, and the same contract: a key into
-#: the catalog's ``why.cause.*`` entries, named so the drift test covers it (rule 144).
-#: Its own wording, for the reason ``season_evidence._NO_KEY_REASONS`` keeps its own --
-#: the subject is "this season", not "this item".
-NO_ADDED_AT_REASON = "no_season_added_at"
-
-#: Why a season's size is unreadable: Sonarr reported no size on disk. Reaches the panel
-#: through a keep rule on "Size on disk"; the movie lane says it of a file, so the two are
-#: named apart (rule 144).
-NO_SIZE_REASON = "no_season_size"
-
 #: Why "has the show ended?" is unreadable: Sonarr sent neither a status nor an ended flag.
 SERIES_STATUS_REASON = "no_series_status"
 
@@ -551,7 +547,7 @@ def build_season_facts(
     (two Plex items share its id) is a different story from one Plex has no match for, and
     a CONFLICTED one (each kind of evidence named a different row, so Plex and Sonarr
     describe the show differently) is a third. The why-panel must not tell the owner the
-    wrong one, so the wording comes from :func:`season_evidence.no_key_reason` rather than a
+    wrong one, so the wording comes from :func:`gates.no_key_reason` rather than a
     ternary that lumps every new outcome in with "not matched".
     """
     dormancy: Observation[float]
@@ -560,7 +556,10 @@ def build_season_facts(
     streaming: Observation[bool]
 
     if plex_rating_key is None:
-        reason = season_evidence.no_key_reason(show_match_status)
+        # Shared with the movie lane through `gates.no_key_reason` (rule 72): the same
+        # MatchStatus produces the same catalog id on both, and the panel's ICU `mediaType`
+        # select ("season" here) picks the "this season"/"this show" wording.
+        reason = no_key_reason(show_match_status, "season")
         dormancy = Unknown(reason=reason, source="plex")
         recent = Unknown(reason=reason, source="plex")
         all_time = Unknown(reason=reason, source="plex")
@@ -621,7 +620,7 @@ def build_season_facts(
                 season=season.season_number,
                 plex_rating_key=plex_rating_key,
             )
-            dormancy = Unknown(reason=NO_ADDED_AT_REASON, source="tautulli")
+            dormancy = Unknown(reason=no_added_at_reason("season"), source="tautulli")
         else:
             dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
 
@@ -681,12 +680,12 @@ def build_season_facts(
         days_since_added=(
             Known(value=dormancy_days(season_added_at, now=utcnow()), source="plex")
             if season_added_at is not None
-            else Unknown(reason=NO_ADDED_AT_REASON, source="plex")
+            else Unknown(reason=no_added_at_reason("season"), source="plex")
         ),
         size_bytes=(
             Known(value=season.size_on_disk, source="sonarr")
             if season.size_on_disk is not None
-            else Unknown(reason=NO_SIZE_REASON, source="sonarr")
+            else Unknown(reason=no_size_reason("season"), source="sonarr")
         ),
         # Sonarr's own ratings are flat TVDB, but the IMDb dataset we already ingest carries
         # a rating for the *series* (keyed by its imdbId). We apply the show's rating to each
@@ -1852,8 +1851,10 @@ def _judge_series(
     if item.show_rating_key is None:
         # No key to look this show's plays up under -- a failed look, never a checked
         # absence (rule 93). The same cause `progress_unknown_reason` above already names
-        # for the mid-binge hold, through the one shared reader (rule 104).
-        no_show_key_reason = season_evidence.no_key_reason(item.match_status)
+        # for the mid-binge hold, off the one shared table (rule 104: `gates.no_key_reason`
+        # here, `gates.no_key_reason_id` there, since the guard freezes a bare id onto the
+        # bundle while this Unknown carries the media-typed Reason directly).
+        no_show_key_reason = no_key_reason(item.match_status, "season")
         rewatch_viewings_obs = Unknown(reason=no_show_key_reason, source="tautulli")
         rewatch_last_play_days_obs = Unknown(reason=no_show_key_reason, source="tautulli")
     else:
@@ -1950,7 +1951,7 @@ def _judge_series(
         age: Observation[float] = (
             Known(value=float(dormancy_days(added_at, now=judged_at)), source="plex")
             if added_at is not None
-            else Unknown(reason=NO_ADDED_AT_REASON, source="plex")
+            else Unknown(reason=no_added_at_reason("season"), source="plex")
         )
         shortfall_by_season[season.season_number] = lifetime_shortfall(reach, age)
     # Everything the plan reads that is NOT the operator's policy, in one frozen bundle. The

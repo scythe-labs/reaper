@@ -306,7 +306,7 @@
     "dormancy_under_floor": "unwatched for {days_span}, less than the {floor_days_window} Reaper waits",
     "dormancy_past_floor": "Unwatched for {days_span}, past the {floor_days_window} Reaper waits.",
     "rewatch_no_history": "Not enough watch history to say how often titles like this get watched.",
-    "rewatch_thin": "Too few titles like this to say.",
+    "rewatch_thin": "Too few {mediaType, select, season {shows} other {titles}} like this to say.",
     "rewatch_watched_again": "titles like this keep getting watched: {k} of {n} within a year",
     "rewatch_under_floor": "Of {n} titles like this, {k, plural, one {# was} other {# were}} watched again within a year, under the {floor_pct}% you keep.",
     "returned_no_record": "Reaper has nothing on record about this title leaving and coming back.",
@@ -478,14 +478,10 @@
       "show_ended": "whether the show has ended"
     },
     "cause": {
-      "plex_unmatched": "This title couldn't be found in Plex.",
-      "plex_season_unmatched": "This season couldn't be found in Plex.",
-      "plex_ambiguous": "This looks like more than one thing in Plex.",
-      "plex_show_ambiguous": "This show looks like more than one thing in Plex.",
-      "radarr_plex_disagree": "Plex and Radarr describe this file differently.",
-      "sonarr_plex_disagree": "Plex and Sonarr describe this show differently.",
-      "no_added_at": "Plex didn't say when this was added.",
-      "no_season_added_at": "Plex didn't say when this season was added.",
+      "plex_unmatched": "This {mediaType, select, season {season} other {title}} couldn't be found in Plex.",
+      "plex_ambiguous": "This{mediaType, select, season { show} other {}} looks like more than one thing in Plex.",
+      "radarr_plex_disagree": "Plex and {mediaType, select, movie {Radarr} other {Sonarr}} describe this {mediaType, select, movie {file} other {show}} differently.",
+      "no_added_at": "Plex didn't say when this{mediaType, select, season { season} other {}} was added.",
       "sessions_unreadable": "Reaper couldn't see what's playing right now.",
       "requests_unreachable": "The requests app couldn't be reached.",
       "requests_not_loaded": "Requests weren't loaded for this scan.",
@@ -494,8 +490,7 @@
       "no_series_status": "Sonarr didn't say whether the show has ended.",
       "imdb_unreadable": "Reaper couldn't read the IMDb ratings data.",
       "no_imdb_id": "Reaper couldn't look this title up on IMDb.",
-      "no_file_size": "Radarr didn't report this file's size.",
-      "no_season_size": "Sonarr didn't report this season's size.",
+      "no_file_size": "{mediaType, select, season {Sonarr} other {Radarr}} didn't report this {mediaType, select, season {season} other {file}}'s size.",
       "plays_unreadable": "Reaper can no longer read the plays it recorded earlier.",
       "progress_history_short": "Your watch history is too short to tell who's part-way through.",
       "progress_plays_unreadable": "Some plays are no longer readable, so who's part-way through is unknown.",
@@ -591,8 +586,7 @@
       "rewatch": {
         "heading": "Rewatch probability",
         "measured": "Of {n} {mediaType, select, season {shows} other {titles}} in your history that had sat unwatched about this long, {k} ({pct}%) were watched again within a year.",
-        "noHistory": "Not enough watch history yet.",
-        "thin": "Too few {mediaType, select, season {shows} other {titles}} like this to say."
+        "noHistory": "Not enough watch history yet."
       },
       "ruleTag": "Your rule",
       "shell": {
@@ -2546,7 +2540,7 @@
       },
       "rewatchOdds": {
         "help": "If titles that sat unwatched this long often got watched again in your history, this one is kept.",
-        "label": "Keep titles most likely to be rewatched above a percentage"
+        "label": "{mediaType, select, tv {Keep shows most likely to be rewatched above a percentage} other {Keep titles most likely to be rewatched above a percentage}}"
       },
       "seasonProgression": {
         "help": "Your season rules kept it, or Reaper couldn't tell who is partway through.",

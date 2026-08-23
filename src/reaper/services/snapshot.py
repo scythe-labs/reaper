@@ -65,6 +65,9 @@ from reaper.engine.gates import (
     Gate,
     GateResult,
     evaluate_all,
+    no_added_at_reason,
+    no_key_reason,
+    no_size_reason,
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
@@ -268,32 +271,6 @@ class RawItem:
     arr_ratings: tuple[Rating, ...] = ()
 
 
-#: Why this item has no Plex rating key, one entry per non-matched resolver outcome. Each
-#: value is a KEY into the catalog's ``why.cause.*`` entries, which turn it into the
-#: sentence the owner reads; a key with no entry there falls back to printing this string
-#: raw, so ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one. ``None`` (a
-#: record from before the field shipped) takes the unmatched wording, which it has always
-#: read as.
-_NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
-    identity.MatchStatus.UNMATCHED: "plex_unmatched",
-    identity.MatchStatus.AMBIGUOUS: "plex_ambiguous",
-    identity.MatchStatus.CONFLICTED: "radarr_plex_disagree",
-}
-
-#: Why dormancy could not be measured: matched to Plex, but no arrival date AND no play, so
-#: there is no instant to measure from. A KEY into the catalog's ``why.cause.*`` entries
-#: exactly as the reasons above are, and named here rather than typed at each site so the
-#: same drift test covers it (rule 144) -- it was written twice by hand, on both sides of
-#: the tree, and nothing failed.
-NO_ADDED_AT_REASON = "no_added_at"
-
-#: Why a movie's size is unreadable: Radarr reported no size for the file. A KEY into the
-#: catalog's ``why.cause.*`` entries like the rest -- it reaches the panel through a keep
-#: rule on "Size on disk", the same route the request reasons take (rule 144). The season
-#: lane says this in its own words, so the two are named apart rather than shared.
-NO_SIZE_REASON = "no_file_size"
-
-
 def build_facts(
     item: RawItem,
     context: ScanContext,
@@ -338,7 +315,10 @@ def build_facts(
     # file; only the words shown to the owner differ, and the wrong words send them to fix
     # the wrong thing. Each string is a key into the catalog's why.cause.* entries (rule 144);
     # test_review_chips.py::TestTheMatchStatusVocabulary fails when one has no entry there.
-    no_key_reason = _NO_KEY_REASONS.get(item.match_status, "plex_unmatched")
+    # Shared with the season lane through `gates.no_key_reason` (rule 72): the same
+    # MatchStatus produces the same catalog id on both, and the panel's ICU `mediaType`
+    # select ("movie" here) picks the "this title" wording.
+    no_key_cause = no_key_reason(item.match_status, "movie")
 
     # --- dormancy -----------------------------------------------------------
     # THE derived field. "Days since last play" is null for exactly the items we care
@@ -346,7 +326,7 @@ def build_facts(
     # the maximum condemnation pressure, for the item we know least about.
     dormancy: Observation[float]
     if rating_key is None:
-        dormancy = Unknown(reason=no_key_reason, source="plex")
+        dormancy = Unknown(reason=no_key_cause, source="plex")
     elif watch_blind_reason is not None:
         # Checked BEFORE the measurement below, and it has to stay there: a re-added file
         # carries a fresh added_at while its earlier plays stay filed under the key it no
@@ -374,7 +354,7 @@ def build_facts(
             # only as "kept to be safe", never on the reap list. Warn so "why isn't this
             # reapable" is answerable from the log, the same as an unmatched item. Rare: a
             # matched Plex item almost always carries an added_at. The reason is a key into
-            # WhyPanel's copy map, named in `NO_ADDED_AT_REASON` so
+            # WhyPanel's copy map, named in `gates.no_added_at_reason` so
             # `test_review_chips.py::TestTheMatchStatusVocabulary` fails if the two sides
             # drift (rule 144) -- it is also the same state the season lane's both-missing
             # arm reports, so the two lanes say one thing.
@@ -387,7 +367,7 @@ def build_facts(
                 tmdb_id=item.tmdb_id,
                 plex_rating_key=rating_key,
             )
-            dormancy = Unknown(reason=NO_ADDED_AT_REASON, source="tautulli")
+            dormancy = Unknown(reason=no_added_at_reason("movie"), source="tautulli")
         else:
             dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
 
@@ -395,8 +375,8 @@ def build_facts(
     recent: Observation[int]
     all_time: Observation[int]
     if rating_key is None:
-        recent = Unknown(reason=no_key_reason, source="plex")
-        all_time = Unknown(reason=no_key_reason, source="plex")
+        recent = Unknown(reason=no_key_cause, source="plex")
+        all_time = Unknown(reason=no_key_cause, source="plex")
     elif watch_blind_reason is not None:
         recent = Unknown(reason=watch_blind_reason, source="tautulli")
         all_time = Unknown(reason=watch_blind_reason, source="tautulli")
@@ -412,8 +392,8 @@ def build_facts(
     viewings_obs: Observation[int]
     last_play_days_obs: Observation[float]
     if rating_key is None:
-        viewings_obs = Unknown(reason=no_key_reason, source="plex")
-        last_play_days_obs = Unknown(reason=no_key_reason, source="plex")
+        viewings_obs = Unknown(reason=no_key_cause, source="plex")
+        last_play_days_obs = Unknown(reason=no_key_cause, source="plex")
     elif watch_blind_reason is not None:
         viewings_obs = Unknown(reason=watch_blind_reason, source="tautulli")
         last_play_days_obs = Unknown(reason=watch_blind_reason, source="tautulli")
@@ -565,7 +545,7 @@ def build_facts(
             # the title, in two copies, someone can be streaming it right now, and the fact
             # asserted otherwise. Every sibling fact above takes Unknown on the same
             # condition, and the season builder's twin already does (rules 93 and 72).
-            streaming = Unknown(reason=no_key_reason, source="plex")
+            streaming = Unknown(reason=no_key_cause, source="plex")
         else:
             streaming = Known(
                 value=any(key in context.active_rating_keys for key in watch_keys),
@@ -590,12 +570,12 @@ def build_facts(
         days_since_added=(
             Known(value=dormancy_days(item.added_at, now=utcnow()), source="plex")
             if item.added_at is not None
-            else Unknown(reason=NO_ADDED_AT_REASON, source="plex")
+            else Unknown(reason=no_added_at_reason("movie"), source="plex")
         ),
         size_bytes=(
             Known(value=item.size_bytes, source="radarr")
             if item.size_bytes is not None
-            else Unknown(reason=NO_SIZE_REASON, source="radarr")
+            else Unknown(reason=no_size_reason("movie"), source="radarr")
         ),
         imdb_rating_tenths=rating,
         imdb_votes=votes,

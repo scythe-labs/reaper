@@ -85,7 +85,13 @@ export type GateId =
  *  choosing what to delete (rule 21). */
 export const unnamedGateLabel = () => i18next.t("policyMeta.unnamedGateLabel");
 
-export function gateMeta(): Record<string, GateMeta> {
+/** `mediaType` selects the rewatch-odds label's movie/TV wording (the same "tv"/"other"
+ *  select `policyEditor.rewatchCopy` already uses, since this is a whole-policy context,
+ *  not a per-item one). Defaulted to "movie" so a caller with no media context in scope
+ *  (`PolicyEditor`'s generic `GateRow`, which never actually renders this id -- the rewatch
+ *  card owns it, `rewatchCopy` below) keeps today's wording rather than needing a prop
+ *  threaded for a label it never asks for. */
+export function gateMeta(mediaType: "movie" | "tv" = "movie"): Record<string, GateMeta> {
   return {
     min_dormancy: {
       label: i18next.t("policyMeta.gates.minDormancy.label"),
@@ -123,7 +129,7 @@ export function gateMeta(): Record<string, GateMeta> {
     // stored gate row. The entry stays complete so the simulator's spared-by list and any
     // stored explanation name it properly.
     rewatch_odds: {
-      label: i18next.t("policyMeta.gates.rewatchOdds.label"),
+      label: i18next.t("policyMeta.gates.rewatchOdds.label", { mediaType }),
       help: i18next.t("policyMeta.gates.rewatchOdds.help"),
     },
     streaming_now: {

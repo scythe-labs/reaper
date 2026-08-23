@@ -29,6 +29,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from reaper.engine.reason import Reason
+
 
 @dataclass(frozen=True, slots=True)
 class Known[T]:
@@ -63,7 +65,14 @@ class Unknown:
     history recording is disabled. This arm may only ever *protect*.
     """
 
-    reason: str
+    reason: str | Reason
+    """A bare catalog id (``"imdb_unreadable"``), for a producer with no params to carry --
+    ``gates.blocked_reason``/``fields.blocked_reason`` wrap it as ``Reason(f"cause.{reason}")``
+    the same as always. A producer that needs a param (the movie/season media select on the
+    match-status and no-added-at/no-size causes, ``gates.no_key_reason`` and friends) hands in
+    the full ``Reason`` instead, already carrying the ``cause.`` id and its params, and the two
+    wrappers above pass it through unchanged (rule 104: one encoding, whichever shape arrives).
+    """
     source: str
     kind: Literal["unknown"] = "unknown"
 

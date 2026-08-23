@@ -1265,7 +1265,10 @@ describe("the verdict headline", () => {
     // seasons, so it left the call to you."
     const blocked = (check: string) => ({
       k: "blocked",
-      p: { check: { k: `check.${check}` }, cause: { k: "cause.plex_season_unmatched" } },
+      p: {
+        check: { k: `check.${check}` },
+        cause: { k: "cause.plex_unmatched", p: { mediaType: "season" } },
+      },
     });
     show(
       detail(WORKED_ROWS, {
@@ -1906,7 +1909,10 @@ describe("a fresh explanation composes from the catalog", () => {
       gate: "min_dormancy",
       detail_key: {
         k: "blocked",
-        p: { check: { k: `check.${check}` }, cause: { k: "cause.plex_unmatched" } },
+        p: {
+          check: { k: `check.${check}` },
+          cause: { k: "cause.plex_unmatched", p: { mediaType: "movie" } },
+        },
       },
     });
     show(

@@ -394,13 +394,9 @@
         },
         "cause": {
             "plex_unmatched": "",
-            "plex_season_unmatched": "",
             "plex_ambiguous": "",
-            "plex_show_ambiguous": "",
             "radarr_plex_disagree": "",
-            "sonarr_plex_disagree": "",
             "no_added_at": "",
-            "no_season_added_at": "",
             "sessions_unreadable": "",
             "requests_unreachable": "",
             "requests_not_loaded": "",
@@ -410,7 +406,6 @@
             "imdb_unreadable": "",
             "no_imdb_id": "",
             "no_file_size": "",
-            "no_season_size": "",
             "plays_unreadable": "",
             "progress_history_short": "",
             "progress_plays_unreadable": "",
@@ -506,8 +501,7 @@
             "rewatch": {
                 "heading": "",
                 "measured": "",
-                "noHistory": "",
-                "thin": ""
+                "noHistory": ""
             },
             "ruleTag": "",
             "shell": {

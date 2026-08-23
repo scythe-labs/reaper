@@ -449,7 +449,7 @@ def plan_series_prune(
     # season itself abstains on its own Unknown facts; its siblings do not, and one of them is
     # the season that viewer is about to watch. Neither flag above expresses it -- the mirror
     # spans the hold and nothing fell, there is simply no address to read
-    # (``season_evidence``'s ``_NO_KEY_REASONS``). True holds every season on disk, for the
+    # (``gates.NO_KEY_REASON_IDS``). True holds every season on disk, for the
     # identical reason: the viewer set is unreadable, not empty.
     progress_seasons_unmatched: bool = False,
     # The whole show, rather than one of its seasons: nothing here bound to Plex at all, so
