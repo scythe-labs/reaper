@@ -1135,7 +1135,7 @@
   "why.returned_past_hold": "The why-panel's row for the came-back protection when its hold period has expired. {days_span} and {hold_days_window} are both humanized durations, derived from raw day counts: how long ago it came back, and the operator's own configured hold length.",
   "why.rewatch_count": "The why-panel's row showing how many times a title has been watched again. {media} selects between 'Watched again N times' (TV) and 'Watched N times' (movies); {n} is a plain pluralized count.",
   "why.rewatch_count_many": "The why-panel's fallback row for a very high rewatch count, shown instead of a specific number. A standalone sentence, no params.",
-  "why.rewatch_keep_few": "A nested rewatch-evidence clause: a small, exact rewatch count with nothing more to say about it. {count} is a plain integer.",
+  "why.rewatch_keep_few": "A nested rewatch-evidence clause: a small, exact rewatch count with nothing more to say about it. {count} is the rendered rewatch_count clause, not a bare number.",
   "why.rewatch_keep_fired": "A nested rewatch-evidence clause for the rewatch-probability keep signal firing: the title has been rewatched and Reaper judges it likely to be watched again. {count} is a plain integer.",
   "why.rewatch_keep_fired_recent": "Same as why.rewatch_keep_fired, with a recency added. {count} is a plain integer; {last_days_span} is a humanized duration derived from a raw day count, since the most recent rewatch.",
   "why.rewatch_keep_never": "A nested rewatch-evidence clause for a title with no recorded rewatches. {media} selects between 'Never watched again here' (TV) and 'Never watched here' (movies).",
