@@ -172,12 +172,7 @@
   border-radius: 50%;
   border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
   border-top-color: currentColor;
-  animation: reap-spin 0.7s linear infinite;
-}
-@keyframes reap-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: spin 0.7s linear infinite;
 }
 .reap-progress {
   margin: 1rem 0 0.2rem;

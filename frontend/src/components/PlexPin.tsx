@@ -12,10 +12,38 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import type { PlexServerChoice, ReasonKey } from "../api";
+import type { PlexResourceConnection, PlexServerChoice, ReasonKey } from "../api";
 import { describeError } from "../errors";
 import i18next from "../i18n";
 import { composeError } from "../why";
+
+/** The sentinel the connection select uses for "let me type one". Not a URI, so it can
+ *  never collide with a discovered address. Shared by `PlexPanel` and `SetupPlexStep` so
+ *  the two can't drift onto different values for the same meaning (rule 72). */
+export const MANUAL_CONNECTION = "__manual__";
+
+/** The label a connection shows in the picker: where it goes, then how.
+ *
+ *  plex.direct hostnames embed the address as dashes ("192-168-20-73.abc….plex.direct"),
+ *  which reads as noise; show the address itself and keep the certificate goodness as
+ *  the "secure" tag. The full URI stays the option's value, so what is saved is exact.
+ *
+ *  Shared by `PlexPanel` and `SetupPlexStep` so an address reads the same in both places,
+ *  through the same `plex.connectionKind.*` / `plex.connectionLabel.*` catalog keys
+ *  (rule 72: it used to be two near-identical copies). */
+export function connectionLabel(c: PlexResourceConnection): string {
+  const kind = c.relay
+    ? i18next.t("plex.connectionKind.relay")
+    : c.local
+      ? i18next.t("plex.connectionKind.local")
+      : i18next.t("plex.connectionKind.remote");
+  let host = c.uri.replace(/^https?:\/\//, "");
+  const direct = /^(\d+)-(\d+)-(\d+)-(\d+)\.[0-9a-f]+\.plex\.direct(:\d+)?$/i.exec(host);
+  if (direct) host = `${direct[1]}.${direct[2]}.${direct[3]}.${direct[4]}${direct[5] ?? ""}`;
+  return c.protocol === "https"
+    ? i18next.t("plex.connectionLabel.secure", { kind, host })
+    : i18next.t("plex.connectionLabel.plain", { kind, host });
+}
 
 /** What the app says when a sign-in lands on the server picker.
  *

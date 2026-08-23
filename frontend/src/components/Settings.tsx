@@ -26,14 +26,13 @@ import { SecurityPanel } from "./SecurityPanel";
 import { ServicesPanel } from "./ServicesPanel";
 import { SwitchConfirm, useSwitchConfirm } from "./SwitchConfirm";
 
-// Two names that moved out of this file and are still imported FROM it: `DiscordModal` reads the
-// webhook check, `SetupPasswordStep` the password floor. The name stays available at this path
-// rather than sending two callers to two new ones.
+// A name that moved out of this file and is still imported FROM it: `SetupPasswordStep` reads
+// the password floor. The name stays available at this path rather than sending that caller to
+// a new one.
 //
-// `PlexPanel` was a third until this split, re-exported for a `SetupWizard` that stopped reading
+// `PlexPanel` was a second until this split, re-exported for a `SetupWizard` that stopped reading
 // it when #384 broke first-start into four steps; the export outlived its only caller by a year
 // and the comment justifying it was still naming that caller.
-export { isDiscordWebhook } from "./NotificationsPanel";
 export { MIN_ADMIN_PASSWORD } from "./SecurityPanel";
 
 export type Panel =

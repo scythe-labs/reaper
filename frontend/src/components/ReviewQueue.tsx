@@ -442,6 +442,16 @@ function toRollups(pages: CandidatePage[] | undefined): Map<string, GroupRollup>
 function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[] {
   const groups: Group[] = [];
   const index = new Map<string, Group>();
+  const sharedFields = (item: Candidate) => ({
+    year: item.year,
+    poster: item.poster_url,
+    reason: cardReason(item),
+    requestedBy: item.requested_by,
+    dormantFor: dormantSpan(item),
+    library: item.library,
+    collections: item.collections ?? null,
+    matchedCollection: item.matched_collection ?? null,
+  });
   for (const item of items) {
     if (item.group_key) {
       let g = index.get(item.group_key);
@@ -449,14 +459,7 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
         g = {
           key: item.group_key,
           title: item.group_title ?? item.title,
-          year: item.year,
-          poster: item.poster_url,
-          reason: cardReason(item),
-          requestedBy: item.requested_by,
-          dormantFor: dormantSpan(item),
-          library: item.library,
-          collections: item.collections ?? null,
-          matchedCollection: item.matched_collection ?? null,
+          ...sharedFields(item),
           rollup: rollups.get(item.group_key) ?? null,
           items: [],
           isShow: true,
@@ -469,14 +472,7 @@ function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[
       groups.push({
         key: item.media_key,
         title: item.title,
-        year: item.year,
-        poster: item.poster_url,
-        reason: cardReason(item),
-        requestedBy: item.requested_by,
-        dormantFor: dormantSpan(item),
-        library: item.library,
-        collections: item.collections ?? null,
-        matchedCollection: item.matched_collection ?? null,
+        ...sharedFields(item),
         rollup: null,
         items: [item],
         isShow: false,

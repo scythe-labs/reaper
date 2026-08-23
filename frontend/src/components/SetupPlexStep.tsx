@@ -21,38 +21,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import { api, type PlexResourceConnection, type SetupStatus } from "../api";
+import { api, type SetupStatus } from "../api";
 import { describeError } from "../errors";
-import i18next from "../i18n";
 import { invalidateAllPlex } from "../plexServerQueries";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
-import { ServerPickList, usePlexPinPoll } from "./PlexPin";
+import { MANUAL_CONNECTION, ServerPickList, connectionLabel, usePlexPinPoll } from "./PlexPin";
 import { StepCard } from "./SetupStepper";
 import { Switch } from "./Switch";
-
-/** What a discovered address is called in the list. The same shape `PlexPanel`'s own
- *  `connectionLabel` builds, so an address reads the same in both places -- and the same
- *  `plex.connectionKind.*` / `plex.connectionLabel.*` catalog keys, reused rather than
- *  re-minted, so the two never drift into different words for the same thing (rule 72). */
-function connectionLabel(c: PlexResourceConnection): string {
-  const kind = c.relay
-    ? i18next.t("plex.connectionKind.relay")
-    : c.local
-      ? i18next.t("plex.connectionKind.local")
-      : i18next.t("plex.connectionKind.remote");
-  let host = c.uri.replace(/^https?:\/\//, "");
-  const direct = /^(\d+)-(\d+)-(\d+)-(\d+)\.[0-9a-f]+\.plex\.direct(:\d+)?$/i.exec(host);
-  if (direct) host = `${direct[1]}.${direct[2]}.${direct[3]}.${direct[4]}${direct[5] ?? ""}`;
-  return c.protocol === "https"
-    ? i18next.t("plex.connectionLabel.secure", { kind, host })
-    : i18next.t("plex.connectionLabel.plain", { kind, host });
-}
-
-/** The sentinel the connection select uses for "let me type one". Not a URI, so it can never
- *  collide with a discovered address. */
-const MANUAL = "__manual__";
 
 export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: () => void }) {
   const { t } = useTranslation();
@@ -294,11 +271,11 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
           <label className="field-sm">
             <span className="field-label">{t("plex.connectionField.label")}</span>
             <select
-              value={manualOpen ? MANUAL : savedUri}
+              value={manualOpen ? MANUAL_CONNECTION : savedUri}
               aria-label={t("plex.connectionField.label")}
               disabled={setConnection.isPending}
               onChange={(e) => {
-                if (e.target.value === MANUAL) setManualOpen(true);
+                if (e.target.value === MANUAL_CONNECTION) setManualOpen(true);
                 else {
                   setManualOpen(false);
                   if (e.target.value !== savedUri) setConnection.mutate(e.target.value);
@@ -315,7 +292,7 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
                   {t("plex.connection.manualOption", { uri: savedUri.replace(/^https?:\/\//, "") })}
                 </option>
               )}
-              <option value={MANUAL}>{t("plex.connection.manualAddressOption")}</option>
+              <option value={MANUAL_CONNECTION}>{t("plex.connection.manualAddressOption")}</option>
             </select>
             <span className="help">{t("plex.connectionField.help")}</span>
           </label>

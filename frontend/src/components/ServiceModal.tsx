@@ -167,6 +167,83 @@ export function TestBadge({ result }: { result: InstanceTest | null }) {
   );
 }
 
+/** Client-side twin of the server's webhook validation (reaper/api/settings.py). The token
+ *  lives in the URL path, so a typo'd host would leak it to a stranger -- we only accept an
+ *  https URL whose host is Discord's webhook endpoint (subdomains like ptb./canary. count)
+ *  and whose path is a real /api/webhooks/ path. The server checks the same thing; this just
+ *  spares a round-trip and gives an instant hint.
+ *
+ *  Lives here rather than in `DiscordModal` or `NotificationsPanel` so both webhook editors
+ *  and `useWebhookTest` below share the one rule without importing each other: a second copy
+ *  of these host and path rules would be one validator written twice, and the copy that
+ *  drifts is the one that starts accepting a URL the backend then refuses (rule 18, rule
+ *  144). */
+const DISCORD_WEBHOOK_HOSTS = ["discord.com", "discordapp.com"];
+
+export function isDiscordWebhook(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  const host = url.hostname.toLowerCase();
+  const okHost =
+    DISCORD_WEBHOOK_HOSTS.includes(host) ||
+    DISCORD_WEBHOOK_HOSTS.some((h) => host.endsWith("." + h));
+  return okHost && url.pathname.startsWith("/api/webhooks/");
+}
+
+/** The shared half of testing a Discord webhook: whether the typed box is a valid new
+ *  webhook, whether Test may fire, and the test mutation itself. `DiscordModal` and
+ *  `NotificationsPanel` each point their own box and save/remove pair at this, so the
+ *  validity rule and the test request can't drift into two answers about the same webhook
+ *  (rule 72); each caller keeps its own pending-button label and error-message wording.
+ *
+ *  `onTestError` gets the raw thrown value, so the message stays the caller's to compose. */
+export function useWebhookTest(url: string, connected: boolean, onTestError: (e: unknown) => void) {
+  // The result and the URL it was computed for: without the pairing, a passed test would
+  // outlive a pasted-over box and show "Passed" for a webhook nobody has sent to (rule 85).
+  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
+
+  /** What a test would be sent. A blank box tests the webhook already STORED, so blank is a
+   *  real value here rather than an absence. */
+  const testedWith = () => url.trim();
+  const typed = url.trim().length > 0;
+  const validNew = typed && isDiscordWebhook(url);
+  const badFormat = typed && !validNew;
+
+  const sendTest = useMutation({
+    // Test what is typed if anything is; otherwise test what is stored, so a saved channel
+    // can be verified without going back to Discord for the URL again.
+    mutationFn: () => api.testWebhook(url.trim() ? url.trim() : null),
+    // What this request is ABOUT, captured when it is issued rather than computed at success
+    // time: the box stays live while the request is out, and `testedWith()` called at success
+    // would fingerprint whatever is typed by then (rule 85).
+    onMutate: () => ({ of: testedWith() }),
+    onSuccess: (r, _v, issued) => {
+      const result = composeDiscordTestResult(r);
+      setTest({ result, of: issued.of });
+      announce(testSentence(result));
+    },
+    onError: onTestError,
+  });
+
+  const canTest = (validNew || (!typed && connected)) && !sendTest.isPending;
+
+  return {
+    typed,
+    validNew,
+    badFormat,
+    canTest,
+    test,
+    testedWith,
+    sendTest,
+    clearTest: () => setTest(null),
+  };
+}
+
 /** The external-URL box's complaint, named once for both ends of the association (rule 67). */
 const EXTERNAL_URL_ERROR_ID = "service-external-url-error";
 

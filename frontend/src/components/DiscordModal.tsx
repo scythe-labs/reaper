@@ -18,12 +18,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import { api, type InstanceTest } from "../api";
+import { api } from "../api";
 import { describeError } from "../errors";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
-import { composeDiscordTestResult, TestBadge, testSentence } from "./ServiceModal";
-import { isDiscordWebhook } from "./Settings";
+import { TestBadge, useWebhookTest } from "./ServiceModal";
 
 /** The webhook box's format complaint, named once for both ends of the association
  *  (rule 67). */
@@ -36,15 +35,12 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
   const connected = data?.has_webhook ?? false;
 
   const [url, setUrl] = useState("");
-  // The result and the URL it was computed for, the pairing `ServiceModal` keeps for its own
-  // badge (rule 72): without it a passed test then a pasted-over URL leaves "Passed" beside a
-  // webhook nobody has sent to (rule 85).
-  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  /** What a test would be sent. A blank box tests the webhook already STORED, so blank is a
-   *  real value here rather than an absence. */
-  const testedWith = () => url.trim();
+  const { validNew, badFormat, canTest, test, testedWith, sendTest } = useWebhookTest(
+    url,
+    connected,
+    (e) => setError(describeError(e)),
+  );
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["notifications"] });
 
@@ -54,26 +50,6 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
       await invalidate();
       announce(t("services.discord.savedAnnouncement"));
       onClose();
-    },
-    onError: (e) => setError(describeError(e)),
-  });
-
-  const sendTest = useMutation({
-    // Test what is typed if anything is; otherwise test what is stored, so a saved channel can
-    // be verified without going back to Discord for the URL again.
-    mutationFn: () => api.testWebhook(url.trim() ? url.trim() : null),
-    // What this request is ABOUT, captured when it is issued rather than computed at success
-    // time, the same as `ServiceModal`'s own test (rule 72). The box stays live while the request
-    // is out. `testedWith()` called at success would fingerprint whatever is typed by then, so a
-    // second webhook pasted mid-send gets "Passed" for a channel nobody tried (rule 85).
-    onMutate: () => ({ of: testedWith() }),
-    onSuccess: (r, _v, issued) => {
-      // The server sends a typed reason (docs/history/I18N_PLAN.md §5); composed once, in
-      // `ServiceModal.tsx`'s `composeDiscordTestResult`, into the same shape `TestBadge` and
-      // `testSentence` already render for a connection test (rule 144).
-      const result: InstanceTest = composeDiscordTestResult(r);
-      setTest({ result, of: issued.of });
-      announce(testSentence(result));
     },
     onError: (e) => setError(describeError(e)),
   });
@@ -88,10 +64,6 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
     onError: (e) => setError(describeError(e)),
   });
 
-  const typed = url.trim().length > 0;
-  const validNew = typed && isDiscordWebhook(url);
-  const badFormat = typed && !validNew;
-  const canTest = (validNew || (!typed && connected)) && !sendTest.isPending;
   const busy = save.isPending || remove.isPending;
 
   return (
