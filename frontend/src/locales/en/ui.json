@@ -350,7 +350,7 @@
     "rewatch_keep_fired_recent": "{count}, most recently {last_days_span} ago. Likely to be watched again.",
     "rewatch_keep_fired": "{count}, and recently. Likely to be watched again.",
     "rewatch_keep_never": "{media, select, tv {Never watched again here.} other {Never watched here.}}",
-    "rewatch_keep_few": "{count} in all.",
+    "rewatch_keep_few": "{count} in total.",
     "rewatch_keep_stale": "{count}, but not in the last {window_days_window}.",
     "season_keep": {
       "specials": "specials are never auto-pruned",

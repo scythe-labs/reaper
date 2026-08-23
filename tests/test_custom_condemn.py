@@ -453,7 +453,7 @@ class TestBuiltinRewatchKeep:
 
         assert result.evaluated is True
         assert result.discount == 0.0
-        assert text(result.detail) == "Watched 3 times in all."
+        assert text(result.detail) == "Watched 3 times in total."
 
     def test_a_stale_last_play_discounts_nothing(self) -> None:
         """Enough viewings, but the most recent one is outside the window: read-and-not-met,
@@ -586,7 +586,7 @@ class TestBuiltinRewatchKeepTvWording:
         result = evaluate_keep(keep, facts)
 
         assert result.discount == 0.0
-        assert text(result.detail) == "Watched again 1 time in all."
+        assert text(result.detail) == "Watched again 1 time in total."
 
     def test_a_stale_last_play_states_the_window(self) -> None:
         keep = _rewatch_keep(media_type="tv", min_viewings=2, recent_days=500)
