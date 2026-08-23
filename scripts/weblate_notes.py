@@ -21,17 +21,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
+
+from _weblate_http import DEFAULT_KEY_FILE, api_key, request
 
 API_ROOT = "https://hosted.weblate.org/api"
 PROJECT = "reaper"
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_KEY_FILE = Path("/opt/reaper_1/.weblate_api")
 
 #: Every component this script keeps in sync, and the one repo file that holds its notes. Both
 #: sides are edited only here (CONTRIBUTING's "Translate it"): Weblate's own explanation field
@@ -42,13 +39,6 @@ _COMPONENTS: tuple[tuple[str, Path], ...] = (
 )
 
 
-#: Retries on a transient failure, and the ceiling on how long one retry may sleep -- a
-#: `Retry-After` is a remote server's number, and rule 114 (backend.md) is the same doctrine
-#: for any sleep driven by one: clamp it, never trust it outright.
-MAX_ATTEMPTS = 5
-MAX_RETRY_AFTER = 60
-
-
 def _component_url(component: str) -> str:
     return f"{API_ROOT}/components/{PROJECT}/{component}/"
 
@@ -57,75 +47,13 @@ def _units_url(component: str) -> str:
     return f"{API_ROOT}/translations/{PROJECT}/{component}/en/units/?page_size=100"
 
 
-def _api_key(key_file: Path) -> str:
-    import os
-
-    key = os.environ.get("WEBLATE_API_KEY")
-    if key:
-        return key.strip()
-    if key_file.exists():
-        return key_file.read_text(encoding="utf-8").strip()
-    raise SystemExit(
-        f"no Weblate API key: set WEBLATE_API_KEY or create {key_file}. Never pass one on the "
-        "command line, where it would land in shell history."
-    )
-
-
-def _http_open(url: str, *, method: str = "GET", key: str, body: bytes | None = None) -> Any:
-    """One request, scheme-checked so nothing but `https://hosted.weblate.org` is ever asked.
-
-    The one place every request goes through, so a header carrying the key can only ever be
-    attached here -- never logged, and never visible in a caller's own code.
-    """
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.netloc != "hosted.weblate.org":
-        raise ValueError(f"refusing to call a non-Weblate host: {url}")
-    request = urllib.request.Request(url, data=body, method=method)  # noqa: S310 (host checked above)
-    request.add_header("Authorization", f"Token {key}")
-    if body is not None:
-        request.add_header("Content-Type", "application/json")
-    return urllib.request.urlopen(request, timeout=30)  # noqa: S310 (host checked above)
-
-
-def _request_json(
-    url: str, *, method: str = "GET", key: str, body: bytes | None = None, allow_404: bool = False
-) -> Any:
-    """One call, retried on a transient failure or a rate limit, else raised.
-
-    A non-2xx status other than 429 is a real failure (a bad key, a moved unit) and is not
-    retried -- retrying it would only hide the failure behind a delay before the same error.
-    `allow_404` returns ``None`` for a 404 instead of raising, for the "does this component
-    exist yet" probe in `main`.
-    """
-    last: Exception | None = None
-    for attempt in range(MAX_ATTEMPTS):
-        try:
-            with _http_open(url, method=method, key=key, body=body) as response:
-                raw = response.read()
-                return json.loads(raw) if raw else None
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404 and allow_404:
-                return None
-            if exc.code == 429 and attempt + 1 < MAX_ATTEMPTS:
-                wait = min(int(exc.headers.get("Retry-After", "5") or "5"), MAX_RETRY_AFTER)
-                print(f"  rate-limited, waiting {wait}s", file=sys.stderr)
-                time.sleep(wait)
-                last = exc
-                continue
-            raise RuntimeError(f"{method} {url} -> HTTP {exc.code}: {exc.read()[:500]!r}") from exc
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            last = exc
-            time.sleep(1 + attempt)
-    raise RuntimeError(f"{method} {url} failed after {MAX_ATTEMPTS} tries: {last}")
-
-
 def _fetch_units(key: str, units_url: str) -> dict[str, dict[str, Any]]:
     """Every English unit's `context` (the dotted catalog key) mapped to its `source_unit`
     URL and current `explanation`, paging through `next` until it is null."""
     units: dict[str, dict[str, Any]] = {}
     url: str | None = units_url
     while url is not None:
-        page = _request_json(url, key=key)
+        page = request(url, key=key)
         for unit in page["results"]:
             context = unit.get("context")
             if not context:
@@ -149,8 +77,8 @@ def sync(
     A key with no matching unit is reported as `missing`, not raised: it is the ordinary gap
     between a merge landing here and Weblate's next pull of `dev`, not a failure this job should
     fail CI over. An HTTP failure is the one thing that ends the run non-zero, and it does that
-    by propagating out of `_request_json` uncaught, since a PATCH that failed partway through is
-    not a state a "missing" count can describe.
+    by propagating out of `_weblate_http.request` uncaught, since a PATCH that failed partway
+    through is not a state a "missing" count can describe.
     """
     changed = unchanged = missing = 0
     for context in sorted(notes):
@@ -168,7 +96,7 @@ def sync(
             print(f"would change: {context}")
         else:
             body = json.dumps({"explanation": note}).encode("utf-8")
-            _request_json(unit["patch_url"], method="PATCH", key=key, body=body)
+            request(unit["patch_url"], method="PATCH", key=key, body=body)
             print(f"changed: {context}")
 
     verb = "would change" if dry_run else "changed"
@@ -181,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
     args = parser.parse_args(argv)
 
-    key = _api_key(args.key_file)
+    key = api_key(args.key_file)
     for component, notes_path in _COMPONENTS:
         print(f"== {component} ==")
         # A component this script's own notes file names before `scripts/weblate_component.py`
@@ -189,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         # file, which can land before anyone runs that script by hand. Skipping rather than
         # raising keeps that push from failing CI over a component that is created moments
         # later -- the next push (or a manual re-run) picks up the notes once it exists.
-        if _request_json(_component_url(component), key=key, allow_404=True) is None:
+        if request(_component_url(component), key=key, allow_404=True) is None:
             print(f"  {component} does not exist on Weblate yet, skipping")
             continue
         notes: dict[str, str] = json.loads(notes_path.read_text(encoding="utf-8"))

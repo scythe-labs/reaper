@@ -25,15 +25,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any
 
+from _weblate_http import DEFAULT_KEY_FILE, api_key, request
 from weblate_glossary import COPIED_FIELDS
 
 API_ROOT = "https://hosted.weblate.org/api"
@@ -45,7 +41,6 @@ BACKEND_COMPONENT_URL = f"{API_ROOT}/components/{PROJECT}/backend/"
 #: points at.
 ADDONS_LIST_URL = f"{API_ROOT}/addons/?page_size=100"
 CREATE_COMPONENT_URL = f"{API_ROOT}/projects/{PROJECT}/components/"
-DEFAULT_KEY_FILE = Path("/opt/reaper_1/.weblate_api")
 
 BACKEND_DIR = "src/reaper/locales"
 BACKEND_FILEMASK = f"{BACKEND_DIR}/*/backend.json"
@@ -67,64 +62,14 @@ GIT_SQUASH_ADDON: dict[str, Any] = {
 }
 
 
-def _api_key(key_file: Path) -> str:
-    key = os.environ.get("WEBLATE_API_KEY")
-    if key:
-        return key.strip()
-    if key_file.exists():
-        return key_file.read_text(encoding="utf-8").strip()
-    raise SystemExit(
-        f"no Weblate API key: set WEBLATE_API_KEY or create {key_file}. Never pass one on the "
-        "command line, where it would land in shell history."
-    )
-
-
-def _http_open(url: str, *, method: str = "GET", key: str, body: bytes | None = None) -> Any:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.netloc != "hosted.weblate.org":
-        raise ValueError(f"refusing to call a non-Weblate host: {url}")
-    request = urllib.request.Request(url, data=body, method=method)  # noqa: S310 (host checked above)
-    request.add_header("Authorization", f"Token {key}")
-    if body is not None:
-        request.add_header("Content-Type", "application/json")
-    return urllib.request.urlopen(request, timeout=30)  # noqa: S310 (host checked above)
-
-
-def _request(
-    url: str, *, method: str = "GET", key: str, body: bytes | None = None, allow_404: bool = False
-) -> Any:
-    """One call, retried on a transient failure or a rate limit. `allow_404` returns ``None``
-    for a 404 instead of raising, for the "does this exist yet" probes."""
-    last: Exception | None = None
-    for attempt in range(5):
-        try:
-            with _http_open(url, method=method, key=key, body=body) as response:
-                raw = response.read()
-                return json.loads(raw) if raw else None
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404 and allow_404:
-                return None
-            if exc.code == 429 and attempt + 1 < 5:
-                wait = min(int(exc.headers.get("Retry-After", "5") or "5"), 60)
-                print(f"  rate-limited, waiting {wait}s", file=sys.stderr)
-                time.sleep(wait)
-                last = exc
-                continue
-            raise RuntimeError(f"{method} {url} -> HTTP {exc.code}: {exc.read()[:500]!r}") from exc
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            last = exc
-            time.sleep(1 + attempt)
-    raise RuntimeError(f"{method} {url} failed after 5 tries: {last}")
-
-
 def _ensure_component(key: str, *, dry_run: bool) -> bool:
     """True once the backend component exists. Creates it only when absent."""
-    existing = _request(BACKEND_COMPONENT_URL, key=key, allow_404=True)
+    existing = request(BACKEND_COMPONENT_URL, key=key, allow_404=True)
     if existing is not None:
         print("backend component already exists, nothing to create")
         return True
 
-    ui = _request(UI_COMPONENT_URL, key=key)
+    ui = request(UI_COMPONENT_URL, key=key)
     payload = {field: ui[field] for field in COPIED_FIELDS}
     # Not the glossary's bilingual exclusion filter (there is no English translation unit to
     # skip here, since `en` is the template): `ui`'s own filter is the one to copy.
@@ -146,7 +91,7 @@ def _ensure_component(key: str, *, dry_run: bool) -> bool:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return False
 
-    _request(CREATE_COMPONENT_URL, method="POST", key=key, body=json.dumps(payload).encode())
+    request(CREATE_COMPONENT_URL, method="POST", key=key, body=json.dumps(payload).encode())
     print("created the backend component")
     return True
 
@@ -160,7 +105,7 @@ def _repository_root(key: str) -> str:
     linked component, which is why the first run installed a second copy on `ui` instead
     of one on `backend`.
     """
-    component = _request(BACKEND_COMPONENT_URL, key=key)
+    component = request(BACKEND_COMPONENT_URL, key=key)
     return str(component.get("linked_component") or BACKEND_COMPONENT_URL).rstrip("/") + "/"
 
 
@@ -169,7 +114,7 @@ def _addon_names(root: str, *, key: str) -> set[str]:
     names: set[str] = set()
     url: str | None = ADDONS_LIST_URL
     while url is not None:
-        page = _request(url, key=key)
+        page = request(url, key=key)
         for addon in page.get("results", []):
             if str(addon.get("component", "")).rstrip("/") + "/" == root:
                 names.add(str(addon.get("name", "")))
@@ -186,7 +131,7 @@ def _ensure_git_squash_addon(key: str, *, dry_run: bool) -> None:
         print(f"would POST the git.squash add-on to {root}addons/")
         print(json.dumps(GIT_SQUASH_ADDON, indent=2, sort_keys=True))
         return
-    _request(f"{root}addons/", method="POST", key=key, body=json.dumps(GIT_SQUASH_ADDON).encode())
+    request(f"{root}addons/", method="POST", key=key, body=json.dumps(GIT_SQUASH_ADDON).encode())
     print(f"installed the git.squash add-on on {root}")
 
 
@@ -196,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
     args = parser.parse_args(argv)
 
-    key = _api_key(args.key_file)
+    key = api_key(args.key_file)
     component_exists = _ensure_component(key, dry_run=args.dry_run)
     if not component_exists:
         print("component not created yet (dry run), skipping the add-on check")
