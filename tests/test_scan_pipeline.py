@@ -1892,6 +1892,91 @@ class TestAnUnreadableRatingsDatasetKeepsInsteadOfCondemning:
         assert all(c.verdict != "condemn" for c in rows.values())
 
 
+async def _run_scan_under_stubs(
+    sync_stub: Any,
+    tmp_path: Path,
+    cache_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    tautulli: Any = None,
+    create_tables: bool = False,
+) -> dict[str, Any]:
+    """Run the orchestrator with ``history_sync.sync`` replaced and return what
+    ``snapshot_service.scan`` was called with.
+
+    Three tests share this shape and vary only two things: ``tautulli`` stands in for the
+    watch-history source (default: a Tautulli with no users at all) and ``create_tables``
+    is for the one caller that reads the protection-list registry back afterward, which
+    needs real tables rather than the soft failure every other caller here is fine with.
+    """
+    from types import SimpleNamespace
+
+    from reaper.engine.policy import ProfileSettings
+    from reaper.services import scan_runner
+
+    captured: dict[str, Any] = {}
+
+    async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return SimpleNamespace(id=1, item_count=0, degraded=False)
+
+    class _CmTautulli:
+        async def __aenter__(self) -> _CmTautulli:
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def users(self) -> list[dict[str, Any]]:
+            return []
+
+    source = tautulli if tautulli is not None else _CmTautulli()
+
+    async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
+        return ([], [], source, [], None)
+
+    async def fake_policies(session: Any) -> Any:
+        return (
+            profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default"),
+            profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
+        )
+
+    async def fake_profile(session: Any) -> Any:
+        return profiles.ActiveProfile(ProfileSettings())
+
+    async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
+        return []
+
+    monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
+    monkeypatch.setattr(history_sync, "sync", sync_stub)
+    monkeypatch.setattr(profiles, "active_policies", fake_policies)
+    monkeypatch.setattr(profiles, "active_profile", fake_profile)
+    monkeypatch.setattr(snapshot_service, "scan", fake_scan)
+    monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync_lists)
+    monkeypatch.setattr(snapshot_service, "protection_sync_degradations", fake_sync_degradations)
+
+    settings = Settings(data_dir=tmp_path, secret_key="k")
+    engine = create_engine(settings)
+    factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+    try:
+        if create_tables:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+        await scan_runner.run_scan(
+            settings=settings,
+            session_factory=factory,
+            cache_engine=cache_engine,
+            box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
+        )
+    finally:
+        await engine.dispose()
+
+    return captured
+
+
 class TestRunScanHistorySync:
     """The orchestrator's handling of the watch-history mirror sync.
 
@@ -1902,88 +1987,14 @@ class TestRunScanHistorySync:
     keeps that item deletable-looking snapshot from being executed.
     """
 
-    async def _degradations_with_sync(
-        self,
-        history_sync_stub: Any,
-        tmp_path: Path,
-        cache_engine: AsyncEngine,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> list[str]:
-        """Run the orchestrator with ``history_sync.sync`` replaced and return the
-        degradation reasons the scan was handed. Both tests below vary only the sync."""
-        from types import SimpleNamespace
-
-        from reaper.engine.policy import ProfileSettings
-        from reaper.services import scan_runner
-
-        captured: dict[str, Any] = {}
-
-        async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
-            captured.update(kwargs)
-            return SimpleNamespace(id=1, item_count=0, degraded=False)
-
-        class _CmTautulli:
-            async def __aenter__(self) -> _CmTautulli:
-                return self
-
-            async def __aexit__(self, *exc: object) -> None:
-                return None
-
-            async def users(self) -> list[dict[str, Any]]:
-                return []
-
-        async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
-            return ([], [], _CmTautulli(), [], None)
-
-        async def fake_policies(session: Any) -> Any:
-            return (
-                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default"),
-                profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
-            )
-
-        async def fake_profile(session: Any) -> Any:
-            return profiles.ActiveProfile(ProfileSettings())
-
-        async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
-            return {}
-
-        async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
-            return []
-
-        monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
-        monkeypatch.setattr(history_sync, "sync", history_sync_stub)
-        monkeypatch.setattr(profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(profiles, "active_profile", fake_profile)
-        monkeypatch.setattr(snapshot_service, "scan", fake_scan)
-        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync_lists)
-        monkeypatch.setattr(
-            snapshot_service, "protection_sync_degradations", fake_sync_degradations
-        )
-
-        settings = Settings(data_dir=tmp_path, secret_key="k")
-        engine = create_engine(settings)
-        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
-        try:
-            await scan_runner.run_scan(
-                settings=settings,
-                session_factory=factory,
-                cache_engine=cache_engine,
-                box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
-            )
-        finally:
-            await engine.dispose()
-
-        return list(captured.get("extra_degrade_reasons") or [])
-
     async def test_a_failed_history_sync_degrades_the_snapshot(
         self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def failing_sync(engine: Any, tautulli: Any) -> Any:
             raise IntegrationError("tautulli", "unreachable (boom)")
 
-        reasons = await self._degradations_with_sync(
-            failing_sync, tmp_path, cache_engine, monkeypatch
-        )
+        captured = await _run_scan_under_stubs(failing_sync, tmp_path, cache_engine, monkeypatch)
+        reasons = list(captured.get("extra_degrade_reasons") or [])
 
         assert reasons, "a failed history sync must hand the scan a degradation reason"
         assert any("Watch history could not be refreshed" in r for r in reasons)
@@ -2000,9 +2011,8 @@ class TestRunScanHistorySync:
         async def sync_with_gaps(engine: Any, tautulli: Any) -> history_sync.HistoryState:
             return history_sync.HistoryState(rows=10, earliest=None, latest=None, unservable=3)
 
-        reasons = await self._degradations_with_sync(
-            sync_with_gaps, tmp_path, cache_engine, monkeypatch
-        )
+        captured = await _run_scan_under_stubs(sync_with_gaps, tmp_path, cache_engine, monkeypatch)
+        reasons = list(captured.get("extra_degrade_reasons") or [])
 
         assert any("Tautulli couldn't return 3 of your plays" in r for r in reasons)
         assert any("nothing may be deleted" in r for r in reasons)
@@ -2724,15 +2734,6 @@ class TestKeepHistoryCoverage:
         snapshot is marked degraded exactly like any other failed source."""
         from types import SimpleNamespace
 
-        from reaper.engine.policy import ProfileSettings
-        from reaper.services import scan_runner
-
-        captured: dict[str, Any] = {}
-
-        async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
-            captured.update(kwargs)
-            return SimpleNamespace(id=1, item_count=0, degraded=False)
-
         class _OffTautulli(FakeTautulli):
             def __init__(self) -> None:
                 super().__init__(
@@ -2745,49 +2746,12 @@ class TestKeepHistoryCoverage:
             async def __aexit__(self, *exc: object) -> None:
                 return None
 
-        async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
-            return ([], [], _OffTautulli(), [], None)
-
         async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
             return SimpleNamespace(rows=0, unservable=0)
 
-        async def fake_policies(session: Any) -> Any:
-            return (
-                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default"),
-                profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
-            )
-
-        async def fake_profile(session: Any) -> Any:
-            return profiles.ActiveProfile(ProfileSettings())
-
-        async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
-            return {}
-
-        async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
-            return []
-
-        monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
-        monkeypatch.setattr(history_sync, "sync", ok_sync)
-        monkeypatch.setattr(profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(profiles, "active_profile", fake_profile)
-        monkeypatch.setattr(snapshot_service, "scan", fake_scan)
-        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync_lists)
-        monkeypatch.setattr(
-            snapshot_service, "protection_sync_degradations", fake_sync_degradations
+        captured = await _run_scan_under_stubs(
+            ok_sync, tmp_path, cache_engine, monkeypatch, tautulli=_OffTautulli()
         )
-
-        settings = Settings(data_dir=tmp_path, secret_key="k")
-        engine = create_engine(settings)
-        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
-        try:
-            await scan_runner.run_scan(
-                settings=settings,
-                session_factory=factory,
-                cache_engine=cache_engine,
-                box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
-            )
-        finally:
-            await engine.dispose()
 
         reasons = captured.get("extra_degrade_reasons")
         assert reasons, "an unrecorded user must hand the scan a degradation reason"
@@ -3781,73 +3745,24 @@ class TestTheScanRecordsTheListsItGatheredUnder:
     ) -> None:
         from types import SimpleNamespace
 
-        from reaper.engine.policy import ProfileSettings
-        from reaper.services import list_config, scan_runner
+        from reaper.services import list_config
 
-        captured: dict[str, Any] = {}
-
-        async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
-            captured.update(kwargs)
-            return SimpleNamespace(id=1, item_count=0, degraded=False)
-
-        class _CmTautulli:
-            async def __aenter__(self) -> _CmTautulli:
-                return self
-
-            async def __aexit__(self, *exc: object) -> None:
-                return None
-
-            async def users(self) -> list[dict[str, Any]]:
-                return []
-
-        async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
-            return ([], [], _CmTautulli(), [], None)
-
-        async def fake_policies(session: Any) -> Any:
-            return (
-                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default"),
-                profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
-            )
-
-        async def fake_profile(session: Any) -> Any:
-            return profiles.ActiveProfile(ProfileSettings())
-
-        async def ok_sync(engine: Any, tautulli: Any) -> Any:
+        async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
             return SimpleNamespace(rows=0, unservable=0)
 
-        async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
-            return {}
-
-        async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
-            return []
-
-        monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
-        monkeypatch.setattr(history_sync, "sync", ok_sync)
-        monkeypatch.setattr(profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(profiles, "active_profile", fake_profile)
-        monkeypatch.setattr(snapshot_service, "scan", fake_scan)
-        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync_lists)
-        monkeypatch.setattr(
-            snapshot_service, "protection_sync_degradations", fake_sync_degradations
+        # Unlike the degradation tests above, this one reads the registry back, so the
+        # tables have to exist rather than being allowed to fail soft.
+        captured = await _run_scan_under_stubs(
+            ok_sync, tmp_path, cache_engine, monkeypatch, create_tables=True
         )
 
+        # Read back through the same helper the route compares with, off a fresh engine on
+        # the same install: the scan already committed it, so the assertion is that the two
+        # agree rather than that some hash was passed (rule 141).
         settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
-        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         try:
-            # Unlike the degradation tests above, this one reads the registry back, so the
-            # tables have to exist rather than being allowed to fail soft.
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-            await scan_runner.run_scan(
-                settings=settings,
-                session_factory=factory,
-                cache_engine=cache_engine,
-                box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
-            )
-            # Read back through the same helper the route compares with, so the assertion is
-            # that the two agree rather than that some hash was passed (rule 141).
-            async with factory() as session:
+            async with create_session_factory(engine)() as session:
                 expected = await list_config.current_fingerprint(session)
         finally:
             await engine.dispose()
