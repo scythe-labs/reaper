@@ -4527,8 +4527,6 @@ def test_every_field_sm_box_names_itself_and_the_population_holds_still() -> Non
 #: ``of:`` key outside a comment. Pinned by name, because the fifth surface is written by copying
 #: whichever of these four its author happened to open, and three of the four were the wrong copy.
 _VOUCHED_TEST_SURFACES = {
-    "frontend/src/components/DiscordModal.tsx",
-    "frontend/src/components/NotificationsPanel.tsx",
     "frontend/src/components/ServiceModal.tsx",
     "frontend/src/components/ServicesPanel.tsx",
 }
@@ -4592,14 +4590,15 @@ def _settle_time_fingerprints(text: str) -> list[int]:
 def test_a_held_test_result_is_stamped_when_its_request_is_issued() -> None:
     """A "Passed" badge must describe the address that was tested, not the one now on screen.
 
-    Four surfaces store ``{ result, of }`` and show the badge only while ``of`` still matches what
-    the form holds. That comparison is the honesty of the badge (rule 85), and it is satisfied by
-    computing the fingerprint at EITHER end -- which is why three of the four computed it at
-    success time, where it is no longer the address the request asked about. The boxes stay live
-    while the request is out, so pasting a second webhook while the first is being sent to left the
-    two matching by construction and "Passed" beside a channel nobody tried. ``ServiceModal``
-    captured it in ``onMutate`` and the other three did not, and nothing in the suite could see the
-    difference; #178 and #264 each fixed one site of this family by hand.
+    Two surfaces store ``{ result, of }`` and show the badge only while ``of`` still matches what
+    the form holds (four before the webhook-test copies were consolidated into ``ServiceModal``'s
+    ``useWebhookTest``). That comparison is the honesty of the badge (rule 85), and it is
+    satisfied by computing the fingerprint at EITHER end -- which is why three of the four
+    computed it at success time, where it is no longer the address the request asked about. The
+    boxes stay live while the request is out, so pasting a second webhook while the first is being
+    sent to left the two matching by construction and "Passed" beside a channel nobody tried.
+    ``ServiceModal`` captured it in ``onMutate`` and the other three did not, and nothing in the
+    suite could see the difference; #178 and #264 each fixed one site of this family by hand.
 
     **The forms this reads** (rule 147): the value an ``of:`` key is handed, on a line that does
     not also spell ``onMutate``, in a shipped ``.ts``/``.tsx`` with block comments blanked and
