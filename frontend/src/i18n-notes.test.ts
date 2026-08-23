@@ -102,7 +102,11 @@ const HOW_TO_UPDATE =
 //: update-status keys) and #906's movie/season media-typed-key merge landed together --
 //: neither PR's own count (1182, 1181) describes this tree, since each was pinned against
 //: a base the other's removals and additions had not yet touched.
-const EXPECTED_REQUIRED_COUNT = 1177;
+//: 1180: format.span.years/months/days joined the catalog with ICU plurals (humanDays and
+//: humanWindow no longer hardcode "year"/"month"/"day"), so all three are required;
+//: format.span.lessThanADay/yearWord/monthWord/dayWord carry no argument or tag and stay
+//: unrequired, the same as any other plain literal.
+const EXPECTED_REQUIRED_COUNT = 1180;
 
 describe("translator notes (locales/en/ui.notes.json)", () => {
   it("classifies a plain literal as not required, and an ICU or tagged one as required (rule 145)", () => {

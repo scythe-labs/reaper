@@ -63,6 +63,15 @@
     "sizeUnknown": "Size unknown",
     "totalWithUnknown": "{known}, {n, plural, one {# size unknown} other {# sizes unknown}}",
     "souls": "{n, plural, one {# soul} other {# souls}}",
+    "span": {
+      "lessThanADay": "less than a day",
+      "years": "{n, plural, one {# year} other {# years}}",
+      "months": "{n, plural, one {# month} other {# months}}",
+      "days": "{n, plural, one {# day} other {# days}}",
+      "yearWord": "year",
+      "monthWord": "month",
+      "dayWord": "day"
+    },
     "spareShort": "{n}d",
     "spareLeft": "{n, plural, one {{n} day left} other {{n} days left}}",
     "spareExpiredPhrase": "expired",
