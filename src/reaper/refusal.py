@@ -37,7 +37,8 @@ MESSAGES: dict[str, str] = {
     # -----------------------------------------------------------------------------
     # Policy: the field registry's save-boundary checks (engine/fields.py, all raise
     # sites) and the policy body's own validators (engine/policy.py, all raise sites).
-    # 37 sites total; tests/test_refusal_catalog.py pins the count.
+    # tests/test_repo_hygiene.py::test_every_refusal_code_has_a_raiser_and_a_catalog_entry
+    # pins the catalog's whole code and site counts, not this section alone.
     # -----------------------------------------------------------------------------
     "error.policy.unknown_field": 'There is no field named "{field}".',
     "error.policy.field_wrong_lane": (
