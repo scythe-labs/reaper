@@ -94,7 +94,9 @@ def validation_error_items(errors: Sequence[Mapping[str, Any]]) -> list[dict[str
     schema's own field validators, ``api/schemas.py``), or a wrapped :class:`Refusal` raised
     inside a ``@model_validator`` -- pydantic parks the original exception on
     ``ctx["error"]`` for a plain ``ValueError``/subclass it catches, so that instance's own
-    ``code``/``params`` are read straight off it rather than re-derived.
+    ``code``/``params`` are read straight off it rather than re-derived, through
+    :func:`~reaper.engine.reason.to_wire` the same way :func:`refusal_body` encodes its own
+    ``params`` -- never the raw dict, which can hold a nested ``Reason``.
 
     Shared by ``main._validation_reason`` (FastAPI's own ``RequestValidationError``),
     ``api.policy._to_body`` and ``api.runs.update_profile`` (both catching a domain
@@ -113,7 +115,13 @@ def validation_error_items(errors: Sequence[Mapping[str, Any]]) -> list[dict[str
         underlying = ctx.get("error")
         if isinstance(underlying, Refusal):
             item["code"] = underlying.code
-            item["params"] = underlying.params
+            # Through `to_wire`, the same encoding `refusal_body` applies -- a param can be
+            # a nested `Reason` (an `IntegrationError`/`PlexError` carried in via
+            # `as_reason()`), and a raw `Reason` dataclass is not JSON serializable. No
+            # current `Refusal(...)` call site nests one, but the constructor's signature
+            # allows it, and the raw dict used to reach this handler's `JSONResponse`
+            # unencoded, which would 500 instead of answering with the refusal.
+            item["params"] = to_wire(underlying.as_reason()).get("p", {})
         elif error.get("type") in MESSAGES:
             item["code"] = error.get("type")
             item["params"] = {k: v for k, v in ctx.items() if k != "error"}
