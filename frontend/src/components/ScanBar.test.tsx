@@ -2,7 +2,7 @@
 //
 // The library scan's start, said out loud.
 //
-// Pressing "Scan library" disables its own button and swaps the schedule line for a progress
+// Pressing "Scan now" disables its own button and swaps the schedule line for a progress
 // bar. Both of those are visual, the disable drops focus to `<body>`, and a `role="progressbar"`
 // announces nothing by itself -- so for an operation that runs for minutes the next thing an
 // operator using a screen reader heard was the finish (#177).
@@ -98,7 +98,7 @@ describe("starting a library scan", () => {
 
     // Wait for the control, not for the page: the button is disabled while the status read is in
     // flight, and user-event reports a click on a disabled control as success (rule 137).
-    const scan = await screen.findByRole("button", { name: /scan library/i });
+    const scan = await screen.findByRole("button", { name: /scan now/i });
     await waitFor(() => expect(scan).toBeEnabled());
     await person.click(scan);
 
@@ -118,7 +118,7 @@ describe("starting a library scan", () => {
     apiMock.startScan.mockRejectedValue(new Error("Sonarr is unreachable"));
     renderRow();
 
-    const scan = await screen.findByRole("button", { name: /scan library/i });
+    const scan = await screen.findByRole("button", { name: /scan now/i });
     await waitFor(() => expect(scan).toBeEnabled());
     await person.click(scan);
 
@@ -139,7 +139,7 @@ describe("starting a library scan", () => {
 
   it("holds the last scan's incomplete notice while the next scan runs", async () => {
     // "This scan came back incomplete" renders inside this row, under the bar of the scan in
-    // flight, so during a run it names the wrong scan -- and the operator pressing Scan library
+    // flight, so during a run it names the wrong scan -- and the operator pressing Scan now
     // has already done what it asks. Every other last-scan fact on the row already waits.
     apiMock.scanStatus.mockResolvedValue(RUNNING);
     renderRow(DEGRADED);

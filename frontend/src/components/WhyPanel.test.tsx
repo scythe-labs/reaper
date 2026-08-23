@@ -1590,7 +1590,7 @@ describe("the watch-record escape", () => {
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);
 
-    expect(await screen.findByText("That didn't save. Try again.")).toBeVisible();
+    expect(await screen.findByText("Couldn't save that. Try again.")).toBeVisible();
     // The warning and its control stay put: the record is still there to discard.
     expect(screen.getByRole("button", { name: PRESS })).toBeEnabled();
   });

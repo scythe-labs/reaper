@@ -264,7 +264,7 @@ describe("a lean keep rule on a list", () => {
 
     // Membership isn't a number, so the ramp controls stay off the page for it.
     expect(screen.queryByRole("group", { name: "Which way it leans" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Full effect at")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("full effect at")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Points this rule takes off")).toBeInTheDocument();
   });
 

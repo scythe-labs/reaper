@@ -118,7 +118,7 @@ describe("the badge on the Discord row", () => {
     );
     const user = userEvent.setup();
     await fill(user, urlBox(), "https://discord.com/api/webhooks/1/aaa");
-    const press = await screen.findByRole("button", { name: "Send test message" });
+    const press = await screen.findByRole("button", { name: "Send test" });
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);
     await waitFor(() => expect(badge()!.textContent).toContain("Posted"));

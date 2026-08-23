@@ -1917,14 +1917,12 @@ export function PolicyEditor({
   const otherKind =
     mediaType === "tv" ? t("policyEditor.mediaKind.movie") : t("policyEditor.mediaKind.tv");
 
-  // The rewatch card's lane-dependent copy, both halves. `bar` and `barLabel` are one
-  // sentence in two places, the span and the screen reader's label, so they are written
-  // together.
+  // The rewatch card's lane-dependent copy. `bar` also serves as the screen reader's
+  // label (rule 21: capitalization has no screen-reader function).
   const rewatchCopy = {
     name: t("policyEditor.rewatchCopy.name", { mediaType }),
     help: t("policyEditor.rewatchCopy.help", { mediaType }),
     bar: t("policyEditor.rewatchCopy.bar", { mediaType }),
-    barLabel: t("policyEditor.rewatchCopy.barLabel", { mediaType }),
     holdName: t("policyEditor.rewatchCopy.holdName", { mediaType }),
     holdHelp: t("policyEditor.rewatchCopy.holdHelp", { mediaType }),
   };
@@ -2520,7 +2518,7 @@ export function PolicyEditor({
                   min={1}
                   max={1000}
                   width="narrow"
-                  ariaLabel={rewatchCopy.barLabel}
+                  ariaLabel={rewatchCopy.bar}
                   onChange={(v) => update({ rewatch_min_viewings: v })}
                 />
               </div>
@@ -2530,7 +2528,7 @@ export function PolicyEditor({
                   value={draft.rewatch_recent_days}
                   units={timeUnits()}
                   min={1}
-                  ariaLabel={t("policyEditor.rewatchCard.mostRecentlyWithinAriaLabel")}
+                  ariaLabel={t("policyEditor.rewatchCard.mostRecentlyWithin")}
                   onChange={(v) => update({ rewatch_recent_days: v })}
                 />
               </div>
@@ -2542,7 +2540,7 @@ export function PolicyEditor({
                   min={1}
                   max={50}
                   width="narrow"
-                  ariaLabel={t("policyEditor.rewatchCard.lowersScoreByAriaLabel")}
+                  ariaLabel={t("policyEditor.rewatchCard.lowersScoreBy")}
                   onChange={(v) => update({ rewatch_keep_discount: v })}
                 />
               </div>
@@ -2598,7 +2596,7 @@ export function PolicyEditor({
                         min={1}
                         max={99}
                         width="narrow"
-                        ariaLabel={t("policyEditor.rewatchHold.keptWhenAtLeastAriaLabel")}
+                        ariaLabel={t("policyEditor.rewatchHold.keptWhenAtLeast")}
                         onChange={(v) => setHold({ ...hold, threshold: v })}
                       />
                     </div>
@@ -2831,7 +2829,7 @@ export function PolicyEditor({
           <div className="savebar">
             <span className="savebar-what">
               <strong>
-                {t("policyEditor.savebar.unsavedChangesPrefix")}
+                {t("common.savebar.unsavedChangesPrefix")}{" "}
                 {[
                   dirty ? t("policyEditor.savebar.kindPolicy", { kind }) : null,
                   paceDirty ? t("policyEditor.savebar.paceAndLimits") : null,

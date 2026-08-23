@@ -84,7 +84,7 @@ export function ScanFreshness({
           <Notice as="span" tone="warn" standing className="freshness-warn">
             {/* The only one of the three with no remedy in it, which is why this is the one
                 that grew a link (rule 72). `ScanBar`'s copy renders ON Settings → Jobs,
-                beside the Scan library button, so it would point at itself; `ReapPlan`'s
+                beside the Scan now button, so it would point at itself; `ReapPlan`'s
                 already ends "Fix the source and scan again" on a page whose remedy is the
                 source, not a rescan. Both were read and left as they are. */}
             <Trans

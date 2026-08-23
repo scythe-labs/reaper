@@ -144,8 +144,8 @@ export function PanelHead({
               so the row always ends on the app that manages the file. */}
           <JumpPill href={links.tautulli} label={t("why.panel.head.tautulli")} />
           <JumpPill href={links.seerr} label={t("why.panel.head.seerr")} />
-          <JumpPill href={links.radarr} label={t("why.panel.head.radarr")} />
-          <JumpPill href={links.sonarr} label={t("why.panel.head.sonarr")} />
+          <JumpPill href={links.radarr} label={t("common.brand.radarr")} />
+          <JumpPill href={links.sonarr} label={t("common.brand.sonarr")} />
         </p>
       </div>
     </div>
@@ -1481,9 +1481,7 @@ export function WhyPanel({
               )}
             </div>
           </Notice>
-          {forgetWatchRecord.isError && (
-            <Notice tone="error">{t("why.panel.watchBlind.saveError")}</Notice>
-          )}
+          {forgetWatchRecord.isError && <Notice tone="error">{t("common.saveError")}</Notice>}
         </>
       )}
 

@@ -288,7 +288,7 @@ export function NotificationsPanel({
         >
           {testWebhook.isPending
             ? t("services.common.testing")
-            : t("services.notifications.sendTestButton")}
+            : t("services.discord.sendTestButton")}
         </button>
         {connected && (
           <button
@@ -308,7 +308,7 @@ export function NotificationsPanel({
       </div>
       {badFormat && (
         <Notice tone="error" id={WEBHOOK_ERROR_ID}>
-          {t("services.notifications.badFormat")}
+          {t("services.discord.badFormat")}
         </Notice>
       )}
       {error && <Notice tone="error">{error}</Notice>}

@@ -108,7 +108,7 @@ export function DiscordModal({ onClose }: { onClose: () => void }) {
     <ModalShell
       title={
         <>
-          <span className="kind-badge kind-discord">{t("services.discord.badge")}</span>{" "}
+          <span className="kind-badge kind-discord">{t("common.brand.discord")}</span>{" "}
           {connected ? t("services.discord.titleEdit") : t("services.discord.titleAdd")}
         </>
       }

@@ -74,7 +74,7 @@ export function SetupPasswordStep({
       components={{ b: <b /> }}
     />
   ) : mismatch ? (
-    t("setup.password.mismatchError")
+    t("common.passwordMismatch")
   ) : save.error ? (
     t("setup.password.saveFailedError", { message: describeError(save.error) })
   ) : null;

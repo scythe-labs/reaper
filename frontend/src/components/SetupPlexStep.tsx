@@ -379,7 +379,7 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
            unlinked or unreachable Plex answers. Without this the step drew an empty grid and
            said nothing at all, so "no libraries" and "we never got to look" were the same
            picture (rule 17/36, rule 93). */
-        <Notice tone="error">{t("setup.plex.librariesLoadErrorRetry")}</Notice>
+        <Notice tone="error">{t("plex.libraries.loadError")}</Notice>
       ) : (
         <>
           {libraries.isError && <StaleReadNotice what={t("plex.stale.libraries")} />}
