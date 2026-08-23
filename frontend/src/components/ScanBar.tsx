@@ -76,7 +76,9 @@ function scanDelta(
   }
   if (size !== 0) {
     const qualifier =
-      unknowns > 0 ? i18next.t("shell.scanBar.deltaUnknownQualifier", { n: unknowns }) : "";
+      unknowns > 0
+        ? i18next.t("shell.scanBar.deltaUnknownQualifier", { n: unknowns, count: unknowns })
+        : "";
     parts.push(
       i18next.t("shell.scanBar.deltaSize", {
         n: bytes(Math.abs(size)),

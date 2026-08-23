@@ -210,6 +210,44 @@ describe("starting a library scan", () => {
     expect(screen.getByText(/radarr didn't answer/i)).toBeInTheDocument();
   });
 
+  it("says how many sizes are unknown, not the raw template", async () => {
+    // `deltaUnknownQualifier`'s catalog string needs both `n` and the ICU plural selector
+    // `count`. The call site once passed only `n`, so i18next-icu's parseErrorHandler
+    // returned the unformatted template mid-sentence instead of "2 sizes unknown".
+    const client = testQueryClient();
+    const before: Snapshot = {
+      ...DEGRADED,
+      degraded: false,
+      degraded_reason: null,
+      condemned: 2,
+      reclaimable_bytes: 1_000_000,
+      unknown_size_items: 0,
+    };
+    client.setQueryData(["snapshot"], before);
+    apiMock.scanStatus.mockResolvedValue(RUNNING);
+    const { rerender } = renderRow(before, client);
+    await screen.findByRole("progressbar");
+
+    apiMock.scanStatus.mockResolvedValue(IDLE);
+    await act(async () => {
+      client.setQueryData(["scanStatus"], IDLE);
+    });
+    await waitFor(() => expect(screen.queryByRole("progressbar")).not.toBeInTheDocument());
+
+    const after: Snapshot = {
+      ...before,
+      id: before.id + 1,
+      reclaimable_bytes: 2_000_000,
+      unknown_size_items: 2,
+    };
+    client.setQueryData(["snapshot"], after);
+    rerender(rowTree(after));
+
+    const delta = await screen.findByText(/compared with the scan before/i);
+    expect(delta.textContent).toContain("2 sizes unknown");
+    expect(delta.textContent).not.toContain("{count");
+  });
+
   it("puts it back when the refetch that would replace the snapshot fails", async () => {
     // The window above is bounded by the READ settling, not by a new id arriving. `before` is
     // cleared only when the NEXT scan starts, so on id-equality alone a refetch that never
