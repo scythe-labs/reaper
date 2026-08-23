@@ -53,7 +53,7 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     onChooseServer: () => setPhase("choose"),
     onTimedOut: () => {
       setPhase("error");
-      setError(t("login.plexButton.timedOut"));
+      setError(t("plex.signInTimedOut"));
     },
     onFailed: (failure) => {
       setPhase("error");

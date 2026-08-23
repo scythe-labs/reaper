@@ -691,7 +691,7 @@ export function RemoveRulesEditor({
                       <QuantityInput
                         value={rTo}
                         units={timeUnits()}
-                        ariaLabel={t("policyRules.fullEffectAriaLabel")}
+                        ariaLabel={t("policyRules.keepEditor.fullEffectAt")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}
                         onChange={setRTo}
@@ -700,7 +700,7 @@ export function RemoveRulesEditor({
                       <QuantityInput
                         value={rTo}
                         units={sizeUnits()}
-                        ariaLabel={t("policyRules.fullEffectAriaLabel")}
+                        ariaLabel={t("policyRules.keepEditor.fullEffectAt")}
                         describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
                         invalid={rampBackwards}
                         onChange={setRTo}
@@ -709,7 +709,7 @@ export function RemoveRulesEditor({
                       <input
                         type="number"
                         step={rampStep}
-                        aria-label={t("policyRules.fullEffectAriaLabel")}
+                        aria-label={t("policyRules.keepEditor.fullEffectAt")}
                         aria-describedby={rampBackwards ? RAMP_ERROR_ID : undefined}
                         aria-invalid={rampBackwards ? true : undefined}
                         {...rampTo}
@@ -1263,7 +1263,7 @@ export function KeepRulesEditor({
                             value={lAt}
                             suffix={fieldUnit(leanField.key)}
                             step={leanField.type === "rating_tenths" ? 0.1 : 1}
-                            ariaLabel={t("policyRules.fullEffectAriaLabel")}
+                            ariaLabel={t("policyRules.keepEditor.fullEffectAt")}
                             describedBy={leanEmpty ? LEAN_EMPTY_ID : undefined}
                             onChange={(v) => setLAt(String(v))}
                           />
@@ -1271,7 +1271,7 @@ export function KeepRulesEditor({
                           <input
                             type="number"
                             value={lAt}
-                            aria-label={t("policyRules.fullEffectAriaLabel")}
+                            aria-label={t("policyRules.keepEditor.fullEffectAt")}
                             aria-describedby={leanEmpty ? LEAN_EMPTY_ID : undefined}
                             onChange={(e) => setLAt(e.target.value)}
                           />

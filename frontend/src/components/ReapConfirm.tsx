@@ -484,7 +484,7 @@ export function ReapConfirm({
           </Notice>
           <div className="reap-confirm-actions">
             <button className="primary" onClick={onClose}>
-              {t("reapConfirm.done")}
+              {t("common.done")}
             </button>
           </div>
         </div>
@@ -549,7 +549,7 @@ export function ReapConfirm({
           </ul>
           <div className="reap-confirm-actions">
             <button className="primary" onClick={onClose}>
-              {t("reapConfirm.done")}
+              {t("common.done")}
             </button>
           </div>
         </div>

@@ -120,9 +120,6 @@
             "loadingJobs": ""
         },
         "presets": {
-            "every12Hours": "",
-            "every6Hours": "",
-            "everyHour": "",
             "maintenanceOff": "",
             "scanMonthly": "",
             "scanNightly": "",
@@ -456,9 +453,7 @@
             },
             "head": {
                 "openInPlex": "",
-                "radarr": "",
                 "seerr": "",
-                "sonarr": "",
                 "tautulli": ""
             },
             "heldBackSizeUnknown": "",
@@ -571,7 +566,6 @@
             "watchBlind": {
                 "done": "",
                 "notice": "",
-                "saveError": "",
                 "useButton": "",
                 "useHelp": "",
                 "using": ""
@@ -723,7 +717,6 @@
             "secure": ""
         },
         "connectionSaved": "",
-        "heading": "",
         "leavingSoon": {
             "allowUnarmedHelp": "",
             "allowUnarmedLabel": "",
@@ -947,10 +940,6 @@
             "enabledLabel": "",
             "hint": ""
         },
-        "savebar": {
-            "accentBlocked": "",
-            "unsavedChanges": ""
-        },
         "sections": {
             "apiAccess": "",
             "appearance": "",
@@ -1040,13 +1029,10 @@
         "title": "",
         "update": {
             "checking": "",
-            "devCurrent": "",
-            "devMoved": "",
             "devSteadier": "",
             "disabled": "",
             "newRelease": "",
             "noAnswer": "",
-            "releaseCurrent": "",
             "schedule": "",
             "seeChanges": ""
         },
@@ -1071,13 +1057,6 @@
             "tags": ""
         },
         "blurb": "",
-        "brand": {
-            "imdb": "",
-            "plex": "",
-            "radarr": "",
-            "sonarr": "",
-            "sonarrAndRadarr": ""
-        },
         "changePolicy": "",
         "checkFailed": "",
         "checkingItNow": "",
@@ -1192,7 +1171,6 @@
         },
         "discord": {
             "badFormat": "",
-            "badge": "",
             "blurb": "",
             "field": {
                 "help": "",
@@ -1215,20 +1193,16 @@
         },
         "kinds": {
             "radarr": {
-                "hint": "",
-                "label": ""
+                "hint": ""
             },
             "seerr": {
-                "hint": "",
-                "label": ""
+                "hint": ""
             },
             "sonarr": {
-                "hint": "",
-                "label": ""
+                "hint": ""
             },
             "tautulli": {
-                "hint": "",
-                "label": ""
+                "hint": ""
             }
         },
         "modal": {
@@ -1316,7 +1290,6 @@
             }
         },
         "notifications": {
-            "badFormat": "",
             "blurb": "",
             "checkError": "",
             "checking": "",
@@ -1329,7 +1302,6 @@
             },
             "heading": "",
             "notConnected": "",
-            "sendTestButton": "",
             "staleWhat": ""
         },
         "panel": {
@@ -1491,7 +1463,6 @@
             "view": "",
             "viewReport": ""
         },
-        "done": "",
         "failed": {
             "body": "",
             "unknownError": ""
@@ -1596,7 +1567,6 @@
             "confirmPasswordLabel": "",
             "currentPasswordLabel": "",
             "currentRequiredError": "",
-            "mismatchError": "",
             "newPasswordLabel": "",
             "newPasswordPlaceholder": "",
             "recoveryHelp": "",
@@ -1778,21 +1748,17 @@
         },
         "rewatchCard": {
             "lowersScoreBy": "",
-            "lowersScoreByAriaLabel": "",
-            "mostRecentlyWithin": "",
-            "mostRecentlyWithinAriaLabel": ""
+            "mostRecentlyWithin": ""
         },
         "rewatchCopy": {
             "bar": "",
-            "barLabel": "",
             "help": "",
             "holdHelp": "",
             "holdName": "",
             "name": ""
         },
         "rewatchHold": {
-            "keptWhenAtLeast": "",
-            "keptWhenAtLeastAriaLabel": ""
+            "keptWhenAtLeast": ""
         },
         "savebar": {
             "becauseInvalid": "",
@@ -1802,8 +1768,7 @@
             "paceAppliesImmediately": "",
             "paceOnlyTail": "",
             "policyBlockedNotice": "",
-            "savesOnlyKind": "",
-            "unsavedChangesPrefix": ""
+            "savesOnlyKind": ""
         },
         "season": {
             "aheadOfWhereTheyAre": "",
@@ -1939,7 +1904,6 @@
             "size_bytes": "",
             "watchers_all_time": ""
         },
-        "fullEffectAriaLabel": "",
         "keepEditor": {
             "alwaysLabel": "",
             "blurb": "",
@@ -2181,7 +2145,6 @@
         "bulkCountCardsItems": "",
         "bulkCountSelected": "",
         "bulkFailuresMessage": "",
-        "clearAll": "",
         "clearFilters": "",
         "clearOverrideButton": "",
         "clearOverrideTitle": "",
@@ -2192,7 +2155,6 @@
         "collectionsNamed": "",
         "condemnedOfTotal": "",
         "deselectAll": "",
-        "done": "",
         "doneSelectingTitle": "",
         "dormantPillTitle": "",
         "emptyCollection": "",
@@ -2560,7 +2522,6 @@
             "blurb": "",
             "confirmLabel": "",
             "minHelp": "",
-            "mismatchError": "",
             "passwordLabel": "",
             "restoreFootNote": "",
             "saveFailedError": "",
@@ -2569,7 +2530,6 @@
         },
         "plex": {
             "announceConnected": "",
-            "librariesLoadErrorRetry": "",
             "lookingForAddress": "",
             "manualAddressAriaLabel": "",
             "manualAddressPlaceholder": "",
@@ -2597,7 +2557,6 @@
             "connectPlexLink": "",
             "discordBadge": "",
             "discordHint": "",
-            "discordName": "",
             "goToQueueButton": "",
             "introBlurb": "",
             "laterBlurb": "",
@@ -2621,7 +2580,6 @@
         "steps": {
             "connect": "",
             "password": "",
-            "plex": "",
             "scan": ""
         },
         "wizard": {
@@ -2651,8 +2609,7 @@
             "chooseServerHelp": "",
             "signIn": "",
             "signInSetup": "",
-            "startFailedFallback": "",
-            "timedOut": ""
+            "startFailedFallback": ""
         },
         "recovery": {
             "codeLabel": "",
@@ -2735,7 +2692,6 @@
                 "starting": ""
             },
             "queueRefreshed": "",
-            "scanLibrary": "",
             "scanOnlyReads": "",
             "scanProblem": "",
             "snapshotSummary": ""
@@ -2767,7 +2723,6 @@
                 "lists": "",
                 "logs": "",
                 "notifications": "",
-                "plex": "",
                 "security": "",
                 "services": ""
             },

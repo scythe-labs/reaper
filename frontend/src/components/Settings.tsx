@@ -54,7 +54,7 @@ export type Panel =
 export const panels = (): { id: Panel; label: string }[] => [
   { id: "general", label: i18next.t("shell.settings.panels.general") },
   { id: "services", label: i18next.t("shell.settings.panels.services") },
-  { id: "plex", label: i18next.t("shell.settings.panels.plex") },
+  { id: "plex", label: i18next.t("common.brand.plex") },
   { id: "lists", label: i18next.t("shell.settings.panels.lists") },
   { id: "jobs", label: i18next.t("shell.settings.panels.jobs") },
   { id: "notifications", label: i18next.t("shell.settings.panels.notifications") },

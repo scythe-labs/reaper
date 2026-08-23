@@ -52,26 +52,26 @@ export const kinds = (): {
 }[] => [
   {
     value: "radarr",
-    label: i18next.t("services.kinds.radarr.label"),
+    label: i18next.t("common.brand.radarr"),
     hint: i18next.t("services.kinds.radarr.hint"),
     port: "7878",
   },
   {
     value: "sonarr",
-    label: i18next.t("services.kinds.sonarr.label"),
+    label: i18next.t("common.brand.sonarr"),
     hint: i18next.t("services.kinds.sonarr.hint"),
     port: "8989",
   },
   {
     value: "tautulli",
-    label: i18next.t("services.kinds.tautulli.label"),
+    label: i18next.t("common.brand.tautulli"),
     hint: i18next.t("services.kinds.tautulli.hint"),
     port: "8181",
     singleton: true,
   },
   {
     value: "seerr",
-    label: i18next.t("services.kinds.seerr.label"),
+    label: i18next.t("common.brand.seerr"),
     hint: i18next.t("services.kinds.seerr.hint"),
     port: "5055",
   },

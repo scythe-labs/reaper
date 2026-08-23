@@ -2671,7 +2671,7 @@ export function ReviewQueue({
               }
             >
               <CheckSquareIcon />
-              {selectMode ? t("reviewQueue.done") : t("reviewQueue.select")}
+              {selectMode ? t("common.done") : t("reviewQueue.select")}
             </button>
           )}
         </div>
@@ -2762,7 +2762,7 @@ export function ReviewQueue({
               );
             })}
             <button type="button" className="link-btn" onClick={clearFilters}>
-              {t("reviewQueue.clearAll")}
+              {t("reviewQueue.clearFilters")}
             </button>
           </div>
         )}
@@ -3012,7 +3012,7 @@ export function ReviewQueue({
                 </button>
               )}
               <button type="button" className="sm select-done" onClick={toggleSelectMode}>
-                {t("reviewQueue.done")}
+                {t("common.done")}
               </button>
             </div>
           </div>

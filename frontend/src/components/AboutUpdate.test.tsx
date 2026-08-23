@@ -177,20 +177,20 @@ describe("the About update row", () => {
   });
 });
 
-describe("jobs.result.update_* says the same thing as this row's about.update.* (rule 144)", () => {
-  // Two people wrote these: this file's `about.update.*` and the Jobs page's
-  // `jobs.result.update_*` (phase 11a, `services.scheduler.check_for_updates`'s own
-  // docstring names the twin). Deriving one from the code makes the other MORE dangerous to
-  // leave unchecked, not less -- so this pins the pair by name rather than trusting the two
-  // authors agreed. Compared with the trailing period and the param name stripped, since
-  // `about.update.*` is a standalone sentence and `jobs.result.update_*` is a resting-line
-  // fragment (`jobs.status.lastRunOk`/`lastRunFailedReason` supply their own punctuation).
+describe("jobs.result.update_available says the same thing as this row's about.update.newRelease (rule 144)", () => {
+  // Three of the four states this row used to word on its own (devMoved, devCurrent,
+  // releaseCurrent) now read `jobs.result.update_dev_behind` / `update_dev_current` /
+  // `update_up_to_date` directly, so those three cannot drift: there is only one catalog
+  // entry left to read. `update_available` stays a separate sibling on purpose: the
+  // backend fixes its param name to `{latest}` (`Reason("update_available", {"latest": ...})`
+  // in `services/scheduler.py`), while this row's own update query supplies `{version}` from
+  // its own endpoint, so this pins the two by name rather than trusting the wording agrees.
+  // Compared with the trailing period and the param name stripped, since `about.update.*` is
+  // a standalone sentence and `jobs.result.update_*` is a resting-line fragment
+  // (`jobs.status.lastRunOk`/`lastRunFailedReason` supply their own punctuation).
   const strip = (s: string) => s.replace(/\.$/, "").replace(/\{[^}]+\}/g, "{}");
 
-  it("matches every one of the four states", () => {
-    expect(strip(en.jobs.result.update_dev_behind)).toBe(strip(en.about.update.devMoved));
-    expect(strip(en.jobs.result.update_dev_current)).toBe(strip(en.about.update.devCurrent));
+  it("matches the one state that's still a separate sibling", () => {
     expect(strip(en.jobs.result.update_available)).toBe(strip(en.about.update.newRelease));
-    expect(strip(en.jobs.result.update_up_to_date)).toBe(strip(en.about.update.releaseCurrent));
   });
 });

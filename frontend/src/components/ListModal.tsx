@@ -348,7 +348,7 @@ export function ListModal({
       {view === "picker" && (
         <div className="service-form">
           <div className="pick-group">
-            <h3>{t("lists.brand.plex")}</h3>
+            <h3>{t("common.brand.plex")}</h3>
             <div className="pick-grid">
               <PickCard
                 name={t("lists.picker.collectionName")}
@@ -388,7 +388,7 @@ export function ListModal({
             </div>
           </div>
           <div className="pick-group">
-            <h3>{t("lists.brand.sonarrAndRadarr")}</h3>
+            <h3>{t("common.brand.sonarrAndRadarr")}</h3>
             <div className="pick-grid">
               <PickCard name={t("lists.picker.tagsName")} blurb={t("lists.picker.tagsBlurb")}>
                 <div className="acts">
@@ -405,7 +405,7 @@ export function ListModal({
             </div>
           </div>
           <div className="pick-group">
-            <h3>{t("lists.brand.imdb")}</h3>
+            <h3>{t("common.brand.imdb")}</h3>
             <div className="pick-grid">
               <PickCard
                 name={t("lists.picker.imdbListName")}

@@ -115,9 +115,9 @@ function maintenancePresets(defaultCron: string): { label: string; cron: string 
     // identical options sharing a React key (rule 19). No shipped default collides today;
     // this is here so the next one cannot.
     ...[
-      { label: i18next.t("jobs.presets.every12Hours"), cron: "0 */12 * * *" },
-      { label: i18next.t("jobs.presets.every6Hours"), cron: "0 */6 * * *" },
-      { label: i18next.t("jobs.presets.everyHour"), cron: "0 * * * *" },
+      { label: i18next.t("jobs.cron.everyNHours", { n: 12 }), cron: "0 */12 * * *" },
+      { label: i18next.t("jobs.cron.everyNHours", { n: 6 }), cron: "0 */6 * * *" },
+      { label: i18next.t("jobs.cron.everyHour"), cron: "0 * * * *" },
     ].filter((p) => p.cron !== defaultCron),
   ];
 }

@@ -5,6 +5,16 @@
     "adminPassword": "Admin password",
     "adminPasswordPlaceholder": "admin password",
     "back": "Back",
+    "brand": {
+      "discord": "Discord",
+      "imdb": "IMDb",
+      "plex": "Plex",
+      "radarr": "Radarr",
+      "seerr": "Seerr",
+      "sonarr": "Sonarr",
+      "sonarrAndRadarr": "Sonarr and Radarr",
+      "tautulli": "Tautulli"
+    },
     "cancel": "Cancel",
     "checking": "Checking…",
     "checkingDeletion": "Checking whether deletion is on…",
@@ -12,6 +22,7 @@
     "close": "Close",
     "confirmRemove": "Confirm remove",
     "discard": "Discard",
+    "done": "Done",
     "edit": "Edit",
     "editNamed": "Edit {name}",
     "failed": "Failed",
@@ -20,6 +31,7 @@
     "loading": "Loading…",
     "noAdminPassword": "Set an admin password first, in Settings → Security.",
     "pageLoadError": "Couldn't load this page. Reload to try again.",
+    "passwordMismatch": "The two passwords don't match.",
     "planning": "Planning…",
     "preparing": "Preparing…",
     "refresh": "Refresh",
@@ -28,6 +40,9 @@
     "removeNamedQuestion": "Remove {name}?",
     "removing": "Removing…",
     "save": "Save",
+    "savebar": {
+      "unsavedChangesPrefix": "Unsaved changes:"
+    },
     "saveChanges": "Save changes",
     "saveError": "Couldn't save that. Try again.",
     "saving": "Saving…",
@@ -121,9 +136,6 @@
       "loadingJobs": "Loading the upkeep jobs…"
     },
     "presets": {
-      "every12Hours": "Every 12 hours",
-      "every6Hours": "Every 6 hours",
-      "everyHour": "Every hour",
       "maintenanceOff": "Off (don't run)",
       "scanMonthly": "First of the month, 3 AM",
       "scanNightly": "Every night at 2 AM",
@@ -152,9 +164,9 @@
       "update_available": "Reaper {latest} is out",
       "update_check_failed": "Couldn't check for updates",
       "update_checks_off": "Update checks are off",
-      "update_dev_behind": "The dev branch has moved since this build",
-      "update_dev_current": "This build matches the dev branch",
-      "update_up_to_date": "You are on the newest release"
+      "update_dev_behind": "The dev branch has moved since this build.",
+      "update_dev_current": "This build matches the dev branch.",
+      "update_up_to_date": "You are on the newest release."
     },
     "row": {
       "editAria": "Edit {title}",
@@ -526,9 +538,7 @@
       },
       "head": {
         "openInPlex": "Open in Plex",
-        "radarr": "Radarr",
         "seerr": "Seerr",
-        "sonarr": "Sonarr",
         "tautulli": "Tautulli"
       },
       "heldBackSizeUnknown": "Held back: size unknown. Sonarr and Radarr had no size for it, so Reaper won't remove it.",
@@ -641,7 +651,6 @@
       "watchBlind": {
         "done": "Reaper will judge this title on what it can see now.",
         "notice": "Plays Reaper recorded earlier are no longer readable. The file may have been added to your library again, and Reaper could not match it to your watch history.",
-        "saveError": "That didn't save. Try again.",
         "useButton": "Use what Reaper sees now",
         "useHelp": "Use the plays visible today for this title only.",
         "using": "Using…"
@@ -1163,7 +1172,6 @@
       "secure": "{kind}, {host}, secure"
     },
     "connectionSaved": "Connection saved.",
-    "heading": "Plex",
     "leavingSoon": {
       "allowUnarmedHelp": "Until deletion is on, Reaper writes nothing to Plex, this shelf included. Turn this on to show the shelf while Reaper is still read-only. It can never remove files.",
       "allowUnarmedLabel": "Update while read-only",
@@ -1194,7 +1202,7 @@
       "foundCount": "{n, plural, one {# library found} other {# libraries found}}",
       "kindMovie": "movies",
       "kindTv": "tv",
-      "loadError": "Couldn't load the library list.",
+      "loadError": "Couldn't load the library list. Try again.",
       "loading": "Loading libraries…",
       "refreshButton": "Refresh libraries",
       "toggleLabel": "Let Reaper touch {title}"
@@ -1397,10 +1405,6 @@
       "enabledLabel": "Behind a reverse proxy",
       "hint": "Off by default. Forwarded headers from any other address are ignored."
     },
-    "savebar": {
-      "accentBlocked": "Enter a hex code like #25c3ff to save.",
-      "unsavedChanges": "Unsaved changes:"
-    },
     "sections": {
       "apiAccess": "API access",
       "appearance": "Appearance",
@@ -1490,13 +1494,10 @@
     "title": "About",
     "update": {
       "checking": "Checking for updates…",
-      "devCurrent": "This build matches the dev branch.",
-      "devMoved": "The dev branch has moved since this build.",
       "devSteadier": "Dev builds change often. Releases are the steadier channel.",
       "disabled": "Update checks are off, so Reaper never asks GitHub for versions. Remove REAPER_UPDATE_CHECK from launcher.conf in Reaper's data folder, or from your environment, to turn them back on.",
       "newRelease": "Reaper {version} is out.",
       "noAnswer": "Couldn't check for updates. Reaper will try again later.",
-      "releaseCurrent": "You are on the newest release.",
       "schedule": "Reaper checks on a schedule you can change in Jobs, and never sends anything about your library.",
       "seeChanges": "See what changed"
     },
@@ -1521,13 +1522,6 @@
       "tags": "Add at least one tag, spelled as it appears in Sonarr or Radarr."
     },
     "blurb": "The lists that keep titles safe, and whether each one is still working. What a list does is set with a keep rule on Policy.",
-    "brand": {
-      "imdb": "IMDb",
-      "plex": "Plex",
-      "radarr": "Radarr",
-      "sonarr": "Sonarr",
-      "sonarrAndRadarr": "Sonarr and Radarr"
-    },
     "changePolicy": "Change policy",
     "checkFailed": "The check didn't run: {error}",
     "checkingItNow": "Checking it now.",
@@ -1641,8 +1635,7 @@
       "testing": "Testing…"
     },
     "discord": {
-      "badFormat": "That doesn't look like a Discord webhook address. It should start with https://discord.com/api/webhooks/",
-      "badge": "Discord",
+      "badFormat": "That doesn't look like a Discord webhook URL. Paste the full https://discord.com/api/webhooks/… URL from the channel's integration settings.",
       "blurb": "Reaper posts here while a title is in its grace period, so someone can watch it or spare it before it goes.",
       "field": {
         "help": "In Discord: Server Settings, Integrations, Webhooks. Copy the webhook URL.",
@@ -1665,20 +1658,16 @@
     },
     "kinds": {
       "radarr": {
-        "hint": "Your movies. At least one is required.",
-        "label": "Radarr"
+        "hint": "Your movies. At least one is required."
       },
       "seerr": {
-        "hint": "Requests. Lets Reaper show who asked for what.",
-        "label": "Seerr"
+        "hint": "Requests. Lets Reaper show who asked for what."
       },
       "sonarr": {
-        "hint": "Your TV shows. Needed for season pruning.",
-        "label": "Sonarr"
+        "hint": "Your TV shows. Needed for season pruning."
       },
       "tautulli": {
-        "hint": "Watch history. Required. It's how Reaper knows what's watched.",
-        "label": "Tautulli"
+        "hint": "Watch history. Required. It's how Reaper knows what's watched."
       }
     },
     "modal": {
@@ -1766,7 +1755,6 @@
       }
     },
     "notifications": {
-      "badFormat": "That doesn't look like a Discord webhook URL. Paste the full https://discord.com/api/webhooks/… URL from the channel's integration settings.",
       "blurb": "Reaper warns your users here before anything is deleted. While a title is in its grace period it posts a \"leaving soon\" message, so someone can watch it or spare it in time. Optional, and the one warning that reaches people who don't look at the Plex \"Leaving Soon\" shelf.",
       "checkError": "Couldn't check whether Discord is connected.",
       "checking": "Checking whether Discord is connected…",
@@ -1784,7 +1772,6 @@
         "savedAnnouncement": "Discord notification language saved."
       },
       "notConnected": "No Discord webhook set, so leaving-soon warnings won't be sent.",
-      "sendTestButton": "Send test message",
       "staleWhat": "whether Discord is connected"
     },
     "panel": {
@@ -1948,7 +1935,6 @@
       "view": "View",
       "viewReport": "View report"
     },
-    "done": "Done",
     "failed": {
       "body": "<strong>The reap stopped on a problem.</strong> {error} Anything already removed is gone. Check the Review queue after the next scan.",
       "unknownError": "Reaper couldn't say what went wrong."
@@ -2059,7 +2045,6 @@
       "confirmPasswordLabel": "Confirm new password",
       "currentPasswordLabel": "Current password",
       "currentRequiredError": "Enter the current password to save.",
-      "mismatchError": "The passwords don't match.",
       "newPasswordLabel": "New password",
       "newPasswordPlaceholder": "at least {min} characters",
       "recoveryHelp": "You can set a new one without the old password.",
@@ -2241,21 +2226,17 @@
     },
     "rewatchCard": {
       "lowersScoreBy": "lowers the score by",
-      "lowersScoreByAriaLabel": "Lowers the score by",
-      "mostRecentlyWithin": "most recently within",
-      "mostRecentlyWithinAriaLabel": "Most recently within"
+      "mostRecentlyWithin": "most recently within"
     },
     "rewatchCopy": {
       "bar": "{mediaType, select, tv {watched again by anyone at least} other {watched by anyone at least}}",
-      "barLabel": "{mediaType, select, tv {Watched again by anyone at least} other {Watched by anyone at least}}",
       "help": "{mediaType, select, tv {A show people here keep coming back to will probably be watched again. It only lowers the score.} other {A title people here keep coming back to will probably be watched again. It only lowers the score.}}",
       "holdHelp": "{mediaType, select, tv {Keeps a show outright, whatever it scored, when its chance of being watched again is at or above your percentage.} other {Keeps a title outright, whatever it scored, when its chance of being watched again is at or above your percentage.}}",
       "holdName": "{mediaType, select, tv {Keep shows most likely to be rewatched above a percentage} other {Keep titles most likely to be rewatched above a percentage}}",
       "name": "{mediaType, select, tv {Keep shows most likely to be rewatched} other {Keep titles most likely to be rewatched}}"
     },
     "rewatchHold": {
-      "keptWhenAtLeast": "kept when the chance is at least",
-      "keptWhenAtLeastAriaLabel": "Kept when the chance is at least"
+      "keptWhenAtLeast": "kept when the chance is at least"
     },
     "savebar": {
       "becauseInvalid": "the \"Can't save this\" problem is fixed",
@@ -2265,8 +2246,7 @@
       "paceAppliesImmediately": "Pace applies immediately.",
       "paceOnlyTail": "Changing a limit never affects a run you've already approved.",
       "policyBlockedNotice": "Save writes pace and limits only. Your {kind} policy can't go with it until {because}.",
-      "savesOnlyKind": "Saves only your {kind} policy. The {otherKind} one is untouched. {appliesOnNextScan}",
-      "unsavedChangesPrefix": "Unsaved changes: "
+      "savesOnlyKind": "Saves only your {kind} policy. The {otherKind} one is untouched. {appliesOnNextScan}"
     },
     "season": {
       "aheadOfWhereTheyAre": "ahead of where they are",
@@ -2402,7 +2382,6 @@
       "size_bytes": "GB",
       "watchers_all_time": "people"
     },
-    "fullEffectAriaLabel": "Full effect at",
     "keepEditor": {
       "alwaysLabel": "Keeps it, always",
       "blurb": "A rule can keep a title <outright>outright</outright>, or <lean>lean toward keeping</lean> by lowering its score. Neither can ever flag a title for removal. When Reaper can't read the data, it assumes the rule applies.",
@@ -2644,7 +2623,6 @@
     "bulkCountCardsItems": "<cardsNum>{cards}</cardsNum> {c, plural, one {card} other {cards}}, <itemsNum>{items}</itemsNum> {i, plural, one {item} other {items}}",
     "bulkCountSelected": "<num>{n}</num> selected",
     "bulkFailuresMessage": "{n, plural, one {1 item could not be updated. It is still selected so you can try again.} other {# items could not be updated. They are still selected so you can try again.}}",
-    "clearAll": "Clear all",
     "clearFilters": "Clear filters",
     "clearOverrideButton": "Clear override",
     "clearOverrideTitle": "Remove any override and let Reaper judge these again",
@@ -2655,7 +2633,6 @@
     "collectionsNamed": "Collections named “{search}”",
     "condemnedOfTotal": "{condemned} of {total} would be removed, {size}",
     "deselectAll": "Deselect all",
-    "done": "Done",
     "doneSelectingTitle": "Done selecting. Clears your picks",
     "dormantPillTitle": "Not watched in {span}",
     "emptyCollection": "Nothing in this collection was in the last scan.",
@@ -3051,7 +3028,6 @@
       "blurb": "It signs you in when Plex can't be reached, and it confirms every deletion.",
       "confirmLabel": "Confirm password",
       "minHelp": "At least {min} characters.",
-      "mismatchError": "The two passwords don't match.",
       "passwordLabel": "Password",
       "restoreFootNote": "Restoring a backup? Set a password first. It's what confirms the restore.",
       "saveFailedError": "That didn't save: {message}",
@@ -3060,7 +3036,6 @@
     },
     "plex": {
       "announceConnected": "Plex connected.",
-      "librariesLoadErrorRetry": "Couldn't load the library list. Try again.",
       "lookingForAddress": "Looking for an address…",
       "manualAddressAriaLabel": "Manual address, hostname or IP",
       "manualAddressPlaceholder": "192.168.1.10",
@@ -3088,7 +3063,6 @@
       "connectPlexLink": "Connect Plex",
       "discordBadge": "DIS",
       "discordHint": "Tells your users what's leaving before it goes.",
-      "discordName": "Discord",
       "goToQueueButton": "Go to the review queue",
       "introBlurb": "Reaper reads your library and shows what it would remove, and why. You approve every deletion by hand.",
       "laterBlurb": "Optional, and you can add it any time from Settings.",
@@ -3112,7 +3086,6 @@
     "steps": {
       "connect": "Connect",
       "password": "Password",
-      "plex": "Plex",
       "scan": "Scan"
     },
     "wizard": {
@@ -3142,8 +3115,7 @@
       "chooseServerHelp": "This account has more than one Plex server. Reaper only scans and prunes the one you pick. You can change it later in Settings.",
       "signIn": "Sign in with Plex",
       "signInSetup": "Sign in with Plex to set up Reaper",
-      "startFailedFallback": "Could not reach Plex to start sign-in.",
-      "timedOut": "Plex sign-in timed out. Please try again."
+      "startFailedFallback": "Could not reach Plex to start sign-in."
     },
     "recovery": {
       "codeLabel": "Recovery code",
@@ -3226,7 +3198,6 @@
         "starting": "Starting"
       },
       "queueRefreshed": "Queue refreshed",
-      "scanLibrary": "Scan library",
       "scanOnlyReads": "A scan only reads. It cannot delete.",
       "scanProblem": "The scan hit a problem: {error}",
       "snapshotSummary": "{itemCount} items, <condemned>{condemnedCount}</condemned> would be removed, freeing <freed>{freedAmount}</freed>",
@@ -3270,7 +3241,6 @@
         "lists": "Lists",
         "logs": "Logs",
         "notifications": "Notifications",
-        "plex": "Plex",
         "security": "Security",
         "services": "Services"
       },

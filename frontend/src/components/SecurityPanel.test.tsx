@@ -117,7 +117,7 @@ describe("the admin password form", () => {
     await fill(person, next, "a-long-enough-password");
     await fill(person, confirm, "a-long-enough-passwerd"); // typo
 
-    expect(screen.getByText(/the passwords don't match/i)).toBeInTheDocument();
+    expect(screen.getByText(/the two passwords don't match/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
 
     // Fix the typo -> Save enables and only the new password is sent.
@@ -153,7 +153,7 @@ describe("the admin password form", () => {
     // And once the length complaint clears, the mismatch is the live one and moves to the box
     // it is actually about.
     await person.type(next, "-long-enough");
-    expect(await screen.findByText(/the passwords don't match/i)).toBeInTheDocument();
+    expect(await screen.findByText(/the two passwords don't match/i)).toBeInTheDocument();
     expect(confirm).toHaveAccessibleDescription(/don't match/i);
     expect(next).not.toHaveAccessibleDescription(/don't match/i);
   });

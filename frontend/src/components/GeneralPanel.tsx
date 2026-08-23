@@ -1089,11 +1089,9 @@ export function GeneralPanel({
       {pending.length > 0 && (
         <div className="savebar">
           <span className="savebar-what">
-            {t("general.savebar.unsavedChanges")}{" "}
+            {t("common.savebar.unsavedChangesPrefix")}{" "}
             <strong>{pending.map((p) => p.label).join(", ")}</strong>
-            {accentBlocks && (
-              <span className="savebar-blocked">{t("general.savebar.accentBlocked")}</span>
-            )}
+            {accentBlocks && <span className="savebar-blocked">{t("general.accent.error")}</span>}
           </span>
           <button className="ghost" disabled={save.isPending} onClick={discardDrafts}>
             {t("common.discard")}

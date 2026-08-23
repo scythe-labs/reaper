@@ -230,10 +230,10 @@ function kindBadge(source: ListConfig["source"], coverage?: Coverage): ReactNode
     return (
       <span className="kind-badge kind-arr">
         <span aria-hidden="true" className={bright("tv") ? undefined : "dim"}>
-          {i18next.t("lists.brand.sonarr")}
+          {i18next.t("common.brand.sonarr")}
         </span>
         <span aria-hidden="true" className={bright("movie") ? undefined : "dim"}>
-          {i18next.t("lists.brand.radarr")}
+          {i18next.t("common.brand.radarr")}
         </span>
         <span className="sr-only">
           {i18next.t("lists.kindBadge.srOnly", {
@@ -245,9 +245,9 @@ function kindBadge(source: ListConfig["source"], coverage?: Coverage): ReactNode
     );
   }
   if (source === "imdb") {
-    return <span className="kind-badge kind-imdb">{i18next.t("lists.brand.imdb")}</span>;
+    return <span className="kind-badge kind-imdb">{i18next.t("common.brand.imdb")}</span>;
   }
-  return <span className="kind-badge kind-plex">{i18next.t("lists.brand.plex")}</span>;
+  return <span className="kind-badge kind-plex">{i18next.t("common.brand.plex")}</span>;
 }
 
 /** One rendered row: the Jobs tab's shape, with the state chip on the title line and real

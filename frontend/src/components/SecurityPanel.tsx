@@ -121,7 +121,7 @@ function AdminPasswordForm({
       components={{ b: <b /> }}
     />
   ) : mismatch ? (
-    t("security.form.mismatchError")
+    t("common.passwordMismatch")
   ) : askCurrent ? (
     t("security.form.currentRequiredError")
   ) : save.error ? (

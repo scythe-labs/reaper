@@ -3477,8 +3477,8 @@ def test_a_dotted_symbol_citation_resolves_to_a_real_symbol() -> None:
             for match in _DOTTED_SYMBOL.finditer(line):
                 if match.group(0).endswith(suffixes):
                     continue
-                # An i18n catalog key ("services.discord.badge") is shaped exactly like a
-                # dotted citation of `reaper.services`. It resolves in its own symbol
+                # An i18n catalog key ("common.brand.discord") is shaped exactly like a
+                # dotted citation of `reaper.common`. It resolves in its own symbol
                 # table -- the en-US catalog -- and the frontend's missing-key gate
                 # (i18n-keys.test.ts) is what holds a stale one, so this guard defers.
                 if match.group(0) in _ui_catalog_keys():
@@ -4305,9 +4305,6 @@ _NEVER_LOADED_COPY = {
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the Leaving Soon settings.": [
-        "frontend/src/locales/en/ui.json",
-    ],
-    "Couldn't load the library list.": [
         "frontend/src/locales/en/ui.json",
     ],
     "Couldn't load the library list. Try again.": [
@@ -7560,12 +7557,14 @@ _ACCENT_DEFAULT_COPIES: dict[str, int] = {
     # `refusal.MESSAGES["error.settings.accent_color_invalid"]`, no longer inline in the route.
     "src/reaper/refusal.py": 1,
     "frontend/src/accent.ts": 1,
-    # Two client-side validation messages (general.accent.error, general.savebar.accentBlocked)
-    # have named the color since Stage 4. Phase 8b's error.* catalog added a third: the SAME
-    # server refusal above (`error.settings.accent_color_invalid`) is now also reachable from
-    # ui.json, so a client bypassing the two local checks (an API client, a race) still names
-    # the color rather than reading a raw code.
-    "frontend/src/locales/en/ui.json": 3,
+    # One client-side validation message (general.accent.error) has named the color since Stage
+    # 4; the savebar's own copy of it (general.savebar.accentBlocked) was folded into that same
+    # key in the i18n catalog consolidation, so it no longer adds a second count. Phase 8b's
+    # error.* catalog added the other: the SAME server refusal above
+    # (`error.settings.accent_color_invalid`) is now also reachable from ui.json, so a client
+    # bypassing the local check (an API client, a race) still names the color rather than
+    # reading a raw code.
+    "frontend/src/locales/en/ui.json": 2,
     "frontend/src/styles/00-tokens.css": 4,
 }
 

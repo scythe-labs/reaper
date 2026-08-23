@@ -317,7 +317,7 @@ describe("NotificationsPanel through a failed refetch", () => {
     // held answer, and now the line above them agrees that it was read.
     expect(screen.getByText(/Discord connected/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send test message" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send test" })).toBeEnabled();
   });
 
   it("still says the check never ran when the first read is the one that fails", async () => {
@@ -329,6 +329,6 @@ describe("NotificationsPanel through a failed refetch", () => {
     // test send stay away, rather than acting on a webhook nobody confirmed exists.
     expect(screen.queryByText(STALE_ANY)).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Send test message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send test" })).toBeDisabled();
   });
 });

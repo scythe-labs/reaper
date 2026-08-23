@@ -648,7 +648,7 @@ export function PlexPanel({
   if (plex.isPending) {
     return (
       <div className="panel">
-        <h2>{t("plex.heading")}</h2>
+        <h2>{t("common.brand.plex")}</h2>
         <p className="muted">{t("common.loading")}</p>
       </div>
     );
@@ -663,7 +663,7 @@ export function PlexPanel({
   if (!data) {
     return (
       <div className="panel">
-        <h2>{t("plex.heading")}</h2>
+        <h2>{t("common.brand.plex")}</h2>
         <Notice tone="error">{t("common.loadError")}</Notice>
       </div>
     );
@@ -689,7 +689,7 @@ export function PlexPanel({
 
   return (
     <div className="panel">
-      <h2>{t("plex.heading")}</h2>
+      <h2>{t("common.brand.plex")}</h2>
       <p className="blurb">{t("plex.blurb")}</p>
 
       {/* The failed refetch the `!data` branch above deliberately no longer swallows the form

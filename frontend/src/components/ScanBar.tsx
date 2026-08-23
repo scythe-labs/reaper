@@ -384,7 +384,7 @@ export function ScanRow({
               ? t("common.scanning")
               : start.isPending
                 ? t("common.starting")
-                : t("shell.scanBar.scanLibrary")}
+                : t("common.scanNow")}
           </button>
         </span>
       </div>

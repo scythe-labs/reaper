@@ -36,7 +36,7 @@ function stepLabel(key: SetupStepKey): string {
     case "password":
       return i18next.t("setup.steps.password");
     case "plex":
-      return i18next.t("setup.steps.plex");
+      return i18next.t("common.brand.plex");
     case "connect":
       return i18next.t("setup.steps.connect");
     case "scan":

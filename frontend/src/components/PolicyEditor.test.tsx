@@ -473,7 +473,7 @@ describe("the rewatch keep card", () => {
     expect(
       await screen.findByRole("switch", { name: "Keep shows most likely to be rewatched" }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Watched again by anyone at least")).toBeInTheDocument();
+    expect(screen.getByLabelText("watched again by anyone at least")).toBeInTheDocument();
     // Same grammar as movies (#554): a TV body carries its own rewatch_odds gate row now,
     // so the hold half renders and fetches the TV lane's own fit.
     expect(
@@ -494,15 +494,15 @@ describe("the rewatch keep card", () => {
     renderEditor({ body: body() });
     const toggle = await screen.findByRole("switch", { name: SWITCH_NAME });
 
-    expect(screen.getByLabelText("Watched by anyone at least")).toBeInTheDocument();
-    expect(screen.getByLabelText("Most recently within")).toBeInTheDocument();
-    expect(screen.getByLabelText("Lowers the score by")).toBeInTheDocument();
+    expect(screen.getByLabelText("watched by anyone at least")).toBeInTheDocument();
+    expect(screen.getByLabelText("most recently within")).toBeInTheDocument();
+    expect(screen.getByLabelText("lowers the score by")).toBeInTheDocument();
 
     await user.click(toggle);
 
-    expect(screen.queryByLabelText("Watched by anyone at least")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Most recently within")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Lowers the score by")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("watched by anyone at least")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("most recently within")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("lowers the score by")).not.toBeInTheDocument();
   });
 
   it("writes each control's edit into the draft, read off the same body the Save button posts", async () => {
@@ -514,14 +514,14 @@ describe("the rewatch keep card", () => {
     renderEditor({ body: body() });
     await screen.findByRole("switch", { name: SWITCH_NAME });
 
-    const viewings = screen.getByLabelText("Watched by anyone at least");
+    const viewings = screen.getByLabelText("watched by anyone at least");
     await user.clear(viewings);
     await user.type(viewings, "42");
     await waitFor(() =>
       expect(apiMock.validatePolicy.mock.calls.at(-1)?.[0].rewatch_min_viewings).toBe(42),
     );
 
-    const discount = screen.getByLabelText("Lowers the score by");
+    const discount = screen.getByLabelText("lowers the score by");
     await user.clear(discount);
     await user.type(discount, "33");
     await waitFor(() =>
@@ -530,7 +530,7 @@ describe("the rewatch keep card", () => {
 
     // The recency box is a unit picker seeded at 365 days, which draws as "1 year" (the
     // friendliest unit `bestUnit` finds) -- so typing "9" here writes 9 years, not 9 days.
-    const recent = screen.getByLabelText("Most recently within");
+    const recent = screen.getByLabelText("most recently within");
     await user.clear(recent);
     await user.type(recent, "9");
     await waitFor(() =>
@@ -541,7 +541,7 @@ describe("the rewatch keep card", () => {
 
 describe("the rewatch-odds hold, the grouped card's second half (#554 stage 2)", () => {
   const HOLD_SWITCH_NAME = "Keep titles most likely to be rewatched above a percentage";
-  const PERCENT_LABEL = "Kept when the chance is at least";
+  const PERCENT_LABEL = "kept when the chance is at least";
 
   // Off the server default (25, rule 141): a fixture pinning 25 could not prove an edit
   // reaches the draft.
@@ -1173,7 +1173,7 @@ describe("why an 'Add rule' will not act", () => {
     const leanField = fields[fields.length - 1]!;
     await user.selectOptions(leanField, "quality_score");
 
-    const box = screen.getByLabelText("Full effect at");
+    const box = screen.getByLabelText("full effect at");
     expect(box).toHaveAccessibleDescription("Enter a number to add this rule.");
     expect(screen.getAllByRole("button", { name: "Add rule" }).at(-1)!).toBeDisabled();
 

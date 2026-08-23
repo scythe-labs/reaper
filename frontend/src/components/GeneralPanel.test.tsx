@@ -280,7 +280,7 @@ describe("the save bar", () => {
     await person.type(hex, "#12");
 
     await waitFor(() => expect(saveChanges()).toBeDisabled());
-    expect(bar()!.textContent).toContain("Enter a hex code like #25c3ff to save.");
+    expect(bar()!.textContent).toContain("Enter a hex code like #25c3ff.");
 
     await person.type(hex, "3456");
     await waitFor(() => expect(saveChanges()).toBeEnabled());

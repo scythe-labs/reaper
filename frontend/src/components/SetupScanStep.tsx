@@ -282,7 +282,7 @@ function DiscordRow({ onOpen }: { onOpen: () => void }) {
           {t("setup.scan.discordBadge")}
         </span>
         <div>
-          <div className="conn-name">{t("setup.scan.discordName")}</div>
+          <div className="conn-name">{t("common.brand.discord")}</div>
           <div className="conn-why">{t("setup.scan.discordHint")}</div>
         </div>
         <button type="button" className="conn-add" onClick={onOpen}>

@@ -122,13 +122,15 @@ function UpdateCell({
   if (!data.update_available)
     return (
       <span>
-        {data.channel === "dev" ? t("about.update.devCurrent") : t("about.update.releaseCurrent")}
+        {data.channel === "dev"
+          ? t("jobs.result.update_dev_current")
+          : t("jobs.result.update_up_to_date")}
       </span>
     );
   if (data.channel === "dev")
     return (
       <>
-        {t("about.update.devMoved")}{" "}
+        {t("jobs.result.update_dev_behind")}{" "}
         {data.url && (
           <a href={data.url} target="_blank" rel="noreferrer">
             {t("about.update.seeChanges")}
