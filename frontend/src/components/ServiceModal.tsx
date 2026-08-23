@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
 import {
   api,
+  type DiscordTest,
   type Instance,
   type InstanceKind,
   type InstanceProbe,
@@ -102,6 +103,18 @@ export function serviceKindLabel(kind: SeerrService["kind"]): string {
  *  already render verbatim (the same shape a pre-conversion stored row carries). */
 export function testDetailText(reason: InstanceTest["detail_reason"]): string {
   return reason.k.startsWith("error.") ? composeError(reason) : composeIn("services.test", reason);
+}
+
+/** A Discord webhook test's typed reason, composed into the same `InstanceTest` shape
+ *  `TestBadge` and `testSentence` already render for a connection test. `DiscordModal.tsx`
+ *  and `NotificationsPanel.tsx` both call this rather than each composing
+ *  `services.discord.testResult` into a `legacy`-wrapped reason on its own (rule 144). */
+export function composeDiscordTestResult(r: DiscordTest): InstanceTest {
+  return {
+    ok: r.ok,
+    detail_reason: { k: "legacy", p: { text: composeIn("services.discord.testResult", r.reason) } },
+    version: r.version,
+  };
 }
 
 /** What a connection test SAYS, written once because two surfaces state it.
