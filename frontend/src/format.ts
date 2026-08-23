@@ -109,6 +109,39 @@ export function coverage(bp: number): string {
   return `${Math.round(bp / 100)}%`;
 }
 
+type SpanUnit = "years" | "months" | "days";
+
+/** The two most-significant non-zero units of a whole day count, largest first: `2060`
+ *  becomes `[[5, "years"], [7, "months"]]`. The truncation and rounding `humanDays` and
+ *  `humanWindow` both need; they differ only in how they word the result. */
+function spanUnits(whole: number): [number, SpanUnit][] {
+  const years = Math.floor(whole / 365);
+  const months = Math.floor((whole % 365) / 30);
+  const days = (whole % 365) % 30;
+  const units: [number, SpanUnit][] = [
+    [years, "years"],
+    [months, "months"],
+    [days, "days"],
+  ];
+  return units.filter(([n]) => n > 0).slice(0, 2);
+}
+
+/** "5 years", "1 month", "3 days" -- `format.span.<unit>`, pluralized on `n` through the
+ *  catalog's own ICU rather than the hand-rolled trailing "s" this used to append. */
+function spanPhrase(n: number, unit: SpanUnit): string {
+  if (unit === "years") return i18next.t("format.span.years", { n });
+  if (unit === "months") return i18next.t("format.span.months", { n });
+  return i18next.t("format.span.days", { n });
+}
+
+/** The bare unit word with no count, for `humanWindow`'s single-"1" case: "year", not
+ *  "1 year". */
+function spanWord(unit: SpanUnit): string {
+  if (unit === "years") return i18next.t("format.span.yearWord");
+  if (unit === "months") return i18next.t("format.span.monthWord");
+  return i18next.t("format.span.dayWord");
+}
+
 /** A day count as a phrase a person reads without doing arithmetic: `2060` becomes
  *  "5 years, 7 months".
  *
@@ -129,23 +162,17 @@ export function coverage(bp: number): string {
  *  Lives here rather than in `PolicyEditor`, which is where it started, because
  *  `signalRamp` needs it too and the editor imports `signalRamp`. The editor re-exported it
  *  for a while so its old callers could keep their import, and that re-export was one half of
- *  the `PolicyEditor` / `PolicyRuleEditors` cycle. Import it from here. */
+ *  the `PolicyEditor` / `PolicyRuleEditors` cycle. Import it from here.
+ *
+ *  The unit words ("year"/"month"/"day") and the sub-day floor ("less than a day") are
+ *  catalog entries under `format.span.*`; only the truncation, rounding and two-unit join
+ *  stay in TS. Before this the words were hardcoded English with no i18next path, so a
+ *  translated sentence built around `{x_span}` (why.ts) still carried raw English inside it. */
 export function humanDays(days: number): string {
   const whole = Math.round(days);
-  if (whole <= 0) return "less than a day";
-
-  const years = Math.floor(whole / 365);
-  const months = Math.floor((whole % 365) / 30);
-  const rest = (whole % 365) % 30;
-  const units: [number, string][] = [
-    [years, "year"],
-    [months, "month"],
-    [rest, "day"],
-  ];
-  return units
-    .filter(([n]) => n > 0)
-    .slice(0, 2)
-    .map(([n, name]) => `${n} ${name}${n === 1 ? "" : "s"}`)
+  if (whole <= 0) return i18next.t("format.span.lessThanADay");
+  return spanUnits(whole)
+    .map(([n, unit]) => spanPhrase(n, unit))
     .join(", ");
 }
 
@@ -154,8 +181,12 @@ export function humanDays(days: number): string {
  *  A multi-unit window ("1 year, 6 months") keeps it. Mirrors the retired
  *  `clock.humanize_window`, whose sentences moved into the catalog (docs/history/I18N_PLAN.md §5). */
 export function humanWindow(days: number): string {
-  const text = humanDays(days);
-  return text.startsWith("1 ") && !text.includes(",") ? text.slice(2) : text;
+  const whole = Math.round(days);
+  if (whole <= 0) return i18next.t("format.span.lessThanADay");
+  const units = spanUnits(whole);
+  const only = units.length === 1 ? units[0] : undefined;
+  if (only && only[0] === 1) return spanWord(only[1]);
+  return units.map(([n, unit]) => spanPhrase(n, unit)).join(", ");
 }
 
 const dayFormat = perLocale(

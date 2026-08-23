@@ -106,8 +106,11 @@ const CONVERTED = [
   "backnav.tsx",
   "errors.ts",
   "focus.ts",
-  // Already localized through Intl (unit-style numbers, RelativeTimeFormat); see format.ts's
-  // own header. No catalog reads to check for here.
+  // Most of the file is localized through Intl (unit-style numbers, RelativeTimeFormat); see
+  // format.ts's own header. humanDays/humanWindow route their unit words through the catalog
+  // too (format.span.*), since Intl has no built-in "N years, M months" form -- proven by
+  // humanDays.test.ts and why.test.ts against the real catalog, not this scan: a literal
+  // built from a plain function's return value is invisible to it (the named limit above).
   "format.ts",
   "i18n.ts",
   "main.tsx",
