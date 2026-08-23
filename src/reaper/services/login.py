@@ -50,6 +50,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import AppUser, AuthProvider, PendingPlexLogin, PlexServer
 from reaper.engine.reason import ReasonParam
 from reaper.refusal import Refusal
+from reaper.services.admin_password import unique_username
 from reaper.services.plex_link import (
     PlexLinkError,
     PlexLinkRetryableError,
@@ -241,7 +242,7 @@ async def _upsert_plex_user(session: AsyncSession, account: PlexAccount) -> AppU
     user = AppUser(
         provider=AuthProvider.PLEX,
         plex_account_id=account.account_id,
-        username=await _unique_username(session, account.username),
+        username=await unique_username(session, account.username, "plex-user"),
         email=account.email,
         thumb_url=account.thumb,
         is_active=True,
@@ -250,18 +251,6 @@ async def _upsert_plex_user(session: AsyncSession, account: PlexAccount) -> AppU
     session.add(user)
     await session.flush()
     return user
-
-
-async def _unique_username(session: AsyncSession, desired: str) -> str:
-    """A username not already taken. Plex usernames are unique on Plex, but a
-    local admin might happen to share one, and ``username`` is unique here."""
-    base = desired.strip() or "plex-user"
-    candidate = base
-    suffix = 2
-    while await session.scalar(select(AppUser.id).where(AppUser.username == candidate)):
-        candidate = f"{base}-{suffix}"
-        suffix += 1
-    return candidate
 
 
 async def _delete_pending(session: AsyncSession, pin_id: int) -> None:

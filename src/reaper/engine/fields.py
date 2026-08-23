@@ -125,30 +125,6 @@ _TYPE_FAMILY: dict[FieldType, str] = {
 _BAR_FAMILY: dict[str, str] = {"season_rank": "season"}
 
 
-def describe_season_rank(rank: float) -> str:
-    """A season's place, counting back from the newest season that has files.
-
-    Rank 1 is the *most recent* season with files on disk (see
-    ``clients.sonarr_stats.rank_seasons``), so it is the newest season and must never
-    be described as an old one. Callers supply the article and any suffix: "The newest
-    season" in a rule explanation, "the newest season on disk" in a signal.
-    """
-    place = int(rank)
-    if place <= 1:
-        return "newest season"
-    if place == 2:
-        return "second-newest season"
-    if place == 3:
-        return "third-newest season"
-    return f"{place}{_ordinal_suffix(place)}-newest season"
-
-
-def _ordinal_suffix(number: int) -> str:
-    if 11 <= number % 100 <= 13:
-        return "th"
-    return {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
-
-
 #: How a lane reads to the person who chose it. The enum's own values ("condemn",
 #: "protect") are engine words and must never reach a saved-policy error, which is
 #: rendered verbatim in the policy editor. `policy.py` phrases the same refusal the
