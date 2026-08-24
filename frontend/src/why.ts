@@ -63,17 +63,23 @@ const RETIRED_SEASON_CAUSE_ALIASES: Record<string, string> = {
 };
 
 // Every id that carries a `mediaType` select today but has a stored row from before it did:
-// the five merged `cause.*` ids above, by their surviving key, plus `rewatch_thin`
-// (RewatchOddsGate's own thin-cohort Reason, which shared its exact wording with the
-// why-panel's evidence block until the two were merged behind this one entry, #906).
+// the five merged `cause.*` ids above, by their surviving key, plus all four Reasons
+// `RewatchOddsGate` emits off its cohort. `rewatch_thin` got its select in #906, where it
+// merged with the why-panel's own evidence block; the other three got theirs in #908, which
+// swept the siblings that fix left saying "titles" on a TV lane.
 // ICU's `select` does not fall to `other` when the variable is entirely absent from params
 // -- it leaves the raw template unparsed instead, proven in why.test.ts -- so a row frozen
 // before its select shipped prints broken syntax rather than the sentence it always
 // rendered. Defaulted below to the wording those bare rows always had (every one of them
-// was a movie row, since `rewatch_thin` used the same "titles" wording on both lanes); a
-// fresh row's own "movie"/"season" param overrides it like any other entry the loop below
-// sets.
-const MEDIA_TYPED_IDS = new Set([...Object.values(RETIRED_SEASON_CAUSE_ALIASES), "rewatch_thin"]);
+// read "titles", on both lanes, which is the bug #906 and #908 fixed); a fresh row's own
+// "movie"/"season" param overrides it like any other entry the loop below sets.
+const MEDIA_TYPED_IDS = new Set([
+  ...Object.values(RETIRED_SEASON_CAUSE_ALIASES),
+  "rewatch_thin",
+  "rewatch_no_history",
+  "rewatch_watched_again",
+  "rewatch_under_floor",
+]);
 
 export function composeIn(namespace: string, key: ReasonKey): string {
   if (key.k === "legacy") return String(key.p?.text ?? "");

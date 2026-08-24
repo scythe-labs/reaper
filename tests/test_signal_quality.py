@@ -23,6 +23,7 @@ from reaper.engine.gates import (
     Facts,
     GateConfig,
     GateId,
+    MediaKind,
     MinDormancyGate,
     RewatchOddsGate,
     wilson_upper,
@@ -299,6 +300,46 @@ class TestTheRewatchOddsGate:
         result = RewatchOddsGate(GateConfig(threshold=50)).evaluate(facts)
 
         assert result.outcome == PROTECT
+
+    @pytest.mark.parametrize(("media_type", "noun"), [("movie", "titles"), ("season", "shows")])
+    def test_every_cohort_reason_names_the_media_type_the_policy_scans(
+        self, media_type: MediaKind, noun: str
+    ) -> None:
+        """All four Reasons this gate emits off the cohort say what is being compared, and a
+        TV policy compares shows (#908).
+
+        Both lanes are swept because a branch hardcoding either noun still passes a one-value
+        test (rule 141), and every branch is driven because #906 fixed one of the four and left
+        the other three saying "titles" on a TV policy (rule 145).
+
+        **The season lane is the half that discriminates here.** ``reaper.i18n.format_icu``
+        falls a select with no param back to its ``other`` branch, so a Reason that dropped
+        ``mediaType`` renders "titles" and the movie row passes either way. i18next does not
+        fall back -- it prints the raw template -- and that half is pinned on the frontend, in
+        ``why.test.ts``'s "#908" block, which is what proves a stored row still renders words.
+        """
+        other = "shows" if noun == "titles" else "titles"
+        gate = RewatchOddsGate(GateConfig(threshold=35), media_type=media_type)
+        unreadable = Unknown(reason="the fit could not read this item", source="fit")
+        floor_n = Known(value=REWATCH_BLOCK_FLOOR_N - 1, source="fit")
+        # n=100 k=10 is a 10% point rate whose Wilson upper bound is well under 35%, so the
+        # last branch is reached rather than the PROTECT above it.
+        under = _cohort(Known(value=100, source="fit"), Known(value=10, source="fit"))
+        assert wilson_upper(10, 100) * 100 < 35
+
+        sentences = {
+            "rewatch_no_history": gate.evaluate(_cohort(unreadable, unreadable)).detail,
+            "rewatch_thin": gate.evaluate(_cohort(floor_n, floor_n)).detail,
+            "rewatch_watched_again": gate.evaluate(
+                _cohort(Known(value=50, source="fit"), Known(value=20, source="fit"))
+            ).detail,
+            "rewatch_under_floor": gate.evaluate(under).detail,
+        }
+
+        for reason_id, detail in sentences.items():
+            assert detail.id == reason_id
+            assert f"{noun} like this" in text(detail), reason_id
+            assert other not in text(detail), reason_id
 
 
 class TestWilsonUpper:
