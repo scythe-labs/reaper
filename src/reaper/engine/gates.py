@@ -1090,13 +1090,14 @@ class RewatchOddsGate:
     config: GateConfig
     id: GateId = GateId.REWATCH_ODDS
     media_type: MediaKind = "movie"
-    """Which wording the panel's ICU ``mediaType`` select should pick for this gate's thin-cohort
-    Reason -- "movie" or "season". ``Facts`` carries no media discriminator of its own (unlike
-    ``KeepConfig.media_type`` in ``engine/signals.py``, the rewatch keep's own twin), so this is
-    set once at construction (``scan_runner.build_gates``, off the policy's own ``media_type``)
-    rather than read per item. Defaulted to "movie" so a hand-built gate in a test needs no
-    opinion about it (rule 141: sweep both values where it matters, which the season fixtures
-    below do)."""
+    """Which wording the panel's ICU ``mediaType`` select should pick for this gate's four
+    cohort Reasons -- "movie" or "season". ``Facts`` carries no media discriminator of its own
+    (unlike ``KeepConfig.media_type`` in ``engine/signals.py``, the rewatch keep's own twin), so
+    this is set once at construction (``scan_runner.build_gates``, off the policy's own
+    ``media_type``) rather than read per item. Defaulted to "movie" so a hand-built gate in a
+    test needs no opinion about it; rule 141 is answered by
+    ``test_signal_quality.py::TestTheRewatchOddsGate``, which sweeps both values across all four
+    Reasons."""
 
     def evaluate(self, facts: Facts) -> GateResult:
         n_obs = facts.rewatch_cohort_n
@@ -1105,7 +1106,7 @@ class RewatchOddsGate:
             return GateResult(
                 self.id,
                 ABSTAIN,
-                detail=Reason("rewatch_no_history"),
+                detail=Reason("rewatch_no_history", {"mediaType": self.media_type}),
             )
         if not (isinstance(n_obs, Known) and isinstance(k_obs, Known)):
             # Hand-built Facts that never gathered a curve: both live lanes freeze a
@@ -1126,12 +1127,17 @@ class RewatchOddsGate:
             return GateResult(
                 self.id,
                 PROTECT,
-                detail=Reason("rewatch_watched_again", {"k": k, "n": n}),
+                detail=Reason(
+                    "rewatch_watched_again", {"k": k, "n": n, "mediaType": self.media_type}
+                ),
             )
         return GateResult(
             self.id,
             ABSTAIN,
-            detail=Reason("rewatch_under_floor", {"k": k, "n": n, "floor_pct": floor}),
+            detail=Reason(
+                "rewatch_under_floor",
+                {"k": k, "n": n, "floor_pct": floor, "mediaType": self.media_type},
+            ),
         )
 
 

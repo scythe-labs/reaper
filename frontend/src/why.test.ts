@@ -195,6 +195,38 @@ describe("rewatch_thin (#906: merged with the why-panel's own rewatch-odds thin 
   });
 });
 
+describe("the rewatch gate's three other cohort reasons (#908)", () => {
+  // #906 gave `rewatch_thin` its select and left these three saying "titles" on a TV lane.
+  // Each carries its own params, so the stored-row cases below drop `mediaType` alone rather
+  // than every param, which is exactly the shape a snapshot frozen before #908 holds.
+  it("selects the movie or season wording off a fresh mediaType param", () => {
+    expect(composeReason({ k: "rewatch_no_history", p: { mediaType: "season" } })).toBe(
+      "Not enough watch history to say how often shows like this get watched.",
+    );
+    expect(
+      composeReason({ k: "rewatch_watched_again", p: { k: 20, n: 50, mediaType: "season" } }),
+    ).toBe("shows like this keep getting watched: 20 of 50 within a year");
+    expect(
+      composeReason({
+        k: "rewatch_under_floor",
+        p: { k: 1, n: 40, floor_pct: 25, mediaType: "season" },
+      }),
+    ).toBe("Of 40 shows like this, 1 was watched again within a year, under the 25% you keep.");
+  });
+
+  it("a row frozen before #908 renders its old wording, never raw ICU", () => {
+    expect(composeReason({ k: "rewatch_no_history" })).toBe(
+      "Not enough watch history to say how often titles like this get watched.",
+    );
+    expect(composeReason({ k: "rewatch_watched_again", p: { k: 20, n: 50 } })).toBe(
+      "titles like this keep getting watched: 20 of 50 within a year",
+    );
+    expect(composeReason({ k: "rewatch_under_floor", p: { k: 2, n: 40, floor_pct: 25 } })).toBe(
+      "Of 40 titles like this, 2 were watched again within a year, under the 25% you keep.",
+    );
+  });
+});
+
 describe("composeIn", () => {
   // Fixture entries, added to i18next at test time rather than reading real catalog
   // content -- `warning` has no production keys yet (chip.text/chip.sentence do now, and
