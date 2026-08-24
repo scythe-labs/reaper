@@ -8150,6 +8150,55 @@ def test_every_refusal_code_is_a_catalog_entry_the_browser_can_compose() -> None
     )
 
 
+#: The four admin-password prompts, mapped to the ``ui.json`` key that nests the refusal, or
+#: ``None`` where the browser renders it bare. Two shapes, both stating the consequence once.
+_PASSWORD_MISMATCH_WRAPPERS: dict[str, str | None] = {
+    "error.auth.restore_password_mismatch": "backup.restore.restoreFailed",
+    "error.auth.change_password_mismatch": "security.form.changeFailedError",
+    "error.auth.arm_deletion_password_mismatch": None,
+    "error.auth.forget_watch_password_mismatch": None,
+}
+
+
+def test_a_password_mismatch_states_its_consequence_exactly_once() -> None:
+    """A refused password says what did not happen once, from the wrapper or from itself.
+
+    Two of the four prompts render inside a lead-in that already carries the consequence
+    (``RestoreCard.tsx``'s "The restore didn't start: {message}",
+    ``SecurityPanel.tsx``'s "The password wasn't changed: {message}"), so their catalog
+    string is the bare sentence. The other two render alone
+    (``DeletionToggle.tsx``'s ``setError(describeError(e))``, ``PlexPanel.tsx``'s notice), so
+    they carry the tail themselves. ``reaper.refusal.MESSAGES`` carries the tail on all four:
+    its readers are API clients and log lines, which never see a wrapper.
+
+    #905 read the two bare-by-design catalog strings as a dropped tail and asked for it back,
+    which would have rendered "The restore didn't start: That password didn't match. Nothing
+    was restored." Pinning both shapes here is what stops the next reader repeating it.
+    """
+    catalog = dict(_ui_catalog_leaves())
+
+    for code, wrapper in _PASSWORD_MISMATCH_WRAPPERS.items():
+        rendered = catalog[code]
+        if wrapper is None:
+            assert rendered.count(".") == 2, (
+                f"{code} renders bare in the browser, so it states the consequence itself: "
+                f"got {rendered!r}, expected two sentences."
+            )
+        else:
+            assert "{message}" in catalog[wrapper], (
+                f"{wrapper} no longer nests a message, so {code} has nothing stating its "
+                "consequence. Give the catalog string its own tail, or restore the wrapper."
+            )
+            assert rendered.count(".") == 1, (
+                f"{code} renders inside {wrapper}, which already says what did not happen: "
+                f"got {rendered!r}, expected one sentence. See #905."
+            )
+        assert MESSAGES[code].count(".") == 2, (
+            f"reaper.refusal.MESSAGES[{code!r}] is read with no wrapper around it, so it "
+            f"states the consequence: got {MESSAGES[code]!r}, expected two sentences."
+        )
+
+
 _EXPECTED_BARE_HTTPEXCEPTION_SITES = 2
 
 
