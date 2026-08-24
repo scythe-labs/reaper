@@ -2338,6 +2338,41 @@ def test_a_dependabot_pull_request_arrives_shaped_like_every_other_one() -> None
     )
 
 
+def test_the_promotion_label_is_excluded_from_the_generated_notes() -> None:
+    """Rule 144: one label name, written in `.github/release.yml` and in CLAUDE.md's recipe.
+
+    The promotion pull request is the only one merging into ``main``, and the next
+    promotion's ours-strategy merge pulls it into that release's notes range. So it
+    printed in every release's notes as a chore beside the changes that shipped (#934).
+    ``.github/release.yml`` drops it by label, and CLAUDE.md's ``gh pr create`` line is
+    where the label gets applied. Neither file names the other, and a rename in one
+    fails nowhere: the notes come out wrong once, months later, where nobody re-reads
+    them.
+    """
+    config = yaml.safe_load((REPO / ".github" / "release.yml").read_text(encoding="utf-8"))
+    excluded = (config.get("changelog", {}).get("exclude", {}) or {}).get("labels") or []
+    assert excluded, (
+        ".github/release.yml has no changelog.exclude.labels, so the promotion pull request\n"
+        "is back in every release's notes (#934)."
+    )
+
+    claude_md = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    recipe = next(
+        (line for line in claude_md.splitlines() if "gh pr create --base main" in line),
+        None,
+    )
+    assert recipe is not None, (
+        "CLAUDE.md no longer holds the promotion `gh pr create --base main` line, so this\n"
+        "test cannot see whether the excluded label is still applied. Fix the test with it."
+    )
+    missing = [label for label in excluded if label not in recipe]
+    assert not missing, (
+        f".github/release.yml excludes {missing} from the release notes, but CLAUDE.md's\n"
+        f"promotion recipe does not apply it:\n  {recipe.strip()}\n"
+        "A promotion opened by that line keeps printing in the next release's notes."
+    )
+
+
 CODEQL_WORKFLOW = REPO / ".github" / "workflows" / "codeql.yml"
 
 #: Each language CodeQL analyzes, against the tree it is there for. Three cover the five names
