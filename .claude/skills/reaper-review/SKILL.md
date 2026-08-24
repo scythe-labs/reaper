@@ -391,7 +391,20 @@ uncertainty twice, which is how a possible fail-open lands at `Low` and is never
 
 The title says what the operator loses, not where the code is wrong: *"A play made after
 approval no longer rescues the file"* beats *"unreadable history body coerced to empty list."*
-Rule 21 governs the title; the body is for engineers and may use the internal vocabulary.
+Rule 21 governs the title.
+
+**The body is written in plain English too.** It names files, symbols and rule numbers freely,
+which the title may not. Everything around those names is ordinary sentences: say what the
+operator sees and what the code does, in the words you would use out loud. Write "a show card
+reads 'titles' where the rest of the panel says 'shows'", never "the `mediaType` select is absent
+from three sibling `Reason` calls". Short sentences, active voice, no em dashes, one clause per
+fact. A sentence that needed a second read is rewritten, not defended.
+
+The reason is who reads it. An issue is picked up weeks later, usually not by whoever filed it,
+and the first question is always "what actually goes wrong". A body written in the shorthand of
+the review that found it answers that question last, so the issue gets skipped and re-derived
+instead of fixed. **This binds an issue you EDIT as much as one you file.** A body already in the
+tracker gets rewritten the moment you touch it for anything else.
 
 **Keep the body short — it is read to decide what to do, not to relive the review.** Five
 short sections, in this order and no others, or six on an unproven one. If a section needs more
