@@ -192,7 +192,19 @@ _SIGNED_IN_ONLY = frozenset(path for _, paths in _SIGNED_IN_ONLY_READS for path 
 
 
 def _listed(phrases: tuple[str, ...]) -> str:
-    """``a, b, and c`` -- the phrases as one readable clause."""
+    """``a, b, and c`` -- the phrases as one readable clause.
+
+    **English, deliberately, even where the sentence around it is translated.** The two
+    refusal bodies these lists ride in are catalog strings
+    (``error.auth.api_key_read_denied`` and ``api_key_write_denied``), so a translated setup
+    renders a translated sentence with an English list inside it. That is the call. The
+    reader here is a script or a terminal holding a header credential, never the localized
+    browser, and the same phrases feed the API reference's auth box
+    (``api_key_scope_description`` below), which stays English whatever the operator picked.
+    The comma-and joining is English grammar of its own besides, so localizing the phrases
+    alone would not finish the job. #912 settled it; #904 moved the surfaces that DO face
+    the browser off this pattern.
+    """
     if len(phrases) < 3:
         return " and ".join(phrases)
     return f"{', '.join(phrases[:-1])}, and {phrases[-1]}"
