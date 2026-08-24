@@ -1124,10 +1124,10 @@
       "external_url_invalid": "The external URL must be a full web address, like https://192.0.2.10:8989.",
       "folder_list_unreachable": "Could not read the folder list: {error}",
       "instance_base_url_invalid": "The service address must be a full web address, like https://192.0.2.10:8989.",
+      "language_invalid": "\"{tag}\" is not a language code. Pick a language from the list.",
       "launcher_conf_write_failed": "Reaper couldn't save this to launcher.conf in its data folder.",
       "no_api_key": "No API key exists yet. Generate one first.",
       "no_password_set_for_arming": "Set an admin password first. It's what confirms turning deletion on.",
-      "notification_language_unknown": "Reaper doesn't have a \"{tag}\" language pack for Discord messages yet. Pick one from the list.",
       "recovery_mode_blocks_arming": "Recovery mode is on, so deletion stays off. Turn it off and restart first.",
       "service_list_unreachable": "Could not read the service list: {error}",
       "timezone_unknown": "That is not a known time zone. Pick one from the list.",
@@ -1389,9 +1389,8 @@
     },
     "heading": "General",
     "language": {
-      "help": "The language Reaper is shown in. Applies to this browser only.",
-      "label": "Language",
-      "optionBrowser": "Match my browser"
+      "help": "The language Reaper is shown in, including notification messages.",
+      "label": "Language"
     },
     "notices": {
       "apiKeyCopied": "API key copied.",
@@ -1769,11 +1768,6 @@
         "placeholderEdit": "leave blank to keep the current webhook"
       },
       "heading": "Notifications",
-      "language": {
-        "help": "More languages will appear here as translations are finished.",
-        "label": "Language of Discord posts",
-        "savedAnnouncement": "Discord notification language saved."
-      },
       "notConnected": "No Discord webhook set, so leaving-soon warnings won't be sent.",
       "staleWhat": "whether Discord is connected"
     },

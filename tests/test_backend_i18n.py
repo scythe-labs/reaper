@@ -21,10 +21,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
 import reaper.i18n as reaper_i18n
 from reaper.i18n import format_icu, say
+from reaper.services import app_settings
 
 from ._reasons import catalog_entry
 
@@ -310,3 +312,53 @@ class TestCatalogLoading:
             result = say("broken", n=float("nan"))
         assert result == "broken"
         assert any(entry["event"] == "i18n.format_failed" for entry in logs)
+
+
+class TestWhichLanguageANotificationIsWrittenIn:
+    """The one setting has two readers, and the split is the whole point of it.
+
+    `get_language` hands back what the operator picked, because that is what the Settings
+    picker shows and what the app is painted in. `get_notification_language` clamps the same
+    value to a tag this process holds a `backend.json` for, because `say` composes a
+    notification here and a browser catalog ships a release ahead of this one. Reading the raw
+    value in `notify.discord` would post an untranslated embed under a tag claiming otherwise;
+    clamping it in the picker would show the operator a language they did not choose.
+    """
+
+    async def test_the_picker_reads_back_exactly_what_was_stored(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # `de` on purpose: a tag with no shipped backend catalog, so this cannot pass by the
+        # clamp happening to agree (rule 141).
+        assert "de" not in reaper_i18n.shipped_tags()
+        async with async_factory() as session:
+            await app_settings.set_language(session, "de")
+            assert await app_settings.get_language(session) == "de"
+
+    async def test_a_notification_falls_back_to_english_for_a_tag_it_cannot_compose(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        async with async_factory() as session:
+            await app_settings.set_language(session, "de")
+            assert await app_settings.get_notification_language(session) == reaper_i18n.DEFAULT_TAG
+
+    async def test_a_notification_uses_the_stored_tag_once_its_catalog_ships(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        # Spanish, not English: English is the fallback, so a case pinning it could not tell a
+        # stored tag being read from the clamp firing (rule 141).
+        shipped = "es"
+        assert shipped in reaper_i18n.shipped_tags()
+        async with async_factory() as session:
+            await app_settings.set_language(session, shipped)
+            assert await app_settings.get_notification_language(session) == shipped
+
+    async def test_both_readers_answer_a_fresh_install(
+        self, async_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Nothing stored is `None` to the picker and English to a notification. The picker
+        must not invent a choice nobody made, and a notification has to be written in
+        something."""
+        async with async_factory() as session:
+            assert await app_settings.get_language(session) is None
+            assert await app_settings.get_notification_language(session) == reaper_i18n.DEFAULT_TAG

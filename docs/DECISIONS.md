@@ -1052,11 +1052,30 @@ and the launcher's console lines, OpenAPI tag descriptions and the API-key auth 
 launcher's tray and dialogs are composed on the server, so they read
 `src/reaper/locales/en/backend.json` through `reaper.i18n.say`, a small ICU formatter with
 a CLDR plural table for the shipped tags. Babel is not a dependency and the catalog does not
-justify one. The tray follows the OS locale. Discord follows the `notification_language`
-setting (Settings, Notifications), whose choices are the tags with a shipped catalog, so a
-language appears there the release after Weblate's translation lands. Weblate holds it as
-the `backend` component beside `ui`. `tests/_reasons.py` formats through the same code, so
-the backend and the browser agree on the ICU subset.
+justify one. The tray follows the OS locale. Discord follows the `language` setting (Settings,
+General), which is the same one that decides what the app is shown in. Weblate holds the
+catalog as the `backend` component beside `ui`. `tests/_reasons.py` formats through the same
+code, so the backend and the browser agree on the ICU subset.
+
+**One language setting, and it lives on the server.** The picker used to be two: a browser-local
+one in General for the UI, and a server-stored one in Notifications for Discord, so an operator
+reading the app in Spanish got English Discord posts unless they found the second picker. There
+is one now, in General, stored server-side because a notification is composed with no browser to
+ask. The browser still decides on a fresh install, but as a *seed*: `useSeedLanguage` writes
+`navigator.languages`' best shipped match the first time it finds nothing stored, so the value a
+notification is written in is always the value the picker shows. Overseerr and Jellyseerr both
+put the display language on the server too; Jellyseerr keeps a per-agent notification locale
+besides, which is a multi-user answer (its webhook posts about someone else's request) and does
+not apply here.
+
+**The two catalogs are separate lists, and the setting is not validated against either.** A
+translation reaches `ui.json` a release before its `backend.json`, so refusing a tag with no
+backend catalog would stop an operator setting the language they are already reading the app in.
+`PUT /api/settings/general` validates the tag's *shape* only. `get_language` hands the picker
+what was stored; `get_notification_language` clamps that to `shipped_tags()`, so a notification
+reads English until the catalog lands and then switches itself with no second edit. Nothing on
+screen says so, which is deliberate: both lists hold English and Spanish today, and a permanent
+sentence about a gap that is usually closed costs every operator a line to read past.
 
 **HTTP error bodies get a code and keep their English `detail`.** `detail` stays the
 formatted English sentence, because an API-key client or a documented example reads it as

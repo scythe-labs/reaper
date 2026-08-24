@@ -10,12 +10,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type RefObject, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { announce } from "../announce";
-import { languageName } from "../i18n";
 import { useSuccessorFocus } from "../focus";
 import { api } from "../api";
 import { describeError } from "../errors";
 import { TestBadge, useWebhookTest } from "./ServiceModal";
-import { SetRow } from "./SetRow";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Notice } from "./Notice";
 
@@ -66,17 +64,6 @@ export function NotificationsPanel({
       // Success here is the box emptying and a line above it flipping, both silent. The test
       // button between these two mutations already speaks (#192); these are its siblings.
       announce(t("services.discord.savedAnnouncement"));
-      invalidate();
-    },
-    onError: (e) => setError(describeError(e)),
-  });
-  // The language select writes immediately, like GeneralPanel's expand-seasons and
-  // reverse-proxy selects -- there is nothing to lose by leaving it, so it needs no place in
-  // a draft or a save bar (rule 43 does not apply: this panel has no bar to begin with).
-  const saveLanguage = useMutation({
-    mutationFn: (language: string) => api.setNotificationLanguage(language),
-    onSuccess: () => {
-      announce(t("services.notifications.language.savedAnnouncement"));
       invalidate();
     },
     onError: (e) => setError(describeError(e)),
@@ -156,28 +143,9 @@ export function NotificationsPanel({
         </>
       )}
 
-      {/* Always on screen, like the webhook box below: a loading or failed check narrows to
-          "en" and disables the select rather than hiding it (rule 17/36). */}
-      <SetRow
-        label={t("services.notifications.language.label")}
-        help={t("services.notifications.language.help")}
-      >
-        <select
-          value={data?.language ?? "en"}
-          aria-label={t("services.notifications.language.label")}
-          disabled={isPending || saveLanguage.isPending}
-          onChange={(e) => {
-            setError(null);
-            saveLanguage.mutate(e.target.value);
-          }}
-        >
-          {(data?.languages ?? ["en"]).map((tag) => (
-            <option key={tag} value={tag}>
-              {languageName(tag, "en")}
-            </option>
-          ))}
-        </select>
-      </SetRow>
+      {/* No language picker here. The one in Settings -> General sets what a notification is
+          written in as well as what the app is shown in, so this panel had a second answer to
+          a question that only has one. */}
 
       <div className="add-grid">
         <label className="field-sm wide">

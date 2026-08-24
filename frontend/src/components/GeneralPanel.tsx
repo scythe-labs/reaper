@@ -20,7 +20,7 @@ import { useTranslation } from "react-i18next";
 import { accentInk, accentText, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { announce } from "../announce";
 import { useSavebarFocus, useSuccessorFocus } from "../focus";
-import i18next, { LANGUAGES, languageName, setLanguage, storedLanguage } from "../i18n";
+import i18next, { LANGUAGES, languageName, preferredLanguage, setLanguage } from "../i18n";
 import { api, type ExpandSeasonsMode, type GeneralSettings } from "../api";
 import { describeError } from "../errors";
 import { useGeneralSettings } from "../useGeneralSettings";
@@ -467,12 +467,13 @@ export function GeneralPanel({
   // inside the right-aligned control box, so the first keystroke made the button appear and
   // shoved the field being typed in 71px to the left -- then back again on undo. The bar names
   // what is unsaved and sends all of it in one request. The controls that take effect the
-  // moment they change are not drafts and do not join it: two of them call `save.mutate`
-  // themselves -- the reverse-proxy `Switch` and the expand-seasons `<select>` -- and the theme
-  // and language `<select>`s write this browser's own localStorage and never reach the server,
-  // so neither has a draft to hold. The language one reloads the page (see `setLanguage`), which
-  // would take this bar's contents with it, so it is disabled while the bar has any: that is why
-  // it reads `pending` rather than being a self-contained control like the theme beside it. The spare-length `Segmented` was a third
+  // moment they change are not drafts and do not join it: three of them call `save` themselves
+  // -- the reverse-proxy `Switch`, the expand-seasons `<select>` and the language `<select>` --
+  // and the theme `<select>` writes this browser's own localStorage and never reaches the
+  // server, so none has a draft to hold. The language one reloads the page once its save lands
+  // (see `setLanguage`), which would take this bar's contents with it, so it is disabled while
+  // the bar has any: that is why it reads `pending` rather than being a self-contained control
+  // like the theme beside it. The spare-length `Segmented` was a third
   // until it started staging `default_spare_days` here instead (see `spareValue` above).
   const pending: { label: string; patch: Parameters<typeof api.saveGeneral>[0] }[] = [];
   for (const field of dirtyText) {
@@ -729,18 +730,33 @@ export function GeneralPanel({
           </SetRow>
 
           <SetRow label={t("general.language.label")} help={t("general.language.help")}>
-            {/* The stored choice is read straight from localStorage rather than held in state:
-                picking one reloads the page, so there is no render between the two to keep a
-                copy for. An empty value is "no choice made", which is what `storedLanguage`
-                returning undefined means. Disabled while the save bar holds anything, because
-                the reload would discard it with no ask. */}
+            {/* The server holds the choice, because a notification is composed there with no
+                browser to ask. So this saves first and repaints second: `setLanguage` writes
+                this browser's copy and reloads onto it, and reaching it only from `mutateAsync`
+                means a refused save leaves both halves on the old language rather than a page
+                speaking one language while the server stores another.
+
+                No "match my browser" entry. The browser still decides on a fresh install --
+                `App` seeds the server from `preferredLanguage()` the first time it finds
+                nothing stored -- but as a seed, not a standing mode, so what the picker shows
+                is always what a notification will be written in.
+
+                Disabled while the save bar holds anything, because the reload would discard it
+                with no ask. */}
             <select
-              value={storedLanguage() ?? ""}
+              value={data.language ?? preferredLanguage()}
               aria-label={t("general.language.label")}
-              disabled={pending.length > 0}
-              onChange={(e) => void setLanguage(e.target.value || undefined)}
+              disabled={pending.length > 0 || save.isPending}
+              onChange={(e) => {
+                const tag = e.target.value;
+                void save
+                  .mutateAsync({ language: tag })
+                  .then(() => setLanguage(tag))
+                  // The refusal is already on screen through `save.error`. This only keeps the
+                  // rejection from going unhandled, which rule 135 makes a test failure.
+                  .catch(() => {});
+              }}
             >
-              <option value="">{t("general.language.optionBrowser")}</option>
               {LANGUAGES.map((tag) => (
                 <option key={tag} value={tag}>
                   {languageName(tag)}

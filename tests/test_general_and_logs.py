@@ -69,9 +69,9 @@ from tests._auth import login
 #: because it was in one for two releases, drifting once per route added while
 #: ``test_the_session_scheme_is_declared`` said "counted, not remembered" and asserted
 #: nothing (rule 144).
-#: +1 for `PUT /api/settings/notifications/language` (phase 10b): a setting write, closed to
-#: an API key by the same deny-by-default fence as every other one, with no allowlist edit.
-FENCED_OPERATIONS = 49
+#: -1 for `PUT /api/settings/notifications/language`, gone: the language is one setting now and
+#: rides `PUT /api/settings/general`, which was already counted here.
+FENCED_OPERATIONS = 48
 
 
 class TestScanProgressPercent:
@@ -152,6 +152,9 @@ class TestGeneralSettings:
             "application_name": "Reaper",
             "application_url": None,
             "accent_color": "#25c3ff",
+            # Null, not "en": nobody has chosen, and the browser seeds it on first sign-in.
+            # A default of "en" here would be the server asserting a choice it never saw.
+            "language": None,
             "api_key_set": False,
             "expand_seasons_mode": "off",
             "default_spare_days": 0,
@@ -161,6 +164,29 @@ class TestGeneralSettings:
             # Desktop app group is absent; TestDesktopSettings drives the other arm.
             "desktop": None,
         }
+
+    def test_a_language_is_stored_and_read_back_as_sent(self, client: TestClient) -> None:
+        data = client.put("/api/settings/general", json={"language": "pt-BR"}).json()
+        assert data["language"] == "pt-BR"
+        assert client.get("/api/settings/general").json()["language"] == "pt-BR"
+
+    def test_a_language_with_no_backend_catalog_is_still_stored(self, client: TestClient) -> None:
+        """The browser ships a translation a release before ``backend.json`` does, so the
+        picker offers tags this process cannot compose a notification in. Refusing one would
+        stop the operator setting the language they are already reading the app in; storing it
+        is what makes the notification start speaking it the release that catalog lands. Rule
+        141: ``de`` on purpose, a tag no fixture and no shipped backend catalog holds, so a
+        pass cannot come from the value happening to be the default."""
+        assert client.put("/api/settings/general", json={"language": "de"}).status_code == 200
+        assert client.get("/api/settings/general").json()["language"] == "de"
+
+    def test_a_value_that_is_not_a_language_tag_is_refused(self, client: TestClient) -> None:
+        client.put("/api/settings/general", json={"language": "es"})
+        response = client.put("/api/settings/general", json={"language": "not a tag!"})
+        assert response.status_code == 422
+        assert response.json()["code"] == "error.settings.language_invalid"
+        # The bad value never landed; the previous language still stands.
+        assert client.get("/api/settings/general").json()["language"] == "es"
 
     def test_a_valid_accent_is_saved_lowercased(self, client: TestClient) -> None:
         data = client.put("/api/settings/general", json={"accent_color": "#4F46E5"}).json()

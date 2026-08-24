@@ -126,21 +126,39 @@ async function serve(tag: string): Promise<void> {
   await i18next.changeLanguage(tag);
 }
 
+/** What this browser asks for, of the catalogs that shipped: the operator's stored choice, else
+ *  the best match for `navigator.languages`, else English.
+ *
+ *  Named because it is read twice now. `applyStoredLanguage` paints with it, and `App` sends it
+ *  to the server the first time it finds no language stored there, which is what makes the
+ *  browser's own preference the seed for a fresh install rather than a standing mode. */
+export function preferredLanguage(): string {
+  return storedLanguage() ?? shippedTag(navigator.languages) ?? "en-US";
+}
+
 /** Move the app onto the operator's chosen language, the browser's when they have not chosen,
  *  or English when neither ships a catalog. Run before the first render, so no screen paints in
  *  one language and repaints in another. A catalog that fails to load serves English, the same
- *  answer a missing one gives. */
+ *  answer a missing one gives.
+ *
+ *  It reads localStorage rather than the server on purpose: the login screen paints before any
+ *  authenticated call can be made (`AuthGuard` opens only `/api/health` and `/api/auth/`), so
+ *  the stored copy is what keeps sign-in in the operator's language. The server holds the
+ *  durable value, and `App` reconciles the two once signed in. */
 export async function applyStoredLanguage(): Promise<void> {
-  const tag = storedLanguage() ?? shippedTag(navigator.languages) ?? "en-US";
   try {
-    await serve(tag);
+    await serve(preferredLanguage());
   } catch {
     // The init's English is still in place.
   }
 }
 
-/** Remember `tag` for this browser and reload onto it. `undefined` forgets the choice, so the
- *  browser's language decides again.
+/** Remember `tag` for this browser and reload onto it.
+ *
+ *  This is the paint half only. The durable copy lives on the server, because a notification is
+ *  composed there with no browser to ask (`app_settings.LANGUAGE_KEY`), so the caller writes
+ *  that first and calls this once it lands. Keeping the API out of here is what lets every test
+ *  that switches language run without a server.
  *
  *  It reloads rather than switching in place because not every surface subscribes to a language
  *  change. `useTranslation` re-renders its component; a module reading the catalog through the
@@ -149,14 +167,13 @@ export async function applyStoredLanguage(): Promise<void> {
  *
  *  What it no longer covers for is a frozen table. Every string in the tree resolves in a
  *  function now, and `i18n-module-scope.test.ts` keeps it that way (#897). */
-export async function setLanguage(tag: string | undefined): Promise<void> {
+export async function setLanguage(tag: string): Promise<void> {
   try {
-    if (tag === undefined) localStorage.removeItem(LANGUAGE_KEY);
-    else localStorage.setItem(LANGUAGE_KEY, tag);
+    localStorage.setItem(LANGUAGE_KEY, tag);
   } catch {
     // Storage can be unavailable (private windows); nothing to reload onto, so switch in place
     // and accept the frozen tables for this page.
-    await serve(tag ?? "en-US");
+    await serve(tag);
     return;
   }
   location.reload();

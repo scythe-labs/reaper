@@ -27,7 +27,7 @@ import { DocsProvider } from "./docs/DocsContext";
 import type { Focus, NavIntent, Selection, View } from "./navIntent";
 import { readLanding, sectionUrl, writeUrl } from "./navUrl";
 import { usePageScrollLock } from "./pageScrollLock";
-import { useGeneralSettings } from "./useGeneralSettings";
+import { useGeneralSettings, useSeedLanguage } from "./useGeneralSettings";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useScanSettled } from "./useScanSettled";
 import { Notice } from "./components/Notice";
@@ -700,6 +700,10 @@ function Authed({ user }: { user: AuthUser }) {
 
   // Above the early return, so the hook order holds whichever branch renders (rule 146).
   useSlowWait(isLoading ? t("shell.app.stillLoadingReaper") : null);
+  // The first signed-in moment is the earliest one where a browser that knows its own preferred
+  // languages is talking to a server that cannot detect them. Here rather than in the wizard,
+  // because an install past setup never runs the wizard again.
+  useSeedLanguage();
 
   if (isLoading) {
     return (

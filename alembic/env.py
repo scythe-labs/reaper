@@ -149,7 +149,7 @@ def run_migrations_online() -> None:
 
 
 # No offline (``--sql``) branch. There was one, with no invoker in the tree, and it could
-# not have worked: 9 revisions call ``op.get_bind()`` -- rule 81's reflection guards, and
+# not have worked: 10 revisions call ``op.get_bind()`` -- rule 81's reflection guards, and
 # the shape every heal migration takes -- so ``alembic upgrade head --sql`` exits 1 at
 # revision 3. Restoring the capability means giving those guards up, which is the wrong
 # trade for a mode nothing runs.

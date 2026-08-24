@@ -166,7 +166,7 @@ def test_env_py_configures_batch_mode(tmp_path: Path, monkeypatch: pytest.Monkey
 
     **One call site, and it used to be parametrized over two.** env.py had an offline
     (``--sql``) branch with no invoker anywhere in the tree, and it could not have run:
-    9 revisions call ``op.get_bind()``, so ``alembic upgrade head --sql`` exits 1 at
+    10 revisions call ``op.get_bind()``, so ``alembic upgrade head --sql`` exits 1 at
     revision 3. It is gone. The parametrize went with it rather than staying as a
     second id driving the same branch, which would have read as twice the coverage
     (rule 118).

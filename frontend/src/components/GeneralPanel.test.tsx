@@ -39,6 +39,7 @@ const STORED: GeneralSettings = {
   application_url: null,
   timezone: "UTC",
   accent_color: "#38bdf8",
+  language: "en",
   api_key_set: false,
   expand_seasons_mode: "off",
   default_spare_days: 0,
@@ -628,26 +629,51 @@ describe("what the panel reports to the section rail", () => {
 // key" are pinned here. Only the first one generates on one press: the other two are the states
 // where the page cannot show that nothing is about to be destroyed.
 describe("the display language picker", () => {
-  it("names each shipped language in that language, and hands the pick to i18n", async () => {
-    const person = renderPanel();
+  it("names each shipped language in that language, and offers no browser-match entry", async () => {
+    renderPanel();
     const select = await screen.findByLabelText<HTMLSelectElement>("Language");
 
     // "Espanol", not "Spanish": an operator scanning for their language looks for the name they
     // call it (rule 21). The tag comes from the same glob the loader reads, so a translation
     // that ships is choosable with no edit here (rule 66) -- which is also why this asserts on
     // the two that ship rather than on the whole list.
-    expect(select.textContent).toContain("Match my browser");
     expect(select.textContent).toContain("English");
     expect(select.textContent).toContain("Espa\u00f1ol");
     expect(select.textContent).not.toContain("Spanish");
 
-    await person.selectOptions(select, "es");
-    expect(setLanguageMock).toHaveBeenCalledWith("es");
+    // The browser still decides on a fresh install, through `useSeedLanguage`, but as a seed
+    // written to the server rather than a standing mode. Leaving the entry here would be the
+    // one choice under which a notification is written in a different language from the app,
+    // which is the split this control exists to close.
+    expect(select.textContent).not.toContain("Match my browser");
+    expect(select.value).toBe("en");
+  });
 
-    // Back to no choice at all, which is a different answer from picking English: it is what
-    // lets the browser decide again.
-    await person.selectOptions(select, "");
-    expect(setLanguageMock).toHaveBeenCalledWith(undefined);
+  it("saves the pick to the server before repainting this browser", async () => {
+    const person = renderPanel();
+    const select = await screen.findByLabelText<HTMLSelectElement>("Language");
+    apiMock.saveGeneral.mockResolvedValue({ ...STORED, language: "es" });
+
+    await person.selectOptions(select, "es");
+
+    // Order is the assertion, not just the pair. The server holds what a notification is
+    // written in, so a refused save must leave this browser on the old language too rather
+    // than painting one language over a server storing another.
+    await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1));
+    expect(apiMock.saveGeneral.mock.calls[0]![0]).toEqual({ language: "es" });
+    await waitFor(() => expect(setLanguageMock).toHaveBeenCalledWith("es"));
+  });
+
+  it("does not repaint when the save is refused", async () => {
+    const person = renderPanel();
+    const select = await screen.findByLabelText<HTMLSelectElement>("Language");
+    apiMock.saveGeneral.mockRejectedValue(new Error("nope"));
+
+    await person.selectOptions(select, "es");
+
+    await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1));
+    expect(apiMock.saveGeneral.mock.calls[0]![0]).toEqual({ language: "es" });
+    expect(setLanguageMock).not.toHaveBeenCalled();
   });
 
   it("cannot be reached while the save bar is holding a draft", async () => {
