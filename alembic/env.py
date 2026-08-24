@@ -43,34 +43,26 @@ target_metadata = Base.metadata
 #: sees a column with no attribute and proposes to DROP it, so ``alembic check`` -- a CI gate
 #: -- fails on every commit until someone either drops it or silences it here (#271).
 #:
-#: **Every entry here is a debt with a due date.** The M+1 sweep drops all six in one
-#: revision under rule 148's three obligations, and this set empties with it. An entry that
-#: outlives its sweep is how a dead column becomes permanent behind a growing exclusion list,
-#: which is the failure rule 148 exists to prevent -- so add to this only alongside the
-#: release that removes the attribute, and never to make a red ``alembic check`` go green.
+#: **Every entry here is a debt with a due date.** The M+1 sweep drops them in one revision
+#: under rule 148's three obligations, and this set empties with it. An entry that outlives its
+#: sweep is how a dead column becomes permanent behind a growing exclusion list, which is the
+#: failure rule 148 exists to prevent -- so add to this only alongside the release that removes
+#: the attribute, and never to make a red ``alembic check`` go green.
 #:
-#: ``candidate.poster_url`` is nullable and needed no schema change to survive its attribute
-#: leaving; it still needs this arm, because autogenerate does not care why a column has no
-#: attribute. The other five are the ``NOT NULL`` ones that revision ``e6f7a8b9c0d1`` gave a
-#: server default or made nullable first.
-RETIRED_COLUMNS = {
-    ("candidate", "poster_url"),
-    ("list_config", "built_in"),
-    ("pending_plex_login", "pin_code"),
-    ("plex_server", "owner_plex_account_id"),
-    ("profile", "active_policy_id"),
-    ("profile", "enabled"),
-}
+#: **Empty, and that is the resting state.** It held six columns from release M
+#: (``e6f7a8b9c0d1``, v2026.8.4) until ``e2f3a4b5c6d7`` dropped them. Empty is what the rule
+#: looks like when it is being followed; a set that stays populated across a release is the
+#: debt going unpaid. ``test_repo_hygiene`` pins that both sets are empty, so the next
+#: population arrives with a reader who has to delete an assertion to add one.
+RETIRED_COLUMNS: set[tuple[str, str]] = set()
 
 #: A retired column that carried a FOREIGN KEY leaves the constraint behind too, and hiding
 #: the column does not hide it: ``alembic check`` reports ``remove_fk`` on the next commit and
 #: the CI gate stays red. Found by running the check rather than by reading the docs, which is
 #: the only reason it is here -- nothing about ``include_name``'s column arm suggests a second
-#: one is needed. Empties with ``RETIRED_COLUMNS`` at the M+1 sweep, where the constraint is
-#: dropped ahead of its column (rule 148's ordering).
-RETIRED_CONSTRAINTS = {
-    ("profile", "fk_profile_active_policy_id_policy"),
-}
+#: one is needed. Empties with ``RETIRED_COLUMNS``, as it just did: ``profile``'s
+#: ``fk_profile_active_policy_id_policy`` went ahead of its column in the same sweep.
+RETIRED_CONSTRAINTS: set[tuple[str, str]] = set()
 
 
 def include_name(name: str | None, type_: str, parent_names: dict[str, str | None]) -> bool:

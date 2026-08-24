@@ -41,9 +41,12 @@ from reaper.services import backup, restore
 from tests.test_migrations import PROJECT_ROOT, _alembic_config
 
 #: Release M, the first revision to carry the marker: four ``batch_alter_table`` blocks are
-#: four full table copies taken from reflection. Its predecessor, and the one revision that
-#: ships after it, bracket it -- so a walk starting below it finds a marked revision and a
-#: walk starting above it finds none.
+#: four full table copies taken from reflection. Its predecessor sits below it, so a walk
+#: starting there finds a marked revision.
+#:
+#: A walk starting ABOVE release M finds one too, now: ``e2f3a4b5c6d7`` is the M+1 sweep and
+#: carries the marker for a stronger reason, since a dropped column's data is gone rather than
+#: merely at risk. Only a database already at head finds nothing pending.
 _RELEASE_M = "e6f7a8b9c0d1"
 _BEFORE_RELEASE_M = "d5e6f7a8b9c0"
 
@@ -75,12 +78,28 @@ class TestWhichPendingRevisionsAskForASnapshot:
     def test_a_revision_below_a_marked_one_asks(self) -> None:
         assert schema_gate.needs_snapshot(_BEFORE_RELEASE_M) is True
 
-    def test_a_revision_above_it_does_not(self) -> None:
-        """The additive revision that ships after release M is the ordinary case: it is
-        pending, it is unmarked, and the boot skips the copy."""
-        pending = [r.revision for r in _script().iterate_revisions("head", _RELEASE_M)]
+    def test_only_the_revisions_that_lose_data_carry_the_marker(self) -> None:
+        """Every revision pending from release M, and which of them asks for the copy.
+
+        This used to read ``needs_snapshot(_RELEASE_M) is False``, on a tree where everything
+        after release M was additive. ``e2f3a4b5c6d7`` is the M+1 sweep and drops six columns,
+        so the honest answer from release M is now True -- and asserting *which* revision made
+        it True is the stronger version of the same check: a marker landing on one of the four
+        additive revisions beside it fails here, which is what the old case was protecting.
+        """
+        pending = list(_script().iterate_revisions("head", _RELEASE_M))
         assert pending, "release M is head; this case needs a revision shipped after it"
-        assert schema_gate.needs_snapshot(_RELEASE_M) is False
+
+        marked = {
+            r.revision for r in pending if getattr(r.module, schema_gate.SNAPSHOT_ATTR, False)
+        }
+        assert marked == {"e2f3a4b5c6d7"}, (
+            "the revisions asking for a pre-migration copy are not the ones that lose data. "
+            "A snapshot nobody needs costs a file; a missing one costs the database."
+        )
+        # So an operator sitting on v2026.8.4 gets their database copied aside on the boot
+        # that crosses the sweep, which is the whole reason the marker is on the revision.
+        assert schema_gate.needs_snapshot(_RELEASE_M) is True
 
     def test_a_database_at_head_asks_for_nothing(self) -> None:
         head = _script().get_current_head()
@@ -295,16 +314,22 @@ class TestPreflightRefusesRatherThanMigrateUnprotected:
 
         assert not (tmp_path / backup.PRE_MIGRATION_DIR).exists()
 
-    def test_an_ordinary_additive_upgrade_writes_nothing(
+    def test_an_upgrade_crossing_the_column_sweep_copies_the_database_first(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The revision after release M adds an index and asks for nothing, which is what
-        keeps every ordinary boot free of a database copy."""
+        """The case an operator on v2026.8.4 actually hits.
+
+        This used to be ``test_an_ordinary_additive_upgrade_writes_nothing``, driven from
+        release M back when everything after it was additive. ``e2f3a4b5c6d7`` drops six
+        columns, so booting from release M now crosses it and the copy is taken. The
+        no-copy side is still pinned, by the two cases above it: a database already at head,
+        and a first boot with no database at all.
+        """
         self._at(_RELEASE_M, tmp_path, monkeypatch)
 
         assert preflight.main() == 0
 
-        assert not (tmp_path / backup.PRE_MIGRATION_DIR).exists()
+        assert (tmp_path / backup.PRE_MIGRATION_DIR).exists()
 
     def test_a_snapshot_that_cannot_be_written_stops_the_boot(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -347,8 +372,8 @@ class TestRestoringFromTheSnapshot:
             conn.execute(
                 text(
                     "INSERT INTO list_config "
-                    "(name, source, config_json, enabled, built_in, created_at) "
-                    "VALUES (:name, 'arr_tag', :body, 1, 0, 1750000000)"
+                    "(name, source, config_json, enabled, created_at) "
+                    "VALUES (:name, 'arr_tag', :body, 1, 1750000000)"
                 ),
                 {"name": name, "body": _LIST_BODY},
             )
@@ -358,15 +383,20 @@ class TestRestoringFromTheSnapshot:
         """Break the database the way a migration that went wrong would.
 
         Alembic's own batch mode, so the rebuild is the real one: no ``collation=`` on the
-        ``alter_column``, which is the two-line authoring slip. Then the column drop that
-        release M+1 performs and no ``downgrade()`` can undo.
+        ``alter_column``, which is the two-line authoring slip. Then a column drop no
+        ``downgrade()`` can undo, the shape release M+1 performs six times.
+
+        The rebuild is triggered on ``enabled``. It used to be ``built_in``, which the M+1
+        sweep (``e2f3a4b5c6d7``) has since dropped; any Boolean on this table reproduces the
+        hazard, because what loses the collation is the rebuild, not which column asked for
+        one.
         """
         engine = create_engine(settings.sync_database_url)
         try:
             with engine.connect() as conn:
                 ops = Operations(MigrationContext.configure(conn, opts={"as_batch": True}))
                 with ops.batch_alter_table("list_config") as batch:
-                    batch.alter_column("built_in", existing_type=Boolean(), existing_nullable=False)
+                    batch.alter_column("enabled", existing_type=Boolean(), existing_nullable=False)
                 conn.exec_driver_sql("ALTER TABLE list_config DROP COLUMN config_json")
                 conn.commit()
         finally:
@@ -392,8 +422,8 @@ class TestRestoringFromTheSnapshot:
         with engine.begin() as conn:  # the collation is gone, so the collision is accepted
             conn.execute(
                 text(
-                    "INSERT INTO list_config (name, source, enabled, built_in, created_at) "
-                    "VALUES ('keepers', 'arr_tag', 1, 0, 1750000000)"
+                    "INSERT INTO list_config (name, source, enabled, created_at) "
+                    "VALUES ('keepers', 'arr_tag', 1, 1750000000)"
                 )
             )
         engine.dispose()
