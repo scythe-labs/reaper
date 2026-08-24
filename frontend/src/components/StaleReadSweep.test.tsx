@@ -531,7 +531,6 @@ const GROUP: Group = {
     trakt: null,
   },
   show_status: null,
-  collections: null,
   seasons: [showSeason()],
 };
 

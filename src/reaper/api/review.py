@@ -1708,9 +1708,5 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             # same scan. Skipping the rows that carry nothing keeps a snapshot taken
             # before this field existed from blanking a group whose other rows have it.
             show_status=next((c.show_status for c in seasons if c.show_status), None),
-            # Same pattern: a TV collection lists the SHOW, not its seasons, so every
-            # season row already carries the show's own list and the first one that has
-            # it answers for the whole group (#816).
-            collections=next((c.collections for c in seasons if c.collections), None),
             seasons=seasons,
         )

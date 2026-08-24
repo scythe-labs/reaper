@@ -304,7 +304,6 @@ describe("the all-seasons list", () => {
       show_spare_expires_at: null,
       links: {} as Group["links"],
       show_status: null,
-      collections: null,
       seasons: [
         season(1, 1, "protect", 34, { tone: "kept", reason: { k: "kept.season.midbinge" } }),
         season(2, 2, "condemn", 88, null),
@@ -643,7 +642,6 @@ describe("what a screen reader hears on a season row", () => {
       show_spare_expires_at: null,
       links: {} as Group["links"],
       show_status: null,
-      collections: null,
       seasons: [
         season(1, 1, "protect", 34, { tone: "kept", reason: { k: "kept.season.midbinge" } }),
         season(2, 2, "condemn", 88, null),

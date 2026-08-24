@@ -219,12 +219,6 @@ export interface Group {
    *  reading of the series is stamped onto every season in the same scan, so they cannot
    *  disagree. Null only when no row carries it (a snapshot from before this field). */
   show_status: ShowStatus | null;
-  /** The show's Plex collection names, taken the same way as `show_status`: a TV
-   *  collection lists the show, not its seasons, so every season carries the same list.
-   *  Null means "not recorded for this scan," never "in no collection". Unread today:
-   *  `toGroups` (ReviewQueue.tsx) builds the card's own group from each season row's
-   *  `Candidate.collections` instead, never this field. */
-  collections: string[] | null;
   /** Every season, sorted by season number (unnumbered rows last). */
   seasons: Candidate[];
 }
