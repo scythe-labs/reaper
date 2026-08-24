@@ -4695,9 +4695,9 @@ def test_the_fingerprint_matcher_reads_every_spelling_the_tree_puts_after_of() -
 # being a name Reaper guesses and becomes one the operator picks off their own server. +1 for
 # `PolicyRuleEditors`'s ListNameSelect, the picker an `on_list` keep rule names its list from --
 # a rule that matches on the name, so it is a picker rather than a box (rule 108's separator half).
-# +1 for `NotificationsPanel`'s language picker (phase 10b): which BCP 47 tag the Discord
-# Leaving Soon embed is written in, offered from `reaper.i18n.shipped_tags()`.
-_EXPECTED_SELECTS = 25
+# -1 for `NotificationsPanel`'s language picker, gone: the language is one setting now, and
+# `GeneralPanel`'s picker (already counted) decides what a notification is written in too.
+_EXPECTED_SELECTS = 24
 
 
 #: A ``//`` that starts a comment, which is any ``//`` not preceded by a colon. Splitting on the
@@ -4877,6 +4877,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "components/TestBadgeFreshness.test.tsx": "one badge's freshness, audited in the panels",
     "components/PlexPin.test.tsx": "the poll's state machine; it mounts the announcer, no screen",
     "focus.test.tsx": "focus moves, not a screen",
+    "useSeedLanguage.test.tsx": "one hook's write, through renderHook; it renders no markup",
     "AppFocus.test.tsx": "which view holds a jump's aim; both routes it drives to are stubs",
     "AppUrl.test.tsx": (
         "which section a URL lands on; its Settings rail is audited in SettingsNav.test.tsx"
@@ -7842,7 +7843,7 @@ _UNRECOVERABLE_OPS = frozenset({"alter_column", "drop_column", "drop_table"})
 #: The revision files walked, pinned for rule 145's reason: a flag-shaped assertion cannot tell
 #: a revision that complies from one that dropped out of the walk. Bump the first with any new
 #: revision, the second only with one performing an operation above.
-_EXPECTED_REVISION_FILES = 28
+_EXPECTED_REVISION_FILES = 29
 _EXPECTED_UNRECOVERABLE_REVISIONS = 4
 
 

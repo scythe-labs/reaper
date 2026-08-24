@@ -63,7 +63,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import InstanceKind, PlexServer
 from reaper.engine.explanation import ReasonKey
 from reaper.engine.reason import Reason, to_wire
-from reaper.i18n import say, shipped_tags
+from reaper.i18n import say
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import (
     admin_password,
@@ -361,20 +361,10 @@ class NotificationsOut(BaseModel):
     """Whether a Discord webhook is stored. The URL itself is a credential and is NEVER
     echoed back to the browser -- a view says only *whether* one is set, exactly like an
     instance API key."""
-    language: str
-    """The BCP 47 tag the Leaving Soon embed is written in. English until changed."""
-    languages: list[str]
-    """Every tag ``language`` may be set to -- ``reaper.i18n.shipped_tags()`` -- so the
-    picker's choices come from the server rather than a copy the browser could drift from
-    (rule 66)."""
 
 
 class NotificationsIn(BaseModel):
     webhook_url: str
-
-
-class NotificationLanguageIn(BaseModel):
-    language: str
 
 
 class NotificationsTestIn(BaseModel):
@@ -1017,23 +1007,15 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> OkOu
 # ---------------------------------------------------------------------------
 
 
-async def _notifications_out(session: AsyncSession, *, has_webhook: bool) -> NotificationsOut:
-    return NotificationsOut(
-        has_webhook=has_webhook,
-        language=await app_settings.get_notification_language(session),
-        languages=list(shipped_tags()),
-    )
-
-
 @router.get("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def get_notifications(request: Request) -> NotificationsOut:
-    """Whether a Discord webhook is configured, and the language it is written in. The URL
-    is write-only -- like an API key, only its presence is ever reported, never the value."""
+    """Whether a Discord webhook is configured. The URL is write-only -- like an API key,
+    only its presence is ever reported, never the value."""
     async with session_factory(request)() as session:
         has = await app_settings.has_discord_webhook(
             session, secret_box(request), runtime_settings(request)
         )
-        return await _notifications_out(session, has_webhook=has)
+        return NotificationsOut(has_webhook=has)
 
 
 @router.put("/notifications", tags=[api_tags.NOTIFICATIONS])
@@ -1045,7 +1027,7 @@ async def set_notifications(request: Request, payload: NotificationsIn) -> Notif
         await app_settings.set_discord_webhook(session, secret_box(request), url)
         await session.commit()
         log.info("notifications.webhook_set")
-        return await _notifications_out(session, has_webhook=True)
+        return NotificationsOut(has_webhook=True)
 
 
 @router.delete("/notifications", tags=[api_tags.NOTIFICATIONS])
@@ -1055,28 +1037,7 @@ async def clear_notifications(request: Request) -> NotificationsOut:
         await app_settings.clear_discord_webhook(session)
         await session.commit()
         log.info("notifications.webhook_cleared")
-        return await _notifications_out(session, has_webhook=False)
-
-
-@router.put("/notifications/language", tags=[api_tags.NOTIFICATIONS])
-async def set_notification_language(
-    request: Request, payload: NotificationLanguageIn
-) -> NotificationsOut:
-    """Which language the Leaving Soon embed is written in. Refused when the tag names no
-    shipped backend catalog (``reaper.i18n.shipped_tags()``), so a stale option or a hand-
-    built request cannot save a language ``say(...)`` would just fall back to English on
-    anyway without saying so."""
-    tag = payload.language
-    if tag not in shipped_tags():
-        refuse(422, "error.settings.notification_language_unknown", tag=tag)
-    async with session_factory(request)() as session:
-        await app_settings.set_notification_language(session, tag)
-        await session.commit()
-        has = await app_settings.has_discord_webhook(
-            session, secret_box(request), runtime_settings(request)
-        )
-        log.info("notifications.language_set", language=tag)
-        return await _notifications_out(session, has_webhook=has)
+        return NotificationsOut(has_webhook=False)
 
 
 @router.post("/notifications/test", tags=[api_tags.NOTIFICATIONS])
@@ -1110,6 +1071,13 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
 
 #: A six-digit hex color, ``#rrggbb``. The one shape the accent may take.
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+#: A BCP 47 language tag's SHAPE: ``es``, ``pt-BR``, ``zh-Hans-CN``. Deliberately not a
+#: membership test against a list of tags. The browser offers every catalog IT ships, and a
+#: translation reaches the UI a release before its ``backend.json`` does, so a list here would
+#: refuse a language the operator can already read the app in. Storing the tag is what makes a
+#: notification start speaking it the release that catalog lands
+#: (``app_settings.get_notification_language`` serves English until then).
+_LANGUAGE_TAG = re.compile(r"^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$")
 
 
 class DesktopSettingsOut(BaseModel):
@@ -1135,6 +1103,11 @@ class GeneralSettingsOut(BaseModel):
     the host's own zone."""
     accent_color: str
     """The UI accent as ``#rrggbb``; the built-in sky blue until changed."""
+    language: str | None = None
+    """The BCP 47 tag the app is shown in, and that a notification is written in. ``null``
+    while nobody has chosen: the browser seeds it on first sign-in from its own preferred
+    languages. A tag whose backend catalog has not shipped yet is stored and served back as
+    it is; the notification falls back to English on its own."""
     api_key_set: bool
     """Whether a key this install can actually use exists -- the value itself only leaves
     through the dedicated reveal route, never rides along on a settings read. Read through
@@ -1165,6 +1138,9 @@ class GeneralSettingsIn(BaseModel):
     """An IANA time-zone name, validated to a real zone at the edge. ``None`` leaves it
     unchanged."""
     accent_color: str | None = Field(default=None, max_length=7)
+    language: str | None = Field(default=None, max_length=35)
+    """A BCP 47 language tag, validated to its shape at the edge. ``None`` leaves it
+    unchanged. 35 is the longest tag BCP 47 registers."""
     expand_seasons_mode: ExpandSeasonsMode | None = None
     """Which screens the review queue opens seasons on. ``None`` leaves it unchanged."""
     default_spare_days: int | None = Field(default=None, ge=0, le=3650)
@@ -1207,6 +1183,7 @@ async def _general_out(
         application_url=await app_settings.get_application_url(session),
         timezone=await app_settings.get_timezone(session, settings),
         accent_color=await app_settings.get_accent_color(session),
+        language=await app_settings.get_language(session),
         api_key_set=await app_settings.get_api_key(session, box) is not None,
         expand_seasons_mode=await app_settings.get_expand_seasons_mode(session),
         default_spare_days=await app_settings.get_default_spare_days(session),
@@ -1303,6 +1280,14 @@ def _clean_accent_color(value: str) -> str:
     return value
 
 
+def _clean_language(value: str) -> str:
+    """Shape only, never membership -- see ``_LANGUAGE_TAG``."""
+    cleaned = value.strip()
+    if not _LANGUAGE_TAG.match(cleaned):
+        refuse(422, "error.settings.language_invalid", tag=value)
+    return cleaned
+
+
 def _clean_trusted_proxies(value: list[str]) -> list[str]:
     for entry in value:
         cleaned_entry = entry.strip()
@@ -1339,6 +1324,7 @@ _GENERAL_FIELDS: tuple[_GeneralField[Any], ...] = (
     _GeneralField[str]("application_url", app_settings.set_application_url, _clean_application_url),
     _GeneralField[str]("timezone", app_settings.set_timezone, _clean_timezone),
     _GeneralField[str]("accent_color", app_settings.set_accent_color, _clean_accent_color),
+    _GeneralField[str]("language", app_settings.set_language, _clean_language),
     _GeneralField[ExpandSeasonsMode]("expand_seasons_mode", _write_expand_seasons_mode),
     _GeneralField[int]("default_spare_days", _write_default_spare_days),
     _GeneralField[bool]("proxy_trust_enabled", _write_proxy_trust_enabled),

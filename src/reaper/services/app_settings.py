@@ -156,13 +156,19 @@ TIMEZONE_KEY = "timezone"
 #: When a backup was last downloaded (ISO 8601, UTC). Only ever surfaced as "last backup"
 #: on the Backup panel, so a losable copy on someone else's schedule is not a source of truth.
 BACKUP_LAST_AT_KEY = "backup_last_at"
-#: The language `notify.discord`'s Leaving Soon embed is written in -- a BCP 47 tag, one of
-#: `reaper.i18n.shipped_tags()`. Not a credential (rule 16 does not bind it) and not
-#: env-seeded like the timezone: there is no first-boot deployment concern a language choice
-#: answers, so `.env.example` carries no matching variable. Stored value wins; an unset row,
-#: or one naming a tag the running build no longer ships, is English. Edited in
-#: Settings -> Notifications.
-NOTIFICATION_LANGUAGE_KEY = "notification_language"
+#: The one language setting: what the app is shown in AND what a notification is written in,
+#: as a BCP 47 tag. Not a credential (rule 16 does not bind it) and not env-seeded like the
+#: timezone: there is no first-boot deployment concern a language choice answers, so
+#: `.env.example` carries no matching variable. Edited in Settings -> General.
+#:
+#: It holds a tag from the BROWSER's catalog list, which is not the same list as
+#: `reaper.i18n.shipped_tags()` -- a translation reaches the UI a release before its
+#: `backend.json` ships. So there are two readers: `get_language` hands back what is stored,
+#: and `get_notification_language` clamps it to a tag `say` can actually serve.
+#:
+#: An empty row means nobody has chosen yet. The browser seeds it on first sign-in from its
+#: own preferred languages, so the row is empty only until then.
+LANGUAGE_KEY = "language"
 
 DEFAULT_PLEX_WEB_URL = "https://app.plex.tv"
 DEFAULT_APPLICATION_NAME = "Reaper"
@@ -375,24 +381,37 @@ async def set_accent_color(session: AsyncSession, color: str | None) -> None:
     await _set(session, ACCENT_COLOR_KEY, cleaned or None)
 
 
+async def get_language(session: AsyncSession) -> str | None:
+    """The stored BCP 47 tag, or ``None`` while nobody has chosen one.
+
+    Raw on purpose. This is what the Settings picker shows, and it holds a tag from the
+    BROWSER's catalog list, which the backend's own ``shipped_tags()`` need not contain.
+    ``get_notification_language`` is the reader that clamps.
+    """
+    stored = await _get(session, LANGUAGE_KEY, default=None)
+    return str(stored) if stored else None
+
+
+async def set_language(session: AsyncSession, tag: str) -> None:
+    """Store the language. Validated to a BCP 47 tag SHAPE at the API edge, never against a
+    list: the browser offers tags this process has no ``backend.json`` for, and storing one
+    is how Discord starts speaking it the release that catalog ships."""
+    await _set(session, LANGUAGE_KEY, tag)
+
+
 async def get_notification_language(session: AsyncSession) -> str:
     """The BCP 47 tag ``notify.discord``'s Leaving Soon embed is written in.
 
-    Falls back to English both when nothing is stored and when the stored tag no longer
-    names a shipped catalog -- a build that dropped a translation must not keep reading a
-    tag ``say`` cannot serve, and ``reaper.i18n.catalog`` would silently do that anyway
-    (it merges an unknown tag's absent file onto English), so this is the one place that
-    also tells the operator's *choice* apart from an unshipped leftover.
+    Falls back to English both when nothing is stored and when the stored tag names no
+    shipped BACKEND catalog -- the UI carries a translation a release before its
+    ``backend.json`` ships, and ``reaper.i18n.catalog`` would silently merge an unknown
+    tag's absent file onto English anyway, so this is the one place that tells the
+    operator's *choice* apart from a tag ``say`` cannot serve.
     """
-    stored = await _get(session, NOTIFICATION_LANGUAGE_KEY, default=None)
-    if stored and str(stored) in shipped_tags():
-        return str(stored)
+    stored = await get_language(session)
+    if stored and stored in shipped_tags():
+        return stored
     return DEFAULT_TAG
-
-
-async def set_notification_language(session: AsyncSession, tag: str) -> None:
-    """Store the Discord notification language. Validated to a shipped tag at the API edge."""
-    await _set(session, NOTIFICATION_LANGUAGE_KEY, tag)
 
 
 async def get_expand_seasons_mode(session: AsyncSession) -> ExpandSeasonsMode:

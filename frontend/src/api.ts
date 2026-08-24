@@ -1283,6 +1283,9 @@ export interface GeneralSettings {
   timezone: string;
   /** The UI accent as #rrggbb; the built-in sky blue until changed. */
   accent_color: string;
+  /** The BCP 47 tag the app is shown in, and that a notification is written in. Null while
+   *  nobody has chosen: this browser seeds it on first sign-in from its own languages. */
+  language: string | null;
   /** Whether a key exists at all; the value only leaves through the reveal call. */
   api_key_set: boolean;
   /** Which screens the review queue opens each show's season list expanded on. */
@@ -1671,11 +1674,6 @@ export interface Notifications {
   /** Whether a Discord webhook is stored. The URL itself is a write-only credential and is
    *  never returned -- exactly like an instance API key, only its presence is reported. */
   has_webhook: boolean;
-  /** The BCP 47 tag the Leaving Soon embed is written in. English until changed. */
-  language: string;
-  /** Every tag `language` may be set to, from the server rather than a copy this file could
-   *  drift from (rule 66) -- the list grows as translations ship. */
-  languages: string[];
 }
 
 export interface BackupInfo {
@@ -2102,6 +2100,7 @@ export const api = {
     application_url?: string;
     timezone?: string;
     accent_color?: string;
+    language?: string;
     expand_seasons_mode?: ExpandSeasonsMode;
     default_spare_days?: number;
     proxy_trust_enabled?: boolean;
@@ -2184,10 +2183,6 @@ export const api = {
    *  already-stored webhook without re-pasting the secret. */
   testWebhook: (webhook_url: string | null) =>
     post<DiscordTest>("/api/settings/notifications/test", { webhook_url }),
-  /** Which language the Leaving Soon embed is written in. `language` must be one of the
-   *  `languages` the last read returned. */
-  setNotificationLanguage: (language: string) =>
-    put<Notifications>("/api/settings/notifications/language", { language }),
 
   policy: (mediaType: "movie" | "tv" = "movie") =>
     request<Policy>(`/api/policy?media_type=${mediaType}`),

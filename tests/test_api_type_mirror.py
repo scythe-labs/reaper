@@ -85,16 +85,16 @@ API_TS = REPO / "frontend" / "src" / "api.ts"
 WIRE_PACKAGE = "reaper.api."
 INNER_MODULES = ("reaper.engine.policy", "reaper.engine.explanation")
 
-#: Reconciled by hand against the tree: 127 under ``reaper.api.*`` and 16 across the two engine
+#: Reconciled by hand against the tree: 128 under ``reaper.api.*`` and 17 across the two engine
 #: modules (+1 for ``RewatchOddsOut``, #554 stage 2, mirrored in the browser as ``RewatchOdds``;
 #: +2 more for the same stage's ``RewatchOddsFitOut``/``RewatchOddsBlockOut``, the Policy page's
 #: ladder-and-echo payload, mirrored as ``RewatchOddsFit``/``RewatchOddsBlock``; +1 more for
 #: #868 phase 5's ``DiscordTestOut``, split off ``TestOut`` for the Discord webhook test's
-#: typed reason; +1 more for phase 10b's ``NotificationLanguageIn``, a one-field request body
-#: with no browser pair of its own -- the browser sends it as a plain literal, the same shape
-#: every other bare ``*In`` request model here already takes). It is here because the collision
-#: assertion below is flag-shaped, and a flag cannot see a member that left the walk (rule 145).
-_EXPECTED_SERVER_MODELS = 146
+#: typed reason; -1 for ``NotificationLanguageIn``, gone with the route it bodied -- the
+#: language is one setting now and rides ``GeneralSettingsIn``). It is here because the
+#: collision assertion below is flag-shaped, and a flag cannot see a member that left the walk
+#: (rule 145).
+_EXPECTED_SERVER_MODELS = 145
 
 #: Browser types whose server counterpart is spelled differently. Each is a real pair -- the
 #: field sets are compared -- and the rename is the only reason a suffix rule cannot find it.

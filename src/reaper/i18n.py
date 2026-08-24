@@ -292,13 +292,12 @@ def shipped_tags() -> tuple[str, ...]:
     """Every BCP 47 tag with a shipped backend catalog: the directories under
     `reaper.locales` holding a `backend.json`, English always first.
 
-    `services.app_settings.get_notification_language` reads this to validate a stored tag,
-    and `NotificationsOut.languages` (api/settings.py) reads it for the exact choices the
-    Settings -> Notifications picker offers -- so a translation only becomes choosable once
-    its `backend.json` actually ships, and a build that ever drops one loses the choice
-    rather than silently keeping a stale option (rule 66: a server-defined list renders from
-    the server response). Cached like `catalog`: the shipped set is fixed for the life of the
-    process.
+    `services.app_settings.get_notification_language` is the one reader: it clamps the stored
+    language tag to this set, so a notification composed here falls back to English while the
+    operator's language has no `backend.json` yet, and a build that drops one stops reading a
+    tag `say` cannot serve. Nothing offers this set as a *choice* -- the picker in Settings ->
+    General lists the browser's own catalogs, which ship a translation a release ahead of this
+    one. Cached like `catalog`: the shipped set is fixed for the life of the process.
     """
     root = _locales_root()
     tags = sorted(
