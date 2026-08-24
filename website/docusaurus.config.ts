@@ -139,6 +139,8 @@ const config: Config = {
           items: [
             { label: "GitHub", href: `https://github.com/${ORG}/${REPO}` },
             { label: "Issues", href: `https://github.com/${ORG}/${REPO}/issues` },
+            { label: "Discussions", href: `https://github.com/${ORG}/${REPO}/discussions` },
+            { label: "Translate", href: "https://hosted.weblate.org/engage/reaper/" },
           ],
         },
       ],
