@@ -1282,9 +1282,10 @@ def _clean_accent_color(value: str) -> str:
 
 def _clean_language(value: str) -> str:
     """Shape only, never membership -- see ``_LANGUAGE_TAG``."""
-    if not _LANGUAGE_TAG.match(value.strip()):
+    cleaned = value.strip()
+    if not _LANGUAGE_TAG.match(cleaned):
         refuse(422, "error.settings.language_invalid", tag=value)
-    return value.strip()
+    return cleaned
 
 
 def _clean_trusted_proxies(value: list[str]) -> list[str]:
