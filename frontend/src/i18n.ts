@@ -131,9 +131,16 @@ async function serve(tag: string): Promise<void> {
  *
  *  Named because it is read twice now. `applyStoredLanguage` paints with it, and `App` sends it
  *  to the server the first time it finds no language stored there, which is what makes the
- *  browser's own preference the seed for a fresh install rather than a standing mode. */
+ *  browser's own preference the seed for a fresh install rather than a standing mode.
+ *
+ *  It ends in `"en"`, a CATALOG tag, and never `"en-US"`, the tag the init above pins. The two
+ *  are the same language and not the same value: `LANGUAGES` is what the Settings picker offers,
+ *  so seeding the server `"en-US"` gave that `<select>` a value none of its options carry and it
+ *  rendered blank. Painting is unaffected -- `serve` sends every tag with no shipped catalog,
+ *  `"en"` included, to `changeLanguage("en-US")`, which is where the US number and date formats
+ *  come from. */
 export function preferredLanguage(): string {
-  return storedLanguage() ?? shippedTag(navigator.languages) ?? "en-US";
+  return storedLanguage() ?? shippedTag(navigator.languages) ?? "en";
 }
 
 /** Move the app onto the operator's chosen language, the browser's when they have not chosen,

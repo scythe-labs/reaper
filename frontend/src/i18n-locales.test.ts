@@ -21,7 +21,7 @@ import { TYPE, type MessageFormatElement } from "@formatjs/icu-messageformat-par
 import { IntlMessageFormat } from "intl-messageformat";
 import { describe, expect, it } from "vitest";
 
-import { SHIPPED_TAGS, shippedTag } from "./i18n";
+import { LANGUAGES, preferredLanguage, SHIPPED_TAGS, shippedTag } from "./i18n";
 import en from "./locales/en/ui.json";
 import { leaves } from "./test/catalog";
 
@@ -164,5 +164,14 @@ describe("shippedTag", () => {
     expect(shippedTag(["fr"], shipped)).toBeUndefined();
     expect(shippedTag([], shipped)).toBeUndefined();
     expect(shippedTag(["de"], new Set())).toBeUndefined();
+  });
+});
+
+describe("preferredLanguage", () => {
+  it("only ever answers with a tag the Settings picker offers", () => {
+    // It is the value seeded to the server, and the picker's `<select>` renders blank for a
+    // value none of its options carry. `"en-US"` is the shape that did that: the tag the
+    // i18next init pins is a language the picker spells `"en"`.
+    expect(LANGUAGES).toContain(preferredLanguage());
   });
 });
