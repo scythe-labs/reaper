@@ -9,6 +9,7 @@ fix is rewriting the entire migration history.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -1087,11 +1088,10 @@ class TestTheListConfigShapeHeal:
         shape at head is already the model's -- which is also what keeps ``alembic check``
         green in CI.
 
-        ``built_in`` is excluded from the stray-default sweep, and the exclusion is the point
-        rather than an escape: release M gave it ``server_default=false()`` deliberately
-        (``e6f7a8b9c0d1``) so an INSERT can omit a column whose ORM attribute has retired.
-        That is a default this heal is not allowed to remove, unlike the three it was written
-        for -- which is exactly the distinction a blanket loop cannot make."""
+        This used to carry a third assertion, that ``built_in`` kept the server default
+        release M gave it. The M+1 sweep (``e2f3a4b5c6d7``) dropped the column, so there is
+        no default left to protect and the exclusion it named is gone with it.
+        ``TestTheRetiredColumnSweep`` is where that column's story ends."""
         config = _alembic_config(tmp_path, monkeypatch)
         command.upgrade(config, "head")
         engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
@@ -1100,10 +1100,6 @@ class TestTheListConfigShapeHeal:
         assert isinstance(columns["created_at"]["type"], Integer)
         for name in ("config_json", "enabled"):
             assert columns[name]["default"] is None, name
-        assert columns["built_in"]["default"] is not None, (
-            "release M's server default for built_in is gone, so a fresh install's first "
-            "list save will fail on a NOT NULL column nothing writes any more"
-        )
         engine.dispose()
 
 
@@ -1138,14 +1134,29 @@ class TestAListNameIsUniqueWithoutRegardToCase:
 
     @staticmethod
     def _add(engine: Engine, *names: str) -> None:
+        """``built_in`` is written only where the table still has it.
+
+        These cases run at three different revisions. Before release M it is ``NOT NULL`` with
+        no server default, so omitting it fails; after the M+1 sweep (``e2f3a4b5c6d7``) the
+        column is gone, so naming it fails. Asking the table is what lets one helper serve
+        both sides of its life."""
+        has_built_in = "built_in" in {c["name"] for c in inspect(engine).get_columns("list_config")}
+        insert = (
+            text(
+                "INSERT INTO list_config "
+                "(name, source, config_json, enabled, built_in, created_at) "
+                "VALUES (:name, 'arr_tag', :config, 1, 0, 1750000000)"
+            )
+            if has_built_in
+            else text(
+                "INSERT INTO list_config (name, source, config_json, enabled, created_at) "
+                "VALUES (:name, 'arr_tag', :config, 1, 1750000000)"
+            )
+        )
         with engine.begin() as conn:
             for name in names:
                 conn.execute(
-                    text(
-                        "INSERT INTO list_config "
-                        "(name, source, config_json, enabled, built_in, created_at) "
-                        "VALUES (:name, 'arr_tag', :config, 1, 0, 1750000000)"
-                    ),
+                    insert,
                     {"name": name, "config": json.dumps({"tags": ["keep"], "match": "any"})},
                 )
 
@@ -1648,7 +1659,12 @@ class TestReleaseMLetsTheRetiredColumnsBeOmitted:
 
     @staticmethod
     def _at_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Engine:
-        command.upgrade(_alembic_config(tmp_path, monkeypatch), "head")
+        """Release M's own revision, not ``head``. It used to be ``head``, and had to stop
+        being: ``e2f3a4b5c6d7`` is the M+1 sweep that drops all six, so at head there is no
+        column left to carry a default. What these still pin is the image an operator is
+        running if they stopped at v2026.8.4, and the shape every upgrade passes through on
+        its way to the sweep."""
+        command.upgrade(_alembic_config(tmp_path, monkeypatch), _RELEASE_M)
         return create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
 
     def test_every_retired_column_can_be_omitted_by_an_insert(
@@ -1737,7 +1753,7 @@ class TestReleaseMLetsTheRetiredColumnsBeOmitted:
         (rule 72).
         """
         config = _alembic_config(tmp_path, monkeypatch)
-        command.upgrade(config, "head")
+        command.upgrade(config, _RELEASE_M)
         engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
 
         command.downgrade(config, _PRIOR_RELEASE_M)
@@ -1754,7 +1770,7 @@ class TestReleaseMLetsTheRetiredColumnsBeOmitted:
         than eyeballed, and the collation this class already pins is the proof that eyeballing
         misses one: reflection reports these four and does not report that."""
         config = _alembic_config(tmp_path, monkeypatch)
-        command.upgrade(config, "head")
+        command.upgrade(config, _RELEASE_M)
         engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
 
         def present() -> set[str]:
@@ -1785,7 +1801,7 @@ class TestReleaseMLetsTheRetiredColumnsBeOmitted:
         before it re-imposes ``NOT NULL``. Without that it raises and the operator is stranded
         on an image they were trying to leave."""
         config = _alembic_config(tmp_path, monkeypatch)
-        command.upgrade(config, "head")
+        command.upgrade(config, _RELEASE_M)
         engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
         with engine.begin() as conn:
             conn.execute(
@@ -1860,4 +1876,181 @@ def test_every_statement_of_the_get_bind_count_is_the_count_the_revisions_have()
             f"alembic/versions/ has {measured} of {len(versions)}. The same sentence is in "
             f"{', '.join(s for s in _GET_BIND_CLAIM_SITES if s != site)} -- correct every one, "
             "not just this file."
+        )
+
+
+# Release M+1: the six retired columns leaving, and the revision just before it.
+_PRIOR_SWEEP = "d1e2f3a4b5c6"
+_SWEEP = "e2f3a4b5c6d7"
+
+#: What the sweep drops, table by table. Rule 148's M+1, and the same six
+#: ``alembic/env.py``'s ``RETIRED_COLUMNS`` held until this revision emptied it.
+_SWEPT = (
+    ("candidate", "poster_url"),
+    ("list_config", "built_in"),
+    ("pending_plex_login", "pin_code"),
+    ("plex_server", "owner_plex_account_id"),
+    ("profile", "active_policy_id"),
+    ("profile", "enabled"),
+)
+
+#: The five tables the sweep rebuilds. Every one is a full table copy under SQLite, which is
+#: what puts their indexes and constraints at risk.
+_SWEPT_TABLES = ("candidate", "list_config", "pending_plex_login", "plex_server", "profile")
+
+
+def _shape(engine: Engine) -> dict[str, dict[str, object]]:
+    """Each rebuilt table's indexes, foreign keys and unique constraints, by name.
+
+    Read for the comparison rule 148 asks for by name rather than by eye: a batch recreate
+    silently drops expression indexes, triggers and ``AUTOINCREMENT``, and none of that shows
+    up in a migration that reads correctly.
+    """
+    inspector = inspect(engine)
+    return {
+        table: {
+            "indexes": sorted(str(i["name"] or "") for i in inspector.get_indexes(table)),
+            "foreign_keys": sorted(
+                tuple(fk["constrained_columns"]) for fk in inspector.get_foreign_keys(table)
+            ),
+            "unique": sorted(str(u["name"] or "") for u in inspector.get_unique_constraints(table)),
+        }
+        for table in _SWEPT_TABLES
+    }
+
+
+class TestTheRetiredColumnSweep:
+    """Rule 148's release M+1. Release M (``e6f7a8b9c0d1``, v2026.8.4) gave these six columns a
+    server default or made them nullable so their ORM attributes could leave; this drops them.
+
+    Two things are asserted that a migration reading correctly cannot promise. The columns are
+    actually gone, and **nothing else about the five rebuilt tables changed** -- each drop is a
+    full table copy under SQLite, and a copy takes whatever reflection could see, which is not
+    everything.
+    """
+
+    def _at(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revision: str) -> Engine:
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, revision)
+        return create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    def test_every_swept_column_is_gone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = self._at(tmp_path, monkeypatch, _SWEEP)
+        inspector = inspect(engine)
+        for table, column in _SWEPT:
+            names = {c["name"] for c in inspector.get_columns(table)}
+            assert column not in names, f"{table}.{column} survived the sweep"
+        engine.dispose()
+
+    def test_the_sweep_changes_nothing_but_the_foreign_key_it_drops(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one obligation an eye check cannot meet (rule 148).
+
+        ``profile``'s foreign key goes with ``active_policy_id`` and is the only expected
+        difference; every other index, unique constraint and foreign key on the five rebuilt
+        tables reads the same on both sides.
+        """
+        engine = self._at(tmp_path, monkeypatch, _PRIOR_SWEEP)
+        before = _shape(engine)
+        engine.dispose()
+
+        engine = self._at(tmp_path, monkeypatch, _SWEEP)
+        after = _shape(engine)
+        engine.dispose()
+
+        assert before["profile"]["foreign_keys"] == [("active_policy_id",)]
+        assert after["profile"]["foreign_keys"] == []
+        before["profile"]["foreign_keys"] = []
+        assert after == before
+
+    def test_a_list_name_still_compares_without_regard_to_case(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``list_config`` is rebuilt to drop ``built_in``, and a rebuild copies from SQLite's
+        reflection, which does not report collations. A sweep that did not restate ``COLLATE
+        NOCASE`` recreates ``name`` case-SENSITIVE and #508 is back: "Holiday" and "holiday"
+        become two rows answering to one keep rule.
+
+        Behavioral rather than a DDL substring, because what the operator loses is the refusal,
+        not the word.
+        """
+        engine = self._at(tmp_path, monkeypatch, _SWEEP)
+        insert = text(
+            "INSERT INTO list_config (name, source, config_json, enabled, created_at) "
+            "VALUES (:name, 'plex_collection', '{}', 1, 1750000000)"
+        )
+        with engine.begin() as conn:
+            conn.execute(insert, {"name": "Holiday"})
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            conn.execute(insert, {"name": "holiday"})
+        engine.dispose()
+
+    def test_the_downgrade_puts_every_column_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Schema only. The values are gone the moment upgrade runs, and a rollback past this
+        revision is the operator's backup -- rule 148 says so, and this test is not evidence
+        otherwise."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _SWEEP)
+        command.downgrade(config, _PRIOR_SWEEP)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        inspector = inspect(engine)
+        for table, column in _SWEPT:
+            names = {c["name"] for c in inspector.get_columns(table)}
+            assert column in names, f"{table}.{column} did not come back"
+        restored = [
+            tuple(fk["constrained_columns"]) for fk in inspector.get_foreign_keys("profile")
+        ]
+        assert restored == [("active_policy_id",)]
+        engine.dispose()
+
+
+def test_the_retired_column_bridge_is_empty() -> None:
+    """``alembic/env.py``'s two sets are rule 148's one-release bridge, not a registry.
+
+    Empty is what the rule looks like when it is being followed. A populated set that outlives
+    its sweep is how a dead column becomes permanent behind a growing exclusion list, which is
+    the failure the rule exists to prevent -- so adding an entry means deleting an assertion
+    here, and the next author has to mean it.
+
+    Read from the source rather than imported, because Alembic execs ``env.py`` by path and
+    there is no ``alembic.env`` module to import (``_env_py_configure_kwargs`` above says the
+    same thing from the other end). Parsed rather than substring-matched, so a set spelled
+    ``{}``-empty, ``set()`` or with an entry all read correctly (rule 147).
+    """
+    tree = ast.parse((PROJECT_ROOT / "alembic" / "env.py").read_text(encoding="utf-8"))
+    wanted = ("RETIRED_COLUMNS", "RETIRED_CONSTRAINTS")
+    found: dict[str, ast.expr] = {}
+    for node in tree.body:
+        target: ast.expr | None = None
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+        elif isinstance(node, ast.Assign):
+            target = node.targets[0]
+        else:
+            continue
+        if isinstance(target, ast.Name) and target.id in wanted and node.value is not None:
+            found[target.id] = node.value
+
+    assert set(found) == {"RETIRED_COLUMNS", "RETIRED_CONSTRAINTS"}, (
+        "alembic/env.py no longer declares both bridge sets at module level, so this "
+        f"reader found only {sorted(found)}. It is the matcher that broke, not the rule."
+    )
+    for name, value in found.items():
+        empty = (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "set"
+            and not value.args
+        )
+        assert empty, (
+            f"alembic/env.py's {name} is populated. That is rule 148's bridge, and it empties "
+            "with the M+1 sweep that drops the columns -- an entry that outlives its sweep is "
+            "how a dead column becomes permanent behind a growing exclusion list. If you are "
+            "adding one alongside a release that removes an ORM attribute, delete this "
+            "assertion in the same change and say which release drops the column."
         )
