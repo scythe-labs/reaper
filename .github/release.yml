@@ -7,6 +7,14 @@
 # doubles as precedence; the catch-all keeps an unlabeled PR visible rather than
 # silently dropped. GitHub appends New Contributors and the changelog link itself.
 changelog:
+  # The promotion pull request is the only one that merges into `main`, and the
+  # ours-strategy merge that opens the next one pulls it into the notes range. So
+  # every release listed the PREVIOUS release's promotion, a repository chore that
+  # says nothing about what shipped. Excluding by label drops it before any category
+  # is matched. CLAUDE.md's promotion recipe applies the label, and
+  # `test_the_promotion_label_is_excluded_from_the_generated_notes` pins the two together.
+  exclude:
+    labels: [Kind/Release]
   categories:
     - title: 💥 Breaking changes
       labels: [Compat/Breaking]

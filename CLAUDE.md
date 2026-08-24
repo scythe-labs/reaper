@@ -274,8 +274,13 @@ written to reassure, so it fails toward telling the operator the app is safer th
   git checkout -b promote-<version> origin/dev
   git merge -s ours origin/main -m "Merge main back so the promotion diffs against the last release"
   git push -u origin promote-<version>
-  gh pr create --base main --head promote-<version>
+  gh pr create --base main --head promote-<version> --label "Kind/Release,Priority/High"
   ```
+
+  **`Kind/Release` is what keeps this pull request out of the next release's notes.**
+  `.github/release.yml` excludes that label. Without it the ours-strategy merge below carries
+  this promotion into the following release's notes range, where it reads as a repository
+  chore beside the changes that actually shipped (#934).
 
   Then `gh pr merge --squash <n>`. The ours-strategy merge keeps `dev`'s tree bit for bit
   (release.yml verifies that before tagging) and never conflicts, whatever the histories look
