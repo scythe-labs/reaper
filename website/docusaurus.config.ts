@@ -102,6 +102,21 @@ const config: Config = {
       items: [
         { type: "docSidebar", sidebarId: "manual", position: "left", label: "Manual" },
         {
+          href: `https://github.com/${ORG}/${REPO}/issues`,
+          label: "Issues",
+          position: "right",
+        },
+        {
+          href: `https://github.com/${ORG}/${REPO}/discussions`,
+          label: "Discussions",
+          position: "right",
+        },
+        {
+          href: "https://hosted.weblate.org/engage/reaper/",
+          label: "Translate",
+          position: "right",
+        },
+        {
           href: `https://github.com/${ORG}/${REPO}`,
           label: "GitHub",
           position: "right",
